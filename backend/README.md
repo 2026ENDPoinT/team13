@@ -109,8 +109,22 @@ git commit -m "Update reference to <변경 요약>"
 | CHG-05 | 출석·마감 시각을 서버 시계 기준으로 | learning, assessment |
 | CHG-06 | 파일·변환·AI가 원문 권한을 우회하지 않게 | files |
 
+## 일감 관리 (Jira)
+
+일감은 Jira [STack 스페이스(키 `STAC`)](https://stack-corp.atlassian.net/jira/software/projects/STAC/boards/1)에서 관리한다.
+
+| 에픽 | 내용 |
+|---|---|
+| STAC-1 개발 기반 준비 | DB 접근 방식, 브랜치 보호, GitHub 연동, 팀원 초대 |
+| STAC-6 ~ STAC-63 | `CHG-01` ~ `CHG-12`. 하위 작업은 [90_changes.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/90_changes.md)의 체크리스트 항목이고, 에픽 설명에 근거와 완료 판정이 있다 |
+| STAC-68 | 기존 클라이언트 결함 수정(SEC-01~07) |
+| STAC-76 미결 설계 결정 | [db/README.md](db/README.md) 7절의 결정 10개 |
+
+모든 일감에는 우선순위 라벨(`P0`/`P1`/`P2`)이, CHG 일감에는 `CHG-xx` 라벨이 붙어 있다. 보드 열은 To Do → In Progress → In Review(PR 리뷰 중) → Done이다.
+
 ## 작업 규칙
 
-- 엔드포인트를 구현할 때 커밋과 PR에 해당 `EP-xxxx` ID와 `CHG-xx` 번호를 적는다.
-- Reference에서 `UNKNOWN`이나 `[추정]`인 동작은 구현 전에 결정을 남긴다. 결정 없이 원본 동작이라고 가정하지 않는다.
+- 브랜치 이름은 `STAC-<번호>-<짧은-설명>`, 커밋 메시지와 PR 제목은 `STAC-<번호>`로 시작한다. 예: 브랜치 `STAC-7-session-principal`, 커밋 `STAC-7 세션 주체만으로 actor 판정`.
+- 엔드포인트를 구현할 때는 커밋이나 PR 본문에 해당 `EP-xxxx` ID도 적는다.
+- Reference에서 `UNKNOWN`이나 `[추정]`인 동작은 구현 전에 결정을 남긴다. 결정은 STAC-76 하위 일감에 기록하고, 결정 없이 원본 동작이라고 가정하지 않는다.
 - 원본 캡처, 개인정보, 토큰, 비밀번호는 커밋하지 않는다.
