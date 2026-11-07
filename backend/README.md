@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# ASTRA-Backend
+# STack-Backend
 
 서울과학기술대학교 e-Class(ILOS LMS, 원본 서비스명 `ASTRA`) 재구현의 백엔드 구현 레포다.
 
@@ -20,7 +20,7 @@
 처음 받을 때는 서브모듈까지 함께 받는다.
 
 ```sh
-git clone --recurse-submodules git@github.com:STack-Corp/ASTRA-Backend.git
+git clone --recurse-submodules git@github.com:STack-Corp/STack-Backend.git
 # 이미 받았다면
 git submodule update --init
 ```
@@ -39,7 +39,7 @@ git submodule update --init
 
 ## 두 레포의 역할
 
-| | ASTRA-Reference | ASTRA-Backend |
+| | ASTRA-Reference | STack-Backend |
 |---|---|---|
 | 담는 것 | 화면 명세, 엔드포인트 계약, DB 설계 근거 | 서버 코드, 정본 DB 스키마, ERD 도구·스냅샷, 테스트 |
 | 변경 기준 | 근거와 근거 수준을 함께 기록 | 계약을 지키는지 테스트로 확인 |
