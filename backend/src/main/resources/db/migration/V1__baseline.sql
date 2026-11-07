@@ -1,4 +1,4 @@
--- ASTRA(e-Class ILOS 재구현) MySQL 8 스키마. 명세: ../*.md, ../backend/*.md. 도메인별 근거: db/design/*.md
+-- ASTRA(e-Class ILOS 재구현) MySQL 8 기준 스키마. 명세: reference/*.md, reference/backend/*.md. 도메인별 근거: reference/db/design/*.md
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 

@@ -9,7 +9,7 @@ ASTRA 재구현용 MySQL 8 스키마(97 테이블, FK 192개)를 어떻게 읽�
 
 | 파일 | 역할 |
 |---|---|
-| [db/astra_schema.sql](astra_schema.sql) | **정본 DDL.** 테이블·컬럼·키·제약·COMMENT는 이 파일이 기준이다 |
+| [src/main/resources/db/migration/](../src/main/resources/db/migration/) | **정본 DDL.** Flyway 마이그레이션 `V1__baseline.sql`, `V2__…sql` …을 버전 순서대로 적용한 결과가 기준이다 |
 | [reference/db/design/](https://github.com/STack-Corp/ASTRA-Reference/tree/main/db/design) `10_identity` ~ `60_files` | 영역별 설계 근거(Reference 레포): 테이블 목록, 근거, 경계·미결 사항. 문서 안의 DDL 조각은 설계 당시 초안이고 기준이 아니다 |
 | [tools/check.sql](tools/check.sql) | 로드한 스키마 점검: 테이블/FK 수, 깨진 FK, COMMENT 누락, 고립 테이블 |
 | [tools/erdcloud_snapshot.py](tools/erdcloud_snapshot.py) | 로드한 스키마에서 ERDCloud 스냅샷 생성, `--compare`로 ERDCloud에서 내려받은 스냅샷과 비교 |
@@ -17,7 +17,7 @@ ASTRA 재구현용 MySQL 8 스키마(97 테이블, FK 192개)를 어떻게 읽�
 
 ERDCloud는 보기용 사본이다. ERDCloud 화면에서 직접 고친 내용은 정본에 반영되지 않으며, 다음 동기화 때 덮어써진다.
 
-언어·프레임워크가 정해지면 `db/astra_schema.sql`을 그 마이그레이션 도구의 첫 마이그레이션으로 옮기고, 그 뒤 스키마 변경은 새 마이그레이션으로만 한다. 그때 이 문서 1절과 5절의 경로를 마이그레이션 기준으로 바꾼다.
+애플리케이션이 시작될 때 Flyway가 아직 적용되지 않은 마이그레이션을 버전 순서대로 실행한다. 한 번이라도 적용된 마이그레이션 파일은 고치지 않는다. 고치면 Flyway 체크섬 검사에서 시작이 실패한다. 바꿀 내용은 항상 다음 번호의 새 파일로 만든다.
 
 ## 2. 큰 그림
 
@@ -108,7 +108,7 @@ flowchart LR
 ## 5. 스키마 변경 절차
 
 1. 설계 이유와 근거 수준을 ASTRA-Reference의 `db/design/<영역>.md`에 먼저 적고 Reference에 반영한다.
-2. `db/astra_schema.sql`을 고친다. 영역 경계를 넘는 FK는 파일 끝 "통합 FK" 구역에 `ALTER TABLE`로 둔다.
+2. `src/main/resources/db/migration/`에 다음 번호의 새 파일(`V<번호>__<변경 요약>.sql`)을 만든다. 기존 파일은 고치지 않는다. 새 테이블과 컬럼에도 4절 규칙(COMMENT 등)을 그대로 적용한다.
 3. 로컬 MySQL에 다시 올리고 점검한다. `tables`/`fks` 두 줄만 나오고 다른 행이 없어야 통과다.
 
 ```sh
@@ -116,14 +116,15 @@ flowchart LR
 docker run -d --name astra-erd-mysql -e MYSQL_ROOT_PASSWORD=erd mysql:8.4
 
 # 변경할 때마다
-docker cp db/astra_schema.sql astra-erd-mysql:/tmp/astra_schema.sql
+docker exec astra-erd-mysql rm -rf /tmp/migration
+docker cp src/main/resources/db/migration astra-erd-mysql:/tmp/migration
 docker cp db/tools/check.sql astra-erd-mysql:/tmp/check.sql
 docker exec astra-erd-mysql sh -c "mysql -uroot -perd -e 'DROP DATABASE IF EXISTS astra; CREATE DATABASE astra CHARACTER SET utf8mb4' \
-  && mysql -uroot -perd --default-character-set=utf8mb4 astra < /tmp/astra_schema.sql \
+  && for f in \$(ls /tmp/migration/V*__*.sql | sort -V); do mysql -uroot -perd --default-character-set=utf8mb4 astra < \$f || exit 1; done \
   && mysql -uroot -perd --default-character-set=utf8mb4 -N astra < /tmp/check.sql"
 ```
 
-큰 SQL 파일을 `docker exec -i`의 표준 입력으로 흘려 넣으면 멈출 수 있다. 위처럼 `docker cp` 후 컨테이너 안에서 리다이렉트한다.
+큰 SQL 파일을 `docker exec -i`의 표준 입력으로 흘려 넣으면 멈출 수 있다. 위처럼 `docker cp` 후 컨테이너 안에서 리다이렉트한다. 이 절차는 ERD와 COMMENT 점검용이다. 애플리케이션에서 마이그레이션이 실제로 적용되는지는 `./gradlew test`가 MySQL 8.4 컨테이너에서 확인한다.
 
 4. 스냅샷을 다시 만든다. 기존 표 위치는 유지되고, 새 테이블은 오른쪽 새 열에 놓인다.
 
@@ -131,7 +132,7 @@ docker exec astra-erd-mysql sh -c "mysql -uroot -perd -e 'DROP DATABASE IF EXIST
 python db/tools/erdcloud_snapshot.py
 ```
 
-5. 아래 6절대로 ERDCloud에 반영하고, `db/astra_schema.sql`, `db/erdcloud/snapshot.json`, 그리고 1단계 Reference 변경을 가리키도록 갱신한 `reference` 서브모듈을 같은 커밋에 넣는다(`git -C reference pull origin main` 후 `git add reference`).
+5. 아래 6절대로 ERDCloud에 반영하고, 새 마이그레이션 파일, `db/erdcloud/snapshot.json`, 그리고 1단계 Reference 변경을 가리키도록 갱신한 `reference` 서브모듈을 같은 커밋에 넣는다(`git -C reference pull origin main` 후 `git add reference`).
 
 ## 6. ERDCloud 반영
 
@@ -149,7 +150,7 @@ python db/tools/erdcloud_snapshot.py
 3. 기존 표를 모두 지운다. 업로드는 이름이 같은 테이블을 덮어쓰지 않고 건너뛰기 때문이다. 비우지 않고 올리면 아무것도 바뀌지 않는데 표 개수는 그대로 97개라서, 바뀌지 않은 것을 알아채기 어렵다.
    - **직전 작업이 스냅샷 업로드나 SQL 가져오기인 경우:** 상단 Undo 한 번에 표가 모두 지워진다. 표가 0개가 됐는지 확인한다.
    - **그 뒤 누가 ERDCloud에서 직접 편집한 경우:** Undo 한 번으로는 비워지지 않는다. Shift를 누른 채 끌면 여러 표가 선택되지만, Delete 키는 선택된 표 하나만 지운다(2026-11-07 확인). 화면을 최대로 줄여도 97개가 한 화면에 들어오지 않는다. 이때는 상단 **Create ERD**로 새 ERD를 만들어 4단계를 그 ERD에서 하고, 이 문서 맨 위의 ERD 주소를 새 주소로 바꾼다. 표를 하나씩 클릭해 Delete로 지워도 되지만 97번 반복해야 한다.
-   - ERDCloud에서 직접 고친 내용은 정본에 없다. 남겨야 하면 먼저 `db/astra_schema.sql`에 반영하고 5절부터 다시 한다.
+   - ERDCloud에서 직접 고친 내용은 정본에 없다. 남겨야 하면 먼저 새 마이그레이션으로 만들고 5절부터 다시 한다.
 4. 하단 **Import → Upload Snapshot**으로 `db/erdcloud/snapshot.json`을 올린다.
 5. 새로고침한 뒤 **Export → Download Snapshot**으로 다시 내려받아 생성본과 비교한다. 표 개수만 보는 것으로는 확인이 안 된다.
 

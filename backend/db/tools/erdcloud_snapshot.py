@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an ERDCloud snapshot (Import > Upload Snapshot) from a MySQL schema loaded with astra_schema.sql.
+"""Build an ERDCloud snapshot (Import > Upload Snapshot) from a MySQL schema built by the Flyway migrations.
 
 The snapshot carries what ERDCloud's SQL import loses or gets wrong: Korean logical names taken
 from COMMENT, UNSIGNED types, comments with brackets, PK/FK placement, and 1:1 cardinality for FK

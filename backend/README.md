@@ -14,7 +14,8 @@
 | 경로 | 내용 |
 |---|---|
 | `reference/` | [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈: 화면 명세, 엔드포인트 계약, DB 설계 근거 |
-| `db/` | 정본 DDL `astra_schema.sql`, ERD 생성·비교 도구, ERDCloud 스냅샷, [DB 가이드](db/README.md) |
+| `src/` | Spring Boot 애플리케이션. DB 마이그레이션은 `src/main/resources/db/migration/` |
+| `db/` | ERD 생성·비교 도구, ERDCloud 스냅샷, [DB 가이드](db/README.md) |
 | `assets/` | 팀 로고 |
 
 처음 받을 때는 서브모듈까지 함께 받는다.
@@ -56,9 +57,27 @@ git commit -m "Update reference to <변경 요약>"
 
 ## DB 스키마 기준
 
-- 정본은 이 레포의 [`db/astra_schema.sql`](db/astra_schema.sql)이다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
-- 언어·프레임워크가 정해지면 `db/astra_schema.sql`을 그 마이그레이션 도구의 첫 마이그레이션으로 옮기고, 이후 변경은 새 마이그레이션으로만 한다.
+- 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
+- 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
+
+## 빌드와 실행
+
+| 항목 | 버전 |
+|---|---|
+| JDK | 25 (Gradle toolchain으로 지정) |
+| Spring Boot | 4.1.2 |
+| Gradle | 9.8.2 (wrapper 포함, 따로 설치하지 않음) |
+| DB | MySQL 8.4, Flyway |
+
+테스트와 로컬 실행에는 Docker가 필요하다. Testcontainers가 MySQL 8.4 컨테이너를 띄우고 마이그레이션을 적용한다.
+
+```sh
+./gradlew build          # Windows: gradlew.bat build
+./gradlew bootTestRun    # DB 없이 로컬 실행. MySQL 컨테이너를 자동으로 띄운다
+```
+
+실제 DB에 붙여 실행할 때는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경 변수를 넣고 `./gradlew bootRun`을 쓴다.
 
 ## 구현 순서
 
