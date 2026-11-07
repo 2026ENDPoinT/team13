@@ -128,3 +128,22 @@ git commit -m "Update reference to <변경 요약>"
 - 엔드포인트를 구현할 때는 커밋이나 PR 본문에 해당 `EP-xxxx` ID도 적는다.
 - Reference에서 `UNKNOWN`이나 `[추정]`인 동작은 구현 전에 결정을 남긴다. 결정은 STAC-76 하위 일감에 기록하고, 결정 없이 원본 동작이라고 가정하지 않는다.
 - 원본 캡처, 개인정보, 토큰, 비밀번호는 커밋하지 않는다.
+
+## 캠퍼스 온 수집 API
+
+`backend/`는 실제 서울과기대 e-class에 로그인해 과목·과제·퀴즈·시험·영상 일정을 수집하는 **독립 Spring Boot 프로젝트**다. 실행/API/보안/검증 근거는 [backend/README.md](backend/README.md)를 따른다.
+
+| 프로젝트 | 실행 환경 | DB | 역할 |
+|---|---|---|---|
+| 루트 `src/` | Java 25 / Spring Boot 4.1 | MySQL 8.4 | ASTRA 재구현과 기존 97개 테이블의 정본 스키마 |
+| `backend/` | Java 21 / Spring Boot 3.5 | PostgreSQL 17 (로컬 H2) | 학교 인증·읽기 수집, 앱 일정/ICS·공지 API |
+
+두 프로젝트의 데이터베이스와 Flyway 이력은 호환되지 않는다. 기존 루트 마이그레이션·ERD 스냅샷·Reference 서브모듈은 변경하지 않았으며, PostgreSQL 앱을 기존 MySQL DB에 연결하면 안 된다. 전체 LMS를 이 수집 API로 대체하는 변경도 아니다.
+
+```sh
+cd backend
+./gradlew test bootJar
+./gradlew bootRun --args=--server.port=18080
+```
+
+Windows는 `gradlew.bat`를 사용한다. 두 앱의 기본 포트가 8080이므로 함께 띄울 때는 위처럼 포트를 분리하고 ICS의 `PUBLIC_BASE_URL`도 실제 공개 주소로 설정한다. Docker 실행 시 비밀키와 포트 설정은 `backend/README.md` 및 `backend/compose.yaml`을 따른다. `.github/workflows/backend-ci.yml`은 기존 루트 CI와 별개로 이 프로젝트의 PostgreSQL 테스트·compose health check를 실행한다.
