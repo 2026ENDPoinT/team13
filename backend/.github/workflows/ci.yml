@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # 테스트가 Testcontainers로 MySQL 8.4를 띄우고 Flyway 마이그레이션을 적용한다.
+      - name: Build
+        run: ./gradlew build
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: build/reports/tests/
+
+  schema:
+    name: Schema check and ERD snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Start MySQL 8.4
+        run: |
+          docker run -d --name astra-erd-mysql -e MYSQL_ROOT_PASSWORD=erd mysql:8.4
+          # 초기화용 임시 서버가 아니라 3306에서 듣는 본 서버가 뜰 때까지 기다린다.
+          for i in $(seq 1 90); do
+            docker logs astra-erd-mysql 2>&1 | grep -q 'port: 3306' && exit 0
+            sleep 2
+          done
+          docker logs astra-erd-mysql
+          exit 1
+
+      # db/README.md 5절 3단계와 같은 절차다.
+      - name: Apply migrations and run check.sql
+        run: |
+          docker cp src/main/resources/db/migration astra-erd-mysql:/tmp/migration
+          docker cp db/tools/check.sql astra-erd-mysql:/tmp/check.sql
+          out=$(docker exec astra-erd-mysql sh -c "mysql -uroot -perd -e 'CREATE DATABASE astra CHARACTER SET utf8mb4' \
+            && for f in \$(ls /tmp/migration/V*__*.sql | sort -V); do mysql -uroot -perd --default-character-set=utf8mb4 astra < \$f || exit 1; done \
+            && mysql -uroot -perd --default-character-set=utf8mb4 -N astra < /tmp/check.sql" 2>/dev/null)
+          echo "$out"
+          problems=$(echo "$out" | grep -vE '^(tables|fks)[[:space:]]' || true)
+          if [ -n "$problems" ]; then
+            echo "::error::check.sql reported problems (broken FK, missing COMMENT, or isolated table). See db/README.md section 5."
+            exit 1
+          fi
+
+      # 마이그레이션을 바꾸고 스냅샷을 다시 만들지 않으면 실패한다.
+      - name: ERD snapshot is up to date
+        run: |
+          python3 db/tools/erdcloud_snapshot.py
+          if ! git diff --exit-code -- db/erdcloud/snapshot.json; then
+            echo "::error::db/erdcloud/snapshot.json is stale. Run 'python db/tools/erdcloud_snapshot.py' and commit the result (db/README.md section 5 step 4)."
+            exit 1
+          fi
