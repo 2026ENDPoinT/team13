@@ -132,12 +132,12 @@ def default_value(raw: str, extra: str, column_type: str) -> str:
 def build(args) -> dict:
     names = json.loads(args.names.read_text(encoding="utf-8")) if args.names else {}
     table_names, column_names = names.get("tables", {}), names.get("columns", {})
-    tables = {t: table_names.get(t) or comment for t, comment in query(args, "tables")}
+    tables = {t: comment or table_names.get(t, "") for t, comment in query(args, "tables")}
     columns = defaultdict(list)
     for t, c, ctype, nullable, dflt, extra, comment in query(args, "columns"):
         if args.engine == "postgres":
             ctype, dflt = pg_type(ctype), (dflt if dflt == NULL else pg_default(dflt))
-        columns[t].append((c, ctype, nullable == "YES", dflt, extra, column_names.get(f"{t}.{c}") or comment))
+        columns[t].append((c, ctype, nullable == "YES", dflt, extra, comment or column_names.get(f"{t}.{c}", "")))
     pks = {(t, c) for t, c in query(args, "pks")}
     fks = {(t, c): (rt, rc) for t, c, rt, rc in query(args, "fks")}
     pk_count = defaultdict(int)

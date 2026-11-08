@@ -2,7 +2,7 @@
 
 ASTRA 재구현용 MySQL 8 스키마(97 테이블, FK 192개)를 어떻게 읽고, 바꾸고, ERDCloud ERD에 반영하는지 정한 문서다. 사람과 에이전트 모두 이 문서의 절차를 따른다. 경로는 이 레포 루트 기준이고, `reference/`는 [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈이다(`git submodule update --init`).
 
-- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`STack DB`)
+- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`ASTRA DB`)
 - ERD B, 캠퍼스 온 운영 스키마(PostgreSQL, `backend/`): https://www.erdcloud.com/d/G75sZP24bZNHuezyy. 6.1절 참고
 - 근거 표기는 [reference/backend/README.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/README.md)의 `OBSERVED`/`CLIENT`/`INFERRED`/`PROPOSED`/`UNKNOWN`과 화면 명세의 `[추정]`을 그대로 쓴다. DB 설계 대부분은 화면·JS에서 역으로 추론한 `INFERRED`다. 운영 서버의 실제 테이블이 아니다.
 
@@ -147,7 +147,7 @@ python db/tools/erdcloud_snapshot.py
 `tools/erdcloud_snapshot.py`가 만든 스냅샷은 이 문제가 없다. 반영 절차:
 
 1. 편집 권한이 있는 계정으로 ERD를 연다. 표 목록이 다 불러와질 때까지 몇 초 기다린다.
-2. 하단 **Export → Download Snapshot**으로 현재 상태를 백업한다.
+2. 하단 **Export → Download Snapshot**으로 현재 상태를 백업한다. ERDCloud에서 표 위치를 옮긴 적이 있으면, 이 백업을 `--previous`로 주고 스냅샷을 다시 만들어 위치를 레포에 먼저 반영한다(`python db/tools/erdcloud_snapshot.py --previous "ASTRA DB-snapshot.json"`). 그러지 않으면 업로드할 때 옛 위치로 돌아간다.
 3. 기존 표를 모두 지운다. 업로드는 이름이 같은 테이블을 덮어쓰지 않고 건너뛰기 때문이다. 비우지 않고 올리면 아무것도 바뀌지 않는데 표 개수는 그대로 97개라서, 바뀌지 않은 것을 알아채기 어렵다.
    - **직전 작업이 스냅샷 업로드나 SQL 가져오기인 경우:** 상단 Undo 한 번에 표가 모두 지워진다. 표가 0개가 됐는지 확인한다.
    - **그 뒤 누가 ERDCloud에서 직접 편집한 경우:** Undo 한 번으로는 비워지지 않는다. Shift를 누른 채 끌면 여러 표가 선택되지만, Delete 키는 선택된 표 하나만 지운다(2026-11-07 확인). 화면을 최대로 줄여도 97개가 한 화면에 들어오지 않는다. 이때는 상단 **Create ERD**로 새 ERD를 만들어 4단계를 그 ERD에서 하고, 이 문서 맨 위의 ERD 주소를 새 주소로 바꾼다. 표를 하나씩 클릭해 Delete로 지워도 되지만 97번 반복해야 한다.
@@ -156,7 +156,7 @@ python db/tools/erdcloud_snapshot.py
 5. 새로고침한 뒤 **Export → Download Snapshot**으로 다시 내려받아 생성본과 비교한다. 표 개수만 보는 것으로는 확인이 안 된다.
 
 ```sh
-python db/tools/erdcloud_snapshot.py --compare "STack DB-snapshot.json"
+python db/tools/erdcloud_snapshot.py --compare "ASTRA DB-snapshot.json"
 ```
 
    마지막 줄이 `… tables compared, 0 differences`여야 통과다. 비교 대상은 테이블과 컬럼의 영문·한글 이름, 타입, NULL 허용, 기본값, 설명, 기본키·FK 배치, 관계 대상, 관계 표기다. 표 위치는 비교하지 않는다. 차이가 있으면 다른 줄이 출력되고 종료 코드 1로 끝난다. 이때는 3단계부터 다시 하거나 2단계의 백업 파일을 올려 되돌린다.

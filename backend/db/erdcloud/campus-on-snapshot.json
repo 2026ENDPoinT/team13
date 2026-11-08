@@ -203,7 +203,7 @@
      "type": "VARCHAR(20)",
      "defaultValue": "'K001'",
      "isAllowNull": false,
-     "comment": "게시판 유형(K001 등)",
+     "comment": "게시판 유형(ILOS 게시판 코드, 기본 K001)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -367,7 +367,7 @@
      "type": "VARCHAR(12)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "등록 구분",
+     "comment": "등록 구분: REGISTRAR(정규)|NONREGULAR(비정규)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -380,7 +380,7 @@
      "type": "VARCHAR(12)",
      "defaultValue": "'STUDENT'",
      "isAllowNull": false,
-     "comment": "수강 역할",
+     "comment": "수강 역할(기본 STUDENT)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -393,7 +393,7 @@
      "type": "VARCHAR(12)",
      "defaultValue": "'ENROLLED'",
      "isAllowNull": false,
-     "comment": "등록 상태",
+     "comment": "등록 상태(기본 ENROLLED)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -406,7 +406,7 @@
      "type": "VARCHAR(12)",
      "defaultValue": "'SYSTEM'",
      "isAllowNull": false,
-     "comment": "출처",
+     "comment": "출처(기본 SYSTEM)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -488,7 +488,7 @@
      "type": "VARCHAR(10)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "과목 유형",
+     "comment": "과목 유형: 정규|비정규(KJ 키가 '비'로 시작하면 비정규)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -527,7 +527,7 @@
      "type": "VARCHAR(12)",
      "defaultValue": "'OPEN'",
      "isAllowNull": false,
-     "comment": "과목 상태",
+     "comment": "과목 상태(기본 OPEN)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -1181,7 +1181,7 @@
      "type": "VARCHAR(20)",
      "defaultValue": "'NOTICE'",
      "isAllowNull": false,
-     "comment": "게시글 종류(NOTICE 등)",
+     "comment": "게시글 종류(기본 NOTICE)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
