@@ -122,6 +122,16 @@ git commit -m "Update reference to <변경 요약>"
 
 모든 일감에는 우선순위 라벨(`P0`/`P1`/`P2`)이, CHG 일감에는 `CHG-xx` 라벨이 붙어 있다. 보드 열은 To Do → In Progress → In Review(PR 리뷰 중) → Done이다.
 
+GitHub 연동(이 레포와 ASTRA-Reference)과 Jira 자동화 규칙 3개로 상태가 자동으로 바뀐다. 브랜치나 PR에 `STAC-<번호>`가 있어야 일감에 연결된다.
+
+| GitHub 이벤트 | 일감 상태 변화 |
+|---|---|
+| `STAC-<번호>-…` 브랜치 생성 | To Do → In Progress |
+| 해당 일감이 연결된 PR 생성 | Done·In Review가 아니면 → In Review |
+| 해당 PR 머지 | Done이 아니면 → Done |
+
+규칙은 Jira 설정 → 전역 자동화에 `[STAC]`로 시작하는 이름으로 있다. Free 플랜은 자동화 실행 횟수에 월 한도가 있다.
+
 ## 작업 규칙
 
 - 브랜치 이름은 `STAC-<번호>-<짧은-설명>`, 커밋 메시지와 PR 제목은 `STAC-<번호>`로 시작한다. 예: 브랜치 `STAC-7-session-principal`, 커밋 `STAC-7 세션 주체만으로 actor 판정`.
