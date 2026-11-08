@@ -103,7 +103,7 @@ git commit -m "Update reference to <변경 요약>"
 | 순서 | 변경 | 주로 닿는 영역 |
 |---|---|---|
 | CHG-01 | 서버 신원과 객체 권한을 하나의 정책으로 | identity, 전 영역 |
-| CHG-02 | 과목 선택을 세션 전역 상태와 분리 | catalog |
+| CHG-02 | 과목 선택을 세션 전역 상태와 분리 | catalog, learning |
 | CHG-03 | 수강신청을 폼 열기와 분리하고 한 번에 처리 | catalog |
 | CHG-04 | 제출·시험·설문의 최종 상태와 첨부를 한 번에 처리 | assessment, files |
 | CHG-05 | 출석·마감 시각을 서버 시계 기준으로 | learning, assessment |
@@ -120,7 +120,7 @@ git commit -m "Update reference to <변경 요약>"
 | STAC-68 | 기존 클라이언트 결함 수정(SEC-01~07) |
 | STAC-76 미결 설계 결정 | [db/README.md](db/README.md) 7절의 결정 10개 |
 
-모든 일감에는 우선순위 라벨(`P0`/`P1`/`P2`)이, CHG 일감에는 `CHG-xx` 라벨이 붙어 있다. 보드 열은 To Do → In Progress → In Review(PR 리뷰 중) → Done이다.
+모든 일감에는 우선순위 라벨(`P0`/`P1`/`P2`)이, CHG 일감에는 `CHG-xx` 라벨이 붙어 있다. 영역 라벨 `area-identity`, `area-catalog`, `area-learning`, `area-assessment`, `area-communication`, `area-files`와 여러 영역에 걸친 `area-common`, 클라이언트 결함용 `area-client`로 영역별로 거를 수 있다. 개발 기반 준비(STAC-1~5)와 여러 영역을 묶는 STAC-76 에픽 자체에는 영역 라벨이 없다(STAC-76의 하위 결정 일감에는 있다). 보드 열은 To Do → In Progress → In Review(PR 리뷰 중) → Done이다.
 
 GitHub 연동(이 레포와 ASTRA-Reference)과 Jira 자동화 규칙 3개로 상태가 자동으로 바뀐다. 브랜치나 PR에 `STAC-<번호>`가 있어야 일감에 연결된다.
 
