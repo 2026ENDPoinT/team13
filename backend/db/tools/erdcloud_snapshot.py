@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Build an ERDCloud snapshot (Import > Upload Snapshot) from a MySQL schema built by the Flyway migrations.
+"""Build an ERDCloud snapshot (Import > Upload Snapshot) from a schema built by the Flyway migrations.
 
-The snapshot carries what ERDCloud's SQL import loses or gets wrong: Korean logical names taken
-from COMMENT, UNSIGNED types, comments with brackets, PK/FK placement, and 1:1 cardinality for FK
-columns that are a PK or a single-column UNIQUE key. Entity positions are kept from the previous
-snapshot by physical table name; tables new to the schema are placed in a fresh column.
+Engines: MySQL (root ASTRA schema, Korean names from COMMENT) and PostgreSQL (backend/ Campus On
+schema; it has no COMMENTs, so Korean names come from a --names JSON file).
+
+The snapshot carries what ERDCloud's SQL import loses or gets wrong: Korean logical names,
+UNSIGNED types, comments with brackets, PK/FK placement, and 1:1 cardinality for FK columns that
+are a PK or a single-column UNIQUE key. Entity positions are kept from the previous snapshot by
+physical table name; tables new to the schema are placed in a fresh column.
 """
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ DEFAULT_SNAPSHOT = ROOT / "db/erdcloud/snapshot.json"
 ID_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTWXYZabcdefghijkmnopqrstuvwxyz"  # Meteor Random.id alphabet
 NULL = "__ASTRA_NULL__"
 
-QUERIES = {
+MYSQL_QUERIES = {
     "tables": "SELECT table_name, table_comment FROM information_schema.tables "
               "WHERE table_schema='{s}' AND table_type='BASE TABLE'",
     "columns": "SELECT table_name, column_name, column_type, is_nullable, IFNULL(column_default,'{null}'), "
@@ -39,12 +42,60 @@ QUERIES = {
                "AND k2.table_name=k.table_name AND k2.constraint_name=k.constraint_name)=1",
 }
 
+_PG_KEY_COLUMNS = ("FROM pg_constraint k JOIN pg_class cl ON cl.oid = k.conrelid "
+                   "CROSS JOIN LATERAL unnest(k.conkey) AS u(attnum) "
+                   "JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum "
+                   "WHERE k.connamespace = '{s}'::regnamespace")
+PG_QUERIES = {
+    "tables": "SELECT c.relname, COALESCE(obj_description(c.oid, 'pg_class'), '') FROM pg_class c "
+              "WHERE c.relnamespace = '{s}'::regnamespace AND c.relkind = 'r' AND c.relname <> 'flyway_schema_history'",
+    "columns": "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod), "
+               "CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END, "
+               "COALESCE(pg_get_expr(d.adbin, d.adrelid), '{null}'), '', COALESCE(col_description(c.oid, a.attnum), '') "
+               "FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped "
+               "LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum "
+               "WHERE c.relnamespace = '{s}'::regnamespace AND c.relkind = 'r' AND c.relname <> 'flyway_schema_history' "
+               "ORDER BY c.relname, a.attnum",
+    "pks": f"SELECT cl.relname, a.attname {_PG_KEY_COLUMNS} AND k.contype = 'p'",
+    "fks": "SELECT cl.relname, a.attname, rcl.relname, ra.attname FROM pg_constraint k "
+           "JOIN pg_class cl ON cl.oid = k.conrelid JOIN pg_class rcl ON rcl.oid = k.confrelid "
+           "CROSS JOIN LATERAL unnest(k.conkey, k.confkey) AS u(attnum, rattnum) "
+           "JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum "
+           "JOIN pg_attribute ra ON ra.attrelid = k.confrelid AND ra.attnum = u.rattnum "
+           "WHERE k.connamespace = '{s}'::regnamespace AND k.contype = 'f'",
+    "uniques": f"SELECT cl.relname, a.attname {_PG_KEY_COLUMNS} AND k.contype = 'u' AND cardinality(k.conkey) = 1",
+}
+ENGINE_DEFAULTS = {
+    "mysql": {"container": "astra-erd-mysql", "schema": "astra", "queries": MYSQL_QUERIES},
+    "postgres": {"container": "campus-on-erd-pg", "schema": "public", "queries": PG_QUERIES},
+}
+PG_TYPES = [(r"^character varying", "VARCHAR"), (r"^timestamp(\(\d+\))? with time zone$", r"TIMESTAMPTZ\1"),
+            (r"^timestamp(\(\d+\))? without time zone$", r"TIMESTAMP\1"), (r"^integer$", "INTEGER"),
+            (r"^character\b", "CHAR")]
 
-def query(args, sql: str) -> list[list[str]]:
-    cmd = ["docker", "exec", args.container, "mysql", "-uroot", f"-p{args.password}",
-           "--default-character-set=utf8mb4", "-N", "-B", "-e", sql.format(s=args.schema, null=NULL)]
+
+def query(args, name: str) -> list[list[str]]:
+    sql = ENGINE_DEFAULTS[args.engine]["queries"][name].format(s=args.schema, null=NULL)
+    if args.engine == "mysql":
+        cmd = ["docker", "exec", args.container, "mysql", "-uroot", f"-p{args.password}",
+               "--default-character-set=utf8mb4", "-N", "-B", "-e", sql]
+    else:
+        cmd = ["docker", "exec", args.container, "psql", "-U", "postgres", "-d", args.database,
+               "-At", "-F", "\t", "-c", sql]
     out = subprocess.run(cmd, capture_output=True, check=True).stdout.decode("utf-8")
     return [line.split("\t") for line in out.splitlines() if line]
+
+
+def pg_type(raw: str) -> str:
+    for pattern, repl in PG_TYPES:
+        raw = re.sub(pattern, repl, raw)
+    return raw
+
+
+def pg_default(raw: str) -> str:
+    """"'K001'::character varying" -> "K001"; numbers, booleans and expressions stay as they are."""
+    m = re.fullmatch(r"'((?:[^']|'')*)'(::[\w\s]+(\(\d+\))?)?", raw)
+    return m.group(1).replace("''", "'") if m else raw
 
 
 def stable_id(key: str) -> str:
@@ -73,23 +124,38 @@ def logical_name(comment: str, fallback: str) -> str:
 def default_value(raw: str, extra: str, column_type: str) -> str:
     if raw == NULL:
         return ""
-    if "DEFAULT_GENERATED" in extra.upper() or re.fullmatch(r"-?\d+(\.\d+)?", raw) and not column_type.lower().startswith(("char", "varchar")):
+    if "DEFAULT_GENERATED" in extra.upper() or re.fullmatch(r"-?\d+(\.\d+)?|true|false", raw) and not column_type.lower().startswith(("char", "varchar")):
         return raw
     return "'" + raw.replace("'", "''") + "'"
 
 
 def build(args) -> dict:
-    tables = dict(query(args, QUERIES["tables"]))
+    names = json.loads(args.names.read_text(encoding="utf-8")) if args.names else {}
+    table_names, column_names = names.get("tables", {}), names.get("columns", {})
+    tables = {t: table_names.get(t) or comment for t, comment in query(args, "tables")}
     columns = defaultdict(list)
-    for t, c, ctype, nullable, dflt, extra, comment in query(args, QUERIES["columns"]):
-        columns[t].append((c, ctype, nullable == "YES", dflt, extra, comment))
-    pks = {(t, c) for t, c in query(args, QUERIES["pks"])}
-    fks = {(t, c): (rt, rc) for t, c, rt, rc in query(args, QUERIES["fks"])}
-    one_to_one = {(t, c) for t, c in query(args, QUERIES["uniques"])} | pks
+    for t, c, ctype, nullable, dflt, extra, comment in query(args, "columns"):
+        if args.engine == "postgres":
+            ctype, dflt = pg_type(ctype), (dflt if dflt == NULL else pg_default(dflt))
+        columns[t].append((c, ctype, nullable == "YES", dflt, extra, column_names.get(f"{t}.{c}") or comment))
+    pks = {(t, c) for t, c in query(args, "pks")}
+    fks = {(t, c): (rt, rc) for t, c, rt, rc in query(args, "fks")}
+    pk_count = defaultdict(int)
+    for t, _ in pks:
+        pk_count[t] += 1
+    # 1:1 when the FK column alone is unique: a single-column PK or a single-column UNIQUE key
+    one_to_one = {(t, c) for t, c in query(args, "uniques")} | {(t, c) for t, c in pks if pk_count[t] == 1}
 
     previous = json.loads(args.previous.read_text(encoding="utf-8")) if args.previous.exists() else {}
     positions = {e["pName"]: e["position"] for e in previous.get("entityData", [])}
-    new_x = max((p["x"] for p in positions.values()), default=-600) + 600
+    new_x = max((p["x"] for p in positions.values()), default=-650) + 650
+    for column in names.get("layout", []):  # first layout for tables a previous snapshot does not place
+        y = 50
+        for t in column:
+            if t in tables and t not in positions:
+                positions[t] = {"x": new_x, "y": y}
+                y += 120 + 26 * len(columns[t])
+        new_x += 650
     new_y = 50
 
     entities = []
@@ -158,15 +224,20 @@ def compare(expected_path: Path, actual_path: Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--container", default="astra-erd-mysql")
-    parser.add_argument("--password", default="erd")
-    parser.add_argument("--schema", default="astra")
+    parser.add_argument("--engine", choices=sorted(ENGINE_DEFAULTS), default="mysql")
+    parser.add_argument("--container", help="Docker container with the loaded schema (default per engine)")
+    parser.add_argument("--password", default="erd", help="MySQL root password")
+    parser.add_argument("--schema", help="MySQL database or PostgreSQL schema (default per engine)")
+    parser.add_argument("--database", default="campus", help="PostgreSQL database")
+    parser.add_argument("--names", type=Path, help="JSON with Korean table/column names and an initial layout")
     parser.add_argument("--diagram", default="B5bWYfGmFisJTYLka", help="ERDCloud diagram id (URL /d/<id>)")
     parser.add_argument("--previous", type=Path, default=DEFAULT_SNAPSHOT, help="snapshot whose positions are kept")
     parser.add_argument("--out", type=Path, default=DEFAULT_SNAPSHOT)
     parser.add_argument("--compare", type=Path, metavar="DOWNLOADED",
                         help="compare a snapshot downloaded from ERDCloud with --out instead of generating")
     args = parser.parse_args()
+    args.container = args.container or ENGINE_DEFAULTS[args.engine]["container"]
+    args.schema = args.schema or ENGINE_DEFAULTS[args.engine]["schema"]
     if args.compare:
         return compare(args.out, args.compare)
     snapshot = build(args)

@@ -77,3 +77,31 @@ jobs:
             echo "::error::db/erdcloud/snapshot.json is stale. Run 'python db/tools/erdcloud_snapshot.py' and commit the result (db/README.md section 5 step 4)."
             exit 1
           fi
+
+  campus-on-erd:
+    name: Campus On ERD snapshot (backend/, PostgreSQL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # db/README.md 6.1절과 같은 절차다.
+      - name: Apply backend/ migrations to PostgreSQL 17
+        run: |
+          docker run -d --name campus-on-erd-pg -e POSTGRES_PASSWORD=erd -e POSTGRES_DB=campus postgres:17
+          for i in $(seq 1 60); do
+            docker exec campus-on-erd-pg pg_isready -U postgres -d campus -q && break
+            sleep 2
+          done
+          sleep 3
+          docker cp backend/src/main/resources/db/migration campus-on-erd-pg:/tmp/migration
+          docker exec campus-on-erd-pg sh -c 'for f in $(ls /tmp/migration/V*__*.sql | sort -V); do psql -v ON_ERROR_STOP=1 -q -U postgres -d campus -f $f || exit 1; done'
+
+      # backend/ 마이그레이션을 바꾸고 ERD B 스냅샷을 다시 만들지 않으면 실패한다.
+      - name: ERD B snapshot is up to date
+        run: |
+          python3 db/tools/erdcloud_snapshot.py --engine postgres --names db/erdcloud/campus-on-names.json \
+            --previous db/erdcloud/campus-on-snapshot.json --out db/erdcloud/campus-on-snapshot.json --diagram G75sZP24bZNHuezyy
+          if ! git diff --exit-code -- db/erdcloud/campus-on-snapshot.json; then
+            echo "::error::db/erdcloud/campus-on-snapshot.json is stale. Regenerate it as in db/README.md section 6.1, add Korean names for new columns to db/erdcloud/campus-on-names.json, and commit."
+            exit 1
+          fi

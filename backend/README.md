@@ -60,6 +60,7 @@ git commit -m "Update reference to <변경 요약>"
 - 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
 - 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
+- ERD는 두 개다. **A** [ASTRA 목표 모델](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)은 루트 MySQL 스키마(97 테이블), **B** [캠퍼스 온 운영 스키마](https://www.erdcloud.com/d/G75sZP24bZNHuezyy)는 `backend/` PostgreSQL 스키마다. B의 갱신 절차는 [db/README.md](db/README.md) 6.1절에 있다.
 
 ## 빌드와 실행
 
@@ -87,14 +88,15 @@ git commit -m "Update reference to <변경 요약>"
 
 ## CI
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 두 작업을 실행한다.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 세 작업을 실행한다.
 
 | 작업 | 확인하는 것 |
 |---|---|
 | Build and test | `./gradlew build`. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다 |
-| Schema check and ERD snapshot | 마이그레이션을 MySQL 8.4에 적용한 뒤 `db/tools/check.sql`로 깨진 FK, COMMENT 누락, 고립 테이블을 찾는다. `db/erdcloud/snapshot.json`이 현재 스키마로 다시 만든 결과와 같은지도 확인한다 |
+| Schema check and ERD snapshot | 마이그레이션을 MySQL 8.4에 적용한 뒤 `db/tools/check.sql`로 깨진 FK, COMMENT 누락, 고립 테이블을 찾는다. `db/erdcloud/snapshot.json`(ERD A)이 현재 스키마로 다시 만든 결과와 같은지도 확인한다 |
+| Campus On ERD snapshot | `backend/` 마이그레이션을 PostgreSQL 17에 적용하고 `db/erdcloud/campus-on-snapshot.json`(ERD B)이 다시 만든 결과와 같은지 확인한다 |
 
-마이그레이션을 추가했다면 같은 PR에서 `python db/tools/erdcloud_snapshot.py`로 스냅샷도 갱신해야 CI가 통과한다. CI는 `reference` 서브모듈을 받지 않는다. 빌드에 필요 없고, 비공개 레포라 기본 토큰으로는 받을 수 없기 때문이다.
+루트 마이그레이션을 추가했다면 같은 PR에서 `python db/tools/erdcloud_snapshot.py`로, `backend/` 마이그레이션을 추가했다면 db/README.md 6.1절 명령으로 스냅샷도 갱신해야 CI가 통과한다. `backend/` 자체의 빌드·테스트는 별도 워크플로 `backend-ci.yml`이 맡는다. CI는 `reference` 서브모듈을 받지 않는다. 빌드에 필요 없고, 비공개 레포라 기본 토큰으로는 받을 수 없기 때문이다.
 
 ## 구현 순서
 

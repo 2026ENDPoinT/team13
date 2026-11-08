@@ -2,7 +2,8 @@
 
 ASTRA 재구현용 MySQL 8 스키마(97 테이블, FK 192개)를 어떻게 읽고, 바꾸고, ERDCloud ERD에 반영하는지 정한 문서다. 사람과 에이전트 모두 이 문서의 절차를 따른다. 경로는 이 레포 루트 기준이고, `reference/`는 [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈이다(`git submodule update --init`).
 
-- ERD: https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`STack DB`)
+- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`STack DB`)
+- ERD B, 캠퍼스 온 운영 스키마(PostgreSQL, `backend/`): https://www.erdcloud.com/d/G75sZP24bZNHuezyy. 6.1절 참고
 - 근거 표기는 [reference/backend/README.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/README.md)의 `OBSERVED`/`CLIENT`/`INFERRED`/`PROPOSED`/`UNKNOWN`과 화면 명세의 `[추정]`을 그대로 쓴다. DB 설계 대부분은 화면·JS에서 역으로 추론한 `INFERRED`다. 운영 서버의 실제 테이블이 아니다.
 
 ## 1. 기준 파일
@@ -161,6 +162,33 @@ python db/tools/erdcloud_snapshot.py --compare "STack DB-snapshot.json"
    마지막 줄이 `… tables compared, 0 differences`여야 통과다. 비교 대상은 테이블과 컬럼의 영문·한글 이름, 타입, NULL 허용, 기본값, 설명, 기본키·FK 배치, 관계 대상, 관계 표기다. 표 위치는 비교하지 않는다. 차이가 있으면 다른 줄이 출력되고 종료 코드 1로 끝난다. 이때는 3단계부터 다시 하거나 2단계의 백업 파일을 올려 되돌린다.
 
 반영 후 Undo를 누르면 방금 올린 표가 모두 사라질 수 있다. 그럴 때는 4단계부터 다시 한다.
+
+### 6.1 ERD B: 캠퍼스 온 운영 스키마
+
+`backend/`(캠퍼스 온, PostgreSQL 17)의 Flyway 마이그레이션 V1~을 적용한 결과를 그린 ERD다. 지금 실제로 동작하는 구조이며 ERD A와 테이블·타입·제약이 다르다. 두 모델의 대응은 [backend/docs/erd-handoff.md](../backend/docs/erd-handoff.md)에 있다.
+
+| 파일 | 역할 |
+|---|---|
+| [erdcloud/campus-on-snapshot.json](erdcloud/campus-on-snapshot.json) | ERD B에 올라간 내용과 같은 스냅샷 |
+| [erdcloud/campus-on-names.json](erdcloud/campus-on-names.json) | 한글 이름·설명과 처음 배치. `backend/` 마이그레이션에 COMMENT가 없어서 여기서 관리한다. `backend/`에 `COMMENT ON` 마이그레이션이 생기면 DB 설명이 없는 항목만 이 파일 값이 쓰인다 |
+
+`backend/` 마이그레이션이 바뀌면 다음 순서로 다시 만들고, 6절 2~5단계를 ERD B 주소에서 한다. 새 컬럼의 한글 이름은 `campus-on-names.json`에 추가한다.
+
+```sh
+# 최초 1회
+docker run -d --name campus-on-erd-pg -e POSTGRES_PASSWORD=erd -e POSTGRES_DB=campus postgres:17
+
+# 변경할 때마다
+docker exec campus-on-erd-pg psql -U postgres -c "DROP DATABASE IF EXISTS campus WITH (FORCE)" -c "CREATE DATABASE campus"
+docker exec campus-on-erd-pg rm -rf /tmp/migration
+docker cp backend/src/main/resources/db/migration campus-on-erd-pg:/tmp/migration
+docker exec campus-on-erd-pg sh -c 'for f in $(ls /tmp/migration/V*__*.sql | sort -V); do psql -v ON_ERROR_STOP=1 -q -U postgres -d campus -f $f || exit 1; done'
+python db/tools/erdcloud_snapshot.py --engine postgres --names db/erdcloud/campus-on-names.json \
+  --previous db/erdcloud/campus-on-snapshot.json --out db/erdcloud/campus-on-snapshot.json --diagram G75sZP24bZNHuezyy
+
+# ERDCloud에서 내려받은 스냅샷과 비교
+python db/tools/erdcloud_snapshot.py --out db/erdcloud/campus-on-snapshot.json --compare "캠퍼스 온 운영 스키마 (PostgreSQL)-snapshot.json"
+```
 
 ## 7. 미결 사항
 
