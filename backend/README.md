@@ -124,7 +124,7 @@ git commit -m "Update reference to <변경 요약>"
 | STAC-88 발표 데모 | 데모 클라이언트 결정, ASTRA 흐름 화면 5개를 캠퍼스 온 API에 연결 |
 | STAC-89 캠퍼스 온(backend/) 정리 | 학교 정책 확인, Spring Boot 4.x 업그레이드, 스키마 COMMENT·ERD B 이름 검토 |
 
-후속 결정·작업 일감(STAC-90~99)은 이 레포의 GitHub 이슈 #5~#14와 서로 연결돼 있다. 진행 상태는 Jira를 기준으로 본다.
+후속 결정·작업 일감(STAC-90~100)은 이 레포의 GitHub 이슈 #5~#15와 서로 연결돼 있다. 진행 상태는 Jira를 기준으로 본다.
 
 모든 일감에는 우선순위 라벨(`P0`/`P1`/`P2`)이, CHG 일감에는 `CHG-xx` 라벨이 붙어 있다. 영역 라벨 `area-identity`, `area-catalog`, `area-learning`, `area-assessment`, `area-communication`, `area-files`와 여러 영역에 걸친 `area-common`, 클라이언트 결함용 `area-client`로 영역별로 거를 수 있다. 개발 기반 준비(STAC-1~5)와 여러 영역을 묶는 STAC-76 에픽 자체에는 영역 라벨이 없다(STAC-76의 하위 결정 일감에는 있다). 보드 열은 To Do → In Progress → In Review(PR 리뷰 중) → Done이다.
 
