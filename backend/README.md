@@ -16,6 +16,7 @@
 | `reference/` | [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈: 화면 명세, 엔드포인트 계약, DB 설계 근거 |
 | `src/` | Spring Boot 애플리케이션. DB 마이그레이션은 `src/main/resources/db/migration/` |
 | `db/` | ERD 생성·비교 도구, ERDCloud 스냅샷, [DB 가이드](db/README.md) |
+| `docs/` | [백엔드 아키텍처](docs/architecture.md)와 결정 기록 [docs/adr/](docs/adr/) |
 | `assets/` | 팀 로고 |
 
 처음 받을 때는 서브모듈까지 함께 받는다.
@@ -37,6 +38,7 @@ git submodule update --init
 | [reference/backend/90_changes.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/90_changes.md) | 바꿔야 할 부분과 우선순위 |
 | [reference/db/design/](https://github.com/STack-Corp/ASTRA-Reference/tree/main/db/design) | DB 영역별 설계 근거와 미결 사항 |
 | [db/README.md](db/README.md) | DB 영역 구성, 데이터 흐름, 설계 규칙, 스키마 변경·ERD 반영 절차 |
+| [docs/architecture.md](docs/architecture.md) | 배포 토폴로지, 모듈 구조, 인증·인가, 영상 전달, 관측, 단계 계획 |
 
 ## 두 레포의 역할
 
@@ -155,6 +157,8 @@ GitHub 연동(이 레포와 ASTRA-Reference)과 Jira 자동화 규칙 3개로 �
 | `backend/` | Java 21 / Spring Boot 3.5 | PostgreSQL 17 (로컬 H2) | 학교 인증·읽기 수집, 앱 일정/ICS·공지 API |
 
 두 프로젝트의 데이터베이스와 Flyway 이력은 호환되지 않는다. 기존 루트 마이그레이션·ERD 스냅샷·Reference 서브모듈은 변경하지 않았으며, PostgreSQL 앱을 기존 MySQL DB에 연결하면 안 된다. 전체 LMS를 이 수집 API로 대체하는 변경도 아니다.
+
+ASTRA 대체 서비스의 본류는 루트 `src/`(MySQL)다. 캠퍼스 온은 독립 프로젝트로 유지하고 두 스키마를 합치지 않는다([ADR-0002](docs/adr/0002-mysql-mainline.md)).
 
 ```sh
 cd backend

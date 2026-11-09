@@ -1,0 +1,222 @@
+# 백엔드 아키텍처
+
+작성일 2026-11-09. 시연부터 학교 도입 전까지 적용하는 기준안이다. 결정의 이유와 기각한 대안은 [docs/adr/](adr/)에 있다. `backend/docs/adr/`는 캠퍼스 온(`backend/`) 프로젝트의 별도 번호 체계이며 이 문서의 ADR과 다르다.
+
+## 1. 전제
+
+| 항목 | 내용 |
+|---|---|
+| 목표 | 서울과학기술대학교 e-Class(ASTRA)를 대체한다. 이 학교에 먼저 도입한다 |
+| 규모 | 1개 기관, 사용자 수백 명. 수만 명 규모를 전제로 설계하지 않는다 |
+| 서버 계약 | [00_server_contract.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/00_server_contract.md)의 SC-01~SC-10, [90_changes.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/90_changes.md)의 CHG-01~CHG-12 |
+| 실행 환경 | Java 25, Spring Boot 4.1, MySQL 8.4, AWS 서울 리전(`ap-northeast-2`) |
+
+| ADR | 결정 |
+|---|---|
+| [ADR-0001](adr/0001-modular-monolith.md) | 단일 Gradle 프로젝트의 modular monolith와 같은 이미지의 worker 프로세스 |
+| [ADR-0002](adr/0002-mysql-mainline.md) | 루트 `src/`의 MySQL 스키마를 본류로 하고, 캠퍼스 온(`backend/`)은 독립 프로젝트로 둔다 |
+| [ADR-0003](adr/0003-aws-single-ec2-until-adoption.md) | 학교 도입 전까지 CloudFront VPC origin과 EC2 1대로 운영하고, ALB는 도입할 때 붙인다 |
+| [ADR-0004](adr/0004-sso-bff-session.md) | 학교 SSO를 백엔드가 받는 BFF 방식, 브라우저에는 opaque session 쿠키, Zero-Trust 전환용 경계 |
+| [ADR-0005](adr/0005-first-paint-static-shell.md) | 첫 화면은 CDN의 정적 shell과 집계 API 한 번으로 그린다. SSR 서버를 두지 않는다 |
+
+## 2. 부하 가정
+
+| 경로 | 가정 | 결과 |
+|---|---|---|
+| 온라인 강의 하트비트 | 기본 주기 240초([62_온라인강의_플레이어.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/62_온라인강의_플레이어.md) §6). 동시 시청 500명 | 약 2 rps |
+| 메인 첫 진입, 과제 마감 직전, 시험 시작, 비정규 수강신청 | 짧은 순간에 요청이 몰린다 | 처리량보다 정원·멱등의 정합성(SC-05)과 서버 시계 기준 마감 판정(SC-06)이 문제다 |
+| 영상 송출 | 3 Mbps HLS 기준 시간당 약 1.35 GB. 500명이 월 12시간씩 보면 약 8 TB | 원 서버가 아니라 CDN이 송출한다. 월 비용 대부분이 이 전송량이다 |
+
+위 수치는 학교 실측 전 가정이다. API는 서버 1대로 충분하고, 대역폭과 비용은 영상이 정한다. 3단계 부하 시험에서 실제 값으로 다시 잡는다.
+
+## 3. 배포 토폴로지
+
+### 3.1 학교 도입 전
+
+```mermaid
+flowchart LR
+  U[브라우저] --> R53[Route 53] --> CF["CloudFront + AWS WAF"]
+  CF -->|"/* 정적"| S3FE[("S3 frontend · OAC")]
+  CF -->|"/vod/* signed cookie"| S3V[("S3 HLS · OAC")]
+  CF -->|"/api/* · /ws (캐시 안 함)"| EC2
+  subgraph VPC["VPC (ap-northeast-2)"]
+    subgraph PUB[Public subnet]
+      NAT["fck-nat (t4g.nano)"]
+    end
+    subgraph PRIV[Private subnet]
+      EC2["EC2 1대 · docker compose<br/>api + worker"]
+      RDS[("RDS MySQL 8.4<br/>single-AZ")]
+    end
+  end
+  EC2 --> RDS
+  EC2 --> NAT --> EXT["학교 IdP · 학사 · AI API (allowlist)"]
+  EC2 --> MC[MediaConvert] --> S3V
+```
+
+- 도메인은 하나다. CloudFront가 경로로 정적 파일, 영상, API를 나눈다. CORS가 필요 없다. session 쿠키의 `SameSite` 예외는 5절에 있다.
+- CloudFront [VPC origin](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html)이 private subnet의 EC2에 직접 연결한다. EC2와 RDS에는 public IP가 없다.
+- api와 worker는 같은 이미지를 프로필만 바꿔 같은 EC2에서 실행한다.
+- 배포 중 JVM 기동 시간 동안 API가 끊긴다. 배포는 사용량이 적은 시간에 한다. 기동은 JDK AOT cache(JEP 483, 514)로, warm-up은 JEP 515로 줄인다.
+
+### 3.2 학교 도입
+
+| 바뀌는 것 | 내용 |
+|---|---|
+| 입구 | private subnet에 ALB를 만들고 CloudFront VPC origin을 EC2에서 ALB로 바꾼다. 도메인은 그대로다 |
+| 실행 | ECS 서비스로 옮긴다. api는 min 2 / max 4, `ALBRequestCountPerTarget` target tracking. worker는 1개 |
+| 캐시·broker | ElastiCache for Valkey를 붙이고 WebSocket fan-out과 사용자 단위 rate limit 저장소를 Valkey로 바꾼다(8절). 앱 코드는 설정만 바뀐다 |
+| DB | RDS Multi-AZ, PITR 유지 |
+| NAT | NAT Gateway로 바꿀지 판단한다(3.3절 fck-nat 장애 영향) |
+
+이 전환이 인프라와 설정 작업으로 끝나려면 4.3절의 stateless 규칙을 1단계부터 지켜야 한다.
+
+### 3.3 네트워크 경계
+
+| 대상 | 들어오는 트래픽 | 나가는 트래픽 |
+|---|---|---|
+| CloudFront | 인터넷 443. AWS WAF managed rule(Core, SQL database, Known bad inputs) | origin만 |
+| EC2(api, worker) | `CloudFront-VPCOrigins-Service-SG`에서 오는 앱 포트만 | RDS 3306, S3(gateway endpoint), 그 밖의 모든 외부·AWS API는 fck-nat 경유 |
+| RDS | EC2 security group의 3306만 | 없음 |
+| fck-nat | private subnet에서 오는 트래픽만 | 인터넷 |
+
+- WAF에 IP 기준 rate limit을 걸지 않는다. 교내 사용자가 NAT 하나로 나오면 학교 전체가 막힌다(SC-09). 요청 제한은 앱에서 사용자, 과목, 연산 단위로 건다.
+- Core rule set의 `SizeRestrictions_BODY`는 8 KB를 넘는 본문을 막는다. 업로드(`POST /api/uploads`), 글 작성, 제출이 걸리므로 이 규칙은 Count로 바꾸고, 본문 크기 상한은 경로별 WAF 규칙과 앱의 413 응답으로 둔다.
+- SSH 포트를 열지 않는다. 운영 접근은 SSM Session Manager로 한다.
+- `/actuator`는 CloudFront 경로에 넣지 않는다. 내부에서만 접근한다.
+- 외부 호출은 allowlist한 scheme, host, port만 허용하고 redirect, timeout, 응답 크기를 제한한다(SC-08).
+- S3 외의 AWS API(SSM, ECR, Secrets Manager, CloudWatch, X-Ray, SQS, MediaConvert)도 fck-nat를 지난다. fck-nat가 멈추면 외부 IdP·AI 호출과 함께 배포, SSM 접속, 로그·지표 전송, 미디어 완료 처리가 멈춘다. interface endpoint는 개당 AZ별로 과금되어 이 단계의 NAT 비용보다 비싸므로 두지 않는다. 대신 fck-nat의 high-availability mode(크기 1 Auto Scaling group과 고정 ENI)로 인스턴스를 자동 교체하고, 교체되는 동안의 장애 범위는 받아들인다.
+
+## 4. 애플리케이션 구조
+
+### 4.1 모듈
+
+단일 Gradle 프로젝트의 `com.stackcorp.astra` 아래에 모듈을 패키지로 나눈다. 영역은 [db/README.md](../db/README.md) 2.1절의 DB 영역을 따른다.
+
+| 모듈 | 담당 | 코드가 의존하는 모듈 |
+|---|---|---|
+| `identity` | 사용자, 외부 신원 연결, session, 기기, 2차 인증, 개인 설정 | 없음 |
+| `catalog` | 학기, 과목, 수강, 시간표, 알림 | `identity` |
+| `learning` | 강의실, 주차, 학습활동, 영상 학습 session, 출석 | `catalog`, `identity`, `files` |
+| `assessment` | 과제, 퀴즈, 설문, 성적 | `learning`, `catalog`, `identity`, `files` |
+| `communication` | 공지, Q&A, 게시판, 쪽지, 임시저장 | `catalog`, `identity`, `learning`, `files` |
+| `files` | 업로드 lifecycle, 첨부, 파일함, 미리보기, 영상 asset | `catalog`, `identity` |
+| `integration` | 학교 IdP, 학사 동기화, AI, 외부 allowlist client | 각 모듈의 공개 API |
+| `shared` | 오류 형식, requestId, 시간, 멱등 원장, 감사 로그, 페이지네이션 | 없음. 모든 모듈이 쓸 수 있다 |
+| `home` | 메인 화면 집계 조회(`/api/me/home`)와 할 일 목록. 쓰기 없음 | `catalog`, `learning`, `assessment`, `communication`의 공개 API. 어떤 모듈도 `home`에 의존하지 않는다 |
+
+의존 방향은 [db/README.md](../db/README.md) 2.1절의 FK 방향을 따른다. 순환은 의존 역전으로 끊는다. 이벤트를 써도 listener가 발행 측 타입을 참조하면 의존이 생기므로 순환을 끊지 못한다.
+
+- 알림: `notifications`는 `catalog` 소유이고 `activity_id`로 `learning`을 가리킨다. `catalog`는 `learning`에 의존하지 않는다. 알림 생성 API는 `catalog`가 공개 API로 정의하고, 이미 `catalog`에 의존하는 `learning`, `assessment`, `communication`이 원래 변경과 같은 transaction 안에서 호출한다. `activity_id`는 값으로만 저장한다.
+- 할 일: 별도 테이블 없이 활성 수강 × 공개 활동 × serverTime으로 계산한다([reference/db/design/20_catalog.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/db/design/20_catalog.md)). 계산에 `learning`, `assessment`가 필요하므로 `home`에 둔다.
+- 외부 연동: `identity`가 `ExternalIdentityProvider` 같은 포트를 공개 API로 정의하고 `integration`이 구현한다. 다른 모듈도 외부 결과가 필요하면 같은 방식을 쓴다.
+
+### 4.2 모듈 규칙
+
+- 모듈은 공개 API 패키지만 외부에 노출한다. Spring Modulith는 기본으로 모듈 루트 패키지만 공개하므로 `api` 하위 패키지는 `@NamedInterface`로 지정한다. 내부 패키지 참조는 `verify()`가 막는다.
+- 다른 모듈의 테이블을 직접 읽거나 바꾸지 않는다. 그 모듈의 operation을 호출한다(SC-01).
+- 경계는 Spring Modulith 2.x(Boot 4 호환 라인)의 `ApplicationModules.verify()` 테스트로 CI에서 확인한다. 정확한 버전은 의존성을 추가할 때 호환표로 정한다.
+- DB 변경과 commit 뒤 후속 작업(외부 API 호출 등)을 함께 보장해야 하는 곳에는 Spring Modulith JDBC event publication registry를 쓴다. 이벤트는 같은 transaction에 기록되고, listener는 commit 뒤 이벤트를 발행한 프로세스에서 비동기로 실행된다. worker는 실패했거나 정해진 시간 이상 끝나지 않은 이벤트만 재전송한다(`ResubmissionOptions.withMinAge` 또는 staleness 설정). 실행 중인 listener와 겹치지 않게 하기 위해서이고, 이 작업은 ShedLock으로 묶는다. 이 registry는 외부 broker로 내보내는 outbox가 아니다. 그런 outbox가 필요해지면 따로 결정한다. 테이블은 Flyway 마이그레이션으로 만든다([db/README.md](../db/README.md) 5절).
+- 객체 권한은 각 모듈의 `Policy`가 판정한다. 컨트롤러나 서비스가 role만 보고 허용하지 않는다(5절).
+
+### 4.3 프로세스와 stateless 규칙
+
+| 프로세스 | 프로필 | 하는 일 |
+|---|---|---|
+| api | `api` | HTTP API, WebSocket, api에서 발행한 이벤트의 listener(예: 업로드 확정 뒤 MediaConvert 작업 지시) |
+| worker | `worker` | 미완료 이벤트 재전송, MediaConvert 완료 처리(SQS), 업로드 GC, ZIP job, 학습 session lease 만료 처리, 학사 동기화 |
+
+- session은 DB(`user_sessions`)에 둔다. 서버 메모리에 사용자 상태를 두지 않는다.
+- 파일은 S3에만 쓴다. 컨테이너 로컬 디스크는 임시 작업 공간으로만 쓰고 요청 사이에 남기지 않는다.
+- `@Scheduled` 작업은 ShedLock(JDBC)으로 묶는다. 인스턴스가 늘어도 한 번만 실행된다.
+- WebSocket fan-out은 인스턴스가 1대일 때 in-memory broker로 하고, 2대가 되면 Valkey pub/sub로 바꾼다(8절).
+
+## 5. 인증과 인가
+
+상세는 [ADR-0004](adr/0004-sso-bff-session.md)에 있다.
+
+- 백엔드가 학교 IdP의 OIDC 또는 SAML client 역할을 한다. IdP 토큰은 서버에만 둔다.
+- 브라우저는 opaque session 쿠키(`HttpOnly`, `Secure`, `SameSite=Lax`)와 CSRF 토큰만 받는다. DB에는 token hash만 저장한다.
+- SAML HTTP-POST 응답은 IdP에서 오는 cross-site POST라 `SameSite=Lax` 쿠키가 전송되지 않는다. SAML이면 로그인 전 요청 상태를 session 대신 `RelayState` 기준 저장소에 두거나, 로그인 전용 쿠키만 `SameSite=None`으로 둔다. OIDC의 GET callback에는 이 문제가 없다.
+- actor는 session principal 하나다. 요청 본문의 학번, `ud`, role 값은 받지 않는다(SC-02, CHG-01).
+- 과목 범위는 `/api/courses/{courseId}/...`처럼 요청에 명시한다. 서버 session에 현재 과목을 두지 않는다(SC-03, CHG-02).
+- 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06).
+- 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA를 강제한다.
+
+## 6. 첫 화면 성능
+
+상세는 [ADR-0005](adr/0005-first-paint-static-shell.md)에 있다.
+
+| 단계 | 동작 | 예산 |
+|---|---|---|
+| 1 | CloudFront가 정적 shell HTML을 응답한다. critical CSS와 skeleton은 inline이다 | TTFB 수십 ms |
+| 2 | shell의 `<head>`가 JS 번들을 기다리지 않고 `GET /api/me/home`을 시작한다 | 요청 waterfall 없음 |
+| 3 | 백엔드 `home` 모듈이 메인에 필요한 과목, 할 일, 알림 수, 공지를 한 응답으로 돌려준다 | p95 100 ms 이하 |
+| 4 | 과목 페이지는 route 단위로 code splitting하고 메인에서 미리 받는다 | — |
+
+- session이 유효하면 IdP redirect를 거치지 않는다.
+- `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
+
+## 7. 영상 전달
+
+1. 업로드 원본은 private S3에 `quarantined` 상태로 들어간다(SC-08, `files` 모듈).
+2. 검사가 끝나면 업로드 확정 이벤트의 listener가 MediaConvert에 HLS 멀티비트레이트 작업을 지시한다. 기본 화질은 720p다.
+3. 완료 이벤트는 EventBridge에서 SQS를 거쳐 worker가 받는다. 결과는 영상 bucket에 저장된다.
+4. CloudFront는 OAC로 bucket을 읽는다. 영상 bucket과 frontend bucket 모두 CloudFront 외의 공개 접근을 막는다.
+5. 재생할 때 백엔드가 권한을 판정한 뒤, 그 강의 경로에만 유효한 짧은 TTL의 CloudFront signed cookie를 발급한다. 긴 강의를 보는 동안에는 하트비트 응답에서 만료 전에 다시 발급하고, 권한이 사라지면 재발급하지 않는다. CDN URL은 권한을 대신하지 않는다.
+6. 출석 인정은 서버 하트비트 원장으로 한다. 재생 위치는 이어보기 힌트로만 쓴다(SC-06, CHG-05).
+
+DRM은 두지 않는다. 필요해지면 HLS AES-128부터 적용한다.
+
+## 8. Valkey 도입 기준
+
+처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
+
+| 조건 | Valkey 용도 |
+|---|---|
+| api 인스턴스가 2대 이상 | WebSocket pub/sub fan-out(AI 채팅, 스마트 출석), 사용자 단위 rate limit 버킷 |
+| `/api/me/home` 등이 측정 예산을 넘음 | 해당 조회의 cache-aside |
+
+출석 원장, 멱등 receipt, 수강 정원은 Valkey에 두지 않는다. 진실의 원천은 DB 제약이다(SC-05).
+
+## 9. 관측
+
+| 대상 | 방식 |
+|---|---|
+| 로그 | JSON 로그를 CloudWatch Logs로 보낸다. requestId를 모든 줄에 넣는다. 본문, query string, 토큰, 개인정보는 남기지 않는다(SC-07) |
+| 지표 | Actuator와 Micrometer를 OTLP로 내보내 CloudWatch에 쌓는다 |
+| trace | OpenTelemetry를 X-Ray로 보낸다 |
+| 알람 | CloudWatch 알람을 SNS를 거쳐 Slack으로 보낸다. 외부 uptime check를 하나 둔다 |
+
+알람 대상 지표는 SC-09를 따른다. API p95와 5xx, 제출·시험 commit 실패, 하트비트 gap, orphan upload, MediaConvert·converter 실패, 미완료 이벤트 backlog, AI 토큰 비용이다. Grafana는 대시보드가 부족해지면 붙인다.
+
+## 10. 빌드와 배포
+
+- 인프라는 Terraform으로 관리한다.
+- GitHub Actions가 OIDC로 AWS role을 받는다. CI에 AWS access key를 저장하지 않는다.
+- 이미지를 ECR에 push하고 SSM Run Command로 EC2의 compose를 갱신한다. 3.2절 전환 뒤에는 ECS rolling 배포와 circuit breaker를 쓴다.
+- 비밀값은 Secrets Manager에 두고 EC2 instance role로 읽는다.
+
+## 11. 단계 계획
+
+| 단계 | 인프라 | 백엔드 |
+|---|---|---|
+| 0. 기반 | Terraform으로 VPC, subnet, fck-nat, ECR, GitHub OIDC role | 의존성(security, oauth2-client, data-jpa, validation, actuator, modulith), 모듈 골격과 경계 테스트, requestId·오류 형식 |
+| 1. 핵심 기능 | CloudFront + WAF, S3 frontend, VPC origin, EC2 1대, RDS single-AZ | identity(session, CSRF, Policy)와 integration(IdP adapter) → catalog → learning → communication(공지 조회) → home. CHG-01~03, CHG-05, CHG-07 |
+| 2. 기능 확장 | S3 영상, MediaConvert, EventBridge·SQS | files, assessment, communication(Q&A, 게시판, 쪽지), 영상 signed cookie, ShedLock·event registry. CHG-04, CHG-06, CHG-08~10 |
+| 3. 학교 도입 | 3.2절 전환(ALB, ECS min 2, Valkey, Multi-AZ) | k6 부하 시험(메인 첫 진입, 시험 시작, 정원 경쟁), 백업 복원 리허설, 알람. CHG-11, CHG-12 |
+
+1단계의 `home`은 과목, 알림, 공지를 채운다. 할 일의 과제·퀴즈 항목은 2단계 `assessment` 구현 뒤에 채운다.
+
+ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md](../db/README.md) 5절 절차로 추가한다. 0단계는 스키마를 바꾸지 않는다.
+
+## 12. 미결 사항과 위험
+
+| 항목 | 영향 | 다음 행동 |
+|---|---|---|
+| 학교 IdP 프로토콜(OIDC, SAML, CAS) | `identity`의 IdP adapter 구현. [db/README.md](../db/README.md) 7절 1번 | 1단계 전에 학교 정보화본부에 확인한다 |
+| frontend 스택 | 6절 정적 shell의 구현 방식 | Vite SPA와 Next.js static export 모두 수용한다. SSR이 필요해지면 ADR-0005를 다시 연다 |
+| 공공 클라우드 보안 인증 | 학교 공식 시스템으로 개인정보를 다루면 CSAP 중 등급이 요구될 수 있다. AWS는 하 등급만 보유하고 있다. 2027년 7월 국정원 단일 검증체계로 바뀔 예정이다 | 도입 협의 때 학교에 확인한다. 앱은 S3 API, 컨테이너, MySQL 표준만 쓰고 AWS 전용 기능은 Terraform에만 둔다 |
+| 영상 전송 비용 | 2절 가정으로 월 수 TB | 학교 실제 시청량으로 다시 계산한다. 기본 화질 720p |
+| 배포 중 API 중단 | 3.1절 | 사용량이 적은 시간에 배포한다. 불만이 생기면 3.2절 전환을 앞당긴다 |
+| [db/README.md](../db/README.md) 7절 미결 결정 | 시험, 출석, 익명 설문 등 해당 기능 구현 | 구현 전에 STAC-76 하위 일감에 결정을 남긴다 |
+| 발표 데모(STAC-88)의 백엔드 | 이슈 #6(STAC-91)과 #7(STAC-92)은 데모 화면을 캠퍼스 온 API에 연결하는 안이다. 이 문서의 단계는 루트 앱 기준이다 | 데모를 어느 백엔드로 할지 STAC-91/92에서 정한다. 캠퍼스 온으로 하면 PostgreSQL이 필요하므로 3.1절 구성과 따로 배포 방법을 정한다 |
