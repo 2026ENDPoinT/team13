@@ -5,9 +5,16 @@
   </picture>
 </p>
 
-# STack-Backend
+# STack-eclass-Backend
 
-서울과학기술대학교 e-Class(ILOS LMS, 원본 서비스명 `ASTRA`) 재구현의 백엔드 구현 레포다.
+서울과학기술대학교 e-Class(ILOS LMS, 원본 서비스명 `ASTRA`) 재구현의 백엔드 레포다. e-class는 캠퍼스 온과 **별개 서비스**이며 백엔드·DB·ERD를 따로 둔다. 두 서비스는 API로 연결한다([서비스 경계 초안](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/05_service_boundary.md)).
+
+| 서비스 | 프론트엔드 | 백엔드 | ERD |
+|---|---|---|---|
+| e-class | [STack-eclass-Frontend](https://github.com/STack-Corp/STack-eclass-Frontend) | 이 레포 (MySQL 8.4) | [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka) |
+| 캠퍼스 온 | [STack-Frontend](https://github.com/STack-Corp/STack-Frontend) | [STack-Backend](https://github.com/STack-Corp/STack-Backend) (PostgreSQL 17) | [ERD B](https://www.erdcloud.com/d/G75sZP24bZNHuezyy) |
+
+2026-11-10 STack-Backend에서 루트 `src/`·MySQL 마이그레이션·`db/`·`docs/`를 커밋 이력과 함께 옮겼다(STAC-90).
 
 ## 폴더 구성
 
@@ -22,7 +29,7 @@
 처음 받을 때는 서브모듈까지 함께 받는다.
 
 ```sh
-git clone --recurse-submodules git@github.com:STack-Corp/STack-Backend.git
+git clone --recurse-submodules https://github.com/STack-Corp/STack-eclass-Backend.git
 # 이미 받았다면
 git submodule update --init
 ```
@@ -39,12 +46,13 @@ git submodule update --init
 | [reference/db/design/](https://github.com/STack-Corp/ASTRA-Reference/tree/main/db/design) | DB 영역별 설계 근거와 미결 사항 |
 | [db/README.md](db/README.md) | DB 영역 구성, 데이터 흐름, 설계 규칙, 스키마 변경·ERD 반영 절차 |
 | [docs/architecture.md](docs/architecture.md) | 배포 토폴로지, 모듈 구조, 인증·인가, 영상 전달, 관측, 단계 계획 |
+| [reference/backend/05_service_boundary.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/05_service_boundary.md) | 캠퍼스 온–e-class 서비스 경계, 신원 발급, 서비스 간 API (논의용 초안) |
 
 ## 두 레포의 역할
 
-| | ASTRA-Reference | STack-Backend |
+| | ASTRA-Reference | STack-eclass-Backend |
 |---|---|---|
-| 담는 것 | 화면 명세, 엔드포인트 계약, DB 설계 근거 | 서버 코드, 정본 DB 스키마, ERD 도구·스냅샷, 테스트 |
+| 담는 것 | 화면 명세, 엔드포인트 계약, DB 설계 근거 | 서버 코드, 정본 DB 스키마, ERD A 도구·스냅샷, 테스트 |
 | 변경 기준 | 근거와 근거 수준을 함께 기록 | 계약을 지키는지 테스트로 확인 |
 
 명세나 계약을 바꿔야 하면 Reference를 먼저 고친다. 그다음 이 레포에서 서브모듈을 그 변경으로 올리고 구현한다.
@@ -62,7 +70,7 @@ git commit -m "Update reference to <변경 요약>"
 - 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
 - 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
-- ERD는 두 개다. **A** [ASTRA 목표 모델](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)은 루트 MySQL 스키마(97 테이블), **B** [캠퍼스 온 운영 스키마](https://www.erdcloud.com/d/G75sZP24bZNHuezyy)는 `backend/` PostgreSQL 스키마다. B의 갱신 절차는 [db/README.md](db/README.md) 6.1절에 있다.
+- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL, 97 테이블)다. 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
 
 ## 빌드와 실행
 
@@ -90,15 +98,14 @@ git commit -m "Update reference to <변경 요약>"
 
 ## CI
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 세 작업을 실행한다.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 두 작업을 실행한다.
 
 | 작업 | 확인하는 것 |
 |---|---|
 | Build and test | `./gradlew build`. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다 |
 | Schema check and ERD snapshot | 마이그레이션을 MySQL 8.4에 적용한 뒤 `db/tools/check.sql`로 깨진 FK, COMMENT 누락, 고립 테이블을 찾는다. `db/erdcloud/snapshot.json`(ERD A)이 현재 스키마로 다시 만든 결과와 같은지도 확인한다 |
-| Campus On ERD snapshot | `backend/` 마이그레이션을 PostgreSQL 17에 적용하고 `db/erdcloud/campus-on-snapshot.json`(ERD B)이 다시 만든 결과와 같은지 확인한다 |
 
-루트 마이그레이션을 추가했다면 같은 PR에서 `python db/tools/erdcloud_snapshot.py`로, `backend/` 마이그레이션을 추가했다면 db/README.md 6.1절 명령으로 스냅샷도 갱신해야 CI가 통과한다. `backend/` 자체의 빌드·테스트는 별도 워크플로 `backend-ci.yml`이 맡는다. CI는 `reference` 서브모듈을 받지 않는다. 빌드에 필요 없고, 비공개 레포라 기본 토큰으로는 받을 수 없기 때문이다.
+마이그레이션을 추가했다면 같은 PR에서 `python db/tools/erdcloud_snapshot.py`로 스냅샷도 갱신해야 CI가 통과한다. CI는 `reference` 서브모듈을 받지 않는다. 빌드에 필요 없고, 비공개 레포라 기본 토큰으로는 받을 수 없기 때문이다.
 
 ## 구현 순서
 
@@ -123,14 +130,14 @@ git commit -m "Update reference to <변경 요약>"
 | STAC-6 ~ STAC-63 | `CHG-01` ~ `CHG-12`. 하위 작업은 [90_changes.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/90_changes.md)의 체크리스트 항목이고, 에픽 설명에 근거와 완료 판정이 있다 |
 | STAC-68 | 기존 클라이언트 결함 수정(SEC-01~07) |
 | STAC-76 미결 설계 결정 | [db/README.md](db/README.md) 7절의 결정 10개 |
-| STAC-88 발표 데모 | 데모 클라이언트 결정, ASTRA 흐름 화면 5개를 캠퍼스 온 API에 연결 |
-| STAC-89 캠퍼스 온(backend/) 정리 | 학교 정책 확인, Spring Boot 4.x 업그레이드, 스키마 COMMENT·ERD B 이름 검토 |
+| STAC-88 발표 데모 | 1차 데모는 프론트엔드에 목업 데이터를 넣어 동작을 보여준다(팀 합의 2026-11-08) |
+| STAC-89 캠퍼스 온 정리 | 학교 정책 확인, Spring Boot 4.x 업그레이드, 스키마 COMMENT·ERD B 이름 검토 (STack-Backend) |
 
-후속 결정·작업 일감(STAC-90~100)은 이 레포의 GitHub 이슈 #5~#15와 서로 연결돼 있다. 진행 상태는 Jira를 기준으로 본다.
+후속 결정·작업 일감(STAC-90~100)은 STack-Backend의 GitHub 이슈 #5~#15와 서로 연결돼 있다. 진행 상태는 Jira를 기준으로 본다.
 
 모든 일감에는 우선순위 라벨(`P0`/`P1`/`P2`)이, CHG 일감에는 `CHG-xx` 라벨이 붙어 있다. 영역 라벨 `area-identity`, `area-catalog`, `area-learning`, `area-assessment`, `area-communication`, `area-files`와 여러 영역에 걸친 `area-common`, 클라이언트 결함용 `area-client`로 영역별로 거를 수 있다. 개발 기반 준비(STAC-1~5)와 여러 영역을 묶는 STAC-76 에픽 자체에는 영역 라벨이 없다(STAC-76의 하위 결정 일감에는 있다). 보드 열은 To Do → In Progress → In Review(PR 리뷰 중) → Done이다.
 
-GitHub 연동(이 레포와 ASTRA-Reference)과 Jira 자동화 규칙 3개로 상태가 자동으로 바뀐다. 브랜치나 PR에 `STAC-<번호>`가 있어야 일감에 연결된다.
+GitHub 연동과 Jira 자동화 규칙 3개로 상태가 자동으로 바뀐다. 브랜치나 PR에 `STAC-<번호>`가 있어야 일감에 연결된다. 연동 대상 레포 목록은 STAC-98에서 정한다. 이 레포를 Jira GitHub 앱에 추가해야 연결된다.
 
 | GitHub 이벤트 | 일감 상태 변화 |
 |---|---|
@@ -146,24 +153,3 @@ GitHub 연동(이 레포와 ASTRA-Reference)과 Jira 자동화 규칙 3개로 �
 - 엔드포인트를 구현할 때는 커밋이나 PR 본문에 해당 `EP-xxxx` ID도 적는다.
 - Reference에서 `UNKNOWN`이나 `[추정]`인 동작은 구현 전에 결정을 남긴다. 결정은 STAC-76 하위 일감에 기록하고, 결정 없이 원본 동작이라고 가정하지 않는다.
 - 원본 캡처, 개인정보, 토큰, 비밀번호는 커밋하지 않는다.
-
-## 캠퍼스 온 수집 API
-
-`backend/`는 실제 서울과기대 e-class에 로그인해 과목·과제·퀴즈·시험·영상 일정을 수집하는 **독립 Spring Boot 프로젝트**다. 실행/API/보안/검증 근거는 [backend/README.md](backend/README.md)를 따른다.
-
-| 프로젝트 | 실행 환경 | DB | 역할 |
-|---|---|---|---|
-| 루트 `src/` | Java 25 / Spring Boot 4.1 | MySQL 8.4 | ASTRA 재구현과 기존 97개 테이블의 정본 스키마 |
-| `backend/` | Java 21 / Spring Boot 3.5 | PostgreSQL 17 (로컬 H2) | 학교 인증·읽기 수집, 앱 일정/ICS·공지 API |
-
-두 프로젝트의 데이터베이스와 Flyway 이력은 호환되지 않는다. 기존 루트 마이그레이션·ERD 스냅샷·Reference 서브모듈은 변경하지 않았으며, PostgreSQL 앱을 기존 MySQL DB에 연결하면 안 된다. 전체 LMS를 이 수집 API로 대체하는 변경도 아니다.
-
-ASTRA 대체 서비스의 본류는 루트 `src/`(MySQL)다. 캠퍼스 온은 독립 프로젝트로 유지하고 두 스키마를 합치지 않는다([ADR-0002](docs/adr/0002-mysql-mainline.md)).
-
-```sh
-cd backend
-./gradlew test bootJar
-./gradlew bootRun --args=--server.port=18080
-```
-
-Windows는 `gradlew.bat`를 사용한다. 두 앱의 기본 포트가 8080이므로 함께 띄울 때는 위처럼 포트를 분리하고 ICS의 `PUBLIC_BASE_URL`도 실제 공개 주소로 설정한다. Docker 실행 시 비밀키와 포트 설정은 `backend/README.md` 및 `backend/compose.yaml`을 따른다. `.github/workflows/backend-ci.yml`은 기존 루트 CI와 별개로 이 프로젝트의 PostgreSQL 테스트·compose health check를 실행한다.
