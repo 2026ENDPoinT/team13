@@ -135,8 +135,10 @@ class EnrollmentFlowTests extends IntegrationTest {
 			.andExpect(jsonPath("$.code").value("already_applied"));
 		apply(student, other, "same-key").andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
-		apply(student, course, null).andExpect(status().isBadRequest());
-		apply(student, course, "bad key!").andExpect(status().isBadRequest());
+		apply(student, course, null).andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("idempotency_key_required"));
+		apply(student, course, "bad key!").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
 		assertThat(this.fixtures.rows(course)).isEqualTo(1);
 		assertThat(this.fixtures.held(course)).isEqualTo(1);
 		assertThat(this.fixtures.rows(other)).isZero();

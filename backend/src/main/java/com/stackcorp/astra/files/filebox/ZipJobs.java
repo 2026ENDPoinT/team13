@@ -78,9 +78,7 @@ class ZipJobs {
 
 	/** @param itemIds 중복 없는 파일함 항목 ID. ZIP 안 순서 */
 	JobView request(Actor actor, List<Long> itemIds, String idempotencyKey) {
-		if (idempotencyKey == null) {
-			throw ApiException.invalid("ZIP 작업 요청에는 Idempotency-Key가 필요합니다.");
-		}
+		Idempotency.requireKey(idempotencyKey);
 		if (itemIds.size() > this.properties.maxItems()) {
 			throw ApiException.invalid("ZIP에는 파일을 " + this.properties.maxItems() + "개까지 넣을 수 있습니다.");
 		}

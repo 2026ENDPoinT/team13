@@ -34,6 +34,16 @@ public interface Attachments {
 	Optional<Long> change(ChangeRequest request);
 
 	/**
+	 * 원본 그룹을 바꾸지 않고 새 첨부 그룹을 만든다. keep과 add는 {@link #change}와 같다. keep은 원본 그룹에 지금 첨부된 파일만 받고,
+	 * 이어받은 파일은 두 그룹이 함께 참조한다. 판마다 첨부 집합을 따로 남기는 부모(과제 제출 버전)가 부모 저장과 같은 transaction
+	 * 안에서 부른다.
+	 *
+	 * @return 새 첨부 그룹 ID. keep과 add가 모두 비어 있으면 비어 있는 값
+	 * @throws AttachmentException keep이나 add에 쓸 수 없는 값이 하나라도 있을 때. 부모 transaction을 되돌려야 한다
+	 */
+	Optional<Long> derive(ChangeRequest request);
+
+	/**
 	 * 부모를 지울 때 그룹의 첨부를 모두 끊는다. 마지막 참조였던 파일은 지운다. 부모 저장과 같은 transaction 안에서 부른다.
 	 */
 	void release(long attachmentGroupId);

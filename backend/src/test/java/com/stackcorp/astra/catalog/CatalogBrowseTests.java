@@ -194,6 +194,33 @@ class CatalogBrowseTests extends IntegrationTest {
 	}
 
 	@Test
+	void filtersListCategoriesThatHaveLiveOfferingsInTheChosenDivision() throws Exception {
+		String live = "T" + UUID.randomUUID().toString().substring(0, 8);
+		String gone = "T" + UUID.randomUUID().toString().substring(0, 8);
+		long offering = this.fixtures.openOffering("분류 있는 과정", "AUTO", null);
+		this.fixtures.update("UPDATE non_regular_offerings SET nonregular_category = 'C', category_code = '" + live
+				+ "', category_name = '건설시스템공학과' WHERE course_id = :c", offering);
+		long cancelled = this.fixtures.openOffering("폐강 과정", "AUTO", null);
+		this.fixtures.update("UPDATE non_regular_offerings SET nonregular_category = 'C', category_code = '" + gone
+				+ "' WHERE course_id = :c", cancelled);
+		this.fixtures.update("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :c", cancelled);
+		ApiClient student = client(this.data.user("STUDENT"));
+
+		student.get("/api/catalog/filters?division=C")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.categories[?(@.code == '%s')].name", live).value("건설시스템공학과"))
+			.andExpect(jsonPath("$.categories[?(@.code == '%s')]", gone).isEmpty());
+		student.get("/api/catalog/filters")
+			.andExpect(jsonPath("$.categories[?(@.code == '%s')]", live).isNotEmpty());
+		student.get("/api/catalog/filters?division=K")
+			.andExpect(jsonPath("$.categories[?(@.code == '%s')]", live).isEmpty());
+		// 고른 분류의 코드가 목록 필터와 같은 과정을 고른다.
+		assertThat(ids(student.get("/api/catalog/offerings?category=" + live))).containsExactly(offering);
+		student.get("/api/catalog/filters?division=X").andExpect(status().isBadRequest());
+		new ApiClient(this.mvc, null).get("/api/catalog/filters").andExpect(status().isUnauthorized());
+	}
+
+	@Test
 	void myCoursesNarrowByTypeTermAndDivisionKeepingTheExistingShape() throws Exception {
 		long first = this.fixtures.term("내 학기 1");
 		long second = this.fixtures.term("내 학기 2");

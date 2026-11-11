@@ -227,7 +227,10 @@ class GradebookService {
 		return view(courseId, itemId);
 	}
 
-	/** 직접 입력 항목의 점수를 학생에게 공개하거나 거둔다. 과제 항목은 과제 수정(scoresReleased), 퀴즈 항목은 퀴즈 수정(resultReleaseAt)으로만 바꾼다. */
+	/**
+	 * 직접 입력 항목의 점수를 학생에게 공개하거나 거둔다. 과제 항목은 과제의 공개 명령({@link AssignmentService#release}), 퀴즈 항목은
+	 * 퀴즈 수정(resultReleaseAt)으로만 바꾼다.
+	 */
 	ItemView release(Actor actor, long courseId, long itemId, boolean released, long revision) {
 		requireManual(managedItem(actor.userId(), courseId, itemId));
 		this.writes.run(() -> {

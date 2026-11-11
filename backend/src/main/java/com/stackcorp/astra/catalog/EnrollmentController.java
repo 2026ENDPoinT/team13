@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.stackcorp.astra.catalog.CatalogQueries.TermView;
+import com.stackcorp.astra.catalog.CourseController.OfferingSummary;
+import com.stackcorp.astra.catalog.EnrollmentRecords.Application;
 import com.stackcorp.astra.catalog.EnrollmentRecords.Request;
 import com.stackcorp.astra.catalog.EnrollmentService.Receipt;
 import com.stackcorp.astra.identity.api.Actor;
@@ -76,9 +79,7 @@ class EnrollmentController {
 		if (this.queries.offering(courseId).isEmpty()) {
 			throw ApiException.notFound();
 		}
-		if (idempotencyKey == null) {
-			throw ApiException.invalid("수강신청에는 Idempotency-Key가 필요합니다.");
-		}
+		Idempotency.requireKey(idempotencyKey);
 		this.rateLimiter.check("enrollment-apply", actor.userId(), 30, Duration.ofMinutes(10));
 		Receipt receipt = retrying(() -> this.idempotency.execute(actor.userId(), "enrollment.apply", idempotencyKey,
 				List.of(courseId), Receipt.class, () -> this.service.apply(actor, courseId)));
@@ -122,6 +123,32 @@ class EnrollmentController {
 		return ok(retrying(() -> this.service.cancel(actor, enrollmentId)));
 	}
 
+	/**
+	 * 내 신청(EP-0202, EP-0214의 신청 상태 부분). 본인의 비정규 수강신청과 청강 신청을 상태와 관계없이 최근 신청 순으로 돌려준다.
+	 * 처리를 기다리는 신청(PENDING, REQUESTED)은 아직 과목 구성원이 아니라 {@code /api/me/courses}에는 없고 여기에만 있다. 반려와
+	 * 취소도 이력으로 남는다. 다른 사람의 신청을 고르는 parameter는 없다(SC-02). 쿼리는 셋(목록, 수, 시계)이다.
+	 * @param kind NONREGULAR|AUDIT. 없으면 둘 다
+	 */
+	@GetMapping("/api/me/applications")
+	ResponseEntity<ApplicationPage> applications(@AuthenticationPrincipal Actor actor,
+			@RequestParam(required = false) String kind, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int size) {
+		if (kind != null && !kind.equals(EnrollmentService.NONREGULAR) && !kind.equals(EnrollmentService.AUDIT)) {
+			throw ApiException.invalid("kind는 NONREGULAR 또는 AUDIT이어야 합니다.");
+		}
+		checkPage(page, size);
+		List<Application> rows = this.records.applications(actor.userId(), kind, (page - 1) * size, size);
+		LocalDateTime now = this.queries.now();
+		List<ApplicationItem> items = rows.stream()
+			.map((a) -> new ApplicationItem(a.enrollmentId(), a.kind(), a.status(), a.version(),
+					OfferingRules.cancellable(a.kind(), a.status(), a.cancelAllowed(), a.cancelCloseAt(), now),
+					a.appliedAt(), a.decidedAt(), a.cancelledAt(), a.reason(),
+					new ApplicationCourse(a.courseId(), a.courseName(), a.courseCode(), a.section(), a.type(), a.term(),
+							a.offering())))
+			.toList();
+		return ok(new ApplicationPage(items, this.records.applicationCount(actor.userId(), kind), page, size, now));
+	}
+
 	/** 처리를 기다리는 신청. 그 과목의 교수와 비정규 담당자만 본다. */
 	@GetMapping("/api/courses/{courseId}/enrollment-requests")
 	ResponseEntity<RequestPage> requests(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
@@ -129,9 +156,7 @@ class EnrollmentController {
 		if (this.records.deciderRole(actor.userId(), courseId).isEmpty()) {
 			throw ApiException.notFound();
 		}
-		if (page < 1 || page > 10_000 || size < 1 || size > MAX_PAGE_SIZE) {
-			throw ApiException.invalid("page는 1 이상, size는 1 이상 " + MAX_PAGE_SIZE + " 이하여야 합니다.");
-		}
+		checkPage(page, size);
 		List<Request> rows = this.records.pending(courseId, (page - 1) * size, size);
 		Map<Long, UserCard> cards = this.users.find(rows.stream().map(Request::userId).toList());
 		List<RequestItem> items = rows.stream().map((r) -> {
@@ -191,6 +216,12 @@ class EnrollmentController {
 		}
 	}
 
+	private static void checkPage(int page, int size) {
+		if (page < 1 || page > 10_000 || size < 1 || size > MAX_PAGE_SIZE) {
+			throw ApiException.invalid("page는 1 이상, size는 1 이상 " + MAX_PAGE_SIZE + " 이하여야 합니다.");
+		}
+	}
+
 	private static <T> ResponseEntity<T> ok(T body) {
 		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
 	}
@@ -222,6 +253,36 @@ class EnrollmentController {
 	}
 
 	record RequestPage(List<RequestItem> items, long total, int page, int size) {
+	}
+
+	/**
+	 * @param kind NONREGULAR|AUDIT
+	 * @param status REQUESTED|PENDING|WAITLISTED|ENROLLED|REJECTED|CANCELLED
+	 * @param version 취소·사유 수정 요청에 그대로 보낸다
+	 * @param cancellable 지금 스스로 취소할 수 있는지(DB 시계 기준)
+	 * @param decidedAt 승인·반려 일시. 처리 전이면 null
+	 * @param cancelledAt 취소 일시. 취소하지 않았으면 null
+	 * @param reason 본인이 쓴 청강 사유. 비정규 신청이면 null
+	 */
+	record ApplicationItem(long enrollmentId, String kind, String status, int version, boolean cancellable,
+			LocalDateTime appliedAt, LocalDateTime decidedAt, LocalDateTime cancelledAt, String reason,
+			ApplicationCourse course) {
+	}
+
+	/**
+	 * 신청한 과목의 공개 항목.
+	 * @param type REGULAR|NONREGULAR
+	 * @param term 정규 과목의 학기. 비정규 과정이면 null
+	 * @param offering 비정규 과정의 차수와 학습기간. 정규 과목이면 null
+	 */
+	record ApplicationCourse(long courseId, String name, String code, String section, String type, TermView term,
+			OfferingSummary offering) {
+	}
+
+	/**
+	 * @param serverTime cancellable을 정한 DB 시각
+	 */
+	record ApplicationPage(List<ApplicationItem> items, long total, int page, int size, LocalDateTime serverTime) {
 	}
 
 }

@@ -121,11 +121,43 @@ class CalendarApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void studentItemsSayWhetherTheCallerAlreadyFinishedTheActivity() throws Exception {
+		LocalDate today = this.jdbc.sql("SELECT CURRENT_DATE").query(LocalDate.class).single();
+		long prof = this.data.user("PROFESSOR");
+		long course = course(prof);
+		long student = this.data.user("STUDENT");
+		long classmate = this.data.user("STUDENT");
+		this.data.enroll(course, student);
+		this.data.enroll(course, classmate);
+		ApiClient professor = new ApiClient(this.mvc, this.data.session(prof));
+		LocalDate due = today.plusDays(1);
+		JsonNode created = ApiClient.json(professor.postJson("/api/courses/" + course + "/assignments",
+				"{\"weekNo\":1,\"title\":\"마감 과제\",\"closeAt\":\"" + due + "T12:00:00\",\"maxScore\":10}")
+			.andExpect(status().isCreated())).get("assignment");
+		long activity = created.get("activityId").asLong();
+		ApiClient mine = new ApiClient(this.mvc, this.data.session(student));
+		mine.send(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+			.post("/api/courses/" + course + "/assignments/" + created.get("assignmentId").asLong() + "/submission")
+			.header("Idempotency-Key", "calendar-done")
+			.contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+			.content("{\"expectedVersion\":0,\"body\":\"제출\"}")).andExpect(status().isCreated());
+
+		String path = "/api/me/calendar/days/" + due;
+		mine.get(path).andExpect(jsonPath("$.activities[?(@.activityId == %d)].completed", activity).value(true));
+		new ApiClient(this.mvc, this.data.session(classmate)).get(path)
+			.andExpect(jsonPath("$.activities[?(@.activityId == %d)].completed", activity).value(false));
+		// 담당 과목의 활동에는 완료 표시가 없다.
+		professor.get(path)
+			.andExpect(jsonPath("$.activities[?(@.activityId == %d)].role", activity).value("INSTRUCTOR"))
+			.andExpect(jsonPath("$.activities[?(@.activityId == %d)].completed", activity).isEmpty());
+	}
+
+	@Test
 	void statementCountDoesNotGrowWithTheNumberOfCourses() throws Exception {
 		ApiClient few = studentWithCourses(2);
 		ApiClient many = studentWithCourses(10);
 		many.get("/api/me/calendar").andExpect(jsonPath("$.activities.length()").value(10));
-		// 시계, 과목, 학사일정, 활동과 session 확인, transaction 문장뿐이다.
+		// 시계, 과목, 학사일정, 활동, 완료 판정(넷 이하)과 session 확인, transaction 문장뿐이다.
 		assertThat(statements(many)).isEqualTo(statements(few)).isLessThanOrEqualTo(20);
 	}
 

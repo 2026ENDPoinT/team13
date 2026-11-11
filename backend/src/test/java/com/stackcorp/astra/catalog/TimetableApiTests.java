@@ -92,6 +92,51 @@ class TimetableApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void termSelectionIsLimitedToTermsWhereTheCallerIsAMember() throws Exception {
+		LocalDate today = this.jdbc.sql("SELECT CURRENT_DATE").query(LocalDate.class).single();
+		long current = term(true, today.minusDays(30), today.plusDays(30));
+		LocalDate pastStart = today.minusDays(700);
+		long past = term(false, pastStart, pastStart.plusDays(100));
+		long foreignTerm = term(false, today.minusDays(500), today.minusDays(400));
+		long cancelledTerm = term(false, today.minusDays(300), today.minusDays(200));
+		long prof = this.data.user("PROFESSOR");
+		long user = this.data.user("STUDENT");
+		long now = course(current, "지금 과목", prof);
+		this.data.enroll(now, user);
+		long old = course(past, "지난 과목", prof);
+		this.data.enroll(old, user);
+		slot(old, 2, "09:00", "12:00", null);
+		long foreign = course(foreignTerm, "남의 과목", prof);
+		slot(foreign, 2, "09:00", "12:00", null);
+		long cancelled = course(cancelledTerm, "폐강 과목", prof);
+		this.data.enroll(cancelled, user);
+		this.jdbc.sql("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :c").param("c", cancelled).update();
+		ApiClient client = new ApiClient(this.mvc, this.data.session(user));
+
+		// 고를 수 있는 학기는 구성원인 과목이 있는 학기뿐이다. 폐강 과목만 있는 학기와 남의 학기는 없다.
+		client.get("/api/me/timetable")
+			.andExpect(jsonPath("$.termId").value((int) current))
+			.andExpect(jsonPath("$.terms[*].termId").value(containsInAnyOrder((int) current, (int) past)));
+		// 지난 학기를 고르면 날짜 없이도 그 학기의 마지막 주를 돌려준다(오늘을 학기 기간 안으로 옮긴 날). 오늘에서 400일 넘게 떨어져
+		// 있어도 학기 안이면 된다.
+		LocalDate pastEnd = pastStart.plusDays(100);
+		LocalDate lastSunday = pastEnd.minusDays(pastEnd.getDayOfWeek().getValue() % 7);
+		client.get("/api/me/timetable?termId=" + past)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.termId").value((int) past))
+			.andExpect(jsonPath("$.weekStart").value(lastSunday.toString()));
+		client.get("/api/me/timetable?termId=" + past + "&date=" + pastStart.plusDays(10))
+			.andExpect(jsonPath("$.slots[*].courseId").value(contains((int) old)));
+		client.get("/api/me/timetable?termId=" + past + "&date=" + today).andExpect(status().isBadRequest());
+		client.get("/api/me/timetable?termId=" + foreignTerm)
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		client.get("/api/me/timetable?termId=" + cancelledTerm).andExpect(status().isBadRequest());
+		client.get("/api/me/timetable?termId=abc").andExpect(status().isBadRequest());
+		new ApiClient(this.mvc, null).get("/api/me/timetable?termId=" + past).andExpect(status().isUnauthorized());
+	}
+
+	@Test
 	void courseTimetableIsForMembersOnly() throws Exception {
 		LocalDate today = this.jdbc.sql("SELECT CURRENT_DATE").query(LocalDate.class).single();
 		long prof = this.data.user("PROFESSOR");

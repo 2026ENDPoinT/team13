@@ -231,6 +231,81 @@ class SubmissionFlowTests extends AssessmentTestSupport {
 	}
 
 	@Test
+	void resubmissionKeepsOnlyFilesOfTheOwnLatestVersionAndHistoryKeepsEachVersionsFiles() throws Exception {
+		long id = assignment("");
+		byte[] pdf = TestPdfs.pdf(1);
+		long report = this.student.upload(this.course, "report.pdf", pdf);
+		long notes = this.student.upload(this.course, "notes.txt", TXT);
+		JsonNode first = ApiClient.json(this.student.submit(submission(this.course, id), "k1", submitBody(0, TEXT, report, notes))
+			.andExpect(status().isCreated()));
+		long reportFile = first.get("files").get(0).get("fileId").asLong();
+		long notesFile = first.get("files").get(1).get("fileId").asLong();
+		long appendix = this.student.upload(this.course, "appendix.txt", TXT);
+
+		// 이어받은 파일과 새 업로드가 새 버전의 첨부다. 앞 버전은 제출했을 때의 파일을 그대로 가진다.
+		String keepReport = "{\"expectedVersion\":1,\"body\":\"수정본\",\"uploadIds\":[" + appendix
+				+ "],\"keepFileIds\":[" + reportFile + "]}";
+		String second = this.student.submit(submission(this.course, id), "k2", keepReport)
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.version").value(2))
+			.andExpect(jsonPath("$.files[*].name").value(org.hamcrest.Matchers.contains("report.pdf", "appendix.txt")))
+			.andExpect(jsonPath("$.files[0].fileId").value((int) reportFile))
+			.andReturn()
+			.getResponse()
+			.getContentAsString(StandardCharsets.UTF_8);
+		this.student.submit(submission(this.course, id), "k2", keepReport)
+			.andExpect(status().isCreated())
+			.andExpect(content().json(second, org.springframework.test.json.JsonCompareMode.STRICT));
+		this.student.submit(submission(this.course, id), "k2", "{\"expectedVersion\":1,\"body\":\"수정본\",\"uploadIds\":["
+				+ appendix + "],\"keepFileIds\":[]}")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		this.student.get(fileContent(this.course, reportFile)).andExpect(status().isOk()).andExpect(content().bytes(pdf));
+		this.professor.get(fileContent(this.course, reportFile)).andExpect(status().isOk());
+		this.classmate.get(fileContent(this.course, reportFile)).andExpect(status().isNotFound());
+
+		// 지금 버전에 없는 파일(앞 버전에만 있는 파일), 다른 학생의 파일, 없는 파일은 이어받지 못하고 아무것도 남지 않는다.
+		long otherAssignment = assignment("");
+		long theirs = ApiClient.json(this.classmate.submit(submission(this.course, otherAssignment), "theirs",
+				submitBody(0, null, this.classmate.upload(this.course, "theirs.txt", TXT))).andExpect(status().isCreated()))
+			.get("files").get(0).get("fileId").asLong();
+		for (long bad : new long[] { notesFile, theirs, 999_999_999L }) {
+			this.student.submit(submission(this.course, id), "bad-keep-" + bad,
+					"{\"expectedVersion\":2,\"body\":\"x\",\"keepFileIds\":[" + bad + "]}")
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("attachment_not_ready"));
+		}
+		// 첫 제출에는 이어받을 버전이 없다.
+		this.student.submit(submission(this.course, assignment("")), "first-keep",
+				"{\"expectedVersion\":0,\"body\":\"x\",\"keepFileIds\":[" + reportFile + "]}")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("attachment_not_ready"));
+		assertThat(versionCount(id)).isEqualTo(2);
+
+		// 본문만 다시 내면 새 버전에 파일이 없고, 앞 두 버전의 파일은 이력에 그대로다.
+		this.student.submit(submission(this.course, id), "k3", submitBody(2, "세 번째"))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.files.length()").value(0));
+		long submissionId = first.get("submissionId").asLong();
+		this.professor.get(submissions(this.course, id) + "/" + submissionId)
+			.andExpect(jsonPath("$.versions[0].files.length()").value(0))
+			.andExpect(jsonPath("$.versions[1].files[*].name").value(org.hamcrest.Matchers.contains("report.pdf", "appendix.txt")))
+			.andExpect(jsonPath("$.versions[2].files[*].name").value(org.hamcrest.Matchers.contains("report.pdf", "notes.txt")));
+
+		for (String bad : new String[] { "{\"expectedVersion\":3,\"keepFileIds\":[1,1]}",
+				"{\"expectedVersion\":3,\"keepFileIds\":[0]}",
+				"{\"expectedVersion\":3,\"uploadIds\":[1,2,3],\"keepFileIds\":[4,5,6]}" }) {
+			this.student.submit(submission(this.course, id), "invalid-keep", bad)
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("invalid_request"));
+		}
+		long textOnly = assignment("\"allowFile\":false");
+		this.student.submit(submission(this.course, textOnly), "text-keep",
+				"{\"expectedVersion\":0,\"body\":\"x\",\"keepFileIds\":[" + reportFile + "]}")
+			.andExpect(status().isBadRequest());
+	}
+
+	@Test
 	void classmatesAndOutsidersCannotReachASubmissionOrItsFilesByAnyPath() throws Exception {
 		long id = assignment("");
 		byte[] pdf = TestPdfs.pdf(1);
@@ -301,7 +376,9 @@ class SubmissionFlowTests extends AssessmentTestSupport {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("invalid_request"));
 		}
-		this.student.submit(submission(this.course, id), null, body).andExpect(status().isBadRequest());
+		this.student.submit(submission(this.course, id), null, body)
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("idempotency_key_required"));
 		this.student.submit(submission(this.course, id), "bad key!", body).andExpect(status().isBadRequest());
 		this.student.putJson(submission(this.course, id) + "/draft", "{\"body\":\"x\",\"submitted\":true}")
 			.andExpect(status().isBadRequest());

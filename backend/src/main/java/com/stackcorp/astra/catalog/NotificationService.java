@@ -16,9 +16,12 @@ import com.stackcorp.astra.catalog.api.NotificationCounts;
 import com.stackcorp.astra.catalog.api.NotificationKind;
 import com.stackcorp.astra.catalog.api.Notifications;
 import com.stackcorp.astra.identity.api.Actor;
+import com.stackcorp.astra.identity.api.UserAudiences;
+import com.stackcorp.astra.identity.api.UserAudiences.UserAudience;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.audit.AuditLog;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -30,6 +33,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 알림 생성(다른 모듈이 부르는 {@link Notifications})과 받는 사람의 알림함(EP-0138, EP-0280~0282, ADR-0027).
  * <p>
  * 생성은 부르는 쪽 transaction 안에서만 한다. 과목 알림은 사건 행을 먼저 잠그고 그다음 알림 행을 쓴다. worker도 같은 순서다.
+ * 과목 없는 전체 알림({@link #publishSite}, ADR-0036)은 만든 쪽이 사건만 남기고, worker가 대상 사용자를 묶음으로 나눠 보낸다.
  * 알림함의 목록, 안 읽은 수, 읽음, 삭제는 {@link NotificationRecords}의 같은 조건을 쓴다. 사용자는 session principal로만 정하고,
  * 다른 사람의 알림이나 지금 볼 수 없는 알림은 ID를 알아도 404다(SC-02). 조회는 읽음을 바꾸지 않는다(SC-04).
  */
@@ -47,18 +51,28 @@ class NotificationService implements Notifications, NotificationCounts {
 
 	private final CourseRosters rosters;
 
+	private final UserAudiences audiences;
+
 	private final AuditLog audit;
 
 	private final TransactionTemplate commands;
 
-	NotificationService(NotificationRecords records, CourseRosters rosters, AuditLog audit,
-			PlatformTransactionManager transactionManager) {
+	private final int siteBatch;
+
+	/**
+	 * @param siteBatch 과목 없는 알림을 한 transaction에 보내는 사람 수
+	 */
+	NotificationService(NotificationRecords records, CourseRosters rosters, UserAudiences audiences, AuditLog audit,
+			PlatformTransactionManager transactionManager,
+			@Value("${astra.notification.site-batch:500}") int siteBatch) {
 		this.records = records;
 		this.rosters = rosters;
+		this.audiences = audiences;
 		this.audit = audit;
 		// 읽음·삭제는 사용자 범위의 여러 행을 바꾼다. 같은 사용자의 행에 알림을 만드는 transaction과 범위 잠금으로 엉키지 않게 한다.
 		this.commands = new TransactionTemplate(transactionManager);
 		this.commands.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+		this.siteBatch = siteBatch;
 	}
 
 	// ---- 생성 ----
@@ -67,6 +81,9 @@ class NotificationService implements Notifications, NotificationCounts {
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void publish(CourseNotification notification) {
 		NotificationKind kind = Objects.requireNonNull(notification.kind());
+		if (kind == NotificationKind.SITE_NOTICE) {
+			throw new IllegalArgumentException("site kind needs publishSite");
+		}
 		CourseRole audience = Objects.requireNonNull(notification.audience());
 		String message = message(kind, notification.subject());
 		LocalDateTime now = this.records.now();
@@ -77,7 +94,7 @@ class NotificationService implements Notifications, NotificationCounts {
 			// 아직 보이지 않는다. 이미 보냈으면 거두고 그 시각에 다시 보낸다.
 			if (event.delivered()) {
 				this.records.deleteAll(kind, notification.targetId());
-				this.records.markPending(event.eventId());
+				this.records.restart(event.eventId());
 			}
 			return;
 		}
@@ -86,6 +103,35 @@ class NotificationService implements Notifications, NotificationCounts {
 			return;
 		}
 		deliver(event);
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void publishSite(SiteNotification notification) {
+		NotificationKind kind = Objects.requireNonNull(notification.kind());
+		if (kind != NotificationKind.SITE_NOTICE) {
+			throw new IllegalArgumentException("not a site kind: " + kind);
+		}
+		UserAudience audience = Objects.requireNonNull(notification.audience());
+		String message = message(kind, notification.subject());
+		LocalDateTime now = this.records.now();
+		LocalDateTime visibleAt = notification.visibleAt() == null ? now : notification.visibleAt();
+		Event event = this.records.upsertSiteEvent(kind, notification.targetId(), audience, message, visibleAt);
+		if (event.siteAudience() != audience || visibleAt.isAfter(now)) {
+			// 받는 대상이 바뀌었거나 아직 보이지 않는다. 보낸 알림을 거두고 처음부터(그 시각에) 다시 보낸다.
+			if (event.started()) {
+				this.records.deleteAll(kind, notification.targetId());
+				this.records.restart(event.eventId());
+			}
+			if (event.siteAudience() != audience) {
+				this.records.setSiteAudience(event.eventId(), audience);
+			}
+			return;
+		}
+		// 보낸 알림은 문장만 바꾼다. 보내기는 worker가 묶음마다 한다. 남은 묶음은 사건의 새 문장으로 만든다.
+		if (event.started()) {
+			this.records.retitle(kind, notification.targetId(), message);
+		}
 	}
 
 	@Override
@@ -111,7 +157,7 @@ class NotificationService implements Notifications, NotificationCounts {
 	}
 
 	/**
-	 * 사건의 받는 사람을 지금 정해 알림 행을 만들고 보낸 것으로 표시한다. 사건 행을 잠근 transaction 안에서 부른다.
+	 * 과목 사건의 받는 사람을 지금 정해 알림 행을 만들고 보낸 것으로 표시한다. 사건 행을 잠근 transaction 안에서 부른다.
 	 * @return 새로 만든 알림 행 수
 	 */
 	int deliver(Event event) {
@@ -123,6 +169,29 @@ class NotificationService implements Notifications, NotificationCounts {
 		return created;
 	}
 
+	/**
+	 * worker가 잠근 사건을 한 걸음 보낸다. 과목 사건은 한 번에 모두, 과목 없는 사건은 지난 위치 다음의 대상 사용자 한 묶음을 보내고
+	 * 위치를 남긴다. 사건 행을 잠근 transaction 안에서 부른다. 같은 사람에게 두 번 가도 (유형, 대상, 사용자) 유일 키가 막는다.
+	 * @return 이 사건을 다 보냈는지
+	 */
+	boolean deliverStep(Event event) {
+		if (!event.site()) {
+			deliver(event);
+			return true;
+		}
+		long after = event.deliveredUserId() == null ? 0 : event.deliveredUserId();
+		List<Long> users = this.audiences.members(event.siteAudience(), after, this.siteBatch);
+		if (!users.isEmpty()) {
+			this.records.insert(users, event.kind(), null, null, event.targetId(), event.message());
+			this.records.advance(event.eventId(), users.getLast());
+		}
+		if (users.size() < this.siteBatch) {
+			this.records.markDelivered(event.eventId());
+			return true;
+		}
+		return false;
+	}
+
 	// ---- 알림함 ----
 
 	@Override
@@ -131,6 +200,7 @@ class NotificationService implements Notifications, NotificationCounts {
 	}
 
 	/**
+	 * 쿼리는 쪽 크기와 관계없이 넷(시계, 쪽, 필터에 맞는 수, 안 읽은 수)이고 모두 같은 DB 시각과 같은 보이는 조건을 쓴다.
 	 * @param kind 이 유형만. {@link NotificationKind} 이름
 	 * @param cursor 앞 응답의 nextCursor. 처음이면 null
 	 */
@@ -146,7 +216,8 @@ class NotificationService implements Notifications, NotificationCounts {
 		List<NotificationRow> rows = this.records.page(userId, now, courseId, type, unreadOnly, after, size + 1);
 		List<NotificationRow> page = rows.size() > size ? rows.subList(0, size) : rows;
 		String next = rows.size() > size ? encode(page.getLast().position()) : null;
-		return new Inbox(now, page.stream().map(NotificationView::of).toList(), this.records.unread(userId, now), next);
+		return new Inbox(now, page.stream().map(NotificationView::of).toList(),
+				this.records.count(userId, now, courseId, type, unreadOnly), this.records.unread(userId, now), next);
 	}
 
 	@Transactional(readOnly = true)
@@ -245,7 +316,8 @@ class NotificationService implements Notifications, NotificationCounts {
 	/**
 	 * @param kind {@link NotificationKind} 이름
 	 * @param courseName 과목 알림이 아니면(쪽지 등) null
-	 * @param targetType 연결 대상 종류: ACTIVITY|ARTICLE|MESSAGE. 화면은 kind, courseId, targetId로 원문 경로를 만든다
+	 * @param targetType 연결 대상 종류: ACTIVITY|ASSIGNMENT|ARTICLE|MESSAGE. 화면은 targetType, courseId, targetId로 원문 경로를 만든다
+	 * ({@link NotificationKind.Target})
 	 */
 	record NotificationView(long notificationId, String kind, String message, Long courseId, String courseName,
 			String courseCode, String section, String targetType, long targetId, boolean read,
@@ -260,10 +332,12 @@ class NotificationService implements Notifications, NotificationCounts {
 	}
 
 	/**
+	 * @param total 고른 조건(과목, 유형, 안 읽음)에 맞는 알림 전체 수. 커서와 관계없다
 	 * @param unreadCount 필터와 관계없는 안 읽은 알림 전체 수(헤더 배지)
 	 * @param nextCursor 다음 쪽이 있으면 그 커서, 없으면 null
 	 */
-	record Inbox(LocalDateTime serverTime, List<NotificationView> items, int unreadCount, String nextCursor) {
+	record Inbox(LocalDateTime serverTime, List<NotificationView> items, int total, int unreadCount,
+			String nextCursor) {
 	}
 
 	record UnreadCount(LocalDateTime serverTime, int unreadCount) {

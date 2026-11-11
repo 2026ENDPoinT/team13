@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import com.stackcorp.astra.catalog.CatalogQueries.Category;
 import com.stackcorp.astra.catalog.CatalogQueries.CourseRow;
 import com.stackcorp.astra.catalog.CatalogQueries.Department;
 import com.stackcorp.astra.catalog.CatalogQueries.OfferingFilter;
@@ -73,11 +74,20 @@ class CatalogController {
 		this.memberships = memberships;
 	}
 
-	/** 필터 선택지: 정규·특별 학기 전체와, 고른 학기(없으면 현재 학기)에 과목이 있는 학과. */
+	/**
+	 * 필터 선택지: 정규·특별 학기 전체, 고른 학기(없으면 현재 학기)에 과목이 있는 학과, 고른 비정규 분류(없으면 모든 분류)에 과정이 있는
+	 * 과목분류. 쿼리는 넷(현재 학기, 학기, 학과, 과목분류)이다.
+	 * @param division 비정규 분류 B|C|K
+	 */
 	@GetMapping("/api/catalog/filters")
-	ResponseEntity<Filters> filters(@RequestParam(required = false) List<Long> term) {
+	ResponseEntity<Filters> filters(@RequestParam(required = false) List<Long> term,
+			@RequestParam(required = false) String division) {
+		if (division != null && !DIVISIONS.contains(division)) {
+			throw ApiException.invalid("division은 B, C, K 중 하나여야 합니다.");
+		}
 		List<Long> terms = terms(term);
-		return ok(new Filters(this.queries.terms(), this.queries.departments(terms)));
+		return ok(new Filters(this.queries.terms(), this.queries.departments(terms),
+				this.queries.categories(division)));
 	}
 
 	/**
@@ -252,7 +262,10 @@ class CatalogController {
 		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
 	}
 
-	record Filters(List<TermView> terms, List<Department> departments) {
+	/**
+	 * @param categories 비정규과목 목록의 category 값으로 보내는 과목분류 코드와 표시명
+	 */
+	record Filters(List<TermView> terms, List<Department> departments, List<Category> categories) {
 	}
 
 	/**

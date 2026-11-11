@@ -120,9 +120,7 @@ class StudyChatController {
 			@RequestBody AskRequest body) {
 		StudyChat chat = readable(actor, courseId, chatId);
 		String question = validated(body);
-		if (idempotencyKey == null) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "idempotency_key_required", "Idempotency-Key header가 필요합니다.");
-		}
+		Idempotency.requireKey(idempotencyKey);
 		this.chats.requireAvailable(courseId, chat.fileId());
 		this.rateLimiter.check("study-chat-ask", actor.userId(), this.properties.rateLimit(),
 				this.properties.rateWindow());

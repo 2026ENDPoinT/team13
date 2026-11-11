@@ -29,9 +29,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 수업시간표(화면 14). 담당하거나 수강이 확정된 과목 가운데 현재 학기 과목의 수업 시간 슬롯(course_schedules)만 돌려준다.
- * 주는 일요일에 시작해 토요일에 끝나고, 주 경계와 오늘은 서버가 DB 시계로 정한다(CAT-15). 학기 기간이 있으면 그 밖의 날은 넣지 않는다.
- * 휴강·보강은 스키마에 없어 반영하지 않는다.
+ * 수업시간표(화면 14). 담당하거나 수강이 확정된 과목 가운데 한 학기 과목의 수업 시간 슬롯(course_schedules)만 돌려준다. 학기는 고르지
+ * 않으면 현재 학기이고, 고를 때는 요청한 사람이 구성원인 과목이 있는 학기만 받는다. 주는 일요일에 시작해 토요일에 끝나고, 주 경계와
+ * 오늘은 서버가 DB 시계로 정한다(CAT-15). 학기 기간이 있으면 그 밖의 날은 넣지 않는다. 휴강·보강은 스키마에 없어 반영하지 않는다.
  */
 @RestController
 class TimetableController {
@@ -59,17 +59,32 @@ class TimetableController {
 	}
 
 	/**
-	 * 한 주의 시간표(EP-0172, EP-0171). 날짜를 비우면 오늘이 든 주다. 오늘 수업(EP-0180)은 이 응답에서 {@code date == today}인
-	 * 슬롯이다.
-	 * @param date 이 날짜가 든 주(yyyy-MM-dd)
+	 * 한 주의 시간표(EP-0172, EP-0171). 오늘 수업(EP-0180)은 이 응답에서 {@code date == today}인 슬롯이다. 쿼리는 과목 수와 관계없이
+	 * 다섯(시계, 내 학기, 슬롯, 담당자, 담당자 이름)이다.
+	 * @param date 이 날짜가 든 주(yyyy-MM-dd). 비우면 오늘이 든 주이고, 학기를 골랐는데 오늘이 그 학기 밖이면 학기 첫날(오늘이 학기
+	 * 뒤면 마지막 날)이 든 주다
+	 * @param termId 학기. 응답의 {@code terms} 가운데 하나여야 한다. 비우면 현재 학기
 	 */
 	@GetMapping("/api/me/timetable")
 	ResponseEntity<WeekTimetable> week(@AuthenticationPrincipal Actor actor,
-			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+			@RequestParam(required = false) Long termId) {
 		LocalDateTime now = this.jdbc.sql("SELECT CURRENT_TIMESTAMP(3)").query(LocalDateTime.class).single();
 		LocalDate today = now.toLocalDate();
-		LocalDate day = date == null ? today : date;
-		if (Math.abs(ChronoUnit.DAYS.between(today, day)) > MAX_DISTANCE_DAYS) {
+		List<TermOption> terms = memberTerms(actor.userId());
+		TermOption term = termId == null ? terms.stream().filter(TermOption::current).findFirst().orElse(null)
+				: terms.stream()
+					.filter((t) -> t.termId() == termId)
+					.findFirst()
+					.orElseThrow(() -> ApiException.invalid("termId는 내 과목이 있는 학기여야 합니다."));
+		LocalDate day = date == null ? (termId == null ? today : term.clamp(today)) : date;
+		if (termId != null && term.startDate() != null && term.endDate() != null) {
+			// 고른 학기는 그 기간 안의 주만 묻는다. 지난 학기도 볼 수 있게 오늘에서의 거리는 따지지 않는다.
+			if (day.isBefore(term.startDate()) || day.isAfter(term.endDate())) {
+				throw ApiException.invalid("date는 고른 학기 기간 안이어야 합니다.");
+			}
+		}
+		else if (Math.abs(ChronoUnit.DAYS.between(today, day)) > MAX_DISTANCE_DAYS) {
 			throw ApiException.invalid("date는 오늘에서 " + MAX_DISTANCE_DAYS + "일 안이어야 합니다.");
 		}
 		LocalDate weekStart = day.minusDays(day.getDayOfWeek().getValue() % 7);
@@ -80,9 +95,11 @@ class TimetableController {
 				""" + MembershipRule.instructorOf("c.course_id", ":user") + """
 				 AS instructor
 				  FROM course_schedules s JOIN courses c ON c.course_id = s.course_id JOIN terms t ON t.term_id = c.term_id
-				 WHERE t.is_current = 1 AND c.course_id IN (""" + MembershipRule.candidateCourses(":user") + ") AND "
-				+ MembershipRule.memberOf("c.course_id", ":user") + ORDER)
+				 WHERE""" + (termId == null ? " t.is_current = 1" : " t.term_id = :term") + " AND c.course_id IN ("
+				+ MembershipRule.candidateCourses(":user") + ") AND " + MembershipRule.memberOf("c.course_id", ":user")
+				+ ORDER)
 			.param("user", actor.userId())
+			.param("term", termId)
 			.query(TimetableController::courseSlotRow)
 			.list();
 		Map<Long, List<String>> instructors = instructors(rows.stream().map((r) -> r.slot().courseId()).toList());
@@ -98,7 +115,26 @@ class TimetableController {
 					slot.dayOfWeek(), slot.periodStart(), slot.periodEnd(), slot.startTime(), slot.endTime(), slot.room(),
 					instructors.getOrDefault(slot.courseId(), List.of())));
 		}
-		return ok(new WeekTimetable(now, today, weekStart, weekStart.plusDays(6), slots));
+		return ok(new WeekTimetable(now, today, weekStart, weekStart.plusDays(6), term == null ? null : term.termId(),
+				terms, slots));
+	}
+
+	/** 요청한 사람이 구성원인 과목이 하나라도 있는 학기. 최근 학기가 먼저다({@link CatalogQueries#terms}와 같은 순서). */
+	private List<TermOption> memberTerms(long userId) {
+		return this.jdbc.sql("""
+				SELECT DISTINCT t.term_id, t.term_year, t.term_code, t.term_name, t.is_current, t.start_date, t.end_date,
+				       t.sort_order
+				  FROM courses c JOIN terms t ON t.term_id = c.term_id
+				 WHERE c.course_id IN (""" + MembershipRule.candidateCourses(":user") + ") AND "
+				+ MembershipRule.memberOf("c.course_id", ":user") + """
+
+				 ORDER BY t.sort_order, t.term_year DESC, t.term_code DESC, t.term_id
+				""")
+			.param("user", userId)
+			.query((rs, n) -> new TermOption(rs.getLong("term_id"), rs.getInt("term_year"), rs.getString("term_code"),
+					rs.getString("term_name"), rs.getBoolean("is_current"), rs.getObject("start_date", LocalDate.class),
+					rs.getObject("end_date", LocalDate.class)))
+			.list();
 	}
 
 	/** 한 과목의 수업 시간(EP-0170, 모바일 상세). 과목 구성원만 본다. 역할은 서버가 관계로 정한다. */
@@ -186,9 +222,31 @@ class TimetableController {
 	 * @param today DB 시계의 오늘
 	 * @param weekStart 일요일
 	 * @param weekEnd 토요일
+	 * @param termId 이 응답의 학기. 학기를 고르지 않았고 현재 학기에 내 과목이 없으면 null
+	 * @param terms 고를 수 있는 학기(내가 구성원인 과목이 있는 학기)
 	 */
-	record WeekTimetable(LocalDateTime serverTime, LocalDate today, LocalDate weekStart, LocalDate weekEnd,
-			List<WeekSlot> slots) {
+	record WeekTimetable(LocalDateTime serverTime, LocalDate today, LocalDate weekStart, LocalDate weekEnd, Long termId,
+			List<TermOption> terms, List<WeekSlot> slots) {
+	}
+
+	/**
+	 * @param startDate 학기 시작일. 없으면 null
+	 * @param endDate 학기 종료일. 없으면 null
+	 */
+	record TermOption(long termId, int year, String code, String name, boolean current, LocalDate startDate,
+			LocalDate endDate) {
+
+		/** 학기 기간 안으로 옮긴 날짜. 기간이 없으면 그대로다. */
+		LocalDate clamp(LocalDate day) {
+			if (this.startDate != null && day.isBefore(this.startDate)) {
+				return this.startDate;
+			}
+			if (this.endDate != null && day.isAfter(this.endDate)) {
+				return this.endDate;
+			}
+			return day;
+		}
+
 	}
 
 	record CourseTimetable(long courseId, String name, String code, String section, String role,

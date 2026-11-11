@@ -31,6 +31,7 @@ class NotificationController {
 
 	/**
 	 * 최신순 목록. nextCursor로 다음 쪽을 받는다. 쪽 사이에 알림이 새로 생기거나 지워져도 항목이 겹치거나 빠지지 않는다(CAT-06).
+	 * total은 같은 조건(과목, 유형, 안 읽음)에 맞는 전체 수다.
 	 * @param courseId 이 과목의 알림만
 	 * @param kind 이 유형만(NotificationKind 이름)
 	 * @param unread true면 안 읽은 알림만(EP-0281 UNREAD_YN)

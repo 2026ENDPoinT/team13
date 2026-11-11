@@ -2,6 +2,7 @@ package com.stackcorp.astra.catalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.LocalDateTime;
@@ -46,7 +47,7 @@ class NotificationFlowTests extends NotificationTestSupport {
 		long notice = ApiClient.json(professor.send(post("/api/courses/" + course + "/notices", key, "{\"title\":\"중간고사 안내\"}"))
 			.andExpect(status().isCreated())).get("noticeId").asLong();
 		professor.send(post("/api/courses/" + course + "/notices", key, "{\"title\":\"중간고사 안내\"}"))
-			.andExpect(status().isOk());
+			.andExpect(status().isCreated());
 
 		assertThat(rows(alice, NotificationKind.COURSE_NOTICE, notice)).isEqualTo(1);
 		assertThat(rows(bob, NotificationKind.COURSE_NOTICE, notice)).isEqualTo(1);
@@ -96,20 +97,51 @@ class NotificationFlowTests extends NotificationTestSupport {
 			.andExpect(status().isCreated())).get("assignment");
 		long assignment = created.get("assignmentId").asLong();
 		long activity = created.get("activityId").asLong();
-		assertThat(rows(alice, NotificationKind.ASSIGNMENT_OPENED, activity)).isEqualTo(1);
-		assertThat(rows(alice, NotificationKind.ASSIGNMENT_GRADED, activity)).isZero();
+		// 대상은 화면이 과제를 여는 과제 ID다(ADR-0036).
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_OPENED, assignment)).isEqualTo(1);
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_OPENED, activity)).isZero();
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_GRADED, assignment)).isZero();
+		client(alice).get("/api/me/notifications")
+			.andExpect(jsonPath("$.items[0].targetType").value("ASSIGNMENT"))
+			.andExpect(jsonPath("$.items[0].targetId").value((int) assignment))
+			.andExpect(jsonPath("$.items[0].courseId").value((int) course));
+		client(alice).get("/api/courses/" + course + "/assignments/" + assignment).andExpect(status().isOk());
 
 		String path = "/api/courses/" + course + "/assignments/" + assignment;
 		update(professor, path, base + ",\"scoresReleased\":true,\"revision\":1");
 		update(professor, path, base + ",\"scoresReleased\":true,\"revision\":2");
-		assertThat(rows(alice, NotificationKind.ASSIGNMENT_OPENED, activity)).isEqualTo(1);
-		assertThat(rows(alice, NotificationKind.ASSIGNMENT_GRADED, activity)).isEqualTo(1);
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_OPENED, assignment)).isEqualTo(1);
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_GRADED, assignment)).isEqualTo(1);
 
 		// 점수 공개를 거두면 그 알림이, 과제를 비공개로 돌리면 남은 알림도 사라진다.
 		update(professor, path, base + ",\"scoresReleased\":false,\"revision\":3");
-		assertThat(rows(alice, NotificationKind.ASSIGNMENT_GRADED, activity)).isZero();
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_GRADED, assignment)).isZero();
 		update(professor, path, base + ",\"published\":false,\"revision\":4");
 		assertThat(rows(alice)).isZero();
+	}
+
+	@Test
+	void dedicatedReleaseCommandNotifiesOnceAndWithholdWithdraws() throws Exception {
+		long prof = this.data.user("PROFESSOR");
+		long course = course(prof);
+		long alice = student(course);
+		ApiClient professor = client(prof);
+		long assignment = ApiClient.json(professor.postJson("/api/courses/" + course + "/assignments",
+				"{\"weekNo\":1,\"title\":\"과제 2\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":10}")
+			.andExpect(status().isCreated())).get("assignment").get("assignmentId").asLong();
+		String release = "/api/courses/" + course + "/assignments/" + assignment + "/release";
+
+		professor.send(MockMvcRequestBuilders.put(release).contentType(MediaType.APPLICATION_JSON)
+			.content("{\"released\":true,\"revision\":1}")).andExpect(status().isOk());
+		professor.send(MockMvcRequestBuilders.put(release).contentType(MediaType.APPLICATION_JSON)
+			.content("{\"released\":true,\"revision\":2}")).andExpect(status().isOk());
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_GRADED, assignment)).isEqualTo(1);
+		assertThat(messages(alice)).contains("과제 점수가 공개되었습니다. \"과제 2\"");
+
+		professor.send(MockMvcRequestBuilders.put(release).contentType(MediaType.APPLICATION_JSON)
+			.content("{\"released\":false,\"revision\":3}")).andExpect(status().isOk());
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_GRADED, assignment)).isZero();
+		assertThat(rows(alice, NotificationKind.ASSIGNMENT_OPENED, assignment)).isEqualTo(1);
 	}
 
 	@Test

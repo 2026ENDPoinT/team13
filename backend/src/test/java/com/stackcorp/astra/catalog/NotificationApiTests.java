@@ -58,20 +58,29 @@ class NotificationApiTests extends NotificationTestSupport {
 			.andExpect(jsonPath("$.items[0].targetType").value("ACTIVITY"))
 			.andExpect(jsonPath("$.items[0].courseName").value("Database"))
 			.andExpect(jsonPath("$.items[0].read").value(false))
+			.andExpect(jsonPath("$.total").value(5))
 			.andExpect(jsonPath("$.unreadCount").value(5)));
 		// 쪽 사이에 새 알림이 생겨도 다음 쪽이 겹치거나 빠지지 않는다.
 		publish(NotificationKind.COURSE_NOTICE, course, "새 공지");
 		JsonNode second = ApiClient.json(client.get("/api/me/notifications?size=2&cursor=" + first.get("nextCursor").asString())
-			.andExpect(jsonPath("$.items[*].targetId").value(contains(targets.get(2), targets.get(1)))));
+			.andExpect(jsonPath("$.items[*].targetId").value(contains(targets.get(2), targets.get(1))))
+			.andExpect(jsonPath("$.total").value(6)));
 		client.get("/api/me/notifications?size=2&cursor=" + second.get("nextCursor").asString())
 			.andExpect(jsonPath("$.items[*].targetId").value(contains(targets.get(0))))
 			.andExpect(jsonPath("$.nextCursor").doesNotExist());
 
 		client.get("/api/me/notifications?courseId=" + other)
-			.andExpect(jsonPath("$.items[*].targetId").value(contains((int) material)));
+			.andExpect(jsonPath("$.items[*].targetId").value(contains((int) material)))
+			.andExpect(jsonPath("$.total").value(1));
 		client.get("/api/me/notifications?kind=LECTURE_MATERIAL")
-			.andExpect(jsonPath("$.items[*].targetId").value(contains((int) material)));
-		client(bob).get("/api/me/notifications?courseId=" + other).andExpect(jsonPath("$.items.length()").value(0));
+			.andExpect(jsonPath("$.items[*].targetId").value(contains((int) material)))
+			.andExpect(jsonPath("$.total").value(1));
+		client(bob).get("/api/me/notifications?courseId=" + other)
+			.andExpect(jsonPath("$.items.length()").value(0))
+			.andExpect(jsonPath("$.total").value(0));
+		// 수강을 취소한 과목의 알림은 목록과 같이 수에서도 빠진다.
+		cancelEnrollment(other, alice);
+		client.get("/api/me/notifications").andExpect(jsonPath("$.total").value(5));
 
 		client.get("/api/me/notifications?kind=DROP_TABLE").andExpect(status().isBadRequest());
 		client.get("/api/me/notifications?cursor=not-a-cursor").andExpect(status().isBadRequest());

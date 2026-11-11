@@ -39,6 +39,7 @@
 | [ADR-0029](adr/0029-step-up-and-learning-auth.md) | 민감한 명령의 재인증과 온라인 학습 인증 grant는 로그인 session에 묶은 `session_step_ups` 행이다. 학교 IdP 재인증(`prompt=login`, `auth_time`)이 근거이고, 학습 적립은 grant 만료에서 끊기고 `reauth_required`가 된다 |
 | [ADR-0028](adr/0028-filebox.md) | 개인 파일함은 사용자별 사용량 행을 잠가 차례로 바꾸고, 다시 쓰기는 같은 내용을 참조하는 새 파일로, ZIP은 worker가 저장소에서 저장소로 흘려 만든다 |
 | [ADR-0030](adr/0030-attendance-and-smart-rounds.md) | 출석부는 담당자 판정이 자동 판정보다 강하다. 스마트출석은 서버가 PIN/QR을 직접 검증해 같은 transaction에서 기록하고, 상태는 WebSocket 없이 조회로 알린다 |
+| [ADR-0036](adr/0036-notification-screen-target-and-instructor-roster.md) | 알림의 연결 대상은 화면이 그 대상을 여는 ID로 적는다(과제 알림은 과제 ID). 과목 없는 전체 알림은 사건 하나를 worker가 대상 사용자 묶음으로 나눠 보낸다. 담당자 수강생 명단은 그 과목 담당자에게 화면 항목(이름, 학번, 수강 근거)만 내보낸다 |
 
 ## 2. 부하 가정
 
@@ -283,7 +284,7 @@ flowchart TD
 - 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
 - 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 다른 사용자의 ID를 넣지 않는다(SC-04).
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
-- `Idempotency-Key`를 받는 명령은 권한 판정과 입력 검사 뒤 멱등 원장을 거친다. 같은 key와 같은 요청이면 처음 응답을, 다른 요청이면 409 `idempotency_conflict`를, 같은 key가 처리 중이면 3초까지 기다린 뒤 409 `idempotency_in_progress`를 돌려준다(SC-05). key는 사용자와 연산마다 따로다. 같은 key에 다른 요청이면 어떤 명령도 처음 만든 객체를 돌려주지 않는다. 자체 key를 두는 업로드(multipart, 스트림, 파일함)도 같은 규칙의 요청 지문(용도, 과목, 이름, 크기, 내용 hash, 폴더)을 저장해 비교한다([ADR-0010](adr/0010-upload-acceptance.md) 10번).
+- `Idempotency-Key`를 받는 명령은 권한 판정과 입력 검사 뒤 멱등 원장을 거친다. 같은 key와 같은 요청이면 처음 응답을, 다른 요청이면 409 `idempotency_conflict`를, 같은 key가 처리 중이면 3초까지 기다린 뒤 409 `idempotency_in_progress`를 돌려준다(SC-05). key는 사용자와 연산마다 따로다. 같은 key에 다른 요청이면 어떤 명령도 처음 만든 객체를 돌려주지 않는다. 자체 key를 두는 업로드(multipart, 스트림, 파일함)도 같은 규칙의 요청 지문(용도, 과목, 이름, 크기, 내용 hash, 폴더)을 저장해 비교한다([ADR-0010](adr/0010-upload-acceptance.md) 10번). key가 반드시 있어야 하는 명령(수강신청, 과제·퀴즈 제출, 설문 완료, 쪽지 보내기·답장·전달, 파일함 ZIP, 학습 대화 질문)은 `shared.idempotency.Idempotency.requireKey` 하나로 검사하고, header가 없으면 400 `idempotency_key_required`, 형식(1~100자의 영문, 숫자, `.` `_` `-`)이 틀리면 400 `invalid_request`다.
 - 상태를 바꾸거나 민감한 연산은 감사 기록(`audit_events`)을 남긴다. 명령의 transaction 안이면 함께 commit하고, 밖이면 기록 실패가 요청을 실패시키지 않는다. 본문, 파일 이름, 자유 텍스트는 남기지 않는다(SC-09). 남기지 않는 것은 읽음·확인 표시, 본인만 보는 임시저장, 학습 session의 시작·하트비트·종료(학습 원장이 기록이다), 미리보기의 변환 대기 응답뿐이다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md) 2번).
 - 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록·수정, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. 사용자가 없는 break-glass 로그인만 브라우저 주소 단위로 건다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다. 이 판정은 연결한 쪽 주소로만 한다.
@@ -291,7 +292,8 @@ flowchart TD
 - 쪽지는 `communication`이 판정한다. 받는사람은 서버가 과목 관계로 계산한 범위 안에서만 고르고, 범위 밖 ID가 하나라도 있으면 보내지 않는다. 보관함의 주인이 아니면 존재와 관계없이 404다. 쪽지 조회는 읽음을 남기지 않고 읽음은 POST 명령이다. 발송, 받는사람 검색, 임시저장에 사용자 단위 요청 제한이 있다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)).
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
 - 성적은 `assessment`가 판정한다. 담당자만 성적부를 읽고 쓴다. 학생 성적 API는 session 사용자 본인 것만 돌려주고 대상 학생을 고르는 parameter가 없다. 공개하지 않은 항목의 점수, 의견, 그 점수가 들어간 합계는 속성 자체가 없다(SEC-14). 과제 항목의 이름, 배점, 공개, 점수는 과제 화면에서만, 퀴즈 항목은 퀴즈 화면에서만 바꾸고, 퀴즈 항목의 학생 공개는 `Quiz.release` 하나가 정한다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 학생에게는 보이는 과제·퀴즈의 항목만 나오고 지운 활동의 항목은 누구에게도 없다. 점수 쓰기는 행마다 감사 기록을 남긴다.
-- 수강신청과 청강 신청은 `catalog`가 판정한다. 조회(GET)는 신청을 만들지 않고, 신청 명령은 과정 행을 잠근 뒤 기간(DB 시계), 신청대상, 본인 담당 여부, 중복(활성 행 unique), 정원(조건부 갱신)을 한 transaction에서 다시 본다. 승인·반려는 그 과목의 교수와 비정규 담당자만 하고, 신청과 취소는 본인 것만 한다. 학사 원장 수강은 바꾸지 않는다.
+- 수강신청과 청강 신청은 `catalog`가 판정한다. 조회(GET)는 신청을 만들지 않고, 신청 명령은 과정 행을 잠근 뒤 기간(DB 시계), 신청대상, 본인 담당 여부, 중복(활성 행 unique), 정원(조건부 갱신)을 한 transaction에서 다시 본다. 승인·반려는 그 과목의 교수와 비정규 담당자만 하고, 신청과 취소는 본인 것만 한다. 학사 원장 수강은 바꾸지 않는다. 내 신청 목록은 session 사용자 본인의 신청만 돌려주고 대상 사용자를 고르는 parameter가 없다.
+- 수강생 명단(이름, 학번, 수강 근거)은 그 과목의 담당자(교수, 조교, 비정규 담당자)만 본다. 학생에게는 어떤 경로로도 다른 학생의 학번이 나가지 않는다. 명단에 학과, 학년, 연락처는 없다([ADR-0036](adr/0036-notification-screen-target-and-instructor-roster.md)).
 - 설문은 `assessment`가 판정한다. 강의실 설문은 담당자가 언제나 보고, 학생은 공개됐고 시작한 설문만 본다. 알림마당 설문은 `survey_targets`의 대상(전체, 학생, 교직원, 학년)이 session의 역할과 학년에 맞을 때만 보인다. 익명 설문은 참여 원장과 응답 저장부를 잇지 않는다. 응답 행에 사용자와 정밀 시각이 없고, 응답 쪽 행 ID는 순번이 아닌 임의 값이라 참여 행이나 감사 기록의 순서와 맞출 수 없다. 완료는 공용 멱등 원장 대신 참여 원장의 key로 재전송을 판정하며, 감사 기록에 requestId가 없고 발생 일시는 일 단위다(SC-05-A, SC-09, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 결과 집계는 익명 설문과 학생에게는 마감 뒤 응답자 5명 이상일 때만 나간다. 설문 등록·수정·완료에도 사용자 단위 요청 제한이 있다.
 - 알림은 받는 사람 본인만 본다. 목록, 안 읽은 수, 읽음, 삭제가 같은 조건(본인, 보존 기간 안, 과목 알림이면 지금도 그 과목의 구성원)을 쓰므로 다른 사람의 알림이나 수강을 취소한 과목의 알림은 ID를 알아도 404다. 조회는 읽음을 바꾸지 않고, 읽음은 POST 명령이다(SC-04, CAT-08). 대상(공지, 자료, 과제)을 숨기면 만든 쪽이 같은 transaction에서 알림을 거둔다.
 - 퀴즈는 `assessment`가 판정한다. 문항은 학생이 응시를 시작한 뒤 본인 응시 조회로만 받고, 정답은 담당자 응답에만 있다. 학생 응답의 총점, 정답, 해설, 문항별 점수는 결과 공개 정책을 판정하는 함수 하나(`Quiz.release`)가 허락할 때만 들어가고, 그 전에는 속성 자체가 없다(SEC-14). 응시 재진입은 client가 지시하지 않고 서버가 정한다(SEC-13, [ADR-0021](adr/0021-quiz-attempt-model.md)).
@@ -516,11 +518,12 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `POST /api/courses/{courseId}/assignments` | 담당자 | 과제 활동, 과제 설정, 성적 항목을 한 transaction으로 만든다. 201 |
-| `PUT /api/courses/{courseId}/assignments/{assignmentId}` | 담당자 | 과제 수정. 읽은 `revision`이 다르면 409. 점수 공개(`scoresReleased`)도 여기서 바꾼다 |
+| `PUT /api/courses/{courseId}/assignments/{assignmentId}` | 담당자 | 과제 수정. 읽은 `revision`이 다르면 409 `edit_conflict`. 점수 공개(`scoresReleased`)도 여기서 바꿀 수 있다 |
+| `PUT /api/courses/{courseId}/assignments/{assignmentId}/release` | 담당자 | `{released, revision}`. 과제 전체를 보내지 않고 점수 공개와 거둠만 바꾼다. 읽은 `revision`이 다르면 409 `edit_conflict`, 성공하면 `revision`이 1 오른다. 성적부 공개 명령과 같은 감사 기록(`grade_item.release`·`grade_item.withhold`)과 알림("점수 공개" 보냄·거둠) |
 | `GET /api/courses/{courseId}/assignments` | 과목 구성원 | 과제 목록. 담당자는 제출 수, 학생은 공개됐고 시작한 과제와 본인 상태만 |
 | `GET /api/courses/{courseId}/assignments/{assignmentId}` | 담당자, 볼 수 있는 학생 | 과제, 서버 시각, 제출 구간. 학생에게는 본인 제출 상태, 현재 버전, 임시저장, 공개한 점수만 |
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}/submission/draft` | 수강생 본인 | 임시저장. 제출로 치지 않는다 |
-| `POST /api/courses/{courseId}/assignments/{assignmentId}/submission` | 수강생 본인 | 최종 제출. `Idempotency-Key`와 `expectedVersion` 필수. 새 버전과 첨부를 한 transaction으로 확정하고 receipt를 돌려준다. 201 |
+| `POST /api/courses/{courseId}/assignments/{assignmentId}/submission` | 수강생 본인 | 최종 제출. `Idempotency-Key`와 `expectedVersion` 필수. `uploadIds`(새 업로드)와 `keepFileIds`(현재 버전의 파일 가운데 이어받을 파일)를 합쳐 5개까지. 새 버전과 첨부를 한 transaction으로 확정하고 receipt를 돌려준다. 앞 버전의 첨부는 그대로 남는다. 이어받을 수 없는 파일이나 쓸 수 없는 업로드는 409 `attachment_not_ready`. 201 |
 | `GET /api/courses/{courseId}/assignments/{assignmentId}/submissions` | 담당자 | 최종 제출한 학생, 접수 시각, 지각, 버전 수, 점수 |
 | `GET /api/courses/{courseId}/assignments/{assignmentId}/submissions/{submissionId}` | 담당자 | 제출물의 모든 버전과 첨부, 점수와 의견 |
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}/submissions/{submissionId}/grade` | 담당자 | 점수(0~배점, 소수 둘째 자리)와 의견(일반 텍스트 1000자) |
@@ -572,16 +575,18 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/catalog/filters?term=` | 로그인한 사용자 | 정규·특별 학기 전체와, 고른 학기(없으면 현재 학기)에 과목이 있는 학과 |
+| `GET /api/catalog/filters?term=&division=` | 로그인한 사용자 | 정규·특별 학기 전체, 고른 학기(없으면 현재 학기)에 과목이 있는 학과, 고른 비정규 분류(B\|C\|K, 없으면 모두)에 폐강하지 않은 과정이 있는 과목분류(`categories`: `code`, `name`. 이름이 없으면 null) |
 | `GET /api/catalog/courses?term=&orgSect=&department=&credit=&auditable=&q=&page=&size=` | 로그인한 사용자 | 정규과목 목록. term이 없으면 현재 학기. size 상한 40, 학기·학수번호·분반 순. `q`의 %, _, \는 글자 그대로 찾는다 |
 | `GET /api/catalog/courses/{courseId}` | 로그인한 사용자 | 정규과목 공개 항목과 본인의 역할·청강 신청 상태, 청강 신청 가능 여부와 이유 |
 | `GET /api/catalog/offerings?open=&audience=&division=&category=&lectureType=&q=&page=&size=` | 로그인한 사용자 | 비정규과목 목록. 접수 시작 역순. 접수 상태(UPCOMING\|OPEN\|CLOSED)와 `serverTime`은 같은 DB 시각 |
 | `GET /api/catalog/offerings/{courseId}` | 로그인한 사용자 | 비정규과목 상세와 신청 미리보기(`eligible`, `reasons`, 본인 신청). 표시용이며 신청 때 다시 판정한다 |
 | `POST /api/catalog/offerings/{courseId}/enrollments` | 신청대상이고 담당자가 아닌 사용자 | 수강신청. `Idempotency-Key` 필수. 자동 승인은 좌석을 잡고 ENROLLED, 승인 과정은 PENDING. 201. 409 `not_open_yet`·`application_closed`·`not_target`·`own_course`·`already_applied`·`seat_full` |
-| `POST /api/catalog/courses/{courseId}/audit-requests` | 구성원이 아닌 사용자, 청강 허용 과목 | 청강 신청(사유 일반 텍스트 1000자). REQUESTED. 201. `Idempotency-Key` 지원 |
-| `PUT /api/enrollments/{enrollmentId}/reason` | 청강 신청자 본인 | REQUESTED인 청강 사유 수정. 본문의 `version`이 다르면 409 `version_conflict` |
+| `POST /api/catalog/courses/{courseId}/audit-requests` | 구성원이 아닌 사용자, 청강 허용 과목 | 청강 신청(사유 일반 텍스트 1000자). REQUESTED. 201. `Idempotency-Key` 지원. 청강을 받지 않거나 개설 중이 아니면 409 `audit_not_allowed`, 이미 구성원이면 409 `already_member`, 처리 중인 신청이 있으면 409 `already_applied` |
+| `PUT /api/enrollments/{enrollmentId}/reason` | 청강 신청자 본인 | REQUESTED인 청강 사유 수정. 본문의 `version`이 다르면 409 `version_conflict`, 이미 처리한 신청이면 409 `not_editable` |
 | `POST /api/enrollments/{enrollmentId}/cancel` | 신청자 본인 | 비정규·청강 취소. 행을 지우지 않고 CANCELLED, 좌석은 한 번만 돌려준다. 이미 취소했으면 같은 결과. 학사 원장은 409 `not_cancellable`, 취소 마감 뒤는 409 `cancel_closed` |
+| `GET /api/me/applications?kind=&page=&size=` | 로그인한 사용자(본인 신청만) | 내 신청(EP-0202, EP-0214의 신청 상태). 비정규 수강신청과 청강 신청을 상태와 관계없이(PENDING, REQUESTED, ENROLLED, REJECTED, CANCELLED) 최근 신청 순으로. 항목마다 상태, `version`, 지금 취소할 수 있는지, 신청·처리·취소 일시, 본인 청강 사유, 과목 공개 항목. `kind`는 NONREGULAR\|AUDIT, size 50 이하, `total`. 학사 원장 수강과 폐강 과목의 신청은 없다 |
 | `GET /api/courses/{courseId}/enrollment-requests?page=&size=` | 그 과목의 교수, 비정규 담당자 | 처리를 기다리는 신청(PENDING, REQUESTED)과 신청자 이름·학번, 청강 사유 |
+| `GET /api/courses/{courseId}/students?q=&sort=&order=&page=&size=` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 교수자 수강생 화면(learner_list_form). 수강생의 이름, 학번, 수강 근거(`kind`: REGISTRAR\|NONREGULAR\|AUDIT), 역할(STUDENT\|AUDITOR). `q`는 이름·학번에 든 글자, `sort`는 `name`\|`studentNumber`, `order`는 `asc`\|`desc`, size 100 이하, `total`. 학생과 구성원이 아닌 사람은 404([ADR-0036](adr/0036-notification-screen-target-and-instructor-roster.md)) |
 | `POST /api/courses/{courseId}/enrollments/{enrollmentId}/decision` | 그 과목의 교수, 비정규 담당자 | 승인(APPROVE) 또는 반려(REJECT). 본문의 `version` 비교. 비정규 승인은 이때 좌석을 잡는다. 409 `not_pending`·`version_conflict`·`seat_full`. `Idempotency-Key` 지원 |
 
 수강이 확정(ENROLLED)되는 즉시 그 과목의 강의실 권한(`CourseMemberships`)이 생기고, 취소하면 모든 강의실 경로에서 404가 된다. 학습 기록은 지우지 않는다.
@@ -608,11 +613,13 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 ### 7.15 알림
 
-생성과 예약은 [ADR-0027](adr/0027-notifications-in-producer-transaction.md)에 있다. 지금 알림을 만드는 명령은 공지 작성·수정(게시되면, 예약 공지는 게시 시각에), 자료 등록(공개하면, 시작 일시에), 과제 등록·수정(공개하면 시작 일시에 "새 과제", 점수를 공개하면 "점수 공개")이다. 받는 사람은 알림을 만드는 때의 그 과목 수강생이다. 공지 삭제, 임시 공지로 돌림, 과제 비공개, 점수 공개 취소는 알림을 거둔다. 알림은 60일 뒤 worker가 지운다.
+생성과 예약은 [ADR-0027](adr/0027-notifications-in-producer-transaction.md)에 있다. 지금 알림을 만드는 명령은 공지 작성·수정(게시되면, 예약 공지는 게시 시각에), 자료 등록(공개하면, 시작 일시에), 과제 등록·수정(공개하면 시작 일시에 "새 과제", 점수를 공개하면 "점수 공개"), 과제 점수 공개 명령이다. 받는 사람은 알림을 만드는 때의 그 과목 수강생이다. 공지 삭제, 임시 공지로 돌림, 과제 비공개, 점수 공개 취소는 알림을 거둔다. 알림은 60일 뒤 worker가 지운다. 연결 대상(`targetType`, `targetId`)은 화면이 그 대상을 여는 ID다. `ACTIVITY`는 `/api/courses/{courseId}/activities/{targetId}`(자료), `ASSIGNMENT`는 `/api/courses/{courseId}/assignments/{targetId}`, `ARTICLE`은 그 유형의 게시글(공지, 질문), `MESSAGE`는 받은 쪽지다([ADR-0036](adr/0036-notification-screen-target-and-instructor-roster.md)).
+
+알림마당 전체 공지처럼 과목이 없는 알림은 `catalog.api.Notifications.publishSite(new SiteNotification(NotificationKind.SITE_NOTICE, audience, noticeId, title, visibleAt))`로 만들고 `withdraw(NotificationKind.SITE_NOTICE, noticeId)`로 거둔다. `audience`는 `identity.api.UserAudiences.UserAudience`(`ALL`, `STUDENT`, `STAFF`, 알림마당 설문 대상과 같은 어휘)다. 만든 transaction에는 사건 하나만 남고, worker가 보일 시각 뒤 다음 주기(30초)에 그때의 대상 사용자(활동 중인 계정, break-glass 제외)에게 500명씩 transaction을 나눠 보낸다. 과목 이름이 없는 알림이라 화면은 "[전체공지사항]"으로 표시한다. 다시 부르면 이미 받은 사람에게 다시 만들지 않고, 대상이 바뀌거나 예약으로 미루면 거두고 다시 보낸다([ADR-0036](adr/0036-notification-screen-target-and-instructor-roster.md) 5~7번).
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/notifications?courseId=&kind=&unread=&cursor=&size=` | 로그인한 사용자 | 본인 알림 최신순(기본 10개, 최대 50개). `nextCursor`로 다음 쪽. 항목마다 유형, 문장, 과목, 연결 대상(`targetType`, `targetId`), 읽음. `unreadCount` |
+| `GET /api/me/notifications?courseId=&kind=&unread=&cursor=&size=` | 로그인한 사용자 | 본인 알림 최신순(기본 10개, 최대 50개). `nextCursor`로 다음 쪽. 항목마다 유형, 문장, 과목, 연결 대상(`targetType`, `targetId`), 읽음. `total`(같은 조건에 맞는 전체 수, 커서와 관계없다), `unreadCount`. 쿼리 4개(시계, 쪽, 수, 안 읽은 수) |
 | `GET /api/me/notifications/unread-count` | 로그인한 사용자 | 안 읽은 알림 수(EP-0138). 쿼리 2개(시계, 건수) |
 | `POST /api/me/notifications/{notificationId}/read` | 그 알림을 받은 사람 | 읽음 표시. 몇 번 보내도 같다. 알림과 남은 안 읽은 수를 돌려준다(EP-0280) |
 | `POST /api/me/notifications/read-all` | 로그인한 사용자 | 지금 볼 수 있는 알림 모두 읽음. 바뀐 수를 돌려준다 |
@@ -624,12 +631,12 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/calendar?view=month\|week&date=` | 로그인한 사용자 | 그 달을 채우는 주(일요일 시작) 또는 그 주의 공개 학사일정과 내 과목 활동 마감(EP-0178). 활동은 마감일에 놓고, 수강 과목은 학생에게 열린 활동만, 담당 과목은 모두. 최대 500개, 넘으면 `truncated` |
-| `GET /api/me/calendar/days/{date}` | 로그인한 사용자 | 그날에 걸친 학사일정과 그날 마감인 활동(EP-0177, 화면 16) |
-| `GET /api/me/timetable?date=` | 로그인한 사용자 | 그 날짜가 든 주(일~토)의 현재 학기 수업 시간. 담당·수강 과목만. 주 경계와 오늘은 DB 시계(EP-0171, EP-0172). 오늘 수업(EP-0180)은 `date == today`인 항목 |
+| `GET /api/me/calendar?view=month\|week&date=` | 로그인한 사용자 | 그 달을 채우는 주(일요일 시작) 또는 그 주의 공개 학사일정과 내 과목 활동 마감(EP-0178). 활동은 마감일에 놓고, 수강 과목은 학생에게 열린 활동만, 담당 과목은 모두. 수강 과목의 활동에는 본인이 끝냈는지(`completed`: 과제 최종 제출, 응시 횟수를 다 쓴 퀴즈, 완료한 설문. 할 일 목록과 같은 판정)가 있고 담당 과목의 활동에는 없다. 최대 500개, 넘으면 `truncated` |
+| `GET /api/me/calendar/days/{date}` | 로그인한 사용자 | 그날에 걸친 학사일정과 그날 마감인 활동(EP-0177, 화면 16). 항목 모양은 위와 같다 |
+| `GET /api/me/timetable?date=&termId=` | 로그인한 사용자 | 그 날짜가 든 주(일~토)의 한 학기 수업 시간. 담당·수강 과목만. `termId`가 없으면 현재 학기이고, 있으면 응답의 `terms`(내가 구성원인 과목이 있는 학기) 가운데 하나여야 한다(아니면 400). 학기를 고르면 날짜는 그 학기 기간 안이어야 하고, 날짜가 없으면 오늘을 학기 기간 안으로 옮긴 날이 든 주다. 주 경계와 오늘은 DB 시계(EP-0171, EP-0172). 오늘 수업(EP-0180)은 `date == today`인 항목 |
 | `GET /api/courses/{courseId}/timetable` | 과목 구성원 | 그 과목의 수업 시간, 강의실, 담당자(EP-0170) |
 
-캘린더 쿼리는 과목 수와 관계없이 4개(시계, 과목, 학사일정, 활동)다. 날짜는 오늘에서 400일 안만 받는다. 휴강·보강, 개인 일정, 제출 완료 표시는 스키마에 없어 넣지 않았다.
+캘린더 쿼리는 과목 수, 활동 수와 관계없이 8개 이하(시계, 과목, 학사일정, 활동, 완료 판정 4개 이하)다. 날짜는 오늘에서 400일 안만 받는다. 휴강·보강, 개인 일정은 스키마에 없어 넣지 않았다.
 
 ### 7.17 퀴즈 출제와 응시
 
@@ -781,9 +788,8 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 악성코드 검사 | 검사기(같은 배포의 ClamAV daemon)를 설정해야 동작한다([ADR-0018](adr/0018-malware-scan-clamd.md)). Terraform 배포는 `scan_uploads`(기본 `true`)로 scan 프로필과 `ASTRA_SCAN_REQUIRED=true`를 넣는다([ADR-0020](adr/0020-terraform-layout.md) 7번). Terraform 밖 배포에서 설정하지 않으면 형식만 검사하고 시작 때 경고한다. 검사기가 멈추거나 첫 서명을 받는 동안에는 새 업로드를 첨부할 수 없다. clamd의 크기 상한보다 큰 파일(수 GB 영상 등)은 검사되지 못하고 quarantined에 남는다. 검사를 켠 EC2는 `t3.large`(8 GiB)가 필요하고, 컨테이너 메모리 상한의 합이 이보다 커서 변환과 검사가 한꺼번에 몰리면 메모리가 모자랄 수 있다 | `scan_uploads`를 끄는 배포는 학교 자료를 받지 않는다. clamd 크기 상한을 업로드 상한 이상으로 둔다. quarantined 수와 `scanner unavailable` 로그에 알람을 건다. 3단계 부하 시험에서 host 메모리를 재고 모자라면 instance type을 올린다. 영상 업로드의 검사 범위는 영상 업로드를 만들 때 정한다 |
 | break-glass 잠금 악용 | 계정 이름(`external_ref`)을 아는 사람은 15분에 5번 틀려 break-glass 계정을 계속 잠가 둘 수 있다. 주소 단위 제한(15분에 30번)은 한 주소의 시도만 줄이고, 주소를 바꾸는 공격은 막지 못한다. 학교 IdP 장애와 겹치면 관리자가 로그인하지 못한다 | 계정 이름을 학번 형식이 아닌 추측하기 어려운 값으로 두고 공개 문서에 적지 않는다. `login_events`의 `LOCKED`에 알람을 건다. 필요하면 CloudFront WAF에 이 경로만의 주소 단위 rate rule을 더한다 |
 | 감사 기록 보존과 누락 | `audit_events`의 보존 기간이 정해지지 않아 지우지 않는다(SC-07). transaction 밖의 기록은 저장 실패 때 경고 로그만 남기고 빠진다 | 기관 정책을 받아 보존 기간을 정한다. 빠진 수를 9절 지표에 넣는다 |
-| 멱등 key와 목록 query 규칙 | `Idempotency-Key`는 선택이라 header를 보내지 않는 client는 재전송으로 자료를 두 번 만들 수 있다. SC-09의 page size 상한, cursor, 정렬 key allowlist는 아직 없다 | 수강신청, 제출을 만들 때 key 필수 여부를 정하고 frontend가 header를 보낸다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 query 규칙을 만든다 |
+| 멱등 key와 목록 query 규칙 | `Idempotency-Key`는 필수인 명령(5절, 없으면 400 `idempotency_key_required`) 밖에서는 선택이라 header를 보내지 않는 client는 재전송으로 자료를 두 번 만들 수 있다. SC-09의 page size 상한, cursor, 정렬 key allowlist는 목록마다 따로 있고 `shared`의 공통 규칙은 아직 없다 | frontend가 만드는 명령에도 header를 보낸다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 query 규칙을 만든다 |
 | 할 일의 완료 판정 | 과제, 퀴즈, 설문은 본인이 끝내면 빠진다(6절). 영상(다 본 영상)과 자료는 완료를 보지 않아 마감까지 남는다. 횟수 제한이 없는 퀴즈와 오프라인 시험도 마감까지 남는다(EP-0144의 "미완료"는 원본에서도 기준 미확인). 마감 전 활동이 500개를 넘으면 마감이 늦은 쪽은 보지 않는다(`truncated`) | `learning`의 진도 완료(출석 인정)를 공개 API로 내어 `home`이 같은 방식으로 뺀다. 횟수 제한이 없는 퀴즈를 언제 끝난 것으로 볼지 학교 기준을 받는다 |
-| 과제 제출 첨부 이어받기 | 다시 제출할 때 이전 버전의 파일을 다시 올려야 한다(ADR-0015). SC-05-B의 `keep` 계약이 없다 | `files.api.Attachments`에 기존 첨부 참조를 더할 때 제출 요청에 `keep`을 받는다 |
 | 과제 제출의 멱등 receipt | 공용 원장 없이 제출 버전 행과 `(submitted_by_user_id, idempotency_key)` 유일 제약으로 처리한다(ADR-0015) | `shared`에 원장을 만들면 receipt 조회를 옮기고 두 컬럼을 정리한다 |
 | 익명 설문의 운영자 재식별 | 저장된 행(행 ID, 시각, requestId)으로는 참여와 응답을 맞출 수 없다(V34). 참여와 응답을 한 transaction으로 쓰므로 binlog·redo log·general log나 data file을 보는 운영자(물리 접근, 물리 백업)는 응답자를 맞출 수 있고, 같은 날 완료한 사람이 한 명뿐이면 일 단위 시각으로도 맞춰진다. '익명'은 교수자에게 비식별인 범위다(SC-05-A, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 재응답과 분기 문항은 없다 | 강한 익명성이나 재응답이 필요하면 응답을 다른 저장소와 권한으로 옮기고 가명 token과 key 권한을 함께 설계해 결정을 받는다 |
 | 기동 시간과 AOT cache | 3.1절의 JDK AOT cache를 이미지에 넣지 않았다. training run에 DB가 필요해 이미지 빌드 안에서 만들 수 없다 | 배포 중 중단 시간이 문제가 되면 배포 단계에서 training run을 돌려 cache를 만드는 방식을 정한다 |

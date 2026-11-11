@@ -111,6 +111,20 @@ class CatalogQueries {
 			.list();
 	}
 
+	/**
+	 * 폐강하지 않은 비정규 과정이 하나라도 있는 과목분류. 과목분류 표시명은 과정마다 저장한 이름 가운데 하나이고 없으면 null이다.
+	 * @param division 비정규 분류 B|C|K. 없으면 모든 분류
+	 */
+	List<Category> categories(String division) {
+		return this.jdbc.sql("SELECT o.category_code, MAX(o.category_name) AS label"
+				+ " FROM non_regular_offerings o JOIN courses c ON c.course_id = o.course_id" + OFFERING_SCOPE
+				+ " AND o.category_code IS NOT NULL" + (division == null ? "" : " AND o.nonregular_category = :division")
+				+ " GROUP BY o.category_code ORDER BY label IS NULL, label, o.category_code")
+			.param("division", division)
+			.query((rs, n) -> new Category(rs.getString(1), rs.getString(2)))
+			.list();
+	}
+
 	Slice<CourseRow> regularCourses(RegularFilter filter, int offset, int size) {
 		if (filter.termIds().isEmpty()) {
 			return new Slice<>(List.of(), 0);
@@ -315,6 +329,12 @@ class CatalogQueries {
 	}
 
 	record Department(String code, String name) {
+	}
+
+	/**
+	 * @param name 과목분류 표시명(SCH_CATEGORY 옵션 문구). 저장하지 않았으면 null
+	 */
+	record Category(String code, String name) {
 	}
 
 	/**
