@@ -43,23 +43,29 @@ class UploadRecords {
 			.optional();
 	}
 
-	/** 같은 내용의 blob이 있으면 참조 수만 올린다. 지웠던 blob이면 다시 쓴다. */
-	Blob referenceBlob(String sha256, long size, String mime, String storageKey) {
+	/**
+	 * 같은 내용의 blob이 있으면 참조 수만 올린다. 지웠던 blob이면 다시 쓴다.
+	 *
+	 * @param initialState 새 blob의 blob_state. 검사기가 있으면 quarantined다(files.scan.ScanMode)
+	 */
+	Blob referenceBlob(String sha256, long size, String mime, String storageKey, String initialState) {
 		try {
 			GeneratedKeyHolder key = new GeneratedKeyHolder();
 			this.jdbc.sql("""
 					INSERT INTO file_blobs (content_sha256, size_bytes, detected_mime_type, storage_key, blob_state, reference_count)
-					VALUES (:sha, :size, :mime, :key, 'clean', 1)
+					VALUES (:sha, :size, :mime, :key, :state, 1)
 					""")
 				.param("sha", sha256)
 				.param("size", size)
 				.param("mime", mime)
 				.param("key", storageKey)
+				.param("state", initialState)
 				.update(key, "file_blob_id");
-			return new Blob(key.getKey().longValue(), "clean", storageKey, false);
+			return new Blob(key.getKey().longValue(), initialState, storageKey, false);
 		}
 		catch (DuplicateKeyException ex) {
-			Blob existing = blob(sha256).orElseThrow(() -> ex);
+			// 검사 worker가 같은 행을 바꾸는 중일 수 있다. 잠가 읽어 확정된 검사 상태를 본다(ADR-0018).
+			Blob existing = lockedBlob(sha256).orElseThrow(() -> ex);
 			if (existing.purged()) {
 				this.jdbc.sql("""
 						UPDATE file_blobs SET reference_count = 1, purged_at = NULL, storage_key = :key
@@ -73,6 +79,16 @@ class UploadRecords {
 			}
 			return existing;
 		}
+	}
+
+	private Optional<Blob> lockedBlob(String sha256) {
+		return this.jdbc.sql("""
+				SELECT file_blob_id, blob_state, storage_key, purged_at IS NOT NULL FROM file_blobs
+				 WHERE content_sha256 = :sha FOR UPDATE
+				""")
+			.param("sha", sha256)
+			.query((rs, n) -> new Blob(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getBoolean(4)))
+			.optional();
 	}
 
 	long insertFile(long blobId, String name, String extension, String mime, long size, long uploader, long courseId,

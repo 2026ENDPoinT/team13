@@ -65,6 +65,11 @@ public class ObjectStore {
 		}
 	}
 
+	/** 객체 하나를 지운다. 없는 key여도 성공한다. */
+	public void delete(Bucket bucket, String key) {
+		this.s3.deleteObject((b) -> b.bucket(name(bucket)).key(key));
+	}
+
 	/** prefix 아래 객체를 모두 지운다. */
 	public void deletePrefix(Bucket bucket, String prefix) {
 		String name = name(bucket);
