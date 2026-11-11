@@ -340,10 +340,10 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 ## 10. 빌드와 배포
 
-- 인프라는 Terraform으로 관리한다.
+- 인프라는 Terraform으로 관리한다. 코드는 [infra/terraform/](../infra/terraform/)에 있고, 만드는 것과 처음 만드는 순서는 [infra/README.md](../infra/README.md)에 있다.
 - GitHub Actions가 OIDC로 AWS role을 받는다. CI에 AWS access key를 저장하지 않는다.
-- 이미지를 ECR에 push하고 SSM Run Command로 EC2의 compose를 갱신한다. 3.2절 전환 뒤에는 ECS rolling 배포와 circuit breaker를 쓴다.
-- 비밀값은 Secrets Manager에 두고 EC2 instance role로 읽는다.
+- 이미지를 ECR에 push하고 SSM Run Command로 EC2의 compose를 갱신한다. CI role이 실행할 수 있는 명령은 image tag 하나를 받는 배포 문서뿐이다([ADR-0020](adr/0020-terraform-layout.md)). 3.2절 전환 뒤에는 ECS rolling 배포와 circuit breaker를 쓴다.
+- 비밀값은 Secrets Manager에 두고 EC2 instance role로 읽는다. Terraform은 secret container만 만들고 값은 운영자가 넣는다.
 
 ## 11. 단계 계획
 
@@ -358,12 +358,15 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md](../db/README.md) 5절 절차로 추가한다. 0단계는 스키마를 바꾸지 않는다.
 
+0~1단계 인프라와 2단계의 S3 `content`·`delivery`, KMS key는 `infra/terraform/envs/pre-adoption`에 코드로 있다. 아직 어떤 계정에도 apply하지 않았다. MediaConvert, EventBridge·SQS는 2단계 앱 코드와 함께 만든다.
+
 ## 12. 미결 사항과 위험
 
 | 항목 | 영향 | 다음 행동 |
 |---|---|---|
 | 학교 IdP 프로토콜(OIDC, SAML, CAS) | `identity`의 IdP adapter 구현. [db/README.md](../db/README.md) 7절 1번 | 1단계 전에 학교 정보화본부에 확인한다 |
 | frontend 스택 | 6절 정적 shell의 구현 방식 | Vite SPA와 Next.js static export 모두 수용한다. SSR이 필요해지면 ADR-0005를 다시 연다 |
+| 인프라 코드 미적용 | Terraform을 apply하지 않아 fck-nat HA, VPC origin security group 조회, WAF 오탐, 배포 문서를 실제 계정에서 확인하지 못했다 | 계정을 만든 뒤 [infra/README.md](../infra/README.md) 4절 순서로 apply하고 8절 항목을 확인한다 |
 | 공공 클라우드 보안 인증 | 학교 공식 시스템으로 개인정보를 다루면 CSAP 중 등급이 요구될 수 있다. AWS는 하 등급만 보유하고 있다. 2027년 7월 국정원 단일 검증체계로 바뀔 예정이다 | 도입 협의 때 학교에 확인한다. 앱은 S3 API, 컨테이너, MySQL 표준만 쓰고 AWS 전용 기능은 Terraform에만 둔다 |
 | 영상 전송 비용 | 2절 가정으로 월 수 TB | 학교 실제 시청량으로 다시 계산한다. 기본 화질 720p |
 | 배포 중 API 중단 | 3.1절 | 사용량이 적은 시간에 배포한다. 불만이 생기면 3.2절 전환을 앞당긴다 |
