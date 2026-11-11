@@ -70,7 +70,7 @@ git commit -m "Update reference to <변경 요약>"
 - 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
 - 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
-- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL, 97 테이블)다. 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
+- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 112 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
 
 ## 빌드와 실행
 

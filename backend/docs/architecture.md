@@ -164,25 +164,72 @@ flowchart LR
 
 ### 4.4 C4 보기
 
-container 수준이다. 기밀 본문이 지나는 경로만 그렸다.
+container 수준이다. 학교 도입 구성(3.2절)이고, 상자 하나가 따로 실행하는 process나 저장소다.
 
 ```mermaid
 flowchart LR
-  U[교수자 · 학생 브라우저] --> CF["CloudFront + WAF"]
-  CF -->|"/* 정적 shell"| FE[("S3 frontend")]
-  CF -->|"/vod/* · /doc/* signed cookie"| DL[("S3 delivery<br/>HLS · 쪽 이미지")]
-  CF -->|"/api/* no-store"| API["api"]
-  API -->|"상태 · 메타데이터"| DB[("MySQL")]
-  API -->|"요약 · 영상 key 읽기"| CT[("S3 content<br/>원본 · 요약 · 영상 key")]
-  WK["worker"] --> DB
+  U["교수자 · 학생 브라우저"]
+  IDP["학교 IdP<br/>OpenID Connect"]
+  LLM["LLM 제공자"]
+  subgraph ASTRA
+    CF["CloudFront + WAF"]
+    FE[("S3 frontend<br/>정적 shell")]
+    DL[("S3 delivery<br/>HLS · 쪽 이미지")]
+    CT[("S3 content<br/>원본 · 파생물 · 영상 key")]
+    API["api"]
+    WK["worker"]
+    DB[("MySQL")]
+    CV["converter<br/>network · credential 없음"]
+    TC["transcoder<br/>network · credential 없음"]
+    AV["clamd"]
+  end
+  U --> CF
+  U -.->|"로그인 redirect"| IDP
+  CF -->|"/* 정적 shell"| FE
+  CF -->|"/vod/* · /doc/* signed cookie"| DL
+  CF -->|"/api/* no-store"| API
+  API -->|"code 교환 · 서명 key"| IDP
+  API -->|"상태 · 메타데이터 · session"| DB
+  API -->|"업로드 · 내려받기 · 요약 · 영상 key"| CT
+  WK --> DB
   WK --> CT
-  WK --> DL
-  WK -->|"PDF ↔ 쪽 이미지 · 텍스트"| CV["converter<br/>network · credential 없음"]
-  WK -->|"쪽 이미지 · 텍스트"| LLM["LLM 제공자"]
-  WK -->|"원본 · 영상 key"| MC["MediaConvert"] --> DL
+  WK -->|"HLS · 쪽 이미지 게시"| DL
+  WK -->|"문서 → 쪽 이미지 · 텍스트"| CV
+  WK -->|"영상 → HLS segment"| TC
+  WK -->|"업로드 검사"| AV
+  WK -->|"교수자가 동의한 자료의 쪽 이미지 · 텍스트, 질문"| LLM
 ```
 
-component 수준이다. 요약에 관여하는 모듈만 그렸다. 점선은 port 구현이다.
+- api와 worker는 같은 이미지의 다른 역할이다(4.3절). converter, transcoder, clamd는 worker만 부르고, 셋 다 저장소와 DB에 닿지 않는다([ADR-0006](adr/0006-summary-module.md), [ADR-0016](adr/0016-video-upload-and-transcoder.md), [ADR-0018](adr/0018-malware-scan-clamd.md), [ADR-0019](adr/0019-container-image-and-single-host-compose.md)).
+- 브라우저에서 들어오는 길은 CloudFront 하나다. 밖으로 나가는 길은 api의 학교 IdP 호출([ADR-0017](adr/0017-school-sso-oidc.md))과 worker의 LLM 호출([ADR-0032](adr/0032-llm-consent-and-study-chat.md)) 둘이고, 둘 다 `integration`의 adapter가 설정한 host로만 보낸다.
+- CDN이 없는 환경에서는 api가 `/vod/*`와 `/doc/*`도 응답한다(7.5절, [ADR-0009](adr/0009-origin-delivery-without-cdn.md)). MediaConvert는 transcoder와 같은 port의 다른 구현으로 남겨 두었고 지금 구성에는 없다(ADR-0016).
+
+component 수준이다. `api`와 `worker` 안의 모듈과 의존 방향이다(4.1절). 실선은 공개 API 호출이고 점선은 port 구현이다. `shared`는 모든 모듈이 쓰므로 선을 그리지 않았다.
+
+```mermaid
+flowchart TD
+  HOME["home<br/>메인 화면 · 할 일 · 캘린더"]
+  ASM["assessment<br/>과제 · 퀴즈 · 설문 · 성적"]
+  COM["communication<br/>공지 · 게시판 · 쪽지"]
+  LRN["learning<br/>학습활동 · 학습 session · 출석"]
+  SUM["summary<br/>쪽별 요약 · LLM 동의 · 학습 대화"]
+  FIL["files<br/>업로드 · 첨부 · 파일함 · rendition · 영상"]
+  CAT["catalog<br/>과목 · 수강 · 시간표 · 알림"]
+  IDN["identity<br/>사용자 · session · 재인증"]
+  INT["integration<br/>OIDC · LLM · converter · transcoder · clamd · CloudFront 서명"]
+  HOME --> ASM & COM & LRN & CAT
+  ASM --> LRN & FIL & CAT & IDN
+  COM --> LRN & FIL & CAT & IDN
+  LRN --> FIL & CAT & IDN
+  SUM --> FIL & IDN
+  FIL --> CAT & IDN
+  CAT --> IDN
+  INT -.->|"ExternalIdentityProvider"| IDN
+  INT -.->|"PageConverter · VideoTranscoder · ContentScanner · DeliverySigner"| FIL
+  INT -.->|"LlmClient · CourseStaff"| SUM
+```
+
+한 모듈 안쪽의 예로 요약에 관여하는 component만 그렸다. 점선은 port 구현이다.
 
 ```mermaid
 flowchart TD
