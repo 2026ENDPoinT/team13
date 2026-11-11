@@ -132,13 +132,7 @@ class LearningController {
 			.orElseThrow(ApiException::notFound);
 		List<AttachedFile> files = row.attachmentGroupId() == null ? List.of()
 				: files(this.attachments.list(List.of(row.attachmentGroupId())), row);
-		List<LectureItem> items = this.jdbc.sql("""
-				SELECT online_lecture_item_id, title, duration_sec FROM online_lecture_items
-				 WHERE activity_id = :activity ORDER BY link_seq
-				""")
-			.param("activity", activityId)
-			.query((rs, n) -> new LectureItem(rs.getLong(1), rs.getString(2), rs.getObject(3, Integer.class)))
-			.list();
+		List<LectureItem> items = lectureItems(this.jdbc, activityId);
 		return ok(new ActivityView(row.activity().activityId(), row.type(), row.weekNo(), row.title(), row.description(),
 				row.activity().openAt(), row.closeAt(), row.activity().published(), files, items));
 	}
@@ -245,7 +239,32 @@ class LearningController {
 
 	}
 
-	record LectureItem(long itemId, String title, Integer durationSec) {
+	/** 활동의 영상 콘텐츠. 영상 처리 상태만 내보내고 실패 사유는 내보내지 않는다. */
+	static List<LectureItem> lectureItems(JdbcClient jdbc, long activityId) {
+		return jdbc.sql("""
+				SELECT online_lecture_item_id, title, duration_sec, required_sec, content_path, video_state
+				  FROM online_lecture_items WHERE activity_id = :activity ORDER BY link_seq
+				""")
+			.param("activity", activityId)
+			.query((rs, n) -> new LectureItem(rs.getLong(1), rs.getString(2), rs.getObject(3, Integer.class),
+					rs.getObject(4, Integer.class), LectureItem.state(rs.getString(5), rs.getString(6))))
+			.list();
+	}
+
+	/**
+	 * @param requiredSec 출석인정 필요 시간(초)
+	 * @param state processing(변환 중) | ready(재생 가능) | failed(재생할 수 없음)
+	 */
+	record LectureItem(long itemId, String title, Integer durationSec, Integer requiredSec, String state) {
+
+		// 재생 가능 여부는 content_path가 정한다. 재생 허가와 key API가 같은 값을 본다.
+		static String state(String contentPath, String videoState) {
+			if (contentPath != null) {
+				return "ready";
+			}
+			return "processing".equals(videoState) ? "processing" : "failed";
+		}
+
 	}
 
 	record ActivityView(long activityId, String type, int weekNo, String title, String description,

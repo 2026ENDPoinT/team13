@@ -37,7 +37,7 @@ import tools.jackson.databind.JsonNode;
  * 로컬 실행 구성(TestStackBackendApplication과 같은 설정): 개발용 로그인, 표본 데이터, CDN 없이 앱이 응답하는 전달 경로(ADR-0009).
  */
 @SpringBootTest(properties = { "astra.summary.poll-interval=1h", "astra.summary.lease-renewal=1h",
-		"astra.summary.lease=2h" })
+		"astra.summary.lease=2h", "astra.transcoder.worker.poll-interval=1h" })
 @AutoConfigureMockMvc
 @ActiveProfiles({ "local", "worker" })
 @Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class, DevLoginConfiguration.class, LocalSeed.class })

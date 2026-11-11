@@ -26,6 +26,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
+      # 영상 변환 테스트가 ffmpeg로 시험 영상을 만들고, 같은 process의 transcoder가 ffmpeg·ffprobe를 실행한다(ADR-0016).
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       # 테스트가 Testcontainers로 MySQL 8.4를 띄우고 Flyway 마이그레이션을 적용한다.
       - name: Build
         run: ./gradlew build

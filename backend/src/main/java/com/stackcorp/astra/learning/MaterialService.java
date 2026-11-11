@@ -75,7 +75,8 @@ class MaterialService {
 		return activityId;
 	}
 
-	private long week(long courseId, int weekNo) {
+	/** 과목의 주차 ID. 없으면 만든다. 영상 활동 등록(LectureService)도 같은 방법으로 주차를 정한다. */
+	long week(long courseId, int weekNo) {
 		Optional<Long> existing = findWeek(courseId, weekNo, "");
 		if (existing.isPresent()) {
 			return existing.get();

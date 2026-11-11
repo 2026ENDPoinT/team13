@@ -10,7 +10,10 @@ import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
  */
 enum UploadPurpose {
 
-	LECTURE_MATERIAL("lecture_material", CourseRole.INSTRUCTOR);
+	LECTURE_MATERIAL("lecture_material", CourseRole.INSTRUCTOR),
+
+	/** 강의 영상. 본문을 흘려 보내는 업로드(POST /api/uploads/stream)로만 받는다(ADR-0016). */
+	LECTURE_VIDEO("lecture_video", CourseRole.INSTRUCTOR);
 
 	private final String code;
 
@@ -27,6 +30,11 @@ enum UploadPurpose {
 
 	CourseRole requiredRole() {
 		return this.requiredRole;
+	}
+
+	/** multipart가 아니라 본문 스트림으로 받는 용도인지. */
+	boolean streamed() {
+		return this == LECTURE_VIDEO;
 	}
 
 	static Optional<UploadPurpose> of(String code) {

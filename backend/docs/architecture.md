@@ -23,6 +23,7 @@
 | [ADR-0008](adr/0008-llm-port-deepseek.md) | LLM 호출은 port 뒤에 두고 DeepSeek로 시작한다. 데이터 처리 정책은 미결이다 |
 | [ADR-0009](adr/0009-origin-delivery-without-cdn.md) | CDN이 없는 환경에서는 앱이 같은 cookie 흐름으로 `/doc`, `/vod`를 직접 응답한다 |
 | [ADR-0010](adr/0010-upload-acceptance.md) | 업로드는 용도, 권한, 이름, 확장자, 크기, 내용 형식을 검사해 받는다. 악성코드 검사는 port로 남긴다 |
+| [ADR-0016](adr/0016-video-upload-and-transcoder.md) | 강의 영상은 본문 스트림으로 받고, 격리한 transcoder가 HLS로 나눈 뒤 files가 AES-128로 암호화해 게시한다. MediaConvert는 port로 남긴다 |
 
 ## 2. 부하 가정
 
@@ -63,6 +64,7 @@ flowchart LR
 - CloudFront [VPC origin](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html)이 private subnet의 EC2에 직접 연결한다. EC2와 RDS에는 public IP가 없다.
 - api와 worker는 같은 이미지를 프로필만 바꿔 같은 EC2에서 실행한다.
 - converter는 문서 변환만 하는 별도 container다. 앱과 같은 jar를 converter main(`com.stackcorp.converter.ConverterServer`)으로 실행한다. worker만 호출하고, 외부 network와 AWS credential을 주지 않는다(SC-08).
+- transcoder는 영상을 HLS segment로 나누기만 하는 별도 container다. 같은 jar를 transcoder main(`com.stackcorp.transcoder.TranscoderServer`)으로 실행하고 ffmpeg를 쓴다. converter와 같이 worker만 호출하고 외부 network와 AWS credential을 주지 않는다. AWS 계정을 쓰게 되면 MediaConvert로 옮길 수 있게 port를 두었다([ADR-0016](adr/0016-video-upload-and-transcoder.md)).
 - bucket은 `frontend`, `content`, `delivery` 셋이다. 용도와 암호화는 [ADR-0007](adr/0007-confidential-content-placement.md)에 있다.
 - 배포 중 JVM 기동 시간 동안 API가 끊긴다. 배포는 사용량이 적은 시간에 한다. 기동은 JDK AOT cache(JEP 483, 514)로, warm-up은 JEP 515로 줄인다.
 
@@ -85,11 +87,12 @@ flowchart LR
 | CloudFront | 인터넷 443. AWS WAF managed rule(Core, SQL database, Known bad inputs) | origin만 |
 | EC2(api, worker) | `CloudFront-VPCOrigins-Service-SG`에서 오는 앱 포트만 | RDS 3306, S3(gateway endpoint), 그 밖의 모든 외부·AWS API는 fck-nat 경유 |
 | converter | 같은 host의 worker에서 오는 요청만 | 없음 |
+| transcoder | 같은 host의 worker에서 오는 요청만 | 없음 |
 | RDS | EC2 security group의 3306만 | 없음 |
 | fck-nat | private subnet에서 오는 트래픽만 | 인터넷 |
 
 - WAF에 IP 기준 rate limit을 걸지 않는다. 교내 사용자가 NAT 하나로 나오면 학교 전체가 막힌다(SC-09). 요청 제한은 앱에서 사용자, 과목, 연산 단위로 건다.
-- Core rule set의 `SizeRestrictions_BODY`는 8 KB를 넘는 본문을 막는다. 업로드(`POST /api/uploads`), 글 작성, 제출이 걸리므로 이 규칙은 Count로 바꾸고, 본문 크기 상한은 경로별 WAF 규칙과 앱의 413 응답으로 둔다.
+- Core rule set의 `SizeRestrictions_BODY`는 8 KB를 넘는 본문을 막는다. 업로드(`POST /api/uploads`, `POST /api/uploads/stream`), 글 작성, 제출이 걸리므로 이 규칙은 Count로 바꾸고, 본문 크기 상한은 경로별 WAF 규칙과 앱의 413 응답으로 둔다. 영상 업로드 경로의 상한은 `lecture_video` 정책(2 GiB)에 맞춘다.
 - SSH 포트를 열지 않는다. 운영 접근은 SSM Session Manager로 한다.
 - `/actuator`는 CloudFront 경로에 넣지 않는다. 내부에서만 접근한다.
 - 외부 호출은 allowlist한 scheme, host, port만 허용하고 redirect, timeout, 응답 크기를 제한한다(SC-08).
@@ -134,7 +137,7 @@ flowchart LR
 | 프로세스 | 프로필 | 하는 일 |
 |---|---|---|
 | api | `api` | HTTP API, WebSocket, api에서 발행한 이벤트의 listener(예: 업로드 확정 뒤 MediaConvert 작업 지시) |
-| worker | `worker` | 미완료 이벤트 재전송, MediaConvert 완료 처리(SQS), 업로드 GC, ZIP job, 문서 rendition, 요약 작업, 학습 session lease 만료 처리, 학사 동기화 |
+| worker | `worker` | 미완료 이벤트 재전송, 영상 변환 작업(transcoder 호출, 암호화, 게시), 끝나지 않은 multipart upload 정리, 업로드 GC, ZIP job, 문서 rendition, 요약 작업, 학습 session lease 만료 처리, 학사 동기화 |
 
 - session은 DB(`user_sessions`)에 둔다. 서버 메모리에 사용자 상태를 두지 않는다.
 - 파일은 S3에만 쓴다. 컨테이너 로컬 디스크는 임시 작업 공간으로만 쓰고 요청 사이에 남기지 않는다.
@@ -229,15 +232,23 @@ flowchart TD
 
 ### 7.1 영상
 
-1. 업로드 원본은 `content` bucket에 `quarantined` 상태로 들어간다(SC-08, `files` 모듈).
-2. 검사가 끝나면 업로드 확정 이벤트의 listener가 영상 asset의 AES-128 key를 만들어 `content` bucket에 저장하고, MediaConvert에 HLS 멀티비트레이트 작업을 지시한다. 기본 화질은 720p다.
-3. 완료 이벤트는 EventBridge에서 SQS를 거쳐 worker가 받는다. 암호화된 결과는 `delivery` bucket의 `vod/`에 저장된다.
+1. 담당자가 `POST /api/uploads/stream`으로 원본을 올린다. 권한과 선언한 크기를 본문을 읽기 전에 판정하고, 컨테이너 signature를 확인한 뒤 본문을 `content` bucket으로 흘려 보낸다(SC-08, [ADR-0016](adr/0016-video-upload-and-transcoder.md)).
+2. 영상 활동을 등록하면 콘텐츠마다 업로드를 첨부로 확정하고, 같은 transaction에서 영상 asset과 변환 작업(`video_transcode_jobs`)을 만든다. 콘텐츠 상태는 `processing`이다.
+3. worker가 작업을 잡아 원본을 transcoder로 보낸다. transcoder는 720p 이하 한 화질의 MPEG-TS segment를 돌려준다. worker가 asset의 AES-128 key(`content` bucket의 `vod-keys/`)로 segment마다 새 IV로 암호화해 `delivery` bucket의 `vod/{assetKey}/`에 쓰고, 마지막에 재생 목록을 쓴다. 게시를 마치면 콘텐츠의 `content_path`, `duration_sec`을 채우고 상태가 `ready`가 된다. 일시 오류는 3번까지 대기 시간을 늘려 다시 시도하고, 그래도 안 되거나 입력이 잘못됐으면 `failed`다. 실패하면 `vod/`에 아무것도 남기지 않는다. 원본 파일이 삭제되면 작업을 취소하고 재생 경로와 HLS, key를 거둔다. MediaConvert로 옮길 때 필요한 것은 ADR-0016 11번에 있다.
 4. CloudFront는 OAC로 bucket을 읽는다. `delivery` bucket과 `frontend` bucket 모두 CloudFront 외의 공개 접근을 막는다.
 5. 재생할 때 player가 `POST /api/courses/{courseId}/lecture-items/{itemId}/playback`을 부른다. 백엔드는 권한을 판정한 뒤 그 강의 경로에만 유효한 짧은 TTL의 signed cookie를 발급하고 manifest 경로를 돌려준다. player는 만료 전에 다시 부르고, 권한이 사라지면 다시 발급되지 않는다. 학습 session과 하트비트를 만들면 하트비트 응답에서 다시 발급하도록 옮긴다. CDN URL은 권한을 대신하지 않는다.
 6. player는 manifest의 key URI인 `GET /api/courses/{courseId}/lecture-items/{itemId}/hls-key`에서 key를 받는다. 이 API는 요청마다 권한을 판정하고 `no-store`로 응답한다. key는 영상 asset마다 16 byte이고 `content` bucket의 `vod-keys/`에 있다.
 7. 출석 인정은 서버 하트비트 원장으로 한다. 재생 위치는 이어보기 힌트로만 쓴다(SC-06, CHG-05).
 
 HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화면 녹화는 막지 못한다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `POST /api/uploads/stream?courseId&purpose=lecture_video&name` | 그 과목의 담당자 | 본문(`application/octet-stream`, `Content-Length` 필수)을 그대로 받아 저장한다. 201. 응답과 이후 흐름은 `POST /api/uploads`와 같다 |
+| `POST /api/courses/{courseId}/lectures` | 담당자 | 영상 활동(`lecture_weeks`)과 콘텐츠를 만들고 영상 업로드를 첨부로 확정하고 변환을 예약한다. 한 transaction |
+| `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | `lectureItems`에 콘텐츠별 `state`(`processing`·`ready`·`failed`), `durationSec`, `requiredSec`. 실패 사유는 내보내지 않는다 |
+| `POST /api/courses/{courseId}/lecture-items/{itemId}/playback` | 그 활동을 볼 수 있는 사람 | `ready`인 콘텐츠만. 그 영상 경로의 짧은 cookie와 manifest 경로 |
+| `GET /api/courses/{courseId}/lecture-items/{itemId}/hls-key` | 그 활동을 볼 수 있는 사람 | `ready`인 콘텐츠만. 16 byte key, `no-store` |
 
 ### 7.2 문서 쪽 이미지와 요약
 
@@ -341,4 +352,7 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 외부 LLM 데이터 처리 정책 | 제공자의 보존 기간, 학습 이용 여부, 국외 이전, 교수자 동의 절차가 정해지지 않았다([ADR-0008](adr/0008-llm-port-deepseek.md)) | 학교 자료로 요약을 생성하기 전에 정한다 |
 | 파일 단위 요약 | 자료 상세 화면의 "ASTRA 서포터즈 요약"(`ai_file_summaries`)을 쪽별 요약의 story로 채울지 정하지 않았다 | `summary` 구현 때 정한다 |
 | 악성코드 검사 | 업로드는 형식만 검사한다([ADR-0010](adr/0010-upload-acceptance.md)). 형식이 맞는 문서 안의 악성 내용은 거르지 못한다 | 학교 자료를 받기 전에 검사기를 정해 `files`에 port로 붙인다. 외부 서비스면 데이터 처리 정책을 먼저 정한다 |
+| 영상 변환 자원 | 1단계에서는 transcoder가 api·worker와 같은 EC2의 CPU를 쓰고 한 번에 영상 하나만 변환한다. 화질은 720p 하나다([ADR-0016](adr/0016-video-upload-and-transcoder.md)) | compose에서 transcoder container의 CPU·메모리 상한을 정한다. 대기가 길어지면 transcoder를 늘리거나 MediaConvert로 옮긴다(ADR-0016 11번) |
+| 영상과 악성코드 검사 | 검사기를 붙이면 영상(최대 2 GiB)도 검사 대기에 들어간다. 검사기의 stream 상한이 영상보다 작으면 영상이 `clean`이 되지 못해 강의를 등록할 수 없다 | 검사기를 고를 때 영상 크기를 받는지, 영상은 다른 방식(변환 성공을 형식 검증으로 보는 등)으로 다룰지 정한다 |
+| 영상 활동 수정·삭제 | 영상 활동은 등록만 있다. 원본 파일이 지워지면 변환 작업이 취소되고 재생이 닫히지만, 활동과 콘텐츠를 지우는 API가 없다 | 강의 자료의 삭제 모델(ADR-0011)에 맞춰 영상 활동의 수정·삭제를 만든다. 지울 때 콘텐츠의 첨부 그룹을 놓으면 원본 삭제를 거쳐 변환 취소와 HLS 회수가 따라온다 |
 | 멱등 원장과 감사 로그 | SC-05의 `(principal, operation, key)` 원장과 SC-09의 감사 기록이 없다. 업로드만 자체 key로 멱등이다 | 제출, 수강신청처럼 중복이 문제 되는 명령을 만들기 전에 `shared`에 만든다 |

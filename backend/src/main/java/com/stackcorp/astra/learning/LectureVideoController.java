@@ -25,7 +25,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 강의 영상의 재생 허가와 HLS key(ADR-0007 6, 8번). 두 API 모두 요청마다 권한을 판정하고 캐시하지 않는다.
- * online_lecture_items.content_path는 delivery bucket의 manifest 경로 vod/{assetKey}/{이름}.m3u8이다.
+ * online_lecture_items.content_path는 delivery bucket의 manifest 경로 vod/{assetKey}/{이름}.m3u8이다. 올린 영상은 변환 worker가
+ * 게시를 마친 뒤에만 채우고 원본이 삭제되면 비운다(ADR-0016). 비어 있는 콘텐츠(변환 중, 실패, 삭제)는 404다.
  * 권한이 없거나 다른 과목의 항목이면 존재를 드러내지 않도록 404로 응답한다.
  */
 @RestController

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import com.stackcorp.astra.files.api.VideoKeys;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
+import com.stackcorp.astra.files.storage.ObjectStreams;
 
 @Service
 class VideoKeyStore implements VideoKeys {
@@ -19,8 +20,11 @@ class VideoKeyStore implements VideoKeys {
 
 	private final ObjectStore store;
 
-	VideoKeyStore(ObjectStore store) {
+	private final ObjectStreams streams;
+
+	VideoKeyStore(ObjectStore store, ObjectStreams streams) {
 		this.store = store;
+		this.streams = streams;
 	}
 
 	@Override
@@ -38,6 +42,11 @@ class VideoKeyStore implements VideoKeys {
 	@Override
 	public Optional<byte[]> find(String assetKey) {
 		return this.store.get(Bucket.CONTENT, objectKey(assetKey)).filter((key) -> key.length == 16);
+	}
+
+	/** asset을 거둘 때 key를 지운다. 없으면 아무것도 하지 않는다. */
+	void delete(String assetKey) {
+		this.streams.delete(Bucket.CONTENT, objectKey(assetKey));
 	}
 
 	private static String objectKey(String assetKey) {

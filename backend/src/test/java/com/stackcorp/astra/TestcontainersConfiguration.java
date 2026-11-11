@@ -16,6 +16,7 @@ import org.testcontainers.utility.DockerImageName;
 import com.stackcorp.astra.files.storage.StorageProperties;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.converter.ConverterServer;
+import com.stackcorp.transcoder.TranscoderServer;
 
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
@@ -56,6 +57,18 @@ public class TestcontainersConfiguration {
 			registry.add("astra.storage.secret-key", () -> "test");
 			registry.add("astra.converter.url", () -> "http://127.0.0.1:" + converterServer.port());
 		};
+	}
+
+	// 영상 transcoder도 편의상 같은 process에서 띄운다. ffmpeg와 ffprobe가 PATH에 있어야 한다(ADR-0016).
+	@Bean(destroyMethod = "close")
+	TranscoderServer transcoderServer() throws IOException {
+		return TranscoderServer.start(new InetSocketAddress("127.0.0.1", 0),
+				TranscoderServer.Limits.fromEnvironment(java.util.Map.of()));
+	}
+
+	@Bean
+	DynamicPropertyRegistrar transcoderService(TranscoderServer transcoderServer) {
+		return (registry) -> registry.add("astra.transcoder.url", () -> "http://127.0.0.1:" + transcoderServer.port());
 	}
 
 	@Bean
