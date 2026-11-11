@@ -189,6 +189,18 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 | `ASTRA_LEARNING_HEARTBEAT_INTERVAL` | `60s` | 서버가 player에 알려 주는 하트비트 주기(10초~5분). 영상 cookie 유효 시간(10분)보다 짧아야 한다 |
 | `ASTRA_LEARNING_LEASE_SWEEP_INTERVAL` | `30s` | worker가 lease가 지난 학습 session을 닫는 간격 |
 
+### 스마트출석 설정
+
+PIN/QR 출석의 보안 값이다([ADR-0030](docs/adr/0030-attendance-and-smart-rounds.md)). 지각 기준, 회차 진행 시간, 지각 환산은 과목마다 담당자가 정하는 출석 정책(`PUT /api/courses/{courseId}/attendance/settings`)이고 여기 없다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_ATTENDANCE_PIN_LENGTH` | `6` | PIN 자릿수(4~8) |
+| `ASTRA_ATTENDANCE_MAX_FAILURES` | `5` | 회차마다 한 학생이 틀릴 수 있는 횟수. 넘으면 그 회차에서 잠긴다 |
+| `ASTRA_ATTENDANCE_QR_ROTATION` · `ASTRA_ATTENDANCE_QR_GRACE` | `15s` · `5s` | QR token 교체 주기(5초~5분)와 바뀐 뒤 앞 token을 받는 시간(교체 주기보다 짧게) |
+| `ASTRA_ATTENDANCE_POLL_INTERVAL` | `3s` | 화면이 회차 상태를 다시 묻는 간격(응답의 `pollAfterSec`) |
+| `ASTRA_ATTENDANCE_ROUND_FAILURE_ALERT` | `50` | 한 회차의 틀린 시도가 이 수에 닿으면 경고 로그를 한 번 남긴다 |
+
 ### 인증과 CDN 서명 설정
 
 학교 IdP 연결 전까지 로그인은 break-glass 계정 하나만 된다([ADR-0004](docs/adr/0004-sso-bff-session.md) 6번). 비밀번호 hash와 TOTP secret은 DB가 아니라 Secrets Manager에서 환경 변수로 넣는다. 셋 중 하나라도 없으면 로컬 로그인은 꺼진다. 운영자는 `users`에 같은 `external_ref`의 행을 먼저 만든다.
