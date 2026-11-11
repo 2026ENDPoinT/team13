@@ -31,6 +31,7 @@
 | [ADR-0019](adr/0019-container-image-and-single-host-compose.md) | 이미지 하나를 api, worker, converter 역할로 실행하고, health는 container 안의 관리 port로만 연다 |
 | [ADR-0014](adr/0014-learning-session-credit.md) | 온라인 강의 출석 인정은 서버 시각의 적립 원장으로 하고, 사용자당 활성 학습 session은 하나다. 새 session이 앞 session을 대체한다 |
 | [ADR-0011](adr/0011-material-deletion.md) | 강의 자료는 삭제 표시로 지우고 수정·삭제는 `If-Match` version으로 막는다. 참조가 끊긴 파일은 바로 지우고 worker GC가 저장소를 정리한다 |
+| [ADR-0028](adr/0028-filebox.md) | 개인 파일함은 사용자별 사용량 행을 잠가 차례로 바꾸고, 다시 쓰기는 같은 내용을 참조하는 새 파일로, ZIP은 worker가 저장소에서 저장소로 흘려 만든다 |
 
 ## 2. 부하 가정
 
@@ -370,6 +371,28 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 제출 구간은 DB 시계로 `openAt <= now < closeAt`이고, 지각은 정책이 `allow_until`일 때 `closeAt <= now < lateUntil`만 받는다. 본문, 설명, 의견은 일반 텍스트로만 받고 내보낸다.
 
+### 7.8 개인 파일함
+
+결정은 [ADR-0028](adr/0028-filebox.md)에 있다. 로그인한 사용자 누구나 자기 파일함만 쓴다. 항목 ID, 부모 폴더 ID, 이동 대상 가운데 하나라도 남의 것이면 요청 전체가 404이고 아무것도 바뀌지 않는다(SEC-08). 하위 항목은 서버가 계산한다(FILES-07).
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/filebox/items?parentId=&q=&sort=&order=&cursor=&size=` | 로그인한 사용자 | 폴더 하나의 활성 항목, 경로, 사용량. 폴더 먼저. `sort`는 `name`·`size`·`date`, 그 밖은 400. keyset `nextCursor`, 쪽당 100까지 |
+| `GET /api/filebox/trash?cursor=&size=` | 로그인한 사용자 | 휴지통에 넣은 묶음. 넣은 일시 역순 |
+| `POST /api/filebox/folders` | 로그인한 사용자 | 폴더 만들기. 201. 같은 폴더에 같은 이름이면 409. 깊이 10까지. `Idempotency-Key` 지원 |
+| `POST /api/filebox/files` | 로그인한 사용자 | 파일함에 올리기(용도 `filebox`). 용량을 넘으면 409. 이름이 겹치면 접미사. 201. `Idempotency-Key` 지원 |
+| `PATCH /api/filebox/items/{itemId}` | 소유자 | 이름 바꾸기. `If-Match` 필수. 파일 확장자는 못 바꾼다 |
+| `POST /api/filebox/items:move` | 소유자 | `{targetFolderId, items:[{id, version}]}`. 자기 자신이나 그 아래로는 409. 하나라도 안 되면 아무것도 옮기지 않는다 |
+| `POST /api/filebox/items:trash` · `:restore` · `:purge` | 소유자 | `{ids}`. 휴지통에 넣기(하위 포함), 원래 폴더나 루트로 되돌리기(이름이 겹치면 접미사), 영구 삭제(파일 참조를 놓고 GC가 원본 정리). 처리한 수를 돌려준다 |
+| `POST /api/filebox/trash:empty` | 로그인한 사용자 | 휴지통 비우기 |
+| `GET /api/filebox/items/{itemId}/content` | 소유자 | 내 파일. 언제나 attachment. 검사 전이면 409 |
+| `GET /api/filebox/items/{itemId}/references` | 소유자 | 이 파일을 다시 써서 첨부한 곳 가운데 지금 볼 수 있는 것 |
+| `POST /api/uploads:fromFilebox` | 대상 용도의 업로드 권한이 있는 사람 | `{itemIds, courseId, purpose}`. 같은 내용을 참조하는 clean 업로드를 만든다. 정책과 검사 상태를 다시 본다. 201. `Idempotency-Key` 지원 |
+| `POST /api/filebox/zip-jobs` | 소유자 | `{itemIds}`. 202. `Idempotency-Key` 필수. 파일 100개, 합 500 MB, 진행 중 2개까지. 같은 집합의 작업이 있으면 그 작업 |
+| `GET /api/filebox/zip-jobs/{jobId}` · `/download` | 요청한 사람 | 상태, 생성물. 만드는 중이면 409, TTL(2시간)이 지나면 410 |
+
+ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 압축해 content bucket `zips/`에 multipart upload로 쓴다. 메모리에는 part 하나만 두고 디스크에 쓰지 않는다. 항목 이름은 경로 구분자를 없애고 겹치면 접미사를 붙이며 UTF-8 flag를 켠다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -446,3 +469,4 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 지운 자료의 CDN 쪽 이미지 | CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 cookie가 끝나기 전, GC가 객체를 지우기 전이면 읽힐 수 있다([ADR-0011](adr/0011-material-deletion.md)) | 문서 cookie TTL을 짧게 유지한다. 더 줄여야 하면 삭제 commit 뒤 `doc/{key}/`를 바로 지우는 이벤트를 붙인다 |
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
+| 파일함 휴지통 보존과 자동 등재 | 휴지통 보존 기간이 정해지지 않아 자동 영구 삭제가 없고, 휴지통 파일도 용량을 차지한다. 원본처럼 과제 제출 파일을 파일함에 자동으로 넣지 않는다([ADR-0028](adr/0028-filebox.md)) | 학교와 보존 기간을 정해 worker가 `trashed_at`으로 지우게 한다. 자동 등재가 필요하면 제출 확정과 같은 transaction에서 파일함 항목을 만드는 `files.api`를 더한다 |

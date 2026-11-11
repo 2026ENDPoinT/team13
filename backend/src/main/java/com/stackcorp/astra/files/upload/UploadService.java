@@ -38,7 +38,7 @@ import org.springframework.web.multipart.MultipartFile;
 @EnableConfigurationProperties(UploadProperties.class)
 class UploadService {
 
-	private static final Pattern CLIENT_KEY = Pattern.compile("[A-Za-z0-9._-]{1,100}");
+	static final Pattern CLIENT_KEY = Pattern.compile("[A-Za-z0-9._-]{1,100}");
 
 	private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -74,7 +74,7 @@ class UploadService {
 		this.rateLimiter.check("upload", userId, this.properties.rateLimit(), this.properties.rateWindow());
 		UploadPurpose purpose = UploadPurpose.of(purposeCode)
 			.orElseThrow(() -> ApiException.invalid("purpose 값이 올바르지 않습니다."));
-		if (this.memberships.roleOf(userId, courseId).filter((r) -> r == purpose.requiredRole()).isEmpty()) {
+		if (!mayUpload(userId, courseId, purpose)) {
 			throw ApiException.notFound();
 		}
 		if (clientKey != null && !CLIENT_KEY.matcher(clientKey).matches()) {
@@ -88,6 +88,23 @@ class UploadService {
 		}
 		Policy policy = this.records.policy(purpose.code())
 			.orElseThrow(() -> new IllegalStateException("upload policy가 없습니다: " + purpose.code()));
+		return sameTarget(store(userId, courseId, purpose.code(), policy, file, clientKey, Placement.NONE), courseId);
+	}
+
+	/** 그 과목에서 이 용도로 올릴 수 있는 역할인지. */
+	boolean mayUpload(long userId, long courseId, UploadPurpose purpose) {
+		return this.memberships.roleOf(userId, courseId).filter((r) -> r == purpose.requiredRole()).isPresent();
+	}
+
+	/**
+	 * 이름·확장자·크기·내용 형식을 검사한 뒤 저장하고 기록한다. 권한과 요청 제한은 부르는 쪽이 먼저 판정한다.
+	 * placement는 업로드를 기록하는 transaction 안에서 기록 앞뒤로 부른다. 예외를 던지면 업로드 기록 전체가 되돌아간다.
+	 *
+	 * @param courseId 과목 밖 업로드(파일함)면 null
+	 * @return 기록한 업로드. 같은 멱등 key의 요청이 먼저 끝났으면 그 업로드
+	 */
+	Upload store(long userId, Long courseId, String purposeCode, Policy policy, MultipartFile file, String clientKey,
+			Placement placement) {
 		String name = FileNames.sanitize(file.getOriginalFilename())
 			.orElseThrow(() -> rejected("invalid_name", "파일 이름이 올바르지 않습니다."));
 		String extension = FileNames.extension(name)
@@ -123,9 +140,12 @@ class UploadService {
 			Recorded recorded;
 			try {
 				recorded = this.transaction.execute((tx) -> {
+					placement.before();
 					Optional<Blob> referenced = this.records.referenceBlob(sha, size, mime, storageKey,
 							this.scan.initialBlobState());
 					if (referenced.isEmpty()) {
+						// placement가 이 transaction에서 바꾼 것도 함께 되돌린다.
+						tx.setRollbackOnly();
 						return null;
 					}
 					Blob blob = referenced.get();
@@ -135,9 +155,10 @@ class UploadService {
 					// 검사를 마치지 않은 blob을 함께 쓰면 이 업로드도 검사를 기다린다. 판정은 blob에 내리고 같은 내용의 파일 모두에 옮긴다.
 					String state = "clean".equals(blob.state()) ? "clean" : "quarantined";
 					long fileId = this.records.insertFile(blob.id(), name, extension, mime, size, userId, courseId,
-							purpose.code(), "clean".equals(state) ? "clean" : "pending");
+							purposeCode, "clean".equals(state) ? "clean" : "pending");
 					long uploadId = this.records.insertUpload(policy.id(), userId, courseId, fileId, clientKey, state,
 							this.properties.ttl());
+					placement.after(fileId, uploadId, name);
 					return new Recorded(this.records.find(uploadId, userId).orElseThrow(), blob.storageKey());
 				});
 			}
@@ -147,7 +168,7 @@ class UploadService {
 				if (clientKey == null) {
 					throw ex;
 				}
-				return sameTarget(this.records.findByKey(userId, clientKey).orElseThrow(() -> ex), courseId);
+				return this.records.findByKey(userId, clientKey).orElseThrow(() -> ex);
 			}
 			catch (ApiException ex) {
 				if (storageKey != null && "content_rejected".equals(ex.code())) {
@@ -258,6 +279,23 @@ class UploadService {
 	}
 
 	private record Recorded(Upload upload, String blobKey) {
+	}
+
+	/**
+	 * 업로드를 어디에 둘지 정하는 쪽이 업로드 기록과 같은 transaction에서 하는 일. 파일함은 앞에서 용량을 잡고 뒤에서 항목을 만든다.
+	 * 잠금 순서를 지키도록 before는 blob을 잠그기 전에 부른다.
+	 */
+	interface Placement {
+
+		Placement NONE = new Placement() {
+		};
+
+		default void before() {
+		}
+
+		default void after(long fileId, long uploadId, String name) {
+		}
+
 	}
 
 }

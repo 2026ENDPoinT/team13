@@ -180,6 +180,22 @@ ASTRA_SCAN_CLAMD_HOST=127.0.0.1 ./gradlew bootTestRun
 
 EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`가 된다. 테스트는 clamd 대신 테스트 소스의 `FakeClamd`(INSTREAM 형식을 구현한 가짜 서버)를 쓴다.
 
+### 개인 파일함 설정
+
+파일함 용량, 항목 수, 폴더 깊이, ZIP 일괄 다운로드 한도는 [ADR-0028](docs/adr/0028-filebox.md)을 따른다. 사용자 한 사람의 용량은 `filebox_quotas.quota_bytes`에 값이 있으면 그 값, 없으면 아래 기본값이다. ZIP은 `worker` 프로필이 만들고, TTL이 지난 생성물(content bucket `zips/`)을 지운다. 끝내지 못한 multipart upload는 content bucket의 lifecycle 규칙(`abort_incomplete_multipart_days`)이 지운다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_FILEBOX_QUOTA` | `1GB` | 사용자 한 사람의 기본 용량. 휴지통에 넣은 파일도 영구 삭제할 때까지 센다 |
+| `ASTRA_FILEBOX_MAX_ITEMS` · `ASTRA_FILEBOX_MAX_DEPTH` | `5000` · `10` | 사용자 한 사람의 항목 수(폴더, 휴지통 포함)와 폴더 깊이 상한 |
+| `ASTRA_FILEBOX_RATE_LIMIT` · `ASTRA_FILEBOX_RATE_WINDOW` | `120` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 파일함 변경 명령 수. 파일함 올리기와 다시 쓰기는 업로드 제한(`ASTRA_UPLOAD_RATE_LIMIT`)을 함께 쓴다 |
+| `ASTRA_FILEBOX_ZIP_MAX_ITEMS` · `ASTRA_FILEBOX_ZIP_MAX_TOTAL_SIZE` | `100` · `500MB` | ZIP 하나에 넣을 파일 수와 크기 합의 상한 |
+| `ASTRA_FILEBOX_ZIP_MAX_CONCURRENT` | `2` | 한 사용자가 동시에 기다리거나 만들고 있을 수 있는 ZIP 작업 수 |
+| `ASTRA_FILEBOX_ZIP_TTL` | `2h` | 생성물을 내려받을 수 있는 시간 |
+| `ASTRA_FILEBOX_ZIP_LEASE` · `ASTRA_FILEBOX_ZIP_MAX_ATTEMPTS` | `10m` · `3` | worker가 작업 하나를 잡는 lease(파일 하나를 넣을 때마다 늘린다)와 생성 시도 수 상한 |
+| `ASTRA_FILEBOX_ZIP_POLL_INTERVAL` | `10s` | worker가 대기 작업과 만료 생성물을 찾는 간격 |
+| `ASTRA_FILEBOX_ZIP_RATE_LIMIT` · `ASTRA_FILEBOX_ZIP_RATE_WINDOW` | `10` · `10m` | 한 사용자가 구간 안에 요청할 수 있는 ZIP 작업 수 |
+
 ### 온라인 강의 학습 설정
 
 학습 session과 출석 인정 적립은 [ADR-0014](docs/adr/0014-learning-session-credit.md)를 따른다. 적립 간격의 하한과 상한, lease는 하트비트 주기에서 정해진다.

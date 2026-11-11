@@ -7,16 +7,17 @@ import java.util.Optional;
 /**
  * 업로드한 파일 이름의 정규화. 저장 key로는 쓰지 않고 표시와 내려받기 이름으로만 쓴다.
  * client는 이 값을 텍스트로만 그려야 한다(SEC-01). 서버는 경로 구분자, 제어 문자, 방향 제어 문자를 없앤다.
+ * 파일함 폴더 이름과 ZIP 항목 이름도 같은 규칙으로 정규화한다(files.filebox).
  */
-final class FileNames {
+public final class FileNames {
 
-	static final int MAX_LENGTH = 255;
+	public static final int MAX_LENGTH = 255;
 
 	private FileNames() {
 	}
 
 	/** @return 쓸 수 있는 이름이 남지 않으면 비어 있는 값 */
-	static Optional<String> sanitize(String original) {
+	public static Optional<String> sanitize(String original) {
 		if (original == null) {
 			return Optional.empty();
 		}
@@ -59,7 +60,7 @@ final class FileNames {
 	}
 
 	/** 마지막 점 뒤의 영문·숫자 확장자(소문자). */
-	static Optional<String> extension(String name) {
+	public static Optional<String> extension(String name) {
 		int dot = name.lastIndexOf('.');
 		if (dot < 1 || dot == name.length() - 1) {
 			return Optional.empty();
