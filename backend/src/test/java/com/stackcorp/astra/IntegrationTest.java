@@ -13,6 +13,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.stackcorp.astra.learning.TestLearningClock;
 import com.stackcorp.astra.summary.FakeLlm;
 
 /**
@@ -23,10 +24,10 @@ import com.stackcorp.astra.summary.FakeLlm;
 		"astra.summary.lease=2h", "astra.break-glass.external-ref=" + IntegrationTest.BREAK_GLASS_REF,
 		"astra.break-glass.totp-secret=" + IntegrationTest.TOTP_SECRET,
 		"astra.cloudfront.base-url=https://lms.example.ac.kr", "astra.cloudfront.key-pair-id=K2TESTKEYPAIR",
-		"astra.upload.rate-limit=6" })
+		"astra.upload.rate-limit=6", "astra.learning.lease-sweep-interval=1h" })
 @AutoConfigureMockMvc
 @ActiveProfiles("worker")
-@Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class })
+@Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class, TestLearningClock.class })
 public abstract class IntegrationTest {
 
 	public static final String BREAK_GLASS_REF = "break-glass-admin";

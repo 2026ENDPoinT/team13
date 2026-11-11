@@ -1,6 +1,7 @@
 package com.stackcorp.astra.learning;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -50,6 +51,7 @@ class LectureVideoController {
 
 	/**
 	 * 이 강의의 전달 경로에만 유효한 짧은 cookie를 발급한다. player는 만료 전에 다시 부른다. 권한이 사라지면 다시 발급되지 않는다.
+	 * 출석 인정 시간을 적립하지 않는 재생 허가다. 학습은 학습 session(ADR-0014)이 같은 cookie를 하트비트마다 다시 발급한다.
 	 */
 	@PostMapping("/api/courses/{courseId}/lecture-items/{itemId}/playback")
 	ResponseEntity<Playback> playback(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
@@ -90,11 +92,13 @@ class LectureVideoController {
 			.filter((i) -> this.access.canView(actor.userId(), i.activity()))
 			.map(Item::contentPath)
 			.orElseThrow(ApiException::notFound);
+		return new Video(contentPath, assetKey(contentPath).orElseThrow(ApiException::notFound));
+	}
+
+	/** content_path가 delivery manifest 경로(vod/{assetKey}/{이름}.m3u8)이면 영상 asset key. */
+	static Optional<String> assetKey(String contentPath) {
 		Matcher m = contentPath == null ? null : CONTENT_PATH.matcher(contentPath);
-		if (m == null || !m.matches()) {
-			throw ApiException.notFound();
-		}
-		return new Video(contentPath, m.group(1));
+		return m != null && m.matches() ? Optional.of(m.group(1)) : Optional.empty();
 	}
 
 	private record Item(Activity activity, String contentPath) {

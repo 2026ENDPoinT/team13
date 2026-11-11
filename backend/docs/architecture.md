@@ -23,12 +23,13 @@
 | [ADR-0008](adr/0008-llm-port-deepseek.md) | LLM 호출은 port 뒤에 두고 DeepSeek로 시작한다. 데이터 처리 정책은 미결이다 |
 | [ADR-0009](adr/0009-origin-delivery-without-cdn.md) | CDN이 없는 환경에서는 앱이 같은 cookie 흐름으로 `/doc`, `/vod`를 직접 응답한다 |
 | [ADR-0010](adr/0010-upload-acceptance.md) | 업로드는 용도, 권한, 이름, 확장자, 크기, 내용 형식을 검사해 받는다. 악성코드 검사는 port로 남긴다 |
+| [ADR-0014](adr/0014-learning-session-credit.md) | 온라인 강의 출석 인정은 서버 시각의 적립 원장으로 하고, 사용자당 활성 학습 session은 하나다. 새 session이 앞 session을 대체한다 |
 
 ## 2. 부하 가정
 
 | 경로 | 가정 | 결과 |
 |---|---|---|
-| 온라인 강의 하트비트 | 기본 주기 240초([62_온라인강의_플레이어.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/62_온라인강의_플레이어.md) §6). 동시 시청 500명 | 약 2 rps |
+| 온라인 강의 하트비트 | 서버가 정하는 주기 60초(원본은 240초, [62_온라인강의_플레이어.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/62_온라인강의_플레이어.md) §6). 동시 시청 500명 | 약 8 rps |
 | 메인 첫 진입, 과제 마감 직전, 시험 시작, 비정규 수강신청 | 짧은 순간에 요청이 몰린다 | 처리량보다 정원·멱등의 정합성(SC-05)과 서버 시계 기준 마감 판정(SC-06)이 문제다 |
 | 영상 송출 | 3 Mbps HLS 기준 시간당 약 1.35 GB. 500명이 월 12시간씩 보면 약 8 TB | 원 서버가 아니라 CDN이 송출한다. 월 비용 대부분이 이 전송량이다 |
 
@@ -206,7 +207,7 @@ flowchart TD
 - 파일 권한은 `files`의 `FileAccess`가 첨부한 부모 객체에 묻는다. 학습활동 첨부는 `learning`이 판정한다. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 권한이 없거나 경로의 과목과 객체가 맞지 않으면 존재를 드러내지 않도록 404로 응답한다.
 - 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
 - 오류는 problem JSON(`status`, `detail`, `code`)으로 응답하고 캐시하지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 다른 사용자의 ID를 넣지 않는다(SC-04).
-- 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록, 요약 생성에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
+- 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록, 요약 생성, 학습 session 시작과 하트비트에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 
 ## 6. 첫 화면 성능
@@ -233,9 +234,19 @@ flowchart TD
 2. 검사가 끝나면 업로드 확정 이벤트의 listener가 영상 asset의 AES-128 key를 만들어 `content` bucket에 저장하고, MediaConvert에 HLS 멀티비트레이트 작업을 지시한다. 기본 화질은 720p다.
 3. 완료 이벤트는 EventBridge에서 SQS를 거쳐 worker가 받는다. 암호화된 결과는 `delivery` bucket의 `vod/`에 저장된다.
 4. CloudFront는 OAC로 bucket을 읽는다. `delivery` bucket과 `frontend` bucket 모두 CloudFront 외의 공개 접근을 막는다.
-5. 재생할 때 player가 `POST /api/courses/{courseId}/lecture-items/{itemId}/playback`을 부른다. 백엔드는 권한을 판정한 뒤 그 강의 경로에만 유효한 짧은 TTL의 signed cookie를 발급하고 manifest 경로를 돌려준다. player는 만료 전에 다시 부르고, 권한이 사라지면 다시 발급되지 않는다. 학습 session과 하트비트를 만들면 하트비트 응답에서 다시 발급하도록 옮긴다. CDN URL은 권한을 대신하지 않는다.
+5. 학습할 때 player가 학습 session을 시작한다. 백엔드는 권한을 판정한 뒤 그 강의 경로에만 유효한 짧은 TTL의 signed cookie를 발급하고 manifest 경로를 돌려준다. 하트비트 응답이 볼 수 있는 동안에만 cookie를 다시 발급하고, 권한이 사라지면 발급하지 않는다. 적립 없이 재생만 하는 `POST /api/courses/{courseId}/lecture-items/{itemId}/playback`도 같은 판정으로 남아 있다. CDN URL은 권한을 대신하지 않는다.
 6. player는 manifest의 key URI인 `GET /api/courses/{courseId}/lecture-items/{itemId}/hls-key`에서 key를 받는다. 이 API는 요청마다 권한을 판정하고 `no-store`로 응답한다. key는 영상 asset마다 16 byte이고 `content` bucket의 `vod-keys/`에 있다.
-7. 출석 인정은 서버 하트비트 원장으로 한다. 재생 위치는 이어보기 힌트로만 쓴다(SC-06, CHG-05).
+7. 출석 인정은 서버 시각의 하트비트 적립 원장으로 한다([ADR-0014](adr/0014-learning-session-credit.md)). client가 보낸 경과 시간, 주기는 받지 않고, 재전송·역순·burst는 아무것도 더하지 않으며, 주기의 2배보다 긴 공백과 close_at 뒤는 적립하지 않는다. 사용자당 활성 session은 하나이고 적립은 사용자 단위 구간의 합집합이다. 재생 위치는 이어보기 힌트로만 쓴다(SC-06, SEC-05, SEC-11, CHG-05).
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `POST /api/courses/{courseId}/lecture-items/{itemId}/learning-sessions` | 그 활동을 지금 볼 수 있는 사람(담당자는 적립 없음) | session 시작. 앞 session은 `superseded`. 주기, lease, 이어보기 위치, 영상 cookie. 201 |
+| `POST /api/courses/{courseId}/learning-sessions/{sessionId}/heartbeats` | session 소유자이고 지금도 볼 수 있을 때 | `{seq, positionSec, playing}`. 서버 시각으로 적립하고 진도, lease 남은 시간, 영상 cookie를 돌려준다. 닫힌 session은 409 |
+| `POST /api/courses/{courseId}/learning-sessions/{sessionId}/end` | session 소유자 | 마지막 구간을 적립하고 닫는다. 멱등 |
+| `GET /api/courses/{courseId}/lecture-progress` | 과목 구성원 | 내 콘텐츠별 적립 시간, 출석인정 필요 시간, 충족 시각을 주차별로 |
+| `GET /api/courses/{courseId}/lecture-progress/students` | 담당자 | 수강생 전체의 콘텐츠별 진도 |
+
+lease가 지난 session은 worker가 닫는다(4.3절). 출석인정을 처음 채운 시각을 한 번 기록하고, 활동에 출석 차시가 연결돼 있으면 출석부에 `출석`을 한 번 넣는다. 이후 사건으로 되돌리지 않는다.
 
 HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화면 녹화는 막지 못한다.
 
@@ -342,3 +353,5 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 파일 단위 요약 | 자료 상세 화면의 "ASTRA 서포터즈 요약"(`ai_file_summaries`)을 쪽별 요약의 story로 채울지 정하지 않았다 | `summary` 구현 때 정한다 |
 | 악성코드 검사 | 업로드는 형식만 검사한다([ADR-0010](adr/0010-upload-acceptance.md)). 형식이 맞는 문서 안의 악성 내용은 거르지 못한다 | 학교 자료를 받기 전에 검사기를 정해 `files`에 port로 붙인다. 외부 서비스면 데이터 처리 정책을 먼저 정한다 |
 | 멱등 원장과 감사 로그 | SC-05의 `(principal, operation, key)` 원장과 SC-09의 감사 기록이 없다. 업로드만 자체 key로 멱등이다 | 제출, 수강신청처럼 중복이 문제 되는 명령을 만들기 전에 `shared`에 만든다 |
+| 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
+| 2차 인증 만료와 학습 적립(SC-06-A) | 적립 유효기한이 close_at만 반영한다. 2차 인증 grant가 없다 | `identity`의 grant와 `learning_sessions.credit_authorized_until`, `reauth_required` 상태를 함께 만든다(ADR-0014 결과 절) |
