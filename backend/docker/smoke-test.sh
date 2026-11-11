@@ -30,7 +30,8 @@ pass "api port published only on loopback (${api_port})"
 # 2. 공개 port는 api 하나다. MySQL, converter, transcoder, 관리 port는 host에 열리지 않는다.
 for target in "mysql 3306" "converter 8090" "transcoder 8091" "api 8081" "worker 8081" "worker 8080"; do
 	# shellcheck disable=SC2086
-	if published="$(docker compose port ${target} 2>/dev/null)" && [[ -n "${published}" && "${published}" != ":0" ]]; then
+	# 열리지 않은 port는 compose 판에 따라 오류, 빈 줄, ":0", "invalid IP:0"으로 나온다.
+	if published="$(docker compose port ${target} 2>/dev/null)" && [[ -n "${published}" && "${published}" != *":0" ]]; then
 		fail "${target} is published on ${published}"
 	fi
 done
