@@ -6,10 +6,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
- * login_events. 잠금과 TOTP 재사용 판정에도 쓴다.
+ * login_events. 잠금과 TOTP 재사용 판정에도 쓴다. 학교 IdP 로그인(identity.sso)도 여기에 기록한다.
  */
 @Repository
-class LoginEvents {
+public class LoginEvents {
 
 	private final JdbcClient jdbc;
 
@@ -17,7 +17,7 @@ class LoginEvents {
 		this.jdbc = jdbc;
 	}
 
-	void record(long userId, Long sessionId, String ip, boolean success, String failureReason) {
+	public void record(long userId, Long sessionId, String ip, boolean success, String failureReason) {
 		this.jdbc.sql("""
 				INSERT INTO login_events (user_id, session_id, ip_address, client_environment, login_result, failure_reason)
 				VALUES (:user, :session, :ip, 'PC', :result, :reason)

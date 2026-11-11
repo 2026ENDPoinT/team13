@@ -27,6 +27,7 @@
 | [ADR-0013](adr/0013-course-notice-storage.md) | 강의실 공지는 과목마다 하나인 공지 게시판의 `posts` 행으로 두고, 게시판은 첫 공지를 쓸 때 DB 제약 아래 만든다 |
 | [ADR-0018](adr/0018-malware-scan-clamd.md) | 업로드 악성코드 검사는 같은 배포의 ClamAV daemon으로 한다. 판정 전에는 열지 않고(fail closed), 판정은 같은 내용을 쓰는 모든 파일에 적용하며, 거부한 객체는 지운다 |
 | [ADR-0015](adr/0015-assignment-submission-model.md) | 과제 최종 제출은 바뀌지 않는 버전이고, 공용 멱등 원장이 생기기 전까지 제출 버전 행이 멱등 receipt다 |
+| [ADR-0017](adr/0017-school-sso-oidc.md) | 학교 SSO는 OpenID Connect code flow + PKCE adapter로 먼저 만든다. 로그인 전 값은 암호화한 쿠키에 두고 IdP token은 저장하지 않는다 |
 
 ## 2. 부하 가정
 
@@ -218,6 +219,16 @@ flowchart TD
 - 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록, 요약 생성, 공지 작성·수정에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
+- 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
+- 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, 로컬 실행의 `devLogin`) |
+| `GET /api/auth/login?returnTo=` | 누구나. IdP 설정이 없으면 404 | 로그인 전용 쿠키를 주고 IdP로 302 |
+| `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
+| `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
+| `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. IdP 로그아웃은 연계하지 않는다 |
 
 ## 6. 첫 화면 성능
 
@@ -389,7 +400,7 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 
 | 항목 | 영향 | 다음 행동 |
 |---|---|---|
-| 학교 IdP 프로토콜(OIDC, SAML, CAS) | `identity`의 IdP adapter 구현. [db/README.md](../db/README.md) 7절 1번 | 1단계 전에 학교 정보화본부에 확인한다 |
+| 학교 IdP 프로토콜(OIDC, SAML, CAS) | OIDC adapter는 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). SAML이나 CAS면 `integration`에 adapter와 callback을 새로 만든다. 학번이 들어 있는 claim, IdP 로그아웃 연계도 미정이다. [db/README.md](../db/README.md) 7절 1번 | 1단계 전에 학교 정보화본부에 프로토콜, ID token claim, redirect URI 등록 절차를 확인한다 |
 | frontend 스택 | 6절 정적 shell의 구현 방식 | Vite SPA와 Next.js static export 모두 수용한다. SSR이 필요해지면 ADR-0005를 다시 연다 |
 | 인프라 코드 미적용 | Terraform을 apply하지 않아 fck-nat HA, VPC origin security group 조회, WAF 오탐, 배포 문서를 실제 계정에서 확인하지 못했다 | 계정을 만든 뒤 [infra/README.md](../infra/README.md) 4절 순서로 apply하고 8절 항목을 확인한다 |
 | 공공 클라우드 보안 인증 | 학교 공식 시스템으로 개인정보를 다루면 CSAP 중 등급이 요구될 수 있다. AWS는 하 등급만 보유하고 있다. 2027년 7월 국정원 단일 검증체계로 바뀔 예정이다 | 도입 협의 때 학교에 확인한다. 앱은 S3 API, 컨테이너, MySQL 표준만 쓰고 AWS 전용 기능은 Terraform에만 둔다 |

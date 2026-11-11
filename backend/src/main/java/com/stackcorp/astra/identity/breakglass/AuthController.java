@@ -24,7 +24,7 @@ import com.stackcorp.astra.shared.audit.AuditLog;
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
- * 로그인, 로그아웃, 현재 사용자. 학교 IdP 로그인은 프로토콜이 정해지면 같은 session을 만든다(ADR-0004 1번).
+ * 로그인, 로그아웃, 현재 사용자. 학교 IdP 로그인({@code identity.sso})도 같은 session을 만든다(ADR-0004 1번, ADR-0017).
  */
 @RestController
 class AuthController {

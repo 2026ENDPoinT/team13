@@ -202,6 +202,24 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 | `ASTRA_IDEMPOTENCY_IN_FLIGHT_WAIT` | `3s` | 같은 key를 처리 중일 때 기다리는 시간. 넘으면 409 `idempotency_in_progress` |
 | `ASTRA_IDEMPOTENCY_PURGE_INTERVAL` | `15m` | worker가 보존기한이 지난 항목을 지우는 간격 |
 
+### 학교 SSO(OpenID Connect) 설정
+
+학교 IdP가 OpenID Connect를 제공한다는 가정으로 authorization code flow + PKCE를 구현했다([ADR-0017](docs/adr/0017-school-sso-oidc.md)). `ASTRA_OIDC_ISSUER`가 없으면 SSO는 꺼지고 `/api/auth/login`, `/api/auth/callback`은 404다. 앱은 시작할 때 IdP를 부르지 않는다. 형식이 틀린 설정이 있으면 시작하지 않는다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_OIDC_ISSUER` | 없음 | IdP의 issuer. discovery 문서와 ID token의 `iss`가 이 값과 글자 그대로 같아야 한다. https만 허용한다 |
+| `ASTRA_OIDC_CLIENT_ID` | 없음 | IdP에 등록한 client ID |
+| `ASTRA_OIDC_CLIENT_SECRET` | 없음 | client secret. Secrets Manager에서 넣고 로그에 남기지 않는다. 로그인 전용 쿠키의 암호화 key도 이 값에서 만든다 |
+| `ASTRA_OIDC_REDIRECT_URI` | 없음 | IdP에 등록한 callback 주소. 서비스 origin 뒤에 `/api/auth/callback`을 붙인다. 예: `https://lms.example.ac.kr/api/auth/callback`. 등록한 값과 글자 그대로 같아야 한다 |
+| `ASTRA_OIDC_USER_CLAIM` | `sub` | `users.external_ref`(학번·교번)와 맞출 ID token claim. userinfo는 부르지 않으므로 ID token에 있어야 한다 |
+| `ASTRA_OIDC_SCOPES` | `openid` | 요청할 scope(쉼표 구분). `openid`가 있어야 한다. 학번 claim을 받으려면 IdP가 요구하는 scope를 더한다 |
+| `ASTRA_OIDC_ALLOWED_HOSTS` | 없음 | discovery가 issuer와 다른 host의 token endpoint나 JWKS를 가리킬 때 그 https host(쉼표 구분). 그 밖의 host는 부르지 않는다 |
+| `ASTRA_OIDC_TIMEOUT` | `10s` | IdP 요청 하나의 전체 제한 시간 |
+| `ASTRA_OIDC_CLOCK_SKEW` | `60s` | ID token 시각(`exp`, `iat`, `nbf`) 검사에 허용하는 시계 오차. 5분까지 |
+
+IdP에는 confidential client로 등록하고 ID token 서명 알고리즘은 RS256으로 둔다. 로그인 화면은 `GET /api/auth/methods`로 쓸 수 있는 수단을 받아 `GET /api/auth/login?returnTo=<같은 origin의 경로>`로 이동한다. 실패하면 `/?login=failed`로 돌아온다. `users`에 그 claim 값의 ACTIVE 사용자가 있어야 로그인된다. 사용자를 자동으로 만들지 않는다.
+
 ## CI
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 두 작업을 실행한다.
