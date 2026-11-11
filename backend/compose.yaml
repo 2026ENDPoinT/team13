@@ -90,11 +90,21 @@ services:
 
   # 격리한 문서 변환 process(SC-08, ADR-0006). 외부 network, 비밀값, 저장소 credential이 없고 worker만 부를 수 있다.
   # env_file을 주지 않는다. 같은 방식으로 실행할 transcoder 역할은 그 main을 더하는 변경에서 이 서비스처럼 추가한다.
+  # 이미지는 LibreOffice를 더한 target converter다(ADR-0033). office 문서를 PDF로 바꾸는 soffice를 이 container 안에서만 실행한다.
   converter:
     <<: *app
+    image: ${ASTRA_CONVERTER_IMAGE:-astra-backend-converter:local}
     command: [converter]
+    # soffice가 남긴 손자 process를 거둔다. converter의 java가 PID 1이면 강제로 끝낸 process가 zombie로 남는다.
+    init: true
+    # LibreOffice의 작업 디렉터리(입력, profile, 결과 PDF)는 작업마다 /tmp에 만들고 지운다.
+    tmpfs:
+      - /tmp:size=768m,mode=1777
     environment:
       CONVERTER_PORT: "8090"
+      CONVERTER_OFFICE_TIMEOUT_SECONDS: "120"
+      # container 메모리의 나머지는 soffice가 쓴다. soffice의 주소 공간 상한은 CONVERTER_OFFICE_MEMORY_BYTES(기본 3 GiB)다.
+      JAVA_OPTS: "-XX:MaxRAMPercentage=30"
     networks: [conversion]
     healthcheck:
       test: ["CMD", "astra-health", "8090", "/health"]
@@ -106,7 +116,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 768m
+          memory: 2048m
 
   # 같은 host의 MySQL. COMPOSE_PROFILES에 mysql이 있을 때만 뜬다. host에 port를 publish하지 않는다.
   # root는 container 안에서만 접속할 수 있고 비밀번호는 처음 초기화할 때 임의로 만든다. 앱은 DB_USERNAME 계정만 쓴다.

@@ -45,6 +45,11 @@ final class PdfRendering {
 
 	static final float MODEL_QUALITY = 0.72f;
 
+	// 첫 쪽 썸네일의 긴 변(px). 뷰어 쪽 목록(180×135)의 2배 밀도다(68_문서미리보기.md 6절).
+	static final int THUMBNAIL_LONG_EDGE = 360;
+
+	static final float THUMBNAIL_QUALITY = 0.8f;
+
 	// 쪽당 텍스트 상한(문자)
 	static final int MAX_TEXT = 20000;
 
@@ -102,8 +107,8 @@ final class PdfRendering {
 	}
 
 	/**
-	 * zip으로 쪽마다 pages/NNN.json, pages/NNN.display.jpg, pages/NNN.model.jpg를 순서대로 쓰고 마지막에 document.json을
-	 * 쓴다. 중간에 실패하면 error.json을 쓰고 끝낸다.
+	 * zip으로 쪽마다 pages/NNN.json, pages/NNN.display.jpg, pages/NNN.model.jpg를 순서대로 쓰고, 첫 쪽 썸네일 thumbnail.jpg와
+	 * 마지막에 document.json을 쓴다. 중간에 실패하면 error.json을 쓰고 끝낸다.
 	 */
 	void writeZip(OutputStream out) throws IOException {
 		try (ZipOutputStream zip = new ZipOutputStream(out)) {
@@ -113,6 +118,7 @@ final class PdfRendering {
 				PDFTextStripper stripper = new PDFTextStripper();
 				stripper.setSortByPosition(true);
 				int count = pageCount();
+				byte[] thumbnail = null;
 				for (int i = 0; i < count; i++) {
 					int page = i + 1;
 					String name = "pages/%03d".formatted(page);
@@ -132,7 +138,11 @@ final class PdfRendering {
 					entry(zip, name + ".json", Json.write(meta).getBytes(StandardCharsets.UTF_8));
 					entry(zip, name + ".display.jpg", jpeg(display, DISPLAY_QUALITY));
 					entry(zip, name + ".model.jpg", jpeg(model, MODEL_QUALITY));
+					if (page == 1) {
+						thumbnail = jpeg(shrink(display, THUMBNAIL_LONG_EDGE), THUMBNAIL_QUALITY);
+					}
 				}
+				entry(zip, "thumbnail.jpg", thumbnail);
 				String title = this.document.getDocumentInformation().getTitle();
 				Map<String, Object> doc = new LinkedHashMap<>();
 				doc.put("pageCount", count);

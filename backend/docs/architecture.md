@@ -370,6 +370,18 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 제출 구간은 DB 시계로 `openAt <= now < closeAt`이고, 지각은 정책이 `allow_until`일 때 `closeAt <= now < lateUntil`만 받는다. 본문, 설명, 의견은 일반 텍스트로만 받고 내보낸다.
 
+### 7.8 문서 미리보기, 썸네일, 이미지 보기
+
+흐름, 엔진 선택, 격리는 [ADR-0033](adr/0033-document-preview-and-office-conversion.md)에 있다. 쪽 이미지는 7.2절의 rendition과 같다. 변환은 worker가 대기열(`conversion_jobs`)에서 잡아 converter로 한다. PDF와 pptx, docx, xlsx를 바꾸고, office 문서는 converter container 안의 LibreOffice가 먼저 PDF로 만든다. HWP, HWPX, 텍스트, 압축 파일, 이미지는 미리보기가 `unsupported`다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `POST /api/courses/{courseId}/files/{fileId}/preview-sessions` | 그 파일의 부모 활동을 볼 수 있는 사람 | 미리보기 열기. `ready`면 쪽 수, `pageImageBase`(`/doc/{key}/`, 쪽은 `NNN.jpg`), cookie 만료 시각과 그 경로에만 유효한 cookie. 변환이 필요하면 대기열에 넣고 202 `converting`(`Retry-After: 2`). `failed`(코드), `unsupported`. 몇 번 보내도 변환은 하나라 `Idempotency-Key`를 받지 않는다. 사용자당 10분에 300번 |
+| `GET /api/courses/{courseId}/files/{fileId}/thumbnail/{variant}` | 같음 | 첫 쪽 썸네일. `variant`는 `thumb_1`(긴 변 360px JPEG)뿐이다. worker가 변환할 때 만든 것만 내보낸다. `nosniff`, `private, max-age=300` |
+| `GET /api/courses/{courseId}/files/{fileId}/image` | 같음 | 서버가 PNG·JPEG로 판정한 이미지만 `inline`으로. `CSP: sandbox`, `nosniff`, `private, no-store`. 그 밖의 파일은 404이고 `/content`(attachment)로만 받는다 |
+
+파일을 지우면 같은 commit부터 세 API 모두 404다. GC가 rendition을 닫을 때 썸네일 행과 대기 중인 변환도 닫고 객체를 지운다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -396,8 +408,8 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 ## 10. 빌드와 배포
 
 - 인프라는 Terraform으로 관리한다. 코드는 [infra/terraform/](../infra/terraform/)에 있고, 만드는 것과 처음 만드는 순서는 [infra/README.md](../infra/README.md)에 있다.
-- 이미지는 루트 `Dockerfile`로 만든다. multi-stage이고 base 이미지는 tag와 digest로 고정한다. 실행 user는 root가 아니고 root filesystem은 읽기 전용으로 쓴다([ADR-0019](adr/0019-container-image-and-single-host-compose.md)).
-- CI의 `container` 작업이 이미지를 만들고 compose를 띄워 healthcheck, 공개 port, converter의 network 차단, 종료 처리를 확인한다. registry에는 올리지 않는다.
+- 이미지는 루트 `Dockerfile`로 만든다. multi-stage이고 base 이미지는 tag와 digest로 고정한다. 실행 user는 root가 아니고 root filesystem은 읽기 전용으로 쓴다([ADR-0019](adr/0019-container-image-and-single-host-compose.md)). converter 역할은 LibreOffice를 더한 target `converter` 이미지로 실행한다([ADR-0033](adr/0033-document-preview-and-office-conversion.md)).
+- CI의 `container` 작업이 두 이미지를 만들고 compose를 띄워 healthcheck, 공개 port, converter의 network 차단, office 문서 변환, 종료 처리를 확인한다. registry에는 올리지 않는다.
 - GitHub Actions가 OIDC로 AWS role을 받는다. CI에 AWS access key를 저장하지 않는다.
 - 이미지를 ECR에 push하고 SSM Run Command로 EC2의 compose를 갱신한다. CI role이 실행할 수 있는 명령은 image tag 하나를 받는 배포 문서뿐이다([ADR-0020](adr/0020-terraform-layout.md)). 3.2절 전환 뒤에는 ECS rolling 배포와 circuit breaker를 쓴다.
 - 비밀값은 Secrets Manager에 두고 EC2 instance role로 읽어 compose의 `.env`로 넣는다. Terraform은 secret container만 만들고 값은 운영자가 넣는다. `.env`는 커밋하지 않는다.
@@ -439,10 +451,13 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 과제 제출 첨부 이어받기 | 다시 제출할 때 이전 버전의 파일을 다시 올려야 한다(ADR-0015). SC-05-B의 `keep` 계약이 없다 | `files.api.Attachments`에 기존 첨부 참조를 더할 때 제출 요청에 `keep`을 받는다 |
 | 과제 제출의 멱등 receipt | 공용 원장 없이 제출 버전 행과 `(submitted_by_user_id, idempotency_key)` 유일 제약으로 처리한다(ADR-0015) | `shared`에 원장을 만들면 receipt 조회를 옮기고 두 컬럼을 정리한다 |
 | 기동 시간과 AOT cache | 3.1절의 JDK AOT cache를 이미지에 넣지 않았다. training run에 DB가 필요해 이미지 빌드 안에서 만들 수 없다 | 배포 중 중단 시간이 문제가 되면 배포 단계에서 training run을 돌려 cache를 만드는 방식을 정한다 |
-| converter의 한글 글꼴 | 실행 이미지에 한글 글꼴이 없다. 글꼴을 포함하지 않은 PDF는 쪽 이미지에서 한글이 빠질 수 있다 | 학교 자료 표본으로 확인하고, 필요하면 converter 역할에 글꼴을 더한다 |
+| converter의 한글 글꼴 | converter 이미지(target `converter`)에 나눔, Liberation, Carlito, Caladea 글꼴을 넣었다([ADR-0033](adr/0033-document-preview-and-office-conversion.md)). 그 밖의 글꼴을 쓴 문서는 대체 글꼴로 그린다 | 학교 자료 표본으로 쪽 이미지를 확인하고, 자주 쓰는 글꼴(맑은 고딕 등)의 사용권을 확인해 더한다 |
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
 | 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
 | 2차 인증 만료와 학습 적립(SC-06-A) | 적립 유효기한이 close_at만 반영한다. 2차 인증 grant가 없다 | `identity`의 grant와 `learning_sessions.credit_authorized_until`, `reauth_required` 상태를 함께 만든다(ADR-0014 결과 절) |
 | 지운 자료의 CDN 쪽 이미지 | CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 cookie가 끝나기 전, GC가 객체를 지우기 전이면 읽힐 수 있다([ADR-0011](adr/0011-material-deletion.md)) | 문서 cookie TTL을 짧게 유지한다. 더 줄여야 하면 삭제 commit 뒤 `doc/{key}/`를 바로 지우는 이벤트를 붙인다 |
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
+| HWP·HWPX 미리보기 | 받지 않는다(`unsupported`). LibreOffice는 HWP 97만 읽고, HWP 5.0·HWPX는 H2Orestart(GPL-3.0) 확장과 LibreOffice Java 연동이 필요하다([ADR-0033](adr/0033-document-preview-and-office-conversion.md) 3번) | GPL-3.0 확장을 converter 이미지에 넣어 배포해도 되는지 학교와 정한 뒤, 표본 HWP로 변환과 격리 설정을 확인하고 형식을 더한다 |
+| LibreOffice 실행 미검증 | 빌드 container에 LibreOffice가 없어 실제 soffice 변환, profile의 macro·link 차단, `prlimit` 주소 공간 상한(3 GiB) 아래 기동, converter 이미지 빌드와 smoke test의 office 단계를 실행하지 않았다. 테스트는 가짜 엔진과 soffice 자리의 Java process로 했다 | CI `container` 작업과 스테이징에서 macro, 외부 link, OLE가 든 표본 문서로 확인한다. 실패하면 상한과 profile 값을 고친다 |
+| 미리보기 실패의 재시도 | 실패한 변환은 파일 버전마다 끝 상태다. converter 장애(연결 불가)와 worker 중단만 3번까지 다시 한다 | 실패 코드별 건수를 9절 지표에 넣는다. 다시 만들 필요가 생기면 담당자용 재변환 명령을 둔다 |

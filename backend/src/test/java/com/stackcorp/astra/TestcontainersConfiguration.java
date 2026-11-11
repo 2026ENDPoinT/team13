@@ -16,6 +16,7 @@ import org.testcontainers.utility.DockerImageName;
 import com.stackcorp.astra.files.storage.StorageProperties;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.converter.ConverterServer;
+import com.stackcorp.converter.FakeOfficeEngine;
 
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
@@ -41,9 +42,10 @@ public class TestcontainersConfiguration {
 			.waitingFor(Wait.forListeningPort());
 	}
 
+	// office 형식은 LibreOffice 대신 같은 process의 가짜 엔진이 PDF로 바꾼다(FakeOfficeEngine). 로컬 실행도 같다.
 	@Bean(destroyMethod = "close")
 	ConverterServer converterServer() throws IOException {
-		return ConverterServer.start(new InetSocketAddress("127.0.0.1", 0), 50L << 20);
+		return ConverterServer.start(new InetSocketAddress("127.0.0.1", 0), 50L << 20, new FakeOfficeEngine());
 	}
 
 	@Bean

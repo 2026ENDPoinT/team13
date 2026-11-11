@@ -49,13 +49,19 @@ class StorageGcRecords {
 	}
 
 	/**
-	 * 파일의 rendition을 모두 expired로 닫고 key를 돌려준다. 객체를 지우기 전에 닫으므로, 아직 변환 중인 rendition은 완료로 바뀌지
-	 * 못하고 자기가 쓴 객체를 스스로 지운다(DocumentRenditionService).
+	 * 파일의 rendition을 모두 expired로 닫고, 그 썸네일 행을 지운 뒤 key를 돌려준다. 객체를 지우기 전에 닫으므로, 아직 대기 중이거나
+	 * 변환 중인 rendition은 완료로 바뀌지 못하고 자기가 쓴 객체를 스스로 지운다(DocumentRenditionService). 썸네일 객체는
+	 * renditions/{key}/ 아래에 있어 rendition과 함께 지운다. 잠금 순서는 변환의 완료 기록과 같은 conversion_jobs → file_thumbnails다.
 	 */
 	List<String> closeRenditions(long fileId) {
 		this.jdbc.sql("""
-				UPDATE conversion_jobs SET conversion_state = 'expired', expires_at = CURRENT_TIMESTAMP(3)
+				UPDATE conversion_jobs SET conversion_state = 'expired', expires_at = CURRENT_TIMESTAMP(3),
+				       lease_owner = NULL, lease_expires_at = NULL
 				 WHERE file_id = :file AND conversion_state <> 'expired'
+				""").param("file", fileId).update();
+		this.jdbc.sql("""
+				DELETE t FROM file_thumbnails t JOIN conversion_jobs c ON c.conversion_job_id = t.conversion_job_id
+				 WHERE c.file_id = :file
 				""").param("file", fileId).update();
 		return this.jdbc.sql("""
 				SELECT converted_doc_key FROM conversion_jobs WHERE file_id = :file AND converted_doc_key IS NOT NULL

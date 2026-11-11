@@ -87,7 +87,32 @@ if grep -q 'smoke-query-value' <<<"${logs}"; then
 fi
 pass "request log is JSON without query string"
 
-# 9. 종료 신호를 받으면 graceful shutdown을 마치고 끝난다(137 = 강제 종료).
+# 9. LibreOffice는 converter 이미지에만 있고, converter가 office 문서를 쪽 이미지로 바꾼다(ADR-0033).
+#    표본 docx는 converter container 안의 LibreOffice로 만들고, 같은 container의 8090에 보내 쪽 zip을 받는지 본다.
+for service in api worker; do
+	if docker compose exec -T "${service}" test -e /usr/lib/libreoffice/program/soffice; then
+		fail "${service} image contains LibreOffice"
+	fi
+done
+docker compose exec -T converter bash -c '
+	set -euo pipefail
+	work="$(mktemp -d)"
+	trap "rm -rf \"${work}\"" EXIT
+	printf "ASTRA smoke\n" > "${work}/sample.txt"
+	HOME="${work}" /usr/lib/libreoffice/program/soffice --headless --convert-to docx --outdir "${work}" \
+		"${work}/sample.txt" > /dev/null 2>&1
+	exec 3<>/dev/tcp/127.0.0.1/8090
+	printf "POST /render?maxPages=5&format=docx HTTP/1.1\r\nHost: converter\r\nContent-Type: application/octet-stream\r\nContent-Length: %s\r\nConnection: close\r\n\r\n" \
+		"$(stat -c %s "${work}/sample.docx")" >&3
+	cat "${work}/sample.docx" >&3
+	cat <&3 > "${work}/response"
+	head -n 1 "${work}/response" | grep -q "^HTTP/1.1 200"
+	grep -aq "document.json" "${work}/response"
+	! grep -aq "error.json" "${work}/response"
+' || fail "converter could not turn a docx into pages"
+pass "only the converter has LibreOffice and it converts a docx into pages"
+
+# 10. 종료 신호를 받으면 graceful shutdown을 마치고 끝난다(137 = 강제 종료).
 docker compose stop api worker
 for service in api worker; do
 	code="$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose ps --all --quiet "${service}")")"
