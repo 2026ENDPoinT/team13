@@ -22,6 +22,7 @@ import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.files.api.DocumentRenditions.Rendition;
 import com.stackcorp.astra.files.api.RenditionException;
 import com.stackcorp.astra.files.api.StoredFiles;
+import com.stackcorp.astra.shared.metrics.MetricTags;
 import com.stackcorp.astra.summary.api.LlmClient;
 import com.stackcorp.astra.summary.pipeline.GenerateInput;
 import com.stackcorp.astra.summary.pipeline.GenerateResult;
@@ -30,11 +31,17 @@ import com.stackcorp.astra.summary.pipeline.GenerationProgress;
 import com.stackcorp.astra.summary.pipeline.SummaryPipeline;
 import com.stackcorp.astra.summary.pipeline.Usage;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+
 /**
  * worker 프로필에서 대기 작업을 하나씩 실행한다. 여러 worker가 떠도 원장의 SKIP LOCKED로 한 곳만 잡는다.
  * 로그에는 작업 ID와 코드만 남긴다. 자료 본문과 모델 출력은 남기지 않는다(ADR-0007 9번).
  * process가 종료할 때는 새 작업을 잡지 않고, 실행 중인 작업은 다음 모델 호출 경계에서 멈춰 lease 만료와 같은
  * {@code interrupted}로 바로 닫는다. lease가 끝날 때까지 작업이 running으로 남지 않는다.
+ * <p>
+ * 끝낸 작업을 상태와 오류 code별로 세고(astra.summary.jobs.finished), 모델 호출은 {@link MeteredLlmClient}로 잰다. 대기열 길이와 나이는
+ * {@link SummaryBacklog}가 낸다.
  */
 @Component
 @Profile("worker")
@@ -61,8 +68,11 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 
 	private volatile boolean running;
 
+	private final MeterRegistry meters;
+
 	SummaryJobRunner(SummaryJobRepository jobs, DocumentRenditions renditions, StoredFiles files,
-			SummaryStorage storage, ObjectProvider<LlmClient> llm, SummaryProperties properties) {
+			SummaryStorage storage, ObjectProvider<LlmClient> llm, SummaryProperties properties,
+			MeterRegistry meters) {
 		this.jobs = jobs;
 		this.renditions = renditions;
 		this.files = files;
@@ -70,6 +80,7 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 		this.llm = llm;
 		this.properties = properties;
 		this.owner = properties.workerId() != null ? properties.workerId() : defaultOwner();
+		this.meters = meters;
 	}
 
 	@Scheduled(fixedDelayString = "${astra.summary.poll-interval:5s}",
@@ -83,6 +94,7 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 	@Scheduled(fixedDelayString = "${astra.summary.lease-renewal:30s}")
 	void failExpired() {
 		int closed = this.jobs.failExpired();
+		finished(JobState.FAILED, "interrupted", closed);
 		if (closed > 0) {
 			log.warn("summary jobs interrupted by expired lease count={}", closed);
 		}
@@ -93,7 +105,8 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 		if (!this.running) {
 			return false;
 		}
-		LlmClient client = this.llm.getIfAvailable();
+		LlmClient configured = this.llm.getIfAvailable();
+		LlmClient client = configured != null ? new MeteredLlmClient(configured, this.meters) : null;
 		Optional<SummaryJob> claimed = this.jobs.claimNext(this.owner, this.properties.lease(),
 				client != null ? client.model() : null, SummaryPipeline.PROMPT_VERSION);
 		if (claimed.isEmpty()) {
@@ -236,6 +249,19 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 				: errorMessage.substring(0, 500);
 		if (!this.jobs.finish(job.id(), this.owner, state, usage, errorCode, message)) {
 			log.warn("summary job finish ignored, lease lost jobId={} state={}", job.id(), state);
+			return;
+		}
+		finished(state, errorCode, 1);
+	}
+
+	private void finished(JobState state, String errorCode, int count) {
+		if (count > 0) {
+			Counter.builder("astra.summary.jobs.finished")
+				.description("끝난 요약 작업 수")
+				.tag("state", state.value())
+				.tag("code", MetricTags.code(errorCode))
+				.register(this.meters)
+				.increment(count);
 		}
 	}
 

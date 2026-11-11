@@ -21,6 +21,11 @@ import com.stackcorp.astra.files.api.RenditionException.Code;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
 
+import com.stackcorp.astra.shared.metrics.MetricTags;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -31,6 +36,8 @@ import tools.jackson.databind.json.JsonMapper;
  * <li>content: renditions/{key}/model/NNN.jpg 모델 입력용 쪽 이미지</li>
  * <li>content: renditions/{key}/document.json 제목과 쪽 텍스트</li>
  * </ul>
+ * 변환 한 번의 시간과 결과를 잰다(astra.files.rendition.conversions). 결과는 ok 또는 failed이고, 실패 code는 converter의 실패
+ * 종류나 storage다. 이미 만든 rendition을 읽는 경우는 재지 않는다.
  */
 @Service
 class DocumentRenditionService implements DocumentRenditions {
@@ -53,12 +60,15 @@ class DocumentRenditionService implements DocumentRenditions {
 
 	private final PageConverter converter;
 
+	private final MeterRegistry meters;
+
 	DocumentRenditionService(FileRecords files, ConversionRecords conversions, ObjectStore store,
-			PageConverter converter) {
+			PageConverter converter, MeterRegistry meters) {
 		this.files = files;
 		this.conversions = conversions;
 		this.store = store;
 		this.converter = converter;
+		this.meters = meters;
 	}
 
 	@Override
@@ -75,7 +85,24 @@ class DocumentRenditionService implements DocumentRenditions {
 		if (existing.isPresent()) {
 			return read(file, existing.get());
 		}
-		return convert(file);
+		Timer.Sample sample = Timer.start(this.meters);
+		String code = "storage";
+		try {
+			Rendition rendition = convert(file);
+			code = null;
+			return rendition;
+		}
+		catch (RenditionException ex) {
+			code = MetricTags.code(ex.code() == Code.CONVERSION_FAILED ? ex.detail() : ex.code().name());
+			throw ex;
+		}
+		finally {
+			sample.stop(Timer.builder("astra.files.rendition.conversions")
+				.description("PDF를 쪽 이미지와 텍스트로 바꾼 시간과 결과")
+				.tag("outcome", code == null ? "ok" : "failed")
+				.tag("code", code == null ? "none" : code)
+				.register(this.meters));
+		}
 	}
 
 	@Override

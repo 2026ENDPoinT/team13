@@ -97,6 +97,8 @@ flowchart LR
 
 새 테이블·컬럼은 아래 규칙을 따른다. `tools/check.sql`이 COMMENT 누락과 깨진 FK를 잡는다.
 
+다른 테이블과 FK로 이어지지 않은 테이블도 `tools/check.sql`이 잡는다(isolated_table). 업무 행을 가리키지 않는 기반 테이블만 그 검사의 예외 목록에 이유와 함께 이름을 적는다. 지금은 주기 작업 lease 잠금 `scheduler_locks`(ADR-0034) 하나다.
+
 - **이름**: snake_case, 테이블은 복수형(원장은 `learning_credit_ledger`처럼 단수), PK는 `<단수>_id`, FK 제약은 `fk_<자식>_<부모>`. 예약어는 피한다(`role` → `enrollment_role`).
 - **PK**: `BIGINT UNSIGNED AUTO_INCREMENT` 대리키. 부모와 1:1인 상세 테이블은 부모 PK를 그대로 PK+FK로 쓴다(`learning_material_details.activity_id` 등).
 - **COMMENT 필수**: 모든 테이블·컬럼에 한글 COMMENT를 단다. ERD의 한글 이름은 COMMENT에서 `:` 앞, 맨 뒤 괄호 앞까지를 잘라 만든다. 예를 들어 `역할: STUDENT|TA`는 `역할`이 되므로, COMMENT는 "이름(보충 설명): 값 목록" 형태로 쓴다.

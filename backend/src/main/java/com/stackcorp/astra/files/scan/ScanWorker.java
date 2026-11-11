@@ -27,6 +27,10 @@ import com.stackcorp.astra.files.scan.ScanRecords.Pending;
 import com.stackcorp.astra.files.scan.ScanRecords.Rejected;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
+import com.stackcorp.astra.shared.metrics.MetricTags;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * quarantined 내용을 검사한다(SC-08, ADR-0018). 한 번에 batchSize개까지 하나씩 SKIP LOCKED와 lease로 잡으므로 worker가 둘이어도 같은
@@ -36,6 +40,8 @@ import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
  * 잡기와 판정 기록은 READ COMMITTED로 한다. REPEATABLE READ의 next-key lock은 files, upload_sessions의 이웃한 blob 행까지 잠가 두
  * worker의 판정 기록이 서로 deadlock을 낸다. 판정 기록은 lease를 조건으로 한 compare-and-set이라 다시 실행해도 안전하므로, 잠금 충돌로
  * 되돌려지면 몇 번 다시 기록한다.
+ * <p>
+ * 검사 결과를 판정(clean, infected, unavailable)과 사유 코드별로 센다(astra.files.scan.results). 검사기 장애는 unavailable 수로 보인다.
  */
 @Component
 @Profile("worker")
@@ -57,8 +63,10 @@ class ScanWorker {
 
 	private final String owner;
 
+	private final MeterRegistry meters;
+
 	ScanWorker(ScanRecords records, ObjectProvider<ContentScanner> scanner, ObjectStore store,
-			PlatformTransactionManager transactionManager, ScanProperties properties) {
+			PlatformTransactionManager transactionManager, ScanProperties properties, MeterRegistry meters) {
 		this.records = records;
 		this.scanner = scanner;
 		this.store = store;
@@ -66,6 +74,7 @@ class ScanWorker {
 		this.transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 		this.properties = properties;
 		this.owner = properties.workerId() != null ? properties.workerId() : defaultOwner();
+		this.meters = meters;
 	}
 
 	@Scheduled(fixedDelayString = "${astra.scan.poll-interval:10s}", initialDelayString = "${astra.scan.poll-interval:10s}")
@@ -119,6 +128,7 @@ class ScanWorker {
 		switch (verdict) {
 			case Clean c -> {
 				if (transition(() -> this.records.markClean(blob.blobId(), this.owner))) {
+					counted("clean", null);
 					log.info("scan clean blobId={} attempt={}", blob.blobId(), blob.attempt());
 				}
 				else {
@@ -127,6 +137,7 @@ class ScanWorker {
 			}
 			case Infected infected -> {
 				if (transition(() -> this.records.markInfected(blob.blobId(), this.owner, infected.signature()))) {
+					counted("infected", null);
 					log.warn("malware detected blobId={} signature={}", blob.blobId(), infected.signature());
 				}
 				else {
@@ -136,10 +147,20 @@ class ScanWorker {
 			case Unavailable unavailable -> {
 				var delay = this.properties.backoff(blob.attempt());
 				this.records.retryLater(blob.blobId(), this.owner, delay);
+				counted("unavailable", unavailable.reason());
 				log.warn("scanner unavailable blobId={} attempt={} reason={} retryInSeconds={}", blob.blobId(),
 						blob.attempt(), unavailable.reason(), delay.toSeconds());
 			}
 		}
+	}
+
+	private void counted(String result, String reason) {
+		Counter.builder("astra.files.scan.results")
+			.description("기록한 검사 판정 수. unavailable은 검사기에 닿지 못해 나중에 다시 검사하는 경우다")
+			.tag("result", result)
+			.tag("reason", MetricTags.code(reason))
+			.register(this.meters)
+			.increment();
 	}
 
 	/** @return lease를 아직 갖고 있어 판정을 기록했는지 */

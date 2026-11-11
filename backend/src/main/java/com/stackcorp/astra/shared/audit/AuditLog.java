@@ -11,12 +11,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import com.stackcorp.astra.shared.RequestIds;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+
 /**
  * 감사 기록(SC-09, ADR-0012). 누가(actor, session), 무엇을(operation), 어디에(object, course), 결과(code)를 requestId,
  * DB 시각과 함께 남긴다. 요청 본문, 파일 이름, 자유 텍스트는 받지 않는다. 이름과 코드는 소문자 식별자만 허용한다.
  * <ul>
  * <li>부르는 쪽의 transaction 안이면 같은 transaction에 쓴다. 기록에 실패하면 그 명령도 되돌린다.</li>
- * <li>transaction 밖이면 바로 commit한다. 기록에 실패해도 요청을 실패시키지 않고 경고 로그만 남긴다.</li>
+ * <li>transaction 밖이면 바로 commit한다. 기록에 실패해도 요청을 실패시키지 않고 경고 로그를 남기며 빠진 수를 연산별로 센다
+ * (astra.audit.write.failures).</li>
  * </ul>
  */
 @Component
@@ -33,8 +37,11 @@ public class AuditLog {
 
 	private final JdbcClient jdbc;
 
-	AuditLog(JdbcClient jdbc) {
+	private final MeterRegistry meters;
+
+	AuditLog(JdbcClient jdbc, MeterRegistry meters) {
 		this.jdbc = jdbc;
+		this.meters = meters;
 	}
 
 	/** 성공한 명령을 남긴다. */
@@ -66,6 +73,11 @@ public class AuditLog {
 		catch (DataAccessException ex) {
 			log.warn("audit record failed operation={} result={} error={}", operation, resultCode,
 					ex.getClass().getSimpleName());
+			Counter.builder("astra.audit.write.failures")
+				.description("transaction 밖에서 쓰지 못해 빠진 감사 기록 수")
+				.tag("operation", operation)
+				.register(this.meters)
+				.increment();
 		}
 	}
 

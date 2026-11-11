@@ -136,7 +136,7 @@ flowchart LR
 - 모듈은 공개 API 패키지만 외부에 노출한다. Spring Modulith는 기본으로 모듈 루트 패키지만 공개하므로 `api` 하위 패키지는 `@NamedInterface`로 지정한다. 내부 패키지 참조는 `verify()`가 막는다.
 - 다른 모듈의 테이블을 직접 읽거나 바꾸지 않는다. 그 모듈의 operation을 호출한다(SC-01).
 - 경계는 Spring Modulith 2.x(Boot 4 호환 라인)의 `ApplicationModules.verify()` 테스트로 CI에서 확인한다. 정확한 버전은 의존성을 추가할 때 호환표로 정한다.
-- DB 변경과 commit 뒤 후속 작업(외부 API 호출 등)을 함께 보장해야 하는 곳에는 Spring Modulith JDBC event publication registry를 쓴다. 이벤트는 같은 transaction에 기록되고, listener는 commit 뒤 이벤트를 발행한 프로세스에서 비동기로 실행된다. worker는 실패했거나 정해진 시간 이상 끝나지 않은 이벤트만 재전송한다(`ResubmissionOptions.withMinAge` 또는 staleness 설정). 실행 중인 listener와 겹치지 않게 하기 위해서이고, 이 작업은 ShedLock으로 묶는다. 이 registry는 외부 broker로 내보내는 outbox가 아니다. 그런 outbox가 필요해지면 따로 결정한다. 테이블은 Flyway 마이그레이션으로 만든다([db/README.md](../db/README.md) 5절).
+- DB 변경과 commit 뒤 후속 작업을 함께 보장해야 하는 곳은 지금 모두 같은 transaction에 쓰는 원장 행으로 한다. 업로드 확정 뒤 검사는 `file_blobs`의 quarantined 행, 요약 요청은 `summary_jobs`의 queued 행이고 worker가 `SKIP LOCKED`로 잡는다. Spring Modulith JDBC event publication registry는 commit 뒤 api process가 바로 외부 API를 불러야 하는 경로(예: 영상 변환 작업 지시)가 생길 때 그 변경에서 더한다. 그때 재전송 작업은 실패했거나 정해진 시간 이상 끝나지 않은 이벤트만 다시 보내고 4.3절의 잠금으로 묶는다. 이 registry는 외부 broker로 내보내는 outbox가 아니다([ADR-0034](adr/0034-observability-and-scheduler-lock.md) 6번).
 - 객체 권한은 각 모듈의 `Policy`가 판정한다. 컨트롤러나 서비스가 role만 보고 허용하지 않는다(5절).
 
 ### 4.3 프로세스와 stateless 규칙
@@ -148,7 +148,7 @@ flowchart LR
 
 - session은 DB(`user_sessions`)에 둔다. 서버 메모리에 사용자 상태를 두지 않는다.
 - 파일은 S3에만 쓴다. 컨테이너 로컬 디스크는 임시 작업 공간으로만 쓰고 요청 사이에 남기지 않는다.
-- `@Scheduled` 작업은 ShedLock(JDBC)으로 묶는다. 인스턴스가 늘어도 한 번만 실행된다.
+- worker loop는 작업 행을 lease와 `SKIP LOCKED`로 잡아 인스턴스가 늘어도 같은 행을 두 번 처리하지 않는다. 겹친 실행이 같은 후보를 함께 훑는 주기 작업(저장소 GC, 학습 session lease 만료)만 `shared.schedule.SchedulerLock`(`scheduler_locks` lease)으로 묶어 한 인스턴스에서 실행한다([ADR-0034](adr/0034-observability-and-scheduler-lock.md) 5번).
 - WebSocket fan-out은 인스턴스가 1대일 때 in-memory broker로 하고, 2대가 되면 Valkey pub/sub로 바꾼다(8절).
 
 ### 4.4 C4 보기
@@ -387,11 +387,11 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 |---|---|
 | 로그 | 앱은 stdout에 한 줄씩 JSON(ECS) 로그를 쓴다. 요청마다 method, 처리한 경로 pattern, 상태 코드, 처리 시간을 한 줄 남긴다. requestId를 모든 줄에 넣는다. 본문, query string, cookie, 토큰, 개인정보는 남기지 않는다(SC-07). CloudWatch Logs로는 host의 log driver나 agent가 보낸다(아직 구성 없음) |
 | 감사 | `audit_events`에 행위자, 연산, 대상, 과목, 결과 코드, requestId, DB 시각을 남긴다(SC-09, [ADR-0012](adr/0012-idempotency-ledger-and-audit.md)) |
-| 지표 | Actuator와 Micrometer를 OTLP로 내보내 CloudWatch에 쌓는다. 지금은 health(liveness, readiness)만 켰고 지표 내보내기는 없다 |
-| trace | OpenTelemetry를 X-Ray로 보낸다 |
-| 알람 | CloudWatch 알람을 SNS를 거쳐 Slack으로 보낸다. 외부 uptime check를 하나 둔다 |
+| 지표 | Micrometer로 요청 시간(경로 pattern, 상태, problem code), 학습 하트비트 간격과 session 종료, GC·검사·요약 대기열, 변환 결과, 모델 호출과 token, 멱등 충돌, 빠진 감사 기록, 요청 제한, DB pool을 잰다. tag에 사용자, 과목, 파일 ID, 실제 경로는 없다. 대기열 gauge는 worker가 1분마다 계산해 둔다. OTLP 내보내기는 기본으로 꺼져 있고 `ASTRA_OTLP_ENABLED`와 수신 주소를 줄 때만 보낸다. 지표 endpoint는 어느 port에도 열지 않는다([ADR-0034](adr/0034-observability-and-scheduler-lock.md)) |
+| trace | 같은 opt-in으로 OpenTelemetry trace를 OTLP로 보낸다. 표본 비율은 설정으로 정한다(기본 10%). client의 trace header와 baggage는 읽지 않고, span에는 경로 pattern, 상태, code와 서버가 만든 requestId만 남긴다. 수신 쪽(collector, X-Ray)은 아직 없다 |
+| 알람 | CloudWatch 알람을 SNS로 보낸다. 알람 목록과 첫 대응은 [operations/alarms.md](operations/alarms.md)에 있다. 지금 Terraform에는 EC2, fck-nat, RDS, CloudFront 알람만 있고, 앱 지표 알람은 내보내기를 켠 뒤 더한다. Slack 연동과 외부 uptime check는 아직 없다 |
 
-알람 대상 지표는 SC-09를 따른다. API p95와 5xx, 제출·시험 commit 실패, 하트비트 gap, orphan upload, MediaConvert·converter 실패, 미완료 이벤트 backlog, AI 토큰 비용이다. Grafana는 대시보드가 부족해지면 붙인다.
+알람 대상 지표는 SC-09를 따른다. API p95와 5xx, 제출·업로드 commit 실패, 하트비트 gap, orphan upload, converter 실패, 대기열 backlog, AI token이다. MediaConvert 실패는 영상 흐름과 함께, 미완료 이벤트 backlog는 event registry와 함께 더한다. Grafana는 대시보드가 부족해지면 붙인다.
 
 ## 10. 빌드와 배포
 
@@ -414,7 +414,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 1단계의 `home`은 과목, 공지, 할 일을 채운다. 할 일은 `learning`의 활동 기간만 보므로, 과제·퀴즈를 제출했는지는 2단계 `assessment` 구현 뒤에 반영한다. 알림 수도 알림을 만드는 기능이 생긴 뒤 넣는다.
 
-ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md](../db/README.md) 5절 절차로 추가한다. 0단계는 스키마를 바꾸지 않는다.
+주기 작업 잠금 테이블 `scheduler_locks`는 V33으로 추가했다. event publication registry 테이블은 그것이 필요한 경로가 생길 때 [db/README.md](../db/README.md) 5절 절차로 추가한다.
 
 0~1단계 인프라와 2단계의 S3 `content`·`delivery`, KMS key는 `infra/terraform/envs/pre-adoption`에 코드로 있다. 아직 어떤 계정에도 apply하지 않았다. MediaConvert, EventBridge·SQS는 2단계 앱 코드와 함께 만든다.
 
@@ -446,3 +446,4 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 지운 자료의 CDN 쪽 이미지 | CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 cookie가 끝나기 전, GC가 객체를 지우기 전이면 읽힐 수 있다([ADR-0011](adr/0011-material-deletion.md)) | 문서 cookie TTL을 짧게 유지한다. 더 줄여야 하면 삭제 commit 뒤 `doc/{key}/`를 바로 지우는 이벤트를 붙인다 |
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
+| 앱 지표의 수신 쪽 | 지표와 trace를 내보낼 collector(또는 CloudWatch agent)와 instance role 권한이 없어 앱 지표 알람([operations/alarms.md](operations/alarms.md) 2절)이 아직 동작하지 않는다 | 수신 쪽을 정하고 `ASTRA_OTLP_ENABLED`를 켠 뒤 알람을 Terraform `monitoring` module에 더한다 |
