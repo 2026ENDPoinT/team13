@@ -41,6 +41,11 @@ variable "deploy_target_tag" {
   })
 }
 
+variable "egress_bridge" {
+  description = "Bridge of the compose egress network; the only one the host firewall lets reach instance metadata."
+  type        = string
+}
+
 variable "app_environment" {
   description = "Non-secret environment written to /opt/astra/.env on each deploy. Values are single-quoted."
   type        = map(string)

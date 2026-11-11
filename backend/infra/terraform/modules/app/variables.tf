@@ -30,6 +30,11 @@ variable "instance_type" {
   type = string
 }
 
+variable "scan_uploads" {
+  description = "The instance runs the ClamAV scan profile; requires at least 8 GiB of memory."
+  type        = bool
+}
+
 variable "root_volume_size" {
   description = "Root volume size in GiB."
   type        = number

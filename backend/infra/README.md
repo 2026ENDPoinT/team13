@@ -21,7 +21,7 @@ infra/terraform/
 |---|---|
 | 네트워크 | VPC 1개, AZ 2개에 public·private subnet 하나씩. private subnet의 기본 경로는 fck-nat의 고정 ENI다. S3는 gateway endpoint로 간다. interface endpoint는 없다(3.3절) |
 | fck-nat | `t4g.nano`, 크기 1 Auto Scaling group. 부팅할 때 고정 ENI와 고정 EIP를 붙인다. private subnet에서 오는 TCP 443만 받아 TCP 443으로만 내보낸다. 모든 외부 호출의 출발 IP는 출력 `nat_egress_ip` 하나다 |
-| 앱 EC2 | private subnet, public IP 없음, SSH 없음, SSM Session Manager로 접근. IMDSv2만 허용(hop limit 2, 컨테이너가 instance role을 쓰기 위해). root volume 암호화. docker와 compose plugin(checksum 확인)을 설치하고 컨테이너 로그를 CloudWatch Logs로 보낸다 |
+| 앱 EC2 | private subnet, public IP 없음, SSH 없음, SSM Session Manager로 접근. IMDSv2만 허용(hop limit 2, api와 worker 컨테이너가 instance role을 쓰기 위해). host firewall이 instance metadata로 가는 컨테이너 트래픽 중 compose `egress` network(bridge `astra-egress`, api와 worker만 붙는다)에서 온 것만 통과시킨다([ADR-0020](../docs/adr/0020-terraform-layout.md) 6번). root volume 암호화. docker와 compose plugin(checksum 확인)을 설치하고 컨테이너 로그를 CloudWatch Logs로 보낸다 |
 | 앱 security group | 들어오는 트래픽은 `CloudFront-VPCOrigins-Service-SG`에서 오는 앱 포트(기본 8080)뿐이다. 나가는 트래픽은 RDS 3306, S3 prefix list 443, fck-nat를 거치는 443뿐이다 |
 | instance role | `content`·`delivery` bucket의 객체 읽기·쓰기·삭제와 두 KMS key 사용(S3 경유만), 자기 secret 5개 읽기, ECR pull, 자기 log group 쓰기, `AmazonSSMManagedInstanceCore`. RDS master secret은 읽지 못한다 |
 | RDS | MySQL 8.4, single-AZ, private subnet, 공개 안 함, storage 암호화, 자동 백업 7일(PITR), deletion protection, 마지막 snapshot. `utf8mb4`·`utf8mb4_0900_ai_ci`, `require_secure_transport=1`. master 비밀번호는 RDS가 Secrets Manager에서 만들고 돌린다. Terraform state에 비밀번호가 없다. error·slow query 로그는 보존 기간을 둔 log group으로 간다 |
@@ -62,8 +62,9 @@ infra/terraform/
 | `cloudfront_signing_public_keys` | 없음 | signed cookie public key(PEM). key 이름 → PEM. 개인 key는 넣지 않는다(검사함) |
 | `cloudfront_signing_active_key` | 없음 | 앱이 서명에 쓰는 key 이름 |
 | `alarm_emails` | `[]` | 알람 email 구독자 |
-| `app_environment` | `{}` | Terraform이 모르는 비밀 아닌 앱 설정. 예: `ASTRA_LLM_MODEL`, `ASTRA_OIDC_ISSUER`, `ASTRA_OIDC_CLIENT_ID` |
-| `app_instance_type` | `t3.medium` | ECR image의 CPU 구조와 맞아야 한다 |
+| `app_environment` | `{}` | Terraform이 모르는 비밀 아닌 앱 설정. 예: `ASTRA_LLM_MODEL`, `ASTRA_OIDC_ISSUER`, `ASTRA_OIDC_CLIENT_ID`. 검사기 설정(`ASTRA_SCAN_*`)과 `COMPOSE_PROFILES`는 받지 않는다 |
+| `scan_uploads` | `true` | ClamAV 검사(compose 프로필 `scan`)를 띄우고 검사기 없이는 앱이 뜨지 않게 한다(ADR-0018). 학교 자료를 받는 배포는 `true`로 둔다. `false`면 업로드가 형식 검사만 거쳐 바로 clean이 된다 |
+| `app_instance_type` | `t3.large` | ECR image의 CPU 구조와 맞아야 한다. `scan_uploads`이면 메모리 8 GiB 이상이어야 한다(plan이 검사한다). clamd가 서명만으로 약 1.2 GiB를 쓰고, 컨테이너 메모리 상한의 합(api 1.25, worker 1, converter 2, transcoder 2, clamav 3, freshclam 1 GiB)은 8 GiB를 넘는다. 변환, 영상 변환, 검사가 한꺼번에 상한까지 쓰면 host가 메모리 부족으로 process를 끝낼 수 있다. 그런 부하가 보이면 `t3.xlarge`로 올린다 |
 | `db_instance_class` | `db.t4g.small` | |
 | `github_repository`, `github_refs`, `github_environment` | `STack-Corp/STack-eclass-Backend`, `["refs/heads/main"]`, 없음 | deploy role을 받을 수 있는 workflow |
 | `create_github_oidc_provider` | `true` | 계정에 이미 GitHub OIDC provider가 있으면 `false` |
@@ -121,23 +122,26 @@ CI workflow는 아직 없다. GitHub Actions에서는 `aws-actions/configure-aws
 ```sh
 aws ecr get-login-password | docker login --username AWS --password-stdin <ecr 주소>
 docker push <ecr_repository_url>:<tag>
+docker push <ecr_repository_url>:<tag>-converter   # Dockerfile target converter로 만든 이미지
 aws ssm send-command --document-name <deploy_document_name> \
   --targets Key=tag:DeployTarget,Values=astra-pre --parameters ImageTag=<tag>
 ```
 
 배포 문서(`modules/deploy/templates/deploy.sh`)는 Terraform이 아는 설정, `app_environment`, secret 값으로 `/opt/astra/.env`(root, 0600)를 만들고 `docker compose pull`, `docker compose up -d --wait`를 실행한다. deploy role은 이 문서 말고 다른 명령을 EC2에서 실행할 수 없다([ADR-0020](../docs/adr/0020-terraform-layout.md)).
 
-Terraform이 넣는 설정: `ASTRA_API_BIND=0.0.0.0`, `ASTRA_API_PORT`, `DB_URL`(`sslMode=REQUIRED`), `ASTRA_STORAGE_CONTENT_BUCKET`, `ASTRA_STORAGE_DELIVERY_BUCKET`, `ASTRA_STORAGE_REGION`, `ASTRA_CLOUDFRONT_BASE_URL`, `ASTRA_CLOUDFRONT_KEY_PAIR_ID`, `ASTRA_SESSION_ALLOWED_ORIGINS`, `ASTRA_OIDC_REDIRECT_URI`. CloudFront와 EC2 사이가 HTTP라 앱은 요청에서 자기 공개 origin을 알 수 없다. 그래서 허용 Origin을 서비스 주소로 넣는다.
+Terraform이 넣는 설정: `ASTRA_API_BIND=0.0.0.0`, `ASTRA_API_PORT`, `DB_URL`(`sslMode=REQUIRED`), `ASTRA_STORAGE_CONTENT_BUCKET`, `ASTRA_STORAGE_DELIVERY_BUCKET`, `ASTRA_STORAGE_REGION`, `ASTRA_CLOUDFRONT_BASE_URL`, `ASTRA_CLOUDFRONT_KEY_PAIR_ID`, `ASTRA_SESSION_ALLOWED_ORIGINS`, `ASTRA_OIDC_REDIRECT_URI`, 그리고 `scan_uploads`이면 `COMPOSE_PROFILES=scan`, `ASTRA_SCAN_CLAMD_HOST=clamav`, `ASTRA_SCAN_CLAMD_PORT=3310`, `ASTRA_SCAN_REQUIRED=true`. 배포 문서는 `ASTRA_IMAGE`를 `<tag>`로, `ASTRA_CONVERTER_IMAGE`를 `<tag>-converter`로 넣는다. CloudFront와 EC2 사이가 HTTP라 앱은 요청에서 자기 공개 origin을 알 수 없다. 그래서 허용 Origin을 서비스 주소로 넣는다.
+
+배포 문서는 컨테이너를 띄우기 전에 host의 instance metadata 차단 규칙이 있는지 보고, 없으면 멈춘다. 띄운 뒤에는 떠 있는 컨테이너마다 그 network namespace에서 instance metadata token을 요청한다. api와 worker가 token을 받지 못하거나 다른 컨테이너가 token을 받으면 그 컨테이너를 멈추고 배포를 실패로 끝낸다. `scan_uploads`로 처음 배포하면 freshclam이 서명을 받는 몇 분 동안 clamav와 worker가 뜨지 않는다. 그동안 받은 업로드는 `quarantined`로 남는다. 문서의 실행 제한 시간은 30분이다.
 
 앱이 지켜야 하는 것:
 
 - `X-Forwarded-For`의 앞쪽 값은 사용자가 보낸 값이다. CloudFront는 이 header에 덧붙이기만 한다. 사용자 IP가 필요하면 `CloudFront-Viewer-Address`를 쓴다. 앱 포트는 CloudFront에서만 열려 있다.
 - S3에 쓸 때 SSE header를 보내지 않는다. bucket 기본 암호화가 key를 정한다. 다른 KMS key나 SSE-S3를 지정한 요청은 bucket policy가 거부한다.
-- converter 컨테이너는 instance role을 받으면 안 된다(SC-08). hop limit 2라서 외부로 나가는 bridge network에 있는 컨테이너는 IMDS에서 자격 증명을 받을 수 있다. converter는 `internal: true` network에만 둔다.
+- api와 worker 말고는 instance role을 받으면 안 된다(SC-08). hop limit 2라서 bridge network의 컨테이너는 그대로면 IMDS에 닿는다. converter, transcoder, clamav, mysql은 `internal: true` network에만 두고, 외부로 나가야 하는 freshclam은 자기 network(`signatures`)에 둔다. host firewall은 `egress` bridge 밖에서 온 instance metadata 트래픽을 모두 버리므로 새 network를 더해도 기본으로 막힌다. `egress`에는 instance role이 필요한 컨테이너만 붙인다.
 
 ## 6. 운영 메모
 
-- 앱 EC2는 AMI와 user data 변경을 무시한다. 새 AL2023으로 바꿀 때는 `terraform apply -replace=module.app.aws_instance.app`로 교체하고 4절 6·7번(compose 파일)과 배포를 다시 한다. 교체하는 동안 API가 멈춘다.
+- 앱 EC2는 AMI와 user data 변경을 무시한다. 새 AL2023으로 바꿀 때는 `terraform apply -replace=module.app.aws_instance.app`로 교체하고 4절 6·7번(compose 파일)과 배포를 다시 한다. 교체하는 동안 API가 멈춘다. instance metadata 차단 규칙(`astra-imds-guard.service`)이 없는 인스턴스에는 배포 문서가 배포하지 않는다. 이 규칙보다 먼저 만든 인스턴스도 같은 방법으로 교체한다.
 - fck-nat도 새 AMI를 자동으로 따라가지 않는다. `terraform apply -replace=module.network.aws_launch_template.nat` 뒤 instance refresh가 끝날 때까지 외부 호출, SSM, 로그 전송이 멈춘다.
 - signed cookie key 교체: 새 public key를 `cloudfront_signing_public_keys`에 더해 apply → 새 개인 key를 secret에 넣고 `cloudfront_signing_active_key`를 바꿔 apply·배포 → 기존 cookie TTL이 지난 뒤 이전 key를 뺀다.
 - 앱 EC2는 `app_termination_protection`, RDS는 `modules/database`의 `deletion_protection`으로 삭제를 막는다. 지우려면 먼저 끄고 apply한다. RDS는 삭제할 때 마지막 snapshot을 남긴다.
@@ -148,7 +152,7 @@ Terraform이 넣는 설정: `ASTRA_API_BIND=0.0.0.0`, `ASTRA_API_PORT`, `DB_URL`
 
 | 항목 | 상시로 나가는 것 |
 |---|---|
-| 앱 EC2 | `t3.medium` 1대 730시간, gp3 30 GiB |
+| 앱 EC2 | `t3.large` 1대 730시간, gp3 30 GiB. `scan_uploads`(clamd) 때문에 `t3.medium`의 두 배 메모리를 쓴다 |
 | fck-nat | `t4g.nano` 1대, gp3 8 GiB, 사용 중인 public IPv4(EIP) 1개 |
 | RDS | `db.t4g.small` single-AZ, gp3 20 GiB, 보존 기간 동안 DB 크기를 넘는 백업 storage |
 | KMS | customer managed key 2개의 월 요금과 요청 수(S3 Bucket Key로 줄임) |
@@ -164,8 +168,8 @@ Terraform이 넣는 설정: `ASTRA_API_BIND=0.0.0.0`, `ASTRA_API_PORT`, `DB_URL`
 검증한 것(2026-11-11, Terraform 1.15.8, AWS provider 6.72.0):
 
 - `terraform fmt -check -recursive`, `terraform init -backend=false`, `terraform validate`
-- `terraform test`: mock AWS provider로 환경 전체를 plan·apply한다. 자원 사이 순환 의존이 없고, `DB_URL`과 허용 Origin이 맞게 만들어지며, 예약된 key를 `app_environment`에 넣거나 개인 key를 public key 자리에 넣으면 거부되는 것을 확인한다. AWS API는 부르지 않는다.
-- 배포 script: 가짜 `aws`·`docker` 명령으로 로컬에서 `.env` 생성, PEM 줄바꿈 처리, `$`가 든 값의 작은따옴표 처리, 허용하지 않은 key 거부, 값이 없는 선택 secret 건너뛰기를 확인했다.
+- `terraform test`: mock AWS provider로 환경 전체를 plan·apply한다. 자원 사이 순환 의존이 없고, `DB_URL`과 허용 Origin이 맞게 만들어지며, 예약된 key를 `app_environment`에 넣거나 개인 key를 public key 자리에 넣으면 거부되는 것을 확인한다. 기본 설정의 `.env`에 검사기 설정 넷이 들어가는지(배포 문서를 렌더링해 본다), `scan_uploads = false`에서 빠지는지, `app_environment`로 검사기를 끌 수 없는지, 메모리 8 GiB 미만 instance type이면 plan이 멈추는지, user data에 instance metadata 차단 규칙이 있고 배포 문서가 그 규칙을 확인하는지도 본다. AWS API는 부르지 않는다.
+- 배포 script: 가짜 `aws`·`docker` 명령으로 로컬에서 `.env` 생성, PEM 줄바꿈 처리, `$`가 든 값의 작은따옴표 처리, 허용하지 않은 key 거부, 값이 없는 선택 secret 건너뛰기를 확인했다(2026-11-11). instance metadata 확인 단계는 이 방식으로 확인하지 않았다.
 
 apply하지 않아 확인하지 못한 것:
 
@@ -174,6 +178,8 @@ apply하지 않아 확인하지 못한 것:
 - CloudFront OAC가 `delivery` key로 SSE-KMS 객체를 읽는지, WebSocket(`/ws`)이 VPC origin으로 연결되는지
 - WAF 오탐: Core·SQLi rule group의 본문 규칙(`CrossSiteScripting_BODY`, `SQLi_BODY` 등)이 업로드 파일 앞 16 KB에 걸리는지, 16 KB 상한이 글 작성·제출 본문에 충분한지. 첫 배포 뒤 sampled request를 보고 `waf_common_rules_to_count`와 `waf_large_body_path_prefixes`를 조정한다
 - deploy role의 `ssm:resourceTag/DeployTarget` 조건과 SSM 문서 실행, 실제 AL2023에서 user data(docker, compose plugin, awslogs driver)와 배포 script
+- instance metadata 차단 규칙: AL2023의 docker(iptables-nft)가 시작할 때 `DOCKER-USER`의 규칙을 그대로 두는지, bridge 이름(`astra-egress`)이 compose network에 붙는지, 배포 문서의 확인 단계가 api·worker는 통과시키고 freshclam 등은 막는지. 첫 배포 뒤 `docker/smoke-test.sh` 12번과 같은 확인을 운영자가 한 번 더 한다
+- `scan_uploads`의 첫 배포: freshclam이 fck-nat를 거쳐 서명을 받는 데 걸리는 시간, clamd의 실제 메모리 사용량
 - RDS parameter(`require_secure_transport`, `log_output` 등)가 `mysql8.4` family에서 그대로 받아지는지, 앱의 Connector/J 기본 설정으로 TLS 연결이 되는지
 - 정적 사이트 라우팅 함수가 frontend build 형태(SPA 또는 경로별 `index.html`)에 맞는지
 - 비용

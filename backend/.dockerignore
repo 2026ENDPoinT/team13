@@ -7,3 +7,4 @@
 !src/main
 !docker/entrypoint.sh
 !docker/healthcheck.sh
+!docker/imds-probe.sh

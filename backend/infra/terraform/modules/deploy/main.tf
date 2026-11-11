@@ -89,11 +89,13 @@ resource "aws_ssm_document" "deploy" {
       action = "aws:runShellScript"
       name   = "deploy"
       inputs = {
-        timeoutSeconds = 900
+        # The first deploy with the scan profile waits for freshclam to download the signatures (several minutes).
+        timeoutSeconds = 1800
         runCommand = split("\n", templatefile("${path.module}/templates/deploy.sh", {
           region         = local.region
           registry       = split("/", aws_ecr_repository.this.repository_url)[0]
           repository_url = aws_ecr_repository.this.repository_url
+          egress_bridge  = var.egress_bridge
           config_lines   = join("\n", [for k in sort(keys(var.app_environment)) : "${k}='${var.app_environment[k]}'"])
           fetch_lines = join("\n", [for id in sort(keys(var.secrets)) :
             "fetch '${var.secrets[id].arn}' '${jsonencode(var.secrets[id].keys)}' ${var.secrets[id].required ? "required" : "optional"}"

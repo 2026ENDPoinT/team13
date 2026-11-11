@@ -37,6 +37,11 @@ locals {
   }
 
   docker_compose_arch = contains(data.aws_ec2_instance_type.app.supported_architectures, "arm64") ? "aarch64" : "x86_64"
+
+  # Bridge name of the compose egress network (compose.yaml networks.egress driver_opts). Only api and worker are on it.
+  egress_bridge = "astra-egress"
+
+  scan_min_memory_mib = 8192
 }
 
 # ---------------------------------------------------------------------------
@@ -231,9 +236,11 @@ resource "aws_instance" "app" {
   monitoring                  = false
 
   metadata_options {
-    http_endpoint = "enabled"
-    http_tokens   = "required"
-    # Containers on the docker bridge network are one extra hop from IMDS.
+    http_endpoint      = "enabled"
+    http_tokens        = "required"
+    http_protocol_ipv6 = "disabled"
+    # api and worker reach IMDS from the docker egress bridge, one hop further than the host. Every other container is
+    # kept away by the host firewall rule in the user data (ADR-0020 6), not by this limit.
     http_put_response_hop_limit = 2
   }
 
@@ -254,6 +261,7 @@ resource "aws_instance" "app" {
     docker_compose_version = var.docker_compose_version
     docker_compose_arch    = local.docker_compose_arch
     docker_compose_sha256  = var.docker_compose_sha256[local.docker_compose_arch]
+    egress_bridge          = local.egress_bridge
   })
 
   tags = {
@@ -265,5 +273,11 @@ resource "aws_instance" "app" {
     # A new AL2023 AMI or bootstrap script must not silently replace or restart the only app instance.
     # Replace deliberately with `terraform apply -replace=module.app.aws_instance.app`.
     ignore_changes = [ami, user_data]
+
+    # clamd keeps about 1.2 GiB of signatures in memory next to api, worker, converter and transcoder (ADR-0018).
+    precondition {
+      condition     = !var.scan_uploads || data.aws_ec2_instance_type.app.memory_size >= local.scan_min_memory_mib
+      error_message = "scan_uploads needs an app instance type with at least 8 GiB of memory (e.g. t3.large)."
+    }
   }
 }

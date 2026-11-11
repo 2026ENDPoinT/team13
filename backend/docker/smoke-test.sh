@@ -1,7 +1,9 @@
 #!/bin/bash
 # compose 구성을 띄워 경계와 기동을 확인한다. CI(.github/workflows/ci.yml)와 로컬에서 같은 절차로 쓴다.
-# 전제: 이미지 ${ASTRA_IMAGE:-astra-backend:local}이 있고, 저장소 root에 .env가 있으며 COMPOSE_PROFILES에 mysql이 있다.
-# 끝나도 container를 내리지 않는다. 정리는 docker compose down --volumes로 한다.
+# 전제: 이미지 ${ASTRA_IMAGE:-astra-backend:local}이 있고, 저장소 root에 .env가 있으며 COMPOSE_PROFILES에 mysql이 있다. host에 curl과 jq가 있다.
+# COMPOSE_PROFILES에 scan이 있으면 clamav와 freshclam의 network 경계도 실제로 확인한다. 없으면 구성 파일로만 확인한다.
+# 끝나도 container를 내리지 않는다. 정리는 docker compose down --volumes로 한다. 마지막 단계가 api와 worker를 멈추므로 운영 host에서
+# 실행하지 않는다. 운영 host의 instance metadata 확인(12번)은 배포 문서가 배포할 때마다 한다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -69,7 +71,57 @@ if probe converter transcoder 8091; then
 fi
 pass "only worker reaches converter and transcoder"
 
-# 6. converter와 transcoder에는 DB, 저장소, 모델 설정이 없다. transcoder에는 ffmpeg가 있다.
+# 6. compose 구성의 network 경계(ADR-0019 4번). scan 프로필을 켜지 않아도 구성 파일로 본다.
+#    egress(외부, instance metadata 허용)에는 api와 worker만, signatures에는 freshclam만 있다. clamav는 worker와만 만난다.
+config="$(docker compose --profile mysql --profile scan config --format json)"
+members() {
+	jq -r --arg n "$1" '[.services | to_entries[] | select((.value.networks // {}) | has($n)) | .key] | sort | join(" ")' <<<"${config}"
+}
+for expected in "egress:api worker" "signatures:freshclam" "data:api mysql worker" "conversion:converter worker" \
+	"transcoding:transcoder worker" "scanning:clamav worker"; do
+	network="${expected%%:*}"
+	actual="$(members "${network}")"
+	[[ "${actual}" == "${expected#*:}" ]] || fail "network ${network} has [${actual}], expected [${expected#*:}]"
+done
+for network in data conversion transcoding scanning; do
+	[[ "$(jq -r --arg n "${network}" '.networks[$n].internal // false' <<<"${config}")" == true ]] \
+		|| fail "network ${network} is not internal"
+done
+[[ "$(jq -r '.networks.egress.driver_opts["com.docker.network.bridge.name"] // ""' <<<"${config}")" == astra-egress ]] \
+	|| fail "egress bridge is not named astra-egress; the host firewall allows instance metadata by that name"
+pass "egress holds only api and worker, clamav shares a network only with worker, freshclam is alone"
+
+# 7. 이미지에 bash가 없을 수 있는 container(clamav, freshclam)는 같은 network namespace에 붙인 앱 이미지로 확인한다.
+app_image="$(docker inspect --format '{{.Config.Image}}' "$(docker compose ps --quiet api)")"
+in_network_of() {
+	docker run --rm --pull never --network "container:$(docker compose ps --quiet "$1")" --read-only --cap-drop ALL \
+		--security-opt no-new-privileges:true --user 10001:10001 --entrypoint "$2" "${app_image}" "${@:3}"
+}
+probe_from() {
+	in_network_of "$1" timeout 5 bash -c "exec 3<>/dev/tcp/$2/$3" >/dev/null 2>&1
+}
+if docker compose ps --services --status running | grep -qx clamav; then
+	probe worker clamav 3310 || fail "worker cannot reach clamav"
+	for client in api freshclam; do
+		if probe_from "${client}" clamav 3310; then
+			fail "${client} reached clamav"
+		fi
+	done
+	for target in "1.1.1.1 443" "api 8080" "mysql 3306"; do
+		# shellcheck disable=SC2086
+		if probe_from clamav ${target}; then
+			fail "clamav reached ${target}"
+		fi
+	done
+	if probe_from freshclam api 8080; then
+		fail "freshclam reached api"
+	fi
+	pass "only worker reaches clamav; clamav has no outbound network, freshclam reaches no other container"
+else
+	echo "skip: scan profile is not running; clamav and freshclam reachability checked only in the compose file"
+fi
+
+# 8. converter와 transcoder에는 DB, 저장소, 모델 설정이 없다. transcoder에는 ffmpeg가 있다.
 for isolated in converter transcoder; do
 	if docker compose exec -T "${isolated}" env | grep -E '^(DB_|ASTRA_|AWS_|SPRING_)'; then
 		fail "${isolated} received application settings or secrets"
@@ -80,7 +132,7 @@ docker compose exec -T transcoder bash -c 'echo x > /work/probe && rm /work/prob
 	|| fail "transcoder cannot write to its work volume"
 pass "converter and transcoder have no secrets; transcoder has ffmpeg and a writable /work"
 
-# 7. 실행 user와 파일 시스템. /var/tmp는 보통 누구나 쓸 수 있으므로 root filesystem이 읽기 전용인지 여기서 본다.
+# 9. 실행 user와 파일 시스템. /var/tmp는 보통 누구나 쓸 수 있으므로 root filesystem이 읽기 전용인지 여기서 본다.
 for service in api worker converter transcoder; do
 	uid="$(docker compose exec -T "${service}" id -u)"
 	[[ "${uid}" != 0 ]] || fail "${service} runs as root"
@@ -91,7 +143,7 @@ for service in api worker converter transcoder; do
 done
 pass "containers run as non-root on a read-only root filesystem with a writable /tmp"
 
-# 8. 로그는 JSON 한 줄이고 query string을 남기지 않는다.
+# 10. 로그는 JSON 한 줄이고 query string을 남기지 않는다.
 curl --silent --output /dev/null --max-time 10 "http://${api_port}/api/auth/csrf?probe=smoke-query-value"
 sleep 1
 logs="$(docker compose logs --no-color --no-log-prefix api)"
@@ -101,8 +153,8 @@ if grep -q 'smoke-query-value' <<<"${logs}"; then
 fi
 pass "request log is JSON without query string"
 
-# 9. LibreOffice는 converter 이미지에만 있고, converter가 office 문서를 쪽 이미지로 바꾼다(ADR-0033).
-#    표본 docx는 converter container 안의 LibreOffice로 만들고, 같은 container의 8090에 보내 쪽 zip을 받는지 본다.
+# 11. LibreOffice는 converter 이미지에만 있고, converter가 office 문서를 쪽 이미지로 바꾼다(ADR-0033).
+#     표본 docx는 converter container 안의 LibreOffice로 만들고, 같은 container의 8090에 보내 쪽 zip을 받는지 본다.
 for service in api worker; do
 	if docker compose exec -T "${service}" test -e /usr/lib/libreoffice/program/soffice; then
 		fail "${service} image contains LibreOffice"
@@ -126,7 +178,28 @@ docker compose exec -T converter bash -c '
 ' || fail "converter could not turn a docx into pages"
 pass "only the converter has LibreOffice and it converts a docx into pages"
 
-# 10. 종료 신호를 받으면 graceful shutdown을 마치고 끝난다(137 = 강제 종료).
+# 12. instance metadata(IAM role credential)의 token은 api와 worker만 받는다(ADR-0020 6번). 각 container의 network namespace에서
+#     token을 요청한다. host가 token을 받지 못하면 EC2가 아니므로 건너뛴다.
+if curl --silent --fail --max-time 2 --request PUT --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+	--output /dev/null http://169.254.169.254/latest/api/token; then
+	for service in $(docker compose ps --services --status running); do
+		case "${service}" in
+			api | worker)
+				in_network_of "${service}" astra-imds-probe || fail "${service} cannot get an instance metadata token"
+				;;
+			*)
+				if in_network_of "${service}" astra-imds-probe; then
+					fail "${service} got an instance metadata token"
+				fi
+				;;
+		esac
+	done
+	pass "only api and worker get an instance metadata token"
+else
+	echo "skip: this host has no EC2 instance metadata service; token isolation not checked"
+fi
+
+# 13. 종료 신호를 받으면 graceful shutdown을 마치고 끝난다(137 = 강제 종료).
 docker compose stop api worker
 for service in api worker; do
 	code="$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose ps --all --quiet "${service}")")"

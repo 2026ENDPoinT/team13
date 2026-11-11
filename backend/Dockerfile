@@ -1,10 +1,10 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # ASTRA 백엔드 이미지. 이미지 하나를 api, worker, converter, transcoder 역할로 실행한다(ADR-0019).
 # 실행할 역할은 command로 고른다: docker run <image> api | worker | converter | transcoder
 # converter 역할에 office 문서 변환(LibreOffice)을 더한 이미지는 target converter로 만든다(ADR-0033):
 #   docker build --target converter -t astra-backend-converter:local .
 # 기본 target은 LibreOffice가 없는 runtime이다. api, worker, transcoder는 이 이미지로 실행한다.
-# base 이미지는 tag와 digest로 고정한다. 판을 올릴 때는 두 값을 함께 바꾼다.
+# base 이미지와 위 syntax 줄의 BuildKit frontend는 tag와 digest로 고정한다. 판을 올릴 때는 두 값을 함께 바꾼다.
 
 FROM eclipse-temurin:25.0.5_8-jdk-noble@sha256:95e350ad1eb738f943e141640f7e3d797e483359a3b33c3864255bfd1ad71f8a AS build
 WORKDIR /workspace
@@ -41,6 +41,8 @@ COPY --from=build /workspace/extracted/snapshot-dependencies/ ./
 COPY --from=build /workspace/extracted/application/ ./
 COPY --chmod=0555 docker/entrypoint.sh /usr/local/bin/astra
 COPY --chmod=0555 docker/healthcheck.sh /usr/local/bin/astra-health
+# 배포 문서와 smoke test가 각 container의 network에서 instance metadata에 닿는지 볼 때 쓴다(ADR-0020 6번). 앱은 부르지 않는다.
+COPY --chmod=0555 docker/imds-probe.sh /usr/local/bin/astra-imds-probe
 
 # 쓰기는 /tmp에만 한다. compose는 root filesystem을 읽기 전용으로 두고 /tmp에 tmpfs를 붙인다.
 ENV TMPDIR=/tmp

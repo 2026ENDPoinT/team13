@@ -31,7 +31,7 @@
 ## 결과와 트레이드오프
 - 학습 기록과 감사에 필요한 활동 행이 남는다. 대신 `learning_activities`를 읽는 새 조회는 모두 `deleted_at IS NULL`을 넣어야 한다. 빠뜨리면 지운 자료가 보인다. 리뷰와 테스트로 막는다.
 - 지운 자료를 되살리는 기능은 없다. 파일이 이미 지워졌기 때문이다. 필요해지면 휴지통 기간을 두고 파일 삭제를 그 뒤로 미룬다.
-- CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 signed cookie가 끝나기 전까지, GC가 객체를 지우기 전이면 읽힐 수 있다. 새 cookie는 발급되지 않고, CDN 없는 전달(ADR-0009)은 파일 상태를 보고 바로 막는다. 노출 상한은 문서 cookie TTL과 파생물 유예 시간 중 긴 쪽이다.
+- CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 signed cookie가 끝나기 전까지 읽힐 수 있다. CloudFront는 edge에 캐시한 객체에도 요청마다 서명을 확인하고, 캐시한 객체는 GC가 원본을 지운 뒤에도 남으므로 노출 상한은 문서 cookie TTL이다(기본 10분). 새 cookie는 발급되지 않고, CDN 없는 전달(ADR-0009)은 파일 상태를 보고 바로 막는다. 삭제 때 prefix 삭제와 invalidation을 하지 않는 이유는 [architecture.md](../architecture.md) 12절 "CloudFront 전달의 권한 회수"에 있다.
 - blob을 지운 것으로 표시한 뒤 S3 삭제가 실패하면 객체가 남는다. DB에서는 닿을 수 없는 객체다. 오류 로그로 알리고 운영자가 지운다.
 - GC를 ShedLock으로 묶지 않았다. 두 worker가 같은 지운 파일의 prefix를 함께 지울 수 있지만 결과는 같다.
 - 수정마다 version이 오르므로, 열어 둔 화면에서 저장하면 409를 받고 다시 불러와야 한다.
