@@ -24,4 +24,9 @@ public final class StorageGcDriver {
 		}
 	}
 
+	/** 밀린 수 gauge를 지금 다시 계산한다. */
+	public static void sampleBacklog(ApplicationContext context) {
+		context.getBean(FilesBacklog.class).sample();
+	}
+
 }

@@ -269,6 +269,19 @@ api·worker의 환경 변수:
 | `ASTRA_IDEMPOTENCY_IN_FLIGHT_WAIT` | `3s` | 같은 key를 처리 중일 때 기다리는 시간. 넘으면 409 `idempotency_in_progress` |
 | `ASTRA_IDEMPOTENCY_PURGE_INTERVAL` | `15m` | worker가 보존기한이 지난 항목을 지우는 간격 |
 
+### 지표와 trace 설정
+
+앱은 Micrometer 지표와 OpenTelemetry trace를 OTLP로 내보낼 수 있다. 기본은 끈다. 아래 둘을 함께 줄 때만 보낸다. 켰는데 주소가 없으면 시작하지 않는다. 지표 endpoint는 API port에도 관리 port에도 열지 않는다. 지표 목록은 [ADR-0034](docs/adr/0034-observability-and-scheduler-lock.md), 알람은 [docs/operations/alarms.md](docs/operations/alarms.md)에 있다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_OTLP_ENABLED` | `false` | `true`면 지표와 trace를 OTLP로 내보낸다 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 없음 | OTLP/HTTP 수신 주소. 예: `http://otel-collector:4318`. 지표는 `/v1/metrics`, trace는 `/v1/traces`로 보낸다. 둘을 따로 주려면 `MANAGEMENT_OTLP_METRICS_EXPORT_URL`, `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`를 쓴다 |
+| `ASTRA_TRACING_SAMPLING_PROBABILITY` | `0.1` | trace로 남길 요청의 비율 |
+| `ASTRA_METRICS_BACKLOG_INTERVAL` | `1m` | worker가 대기열·backlog gauge를 다시 계산하는 간격 |
+
+`OTEL_PROPAGATORS`, `OTEL_TRACES_SAMPLER`처럼 propagation과 sampler를 바꾸는 `OTEL_*` 변수는 두지 않는다. client가 보낸 trace header를 읽지 않는 설정을 덮어쓴다.
+
 ### 학교 SSO(OpenID Connect) 설정
 
 학교 IdP가 OpenID Connect를 제공한다는 가정으로 authorization code flow + PKCE를 구현했다([ADR-0017](docs/adr/0017-school-sso-oidc.md)). `ASTRA_OIDC_ISSUER`가 없으면 SSO는 꺼지고 `/api/auth/login`, `/api/auth/callback`은 404다. 앱은 시작할 때 IdP를 부르지 않는다. 형식이 틀린 설정이 있으면 시작하지 않는다.

@@ -26,6 +26,10 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 /**
  * 온라인 강의 학습 session, 하트비트 적립, 출석 인정(ADR-0014). 적립은 서버 시각과 원장으로만 정한다(SC-06, SEC-11, CHG-05).
  * <ul>
@@ -38,6 +42,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * {@code reauth_required}이고 다시 인증하면 소급 없이 이어 간다(SC-06-A, ADR-0029, 규칙 v2).</li>
  * </ul>
  * 404가 되거나 session이 닫히는 응답도 session 상태 변경은 commit한 뒤 오류로 알린다.
+ * <p>
+ * 지표: 받아들인 하트비트마다 앞 기준 시각과의 간격(astra.learning.heartbeat.gap)과 닫힌 session 수를 사유별로 센다
+ * (astra.learning.sessions.closed, reason=button|unload|forced|superseded|lease_expired). 사용자와 과목은 tag에 없다.
  */
 @Service
 class LearningSessionService {
@@ -58,9 +65,13 @@ class LearningSessionService {
 
 	private final LearningAuthGrants grants;
 
+	private final MeterRegistry meters;
+
+	private final Timer heartbeatGap;
+
 	LearningSessionService(JdbcClient jdbc, TransactionTemplate tx, LearningClock clock,
 			CourseMemberships memberships, DeliveryCookies cookies, LearningSessionProperties properties,
-			LearningAuthGrants grants) {
+			LearningAuthGrants grants, MeterRegistry meters) {
 		this.jdbc = jdbc;
 		this.tx = tx;
 		this.clock = clock;
@@ -68,6 +79,10 @@ class LearningSessionService {
 		this.cookies = cookies;
 		this.properties = properties;
 		this.grants = grants;
+		this.meters = meters;
+		this.heartbeatGap = Timer.builder("astra.learning.heartbeat.gap")
+			.description("받아들인 하트비트와 앞 기준 시각(앞 하트비트 또는 시작) 사이의 서버 시각 간격")
+			.register(meters);
 	}
 
 	/**
@@ -119,12 +134,12 @@ class LearningSessionService {
 				""").param("now", now).query(Long.class).list();
 		int closed = 0;
 		for (long sessionId : candidates) {
-			closed += this.jdbc.sql("""
+			closed += closed("lease_expired", this.jdbc.sql("""
 					UPDATE learning_sessions
 					   SET state = 'lease_expired', end_reason = 'lease_expired', ended_at = COALESCE(last_heartbeat_at, started_at)
 					 WHERE learning_session_id = :session AND state IN ('active', 'reauth_required')
 					   AND TIMESTAMPADD(SECOND, lease_sec, COALESCE(last_heartbeat_at, started_at)) < :now
-					""").param("session", sessionId).param("now", now).update();
+					""").param("session", sessionId).param("now", now).update());
 		}
 		return closed;
 	}
@@ -152,10 +167,10 @@ class LearningSessionService {
 			throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "delivery_unavailable", "영상 전달이 설정되지 않았습니다.");
 		}
 		// 열린 session 유일 제약의 index 행을 잠그고 대체한다. 그 session의 적립은 마지막 기준 시각까지다.
-		this.jdbc.sql("""
+		closed("superseded", this.jdbc.sql("""
 				UPDATE learning_sessions SET state = 'superseded', end_reason = 'superseded', ended_at = :now
 				 WHERE active_user_key = :user AND state IN ('active', 'reauth_required')
-				""").param("now", now).param("user", userId).update();
+				""").param("now", now).param("user", userId).update());
 		int interval = (int) this.properties.heartbeatInterval().toSeconds();
 		int lease = CreditRule.leaseSec(interval);
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
@@ -211,6 +226,7 @@ class LearningSessionService {
 					session.creditAuthorizedUntil());
 		}
 		else {
+			this.heartbeatGap.record(Duration.between(session.baseline(), now));
 			beat = session.bound() ? boundBeat(session, loginSessionId, item, access, positionSec, now)
 					: unboundBeat(session, item, access, positionSec, now);
 			this.jdbc.sql("""
@@ -524,18 +540,30 @@ class LearningSessionService {
 	}
 
 	private void expire(Session session) {
-		this.jdbc.sql("""
+		closed("lease_expired", this.jdbc.sql("""
 				UPDATE learning_sessions
 				   SET state = 'lease_expired', end_reason = 'lease_expired', ended_at = COALESCE(last_heartbeat_at, started_at)
 				 WHERE learning_session_id = :session AND state IN ('active', 'reauth_required')
-				""").param("session", session.id()).update();
+				""").param("session", session.id()).update());
 	}
 
 	private void close(Session session, LocalDateTime now, String reason) {
-		this.jdbc.sql("""
+		closed(reason, this.jdbc.sql("""
 				UPDATE learning_sessions SET state = 'ended', end_reason = :reason, ended_at = :now
 				 WHERE learning_session_id = :session AND state IN ('active', 'reauth_required')
-				""").param("reason", reason).param("now", now).param("session", session.id()).update();
+				""").param("reason", reason).param("now", now).param("session", session.id()).update());
+	}
+
+	/** @return count. 사유는 코드가 정한 값(button, unload, forced, superseded, lease_expired)뿐이다 */
+	private int closed(String reason, int count) {
+		if (count > 0) {
+			Counter.builder("astra.learning.sessions.closed")
+				.description("닫힌 학습 session 수")
+				.tag("reason", reason)
+				.register(this.meters)
+				.increment(count);
+		}
+		return count;
 	}
 
 	private Ended ended(Session session, String state, String reason, int credited, Item item) {

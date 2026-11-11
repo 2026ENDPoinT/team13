@@ -32,6 +32,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	// 운영 상태 확인(health)만 쓴다. 관리 port와 노출 범위는 application.properties에 있다(ADR-0019).
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	// 지표와 trace를 OTLP로 내보낸다. 기본은 꺼져 있고 ASTRA_OTLP_ENABLED와 주소를 줄 때만 보낸다(ADR-0034).
+	implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
 	implementation('software.amazon.awssdk:s3') {
 		// 동기 client만 쓴다. Netty는 Spring Boot가 관리하는 판과 섞이지 않게 뺀다.
 		exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
@@ -51,6 +53,9 @@ dependencies {
 	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
 	testImplementation 'org.testcontainers:testcontainers-mysql'
 	testImplementation 'org.springframework.modulith:spring-modulith-starter-test'
+	// 내보내기 bean이 기본 설정에서 생기지 않는지 확인하는 테스트가 type으로 찾는다(ObservabilityExportTests).
+	testImplementation 'io.micrometer:micrometer-registry-otlp'
+	testImplementation 'io.opentelemetry:opentelemetry-exporter-otlp'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

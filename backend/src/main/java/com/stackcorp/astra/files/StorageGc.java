@@ -1,5 +1,6 @@
 package com.stackcorp.astra.files;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.IntSupplier;
@@ -19,6 +20,10 @@ import com.stackcorp.astra.files.StorageGcRecords.ExpiredUpload;
 import com.stackcorp.astra.files.StorageGcRecords.UnreferencedBlob;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
+import com.stackcorp.astra.shared.schedule.SchedulerLock;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * worker의 저장소 GC(ADR-0010, ADR-0011). 한 번에 정해진 수만큼 처리하고, 같은 일을 다시 해도 결과가 같다.
@@ -32,6 +37,10 @@ import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
  * transaction은 READ COMMITTED다. 다른 행의 index 틈을 잠그지 않아, 이웃한 행을 다루는 다른 worker나 요청과 서로 기다리지 않는다.
  * 잠금 순서는 file_blobs → files → upload_sessions다. 교착이나 잠금 대기 초과로 실패한 transaction은 정해진 횟수만큼 다시 하고,
  * 끝내 실패한 행은 상태가 바뀌지 않은 채 남아 다음 실행에서 다시 고른다. 실패는 그 단계의 실패로 올린다. 로그에는 개수와 ID만 남긴다.
+ * <p>
+ * 주기 실행은 {@link SchedulerLock}으로 묶어 worker가 여럿이어도 한 곳에서만 돈다(ADR-0034). 만료 업로드와 지운 파일은 잠그지 않고 읽은
+ * 후보라 두 worker가 같은 후보를 함께 다루고, 지운 파일의 파생물 prefix 삭제(S3 목록 조회와 삭제)가 겹쳐 실행되기 때문이다.
+ * 단계마다 처리한 수와 실패를 센다(astra.files.gc.processed, astra.files.gc.failures).
  */
 @Component
 @Profile("worker")
@@ -40,6 +49,11 @@ class StorageGc {
 	private static final Logger log = LoggerFactory.getLogger(StorageGc.class);
 
 	private static final int ATTEMPTS = 3;
+
+	static final String LOCK = "files.storage_gc";
+
+	// 한 번의 실행은 단계마다 batchSize개라 보통 수십 초 안에 끝난다. 실행하던 worker가 죽으면 이 시간 뒤에 다른 worker가 잡는다.
+	private static final Duration LOCK_AT_MOST = Duration.ofMinutes(10);
 
 	private final StorageGcRecords records;
 
@@ -51,21 +65,30 @@ class StorageGc {
 
 	private final StorageGcProperties properties;
 
+	private final SchedulerLock lock;
+
+	private final MeterRegistry meters;
+
 	StorageGc(StorageGcRecords records, FileReferences references, ObjectStore store,
-			PlatformTransactionManager transactionManager, StorageGcProperties properties) {
+			PlatformTransactionManager transactionManager, StorageGcProperties properties, SchedulerLock lock,
+			MeterRegistry meters) {
 		this.records = records;
 		this.references = references;
 		this.store = store;
 		this.transaction = new TransactionTemplate(transactionManager);
 		this.transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 		this.properties = properties;
+		this.lock = lock;
+		this.meters = meters;
 	}
 
 	@Scheduled(fixedDelayString = "${astra.files.gc.interval:1m}", initialDelayString = "${astra.files.gc.interval:1m}")
 	void run() {
-		step("expired uploads", this::expireUploads);
-		step("deleted files", this::purgeDeletedFiles);
-		step("unreferenced blobs", this::purgeBlobs);
+		this.lock.runExclusively(LOCK, LOCK_AT_MOST, () -> {
+			step("expired_uploads", this::expireUploads);
+			step("deleted_files", this::purgeDeletedFiles);
+			step("unreferenced_blobs", this::purgeBlobs);
+		});
 	}
 
 	/**
@@ -184,14 +207,24 @@ class StorageGc {
 		}
 	}
 
-	private static void step(String name, IntSupplier work) {
+	private void step(String name, IntSupplier work) {
 		try {
 			int count = work.getAsInt();
+			Counter.builder("astra.files.gc.processed")
+				.description("저장소 GC가 처리한 수(expired_uploads: 첨부하지 않고 만료된 업로드)")
+				.tag("step", name)
+				.register(this.meters)
+				.increment(count);
 			if (count > 0) {
 				log.info("storage gc step={} count={}", name, count);
 			}
 		}
 		catch (RuntimeException ex) {
+			Counter.builder("astra.files.gc.failures")
+				.description("저장소 GC 단계가 실패한 횟수")
+				.tag("step", name)
+				.register(this.meters)
+				.increment();
 			log.error("storage gc step failed step={}", name, ex);
 		}
 	}

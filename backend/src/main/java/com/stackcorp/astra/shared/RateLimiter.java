@@ -4,11 +4,18 @@ import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import com.stackcorp.astra.shared.metrics.MetricTags;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * 사용자와 연산 단위의 요청 제한(SC-09). IP로 제한하지 않는다. 교내 NAT 하나가 학교 전체를 막기 때문이다.
  * 고정 구간 counter를 이 process의 메모리에 둔다. api 인스턴스가 2대가 되면 저장소를 Valkey로 바꾼다(architecture.md 8절).
+ * 거부한 요청 수를 연산별로 센다(astra.ratelimit.rejections). 사용자는 tag에 넣지 않는다.
  */
 @Component
 public class RateLimiter {
@@ -19,12 +26,16 @@ public class RateLimiter {
 
 	private final LongSupplier nanoTime;
 
-	public RateLimiter() {
-		this(System::nanoTime);
+	private final MeterRegistry meters;
+
+	@Autowired
+	public RateLimiter(MeterRegistry meters) {
+		this(System::nanoTime, meters);
 	}
 
-	RateLimiter(LongSupplier nanoTime) {
+	RateLimiter(LongSupplier nanoTime, MeterRegistry meters) {
 		this.nanoTime = nanoTime;
+		this.meters = meters;
 	}
 
 	/**
@@ -44,6 +55,11 @@ public class RateLimiter {
 			return new Window(w.startedAt, w.length, w.count + 1);
 		});
 		if (current.count > limit) {
+			Counter.builder("astra.ratelimit.rejections")
+				.description("사용자·연산 요청 제한으로 거부한 요청 수")
+				.tag("operation", MetricTags.code(operation))
+				.register(this.meters)
+				.increment();
 			long remaining = current.length - (now - current.startedAt);
 			throw new RateLimitedException(Duration.ofNanos(Math.max(remaining, 1_000_000_000L)));
 		}

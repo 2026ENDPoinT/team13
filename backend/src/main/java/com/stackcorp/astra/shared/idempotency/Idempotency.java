@@ -5,6 +5,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -16,6 +17,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.stackcorp.astra.shared.ApiException;
+import com.stackcorp.astra.shared.metrics.MetricTags;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 import tools.jackson.databind.MapperFeature;
 import tools.jackson.databind.SerializationFeature;
@@ -36,6 +42,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code idempotency_in_progress}다.</li>
  * </ul>
  * key가 없는 요청은 원장 없이 한 transaction으로 실행한다.
+ * <p>
+ * 지표: 이미 있는 key를 만난 요청을 결과(replayed, conflict, in_progress)별로 세고(astra.idempotency.requests), 그 key의 행을 확인하는 데
+ * 걸린 시간(처리 중인 요청을 기다린 시간 포함)을 잰다(astra.idempotency.wait). tag는 연산 이름뿐이다.
  */
 @Component
 public class Idempotency {
@@ -59,11 +68,15 @@ public class Idempotency {
 
 	private final IdempotencyProperties properties;
 
-	Idempotency(JdbcClient jdbc, TransactionTemplate transaction, JsonMapper json, IdempotencyProperties properties) {
+	private final MeterRegistry meters;
+
+	Idempotency(JdbcClient jdbc, TransactionTemplate transaction, JsonMapper json, IdempotencyProperties properties,
+			MeterRegistry meters) {
 		this.jdbc = jdbc;
 		this.transaction = transaction;
 		this.json = json;
 		this.properties = properties;
+		this.meters = meters;
 	}
 
 	/**
@@ -86,9 +99,12 @@ public class Idempotency {
 		}
 		String fingerprint = fingerprint(request);
 		return this.transaction.execute((status) -> {
-			Optional<Entry> existing = boundedWait(() -> reserve(principalUserId, operation, key, fingerprint));
+			long started = System.nanoTime();
+			Optional<Entry> existing = boundedWait(operation, started,
+					() -> reserve(principalUserId, operation, key, fingerprint));
 			if (existing.isPresent()) {
-				return replay(existing.get(), fingerprint, receiptType);
+				waited(operation, started);
+				return replay(operation, existing.get(), fingerprint, receiptType);
 			}
 			T receipt = Objects.requireNonNull(command.get(), "receipt");
 			this.jdbc.sql("""
@@ -157,12 +173,14 @@ public class Idempotency {
 	}
 
 	// 같은 key를 처리 중인 transaction을 기다리는 시간을 이 구간에서만 줄인다. 명령의 다른 잠금 대기에는 기본값을 쓴다.
-	private <T> T boundedWait(Supplier<T> action) {
+	private <T> T boundedWait(String operation, long started, Supplier<T> action) {
 		this.jdbc.sql("SET SESSION innodb_lock_wait_timeout = " + this.properties.inFlightWaitSeconds()).update();
 		try {
 			return action.get();
 		}
 		catch (PessimisticLockingFailureException ex) {
+			waited(operation, started);
+			count(operation, "in_progress");
 			throw new ApiException(HttpStatus.CONFLICT, "idempotency_in_progress",
 					"같은 요청을 처리하고 있습니다. 잠시 뒤 다시 시도해 주세요.");
 		}
@@ -171,14 +189,34 @@ public class Idempotency {
 		}
 	}
 
-	private <T> T replay(Entry entry, String fingerprint, Class<T> receiptType) {
+	private <T> T replay(String operation, Entry entry, String fingerprint, Class<T> receiptType) {
 		if (!entry.fingerprint().equals(fingerprint)) {
+			count(operation, "conflict");
 			throw new ApiException(HttpStatus.CONFLICT, "idempotency_conflict", "같은 Idempotency-Key를 다른 요청에 썼습니다.");
 		}
 		if (!"completed".equals(entry.state()) || entry.receipt() == null) {
 			throw new IllegalStateException("완료하지 않은 멱등 원장 항목이 commit됐습니다: " + entry.id());
 		}
-		return this.json.readValue(entry.receipt(), receiptType);
+		T receipt = this.json.readValue(entry.receipt(), receiptType);
+		count(operation, "replayed");
+		return receipt;
+	}
+
+	private void count(String operation, String outcome) {
+		Counter.builder("astra.idempotency.requests")
+			.description("이미 있는 Idempotency-Key를 만난 요청 수")
+			.tag("operation", MetricTags.code(operation))
+			.tag("outcome", outcome)
+			.register(this.meters)
+			.increment();
+	}
+
+	private void waited(String operation, long started) {
+		Timer.builder("astra.idempotency.wait")
+			.description("이미 있는 Idempotency-Key의 행을 확인하는 데 걸린 시간. 처리 중인 같은 key를 기다린 시간을 포함한다")
+			.tag("operation", MetricTags.code(operation))
+			.register(this.meters)
+			.record(System.nanoTime() - started, TimeUnit.NANOSECONDS);
 	}
 
 	static String fingerprint(Object request) {

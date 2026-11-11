@@ -47,6 +47,10 @@ import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
 import com.stackcorp.astra.integration.scan.FakeClamd;
 import com.stackcorp.astra.integration.scan.FakeClamd.Mode;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tag;
+
 /**
  * 검사기를 붙인 배포의 업로드 흐름(SC-08, SEC-15, ADR-0018). 새 내용은 검사가 끝날 때까지 quarantined이고, 첨부·열람·변환되지 않는다.
  * clean으로 가는 길은 검사기의 clean 판정 하나뿐이다. 검사기 설정이 달라 Spring context를 따로 쓴다. 검사기는 같은 process의 가짜
@@ -107,6 +111,9 @@ class ScanFlowTests extends IntegrationTest {
 
 	@Autowired
 	ApplicationContext context;
+
+	@Autowired
+	MeterRegistry meters;
 
 	long course;
 
@@ -258,6 +265,48 @@ class ScanFlowTests extends IntegrationTest {
 	}
 
 	@Test
+	void countsVerdictsAndScannerOutagesAndReportsTheQueueLength() throws Exception {
+		ApiClient professor = instructor();
+		StorageGcDriver.sampleBacklog(this.context);
+		double queued = gauge("astra.files.scan.backlog");
+		double unavailable = results("unavailable");
+		double clean = results("clean");
+		long uploadId = uploadId(upload(professor, notes()));
+		StorageGcDriver.sampleBacklog(this.context);
+		assertThat(gauge("astra.files.scan.backlog")).isEqualTo(queued + 1);
+
+		clamd.mode(Mode.CLOSE_EARLY);
+		drain();
+		// 다른 테스트가 남긴 내용이 함께 잡힐 수 있어 늘어난 수의 하한만 본다.
+		assertThat(results("unavailable")).isGreaterThanOrEqualTo(unavailable + 1);
+		professor.get("/api/uploads/" + uploadId).andExpect(jsonPath("$.state").value("quarantined"));
+
+		clamd.mode(Mode.NORMAL);
+		makeDue(uploadId);
+		drain();
+		assertThat(results("clean")).isGreaterThanOrEqualTo(clean + 1);
+		StorageGcDriver.sampleBacklog(this.context);
+		assertThat(gauge("astra.files.scan.backlog")).isLessThanOrEqualTo(queued);
+		// tag는 판정과 사유 코드뿐이다.
+		assertThat(this.meters.find("astra.files.scan.results").counters())
+			.allSatisfy((c) -> assertThat(c.getId().getTags()).extracting(Tag::getKey)
+				.containsExactlyInAnyOrder("result", "reason", "role"));
+	}
+
+	private double gauge(String name) {
+		return this.meters.get(name).gauge().value();
+	}
+
+	private double results(String result) {
+		return this.meters.find("astra.files.scan.results")
+			.tag("result", result)
+			.counters()
+			.stream()
+			.mapToDouble(Counter::count)
+			.sum();
+	}
+
+	@Test
 	void twoWorkersNeverScanTheSameContentTwice() throws Exception {
 		List<byte[]> contents = new ArrayList<>();
 		List<Long> uploads = new ArrayList<>();
@@ -273,7 +322,8 @@ class ScanFlowTests extends IntegrationTest {
 		ScanWorker other = new ScanWorker(this.records, this.scanner, this.store, this.transactionManager,
 				new ScanProperties(false, this.properties.pollInterval(), this.properties.batchSize(),
 						this.properties.lease(), this.properties.retryBackoff(), this.properties.maxRetryBackoff(),
-						"scan-test-2"));
+						"scan-test-2"),
+				this.meters);
 		CountDownLatch start = new CountDownLatch(1);
 
 		try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
