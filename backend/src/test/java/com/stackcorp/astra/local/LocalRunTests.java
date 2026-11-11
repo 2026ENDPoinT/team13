@@ -72,6 +72,10 @@ class LocalRunTests {
 			.andExpect(jsonPath("$.length()").value(7))
 			.andExpect(jsonPath("$[?(@.key == 'bi')].role").value("STUDENT"))
 			.andExpect(jsonPath("$[?(@.key == 'bi')].instructors[0]").value("박은주"));
+		this.mvc.perform(get("/api/me/home").cookie(session))
+			.andExpect(jsonPath("$.courses.length()").value(7))
+			.andExpect(jsonPath("$.notices.length()").value(5))
+			.andExpect(jsonPath("$.notices[0].pinned").value(true));
 
 		// proxy 뒤에서 온 요청, 다른 컴퓨터의 요청은 로그인 경로가 없는 것처럼 답한다.
 		this.mvc.perform(devLogin(LocalSeed.STUDENT_REF).header("X-Forwarded-For", "203.0.113.9, 127.0.0.1"))

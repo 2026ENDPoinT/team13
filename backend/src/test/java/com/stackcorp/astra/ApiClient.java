@@ -8,6 +8,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.AbstractMockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 import tools.jackson.databind.JsonNode;
@@ -44,6 +45,11 @@ public final class ApiClient {
 	public ResultActions delete(String path) throws Exception {
 		return this.mvc
 			.perform(mutating(MockMvcRequestBuilders.delete(path)));
+	}
+
+	/** 직접 만든 요청(PUT, header나 query parameter가 붙은 요청 등)에 session과 CSRF token을 붙여 보낸다. */
+	public ResultActions send(MockHttpServletRequestBuilder request) throws Exception {
+		return this.mvc.perform(mutating(request));
 	}
 
 	public ResultActions upload(long courseId, String purpose, String fileName, byte[] content, String idempotencyKey)

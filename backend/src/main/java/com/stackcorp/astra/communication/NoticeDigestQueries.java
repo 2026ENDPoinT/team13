@@ -1,0 +1,31 @@
+package com.stackcorp.astra.communication;
+
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+
+import com.stackcorp.astra.communication.api.CourseNoticeDigest;
+
+import org.springframework.stereotype.Service;
+
+@Service
+class NoticeDigestQueries implements CourseNoticeDigest {
+
+	private final NoticeRepository notices;
+
+	NoticeDigestQueries(NoticeRepository notices) {
+		this.notices = notices;
+	}
+
+	@Override
+	public Map<Long, Integer> unreadCounts(long userId, Collection<Long> courseIds, LocalDateTime now) {
+		return courseIds.isEmpty() ? Map.of() : this.notices.unreadCounts(userId, courseIds, now);
+	}
+
+	@Override
+	public List<NoticeHeadline> latest(long userId, Collection<Long> courseIds, LocalDateTime now, int limit) {
+		return courseIds.isEmpty() || limit < 1 ? List.of() : this.notices.latest(userId, courseIds, now, limit);
+	}
+
+}
