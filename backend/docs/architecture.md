@@ -38,6 +38,7 @@
 | [ADR-0016](adr/0016-video-upload-and-transcoder.md) | 강의 영상은 본문 스트림으로 받고, 격리한 transcoder가 HLS로 나눈 뒤 files가 AES-128로 암호화해 게시한다. MediaConvert는 port로 남긴다 |
 | [ADR-0029](adr/0029-step-up-and-learning-auth.md) | 민감한 명령의 재인증과 온라인 학습 인증 grant는 로그인 session에 묶은 `session_step_ups` 행이다. 학교 IdP 재인증(`prompt=login`, `auth_time`)이 근거이고, 학습 적립은 grant 만료에서 끊기고 `reauth_required`가 된다 |
 | [ADR-0028](adr/0028-filebox.md) | 개인 파일함은 사용자별 사용량 행을 잠가 차례로 바꾸고, 다시 쓰기는 같은 내용을 참조하는 새 파일로, ZIP은 worker가 저장소에서 저장소로 흘려 만든다 |
+| [ADR-0030](adr/0030-attendance-and-smart-rounds.md) | 출석부는 담당자 판정이 자동 판정보다 강하다. 스마트출석은 서버가 PIN/QR을 직접 검증해 같은 transaction에서 기록하고, 상태는 WebSocket 없이 조회로 알린다 |
 
 ## 2. 부하 가정
 
@@ -248,6 +249,7 @@ flowchart TD
 - 내정보, 개인설정, 로그인 session, 등록 기기, 로그인 기록, 학습 인증은 모두 요청한 사용자의 것만 다룬다. 경로의 session ID, 기기 ID, challenge ID가 다른 사람의 것이면 존재와 관계없이 404다. 이름, 소속, 학년과 학사 원천 연락처는 받지 않는다. 기기를 폐기하면 그 기기의 session도 폐기되고, 폐기한 session은 다음 요청부터 401이다.
 - 로그인하면 브라우저를 등록 기기로 만든다. 기기 쿠키(`ASTRA_DEVICE`, `HttpOnly`, `Path=/api/auth`)는 기기 식별자일 뿐 인증에 쓰지 않는다. 다른 사용자나 폐기한 기기의 값이면 새 기기를 만든다.
 - 학습 인증 grant(SC-06-A)는 2차 인증 challenge를 통과해야 생긴다. 수단은 port(`identity.api.SecondFactorChannel`)이고 지금은 학교 IdP 재인증(`idp`) 하나다. challenge는 로그인 session에 묶이고, 5번 실패하면 잠기며, 사용자의 최근 실패 합이 한도면 새 challenge를 만들지 못한다. 확인 요청의 본문으로는 통과하지 않는다(SEC-04, IDENTITY-03~05).
+- 출석, 그룹, 강의계획서는 `learning`이 판정한다([ADR-0030](adr/0030-attendance-and-smart-rounds.md)). 학생은 자기 출석 기록과 자기 그룹(구성원 이름만)만 보고, 다른 학생의 기록, 학번, 다른 그룹은 보지 못한다. 출석 상태는 담당자 지정이 가장 강하고, 온라인 학습과 스마트출석은 빈 칸만 채운다. 스마트출석 회차를 열고 닫고 취소하는 것은 담당자만 한다. 제출은 PIN·QR이 회차·과목·차시·방식에 묶인 서버 증명이고, 회차·학생마다 틀린 횟수 한도와 사용자 단위 요청 제한이 있다. 강의계획서는 구성원이 아닌 로그인 사용자에게 정규과목의 공개 항목만 보이고 담당자 연락처는 보이지 않는다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -605,6 +607,33 @@ worker는 마감이 지난 진행 중 응시를 `astra.quiz.close-interval`(기�
 
 ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 압축해 content bucket `zips/`에 multipart upload로 쓴다. 메모리에는 part 하나만 두고 디스크에 쓰지 않는다. 항목 이름은 경로 구분자를 없애고 겹치면 접미사를 붙이며 UTF-8 flag를 켠다.
 
+### 7.8 출석, 스마트출석, 그룹, 강의계획서
+
+판정 규칙과 스마트출석 증명은 [ADR-0030](adr/0030-attendance-and-smart-rounds.md)에 있다. 상태 코드는 `present | late | absent | excused | unmarked`, 출처는 `smart | online | manual`이다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/courses/{courseId}/attendance?week=` | 과목 구성원 | 출석부(EP-0011). 학생은 차시마다 자기 기록과 요약, 담당자는 차시마다 상태별 수 |
+| `GET /api/courses/{courseId}/attendance/roster?page=&size=&sort=` | 담당자 | 수강생 × 차시 출석부. 쪽 번호, size 100까지, `sort`는 `studentNo`·`name`. 칸마다 version |
+| `GET /api/courses/{courseId}/attendance/settings` · `PUT` | 구성원 읽기, 담당자 수정 | 지각 기준, 회차 진행 시간, 지각 환산. 수정은 `If-Match`(설정 전 0) |
+| `POST /api/courses/{courseId}/attendance-sessions` | 담당자 | 차시(주차, 차시 번호, 수업일·시각, 방식, 보강 대상) 등록. 201. `Idempotency-Key` 지원 |
+| `PUT /api/courses/{courseId}/attendance-sessions/{sessionId}` · `DELETE` | 담당자 | 차시 수정(휴강 포함), 삭제. `If-Match` 필수. 기록·회차·연결 활동이 있으면 삭제 409 |
+| `PUT /api/courses/{courseId}/attendance-sessions/{sessionId}/records/{studentId}` | 담당자 | 한 학생의 상태와 사유. `If-Match`는 칸의 version(없으면 0). 사유는 변경 이력에 남는다 |
+| `POST /api/courses/{courseId}/attendance-sessions/{sessionId}/records/fill` | 담당자 | 판정 전 수강생 모두를 한 상태로 채운다. 판정된 칸은 그대로 |
+| `POST /api/courses/{courseId}/attendance-sessions/{sessionId}/smart-rounds` | 담당자 | 스마트출석 회차(`pin`·`qr`, 진행 시간, 지각 기준, 대상 그룹)를 연다. 201. 차시마다 진행 중 하나 |
+| `GET /api/courses/{courseId}/smart-rounds/{roundId}` | 담당자 | PIN, 지금 QR token과 교체 시각, 대상·확정·출석·지각·실패·잠금 수 |
+| `POST /api/courses/{courseId}/smart-rounds/{roundId}/close` · `/cancel` | 담당자 | 마감(멱등), 취소(그 회차가 만든 기록을 지운다) |
+| `GET /api/courses/{courseId}/smart-rounds/active` | 과목 구성원 | 진행 중 회차. 담당자는 회차 화면, 학생은 회차마다 자기 상태. `pollAfterSec` |
+| `GET /api/courses/{courseId}/smart-rounds/{roundId}/me` | 그 과목 학생 | `confirmed`(서버 기록 포함), `pending`, `locked`, `expired`, `closed`, `cancelled`, `not_target` |
+| `POST /api/courses/{courseId}/smart-rounds/{roundId}/check` | 그 과목 학생 | `{pin}` 또는 `{qrToken}` 제출. 확정 200, 틀림 422, 잠김 429, 만료·마감·취소·대상 아님 409. 다시 보내도 기록은 하나라 `Idempotency-Key`를 받지 않는다 |
+| `GET /api/courses/{courseId}/groups` | 과목 구성원 | 담당자는 모든 그룹과 구성원(학번 포함), 학생은 자기 그룹과 구성원 이름(EP-0039) |
+| `POST /api/courses/{courseId}/groups` · `PUT …/{groupId}` · `DELETE …/{groupId}` | 담당자 | 그룹 생성(`Idempotency-Key` 지원), 이름 바꾸기와 삭제(`If-Match`). 출석에 쓴 그룹은 삭제 409 |
+| `PUT /api/courses/{courseId}/groups/{groupId}/members/{studentId}` · `DELETE` · `POST …/move` | 담당자 | 수강생 넣기·빼기(멱등), 다른 그룹으로 옮기기(한 transaction) |
+| `GET /api/courses/{courseId}/syllabus` | 구성원 전체, 구성원이 아닌 로그인 사용자는 정규과목 공개 항목만 | 강의계획서(EP-0218, EP-0219). 과목 기본 정보는 catalog 값 |
+| `PUT /api/courses/{courseId}/syllabus` · `PUT …/syllabus/instructors/me` | 담당자 | 서술 항목과 주별 계획, 자기 강사 정보. `If-Match`(처음 0). 일반 텍스트 |
+
+스마트출석의 실시간 신호는 WebSocket 없이 조회로 한다. 학생 화면은 `pollAfterSec`(기본 3초)마다 `active`와 `me`를 묻고, 담당자 화면은 QR 교체 시각마다 회차를 다시 읽는다. "출석했습니다."는 `me`가 `confirmed`이고 서버 기록이 있을 때만 보인다(SEC-06).
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -615,6 +644,8 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | `/api/me/home` 등이 측정 예산을 넘음 | 해당 조회의 cache-aside |
 
 출석 원장, 멱등 receipt, 수강 정원은 Valkey에 두지 않는다. 진실의 원천은 DB 제약이다(SC-05).
+
+스마트출석은 Valkey 전까지 WebSocket 대신 조회로 신호를 준다(7.8절, [ADR-0030](adr/0030-attendance-and-smart-rounds.md)). Valkey를 붙일 때 push로 바꿀지 다시 본다.
 
 ## 9. 관측
 
@@ -695,3 +726,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 퀴즈와 할 일 | 할 일은 learning의 활동 기간만 보므로 제출한 퀴즈도 마감까지 남는다 | 위 "할 일의 완료 판정"과 함께 `assessment` api로 응시 완료를 받아 뺀다 |
 | 앱 지표의 수신 쪽 | 지표와 trace를 내보낼 collector(또는 CloudWatch agent)와 instance role 권한이 없어 앱 지표 알람([operations/alarms.md](operations/alarms.md) 2절)이 아직 동작하지 않는다 | 수신 쪽을 정하고 `ASTRA_OTLP_ENABLED`를 켠 뒤 알람을 Terraform `monitoring` module에 더한다 |
 | 파일함 휴지통 보존과 자동 등재 | 휴지통 보존 기간이 정해지지 않아 자동 영구 삭제가 없고, 휴지통 파일도 용량을 차지한다. 원본처럼 과제 제출 파일을 파일함에 자동으로 넣지 않는다([ADR-0028](adr/0028-filebox.md)) | 학교와 보존 기간을 정해 worker가 `trashed_at`으로 지우게 한다. 자동 등재가 필요하면 제출 확정과 같은 transaction에서 파일함 항목을 만드는 `files.api`를 더한다 |
+| 출석 정책 수치 | 지각 기준 5분, 회차 진행 시간 10분, 지각 환산 없음은 과목 설정의 기본값이다. 결석 확정(마감 뒤 미제출을 결석으로 볼지), 결석 한도, 성적 연계, 온라인 학습 지각 판정은 만들지 않았다. 미제출은 담당자가 일괄 지정으로 채운다([ADR-0030](adr/0030-attendance-and-smart-rounds.md)) | 학교 학사 담당과 기본값, 결석·지각 규칙을 정하고 규칙 버전(`smart-v1`, `manual`)을 올린다 |
+| 스마트출석 보안 값과 대리 출석 | PIN 6자리, 회차·학생마다 5번 실패 잠금, QR 15초 교체와 5초 유예는 제안값이다(`astra.attendance.*`). QR 교체 주기 안의 실시간 화면 공유로 하는 대리 출석은 막지 못한다 | 기기 인증이나 위치 신호가 필요한지 학교와 정한다. 회차의 실패 수 경고 로그에 알람을 건다 |
+| 강의계획서 공개 범위와 첨부 | 구성원이 아닌 사용자에게 담당자 연락처(이메일, 연락처, 연구실, 면담시간, 홈페이지)를 보이지 않는다. 원본 정규과목 상세는 보인다. 계획서 첨부(`course_syllabi.attachment_group_id`)는 받지 않는다 | 학교와 연락처 공개 범위를 정한다. 첨부가 필요하면 업로드 용도와 `AttachmentParentAccess`를 더한다 |
+| 스마트출석 회차 제출 직렬화 | 한 회차의 제출은 회차 행 잠금으로 차례대로 처리된다. 수백 명 규모에서는 1초 안팎이다 | 3단계 부하 시험에서 동시 제출 지연을 잰다. 길면 학생 단위 잠금 행으로 나눈다 |

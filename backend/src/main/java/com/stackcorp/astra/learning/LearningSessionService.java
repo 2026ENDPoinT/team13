@@ -467,7 +467,8 @@ class LearningSessionService {
 			.update();
 		this.jdbc.sql("""
 				UPDATE attendance_records
-				   SET status = '출석', source = 'online', progress_percent = 100.00, decided_at = :now, rule_version = :rule
+				   SET status = '출석', source = 'online', progress_percent = 100.00, decided_at = :now, rule_version = :rule,
+				       row_version = row_version + 1
 				 WHERE attendance_session_id = :attendance AND user_id = :user AND status = '미처리'
 				""")
 			.param("attendance", item.attendanceSessionId())
