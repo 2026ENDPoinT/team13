@@ -19,9 +19,9 @@ import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
 
 import org.junit.jupiter.api.Test;
-import org.testcontainers.mysql.MySQLContainer;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.autoconfigure.JdbcConnectionDetails;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -52,7 +52,7 @@ class InstitutionTimeTests extends IntegrationTest {
 	InstitutionTime time;
 
 	@Autowired
-	MySQLContainer mysql;
+	JdbcConnectionDetails database;
 
 	@Autowired
 	PlatformTransactionManager transactions;
@@ -147,8 +147,8 @@ class InstitutionTimeTests extends IntegrationTest {
 			.isEqualTo(ZoneOffset.ofHours(9));
 
 		// 시간대 연결 속성이 없는 연결은 container 기본값(UTC)이다. RDS parameter group이나 JDBC URL이 바뀐 경우와 같다.
-		JdbcClient plain = JdbcClient.create(new DriverManagerDataSource(this.mysql.getJdbcUrl(),
-				this.mysql.getUsername(), this.mysql.getPassword()));
+		JdbcClient plain = JdbcClient.create(new DriverManagerDataSource(this.database.getJdbcUrl(),
+				this.database.getUsername(), this.database.getPassword()));
 		assertThatIllegalStateException().isThrownBy(() -> InstitutionTimeCheck.verify(plain, this.time, SEOUL))
 			.withMessageContaining("astra.time.zone=Asia/Seoul (+09:00)")
 			.withMessageContaining("JVM default=Asia/Seoul (+09:00)")

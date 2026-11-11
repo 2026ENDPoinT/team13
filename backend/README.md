@@ -83,6 +83,8 @@ git commit -m "Update reference to <변경 요약>"
 
 테스트와 로컬 실행에는 Docker와 `ffmpeg`·`ffprobe`(PATH)가 필요하다. Testcontainers가 MySQL 8.4와 S3 호환 저장소 컨테이너를 띄우고 마이그레이션을 적용한다. 영상 변환 테스트는 ffmpeg로 짧은 시험 영상을 만들어 쓴다.
 
+두 컨테이너는 테스트 JVM 하나에 하나씩만 뜨고 모든 Spring context가 함께 쓴다(`TestcontainersConfiguration`). context마다 번호를 받아 자기 database(`astra_c<번호>`)와 bucket(`astra-content-c<번호>`, `astra-delivery-c<번호>`)을 만들고, Flyway는 context마다 자기 database를 처음부터 마이그레이션한다. 한 context의 worker와 저장소 GC는 다른 context의 행과 객체를 보지 못한다. 컨테이너는 JVM이 끝나면 Testcontainers(Ryuk)가 지운다. 로컬 실행은 context가 하나이므로 실행할 때마다 새 컨테이너에 `astra_c1`과 그 bucket을 쓴다.
+
 ```sh
 ./gradlew build          # Windows: gradlew.bat build
 ./gradlew bootTestRun    # DB 없이 로컬 실행. MySQL과 S3 호환 저장소 컨테이너를 자동으로 띄운다
