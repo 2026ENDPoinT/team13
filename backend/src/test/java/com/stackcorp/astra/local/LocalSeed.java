@@ -72,6 +72,7 @@ public class LocalSeed {
 				jdbc.sql("INSERT INTO course_weeks (course_id, week_no) VALUES (:c, :n)").param("c", id).param("n", week).update();
 			}
 		}
+		LocalNoticeSeed.seed(jdbc, professor);
 	}
 
 	private static long user(JdbcClient jdbc, String ref, String name, String role) {
