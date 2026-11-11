@@ -29,8 +29,10 @@ import tools.jackson.databind.json.JsonMapper;
  * @param verifier PKCE code verifier(RFC 7636)
  * @param returnTo 로그인 뒤 돌아갈 경로
  * @param expiresAt 이 시각(epoch 초)이 지나면 받지 않는다
+ * @param reauthentication 로그인한 사용자의 재인증이다. callback에서 IdP의 재인증 시각을 확인한다(ADR-0029)
  */
-record LoginBinding(String state, String nonce, String verifier, String returnTo, long expiresAt) {
+record LoginBinding(String state, String nonce, String verifier, String returnTo, long expiresAt,
+		boolean reauthentication) {
 
 	private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
@@ -67,6 +69,7 @@ record LoginBinding(String state, String nonce, String verifier, String returnTo
 		body.put("v", this.verifier);
 		body.put("r", this.returnTo);
 		body.put("e", this.expiresAt);
+		body.put("a", this.reauthentication);
 		byte[] iv = new byte[IV_BYTES];
 		RANDOM.nextBytes(iv);
 		try {
@@ -98,11 +101,12 @@ record LoginBinding(String state, String nonce, String verifier, String returnTo
 			cipher.updateAAD(AAD);
 			JsonNode body = MAPPER.readTree(cipher.doFinal(raw, IV_BYTES, raw.length - IV_BYTES));
 			if (!body.path("s").isString() || !body.path("n").isString() || !body.path("v").isString()
-					|| !body.path("r").isString() || !body.path("e").isIntegralNumber()) {
+					|| !body.path("r").isString() || !body.path("e").isIntegralNumber() || !body.path("a").isBoolean()) {
 				throw new ExternalLoginException("binding_invalid");
 			}
 			return new LoginBinding(body.path("s").stringValue(), body.path("n").stringValue(),
-					body.path("v").stringValue(), body.path("r").stringValue(), body.path("e").longValue());
+					body.path("v").stringValue(), body.path("r").stringValue(), body.path("e").longValue(),
+					body.path("a").booleanValue());
 		}
 		catch (GeneralSecurityException | IllegalArgumentException | JacksonException ex) {
 			throw new ExternalLoginException("binding_invalid");

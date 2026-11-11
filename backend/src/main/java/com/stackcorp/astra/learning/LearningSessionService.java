@@ -9,6 +9,8 @@ import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 import com.stackcorp.astra.files.api.DeliveryCookies;
 import com.stackcorp.astra.files.api.DeliveryCookies.DeliveryCookie;
+import com.stackcorp.astra.identity.api.LearningAuthGrants;
+import com.stackcorp.astra.identity.api.LearningAuthGrants.Grant;
 import com.stackcorp.astra.learning.CreditRule.Credit;
 import com.stackcorp.astra.learning.CreditRule.Outcome;
 import com.stackcorp.astra.learning.CreditRule.Window;
@@ -31,6 +33,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <li>하트비트와 종료는 session 행을 잠근 뒤 시각을 읽고 권한을 다시 판정한다. 권한이 사라지면 session을 닫고 적립하지 않는다.
  * 이미 적립한 시간은 그대로 둔다.</li>
  * <li>출석인정 충족은 콘텐츠마다 한 번, 조건부 UPDATE로 기록하고 이후 어떤 사건으로도 되돌리지 않는다.</li>
+ * <li>학습 인증을 요구하는 배포({@code astra.learning.require-auth-grant})에서는 학생의 시작에 유효한 학습 인증 grant가 있어야 하고
+ * 적립 유효기한을 session에 저장한다. 하트비트마다 요청한 로그인 session의 grant를 다시 보고 그 경계에서 구간을 자른다. 경계를 지나면
+ * {@code reauth_required}이고 다시 인증하면 소급 없이 이어 간다(SC-06-A, ADR-0029, 규칙 v2).</li>
  * </ul>
  * 404가 되거나 session이 닫히는 응답도 session 상태 변경은 commit한 뒤 오류로 알린다.
  */
@@ -51,21 +56,29 @@ class LearningSessionService {
 
 	private final LearningSessionProperties properties;
 
+	private final LearningAuthGrants grants;
+
 	LearningSessionService(JdbcClient jdbc, TransactionTemplate tx, LearningClock clock,
-			CourseMemberships memberships, DeliveryCookies cookies, LearningSessionProperties properties) {
+			CourseMemberships memberships, DeliveryCookies cookies, LearningSessionProperties properties,
+			LearningAuthGrants grants) {
 		this.jdbc = jdbc;
 		this.tx = tx;
 		this.clock = clock;
 		this.memberships = memberships;
 		this.cookies = cookies;
 		this.properties = properties;
+		this.grants = grants;
 	}
 
-	/** 콘텐츠의 학습 session을 시작한다(EP-0049, EP-0053, EP-0054). 볼 수 없는 콘텐츠면 404다. */
-	Granted<Started> start(long userId, long courseId, long itemId) {
+	/**
+	 * 콘텐츠의 학습 session을 시작한다(EP-0049, EP-0053, EP-0054). 볼 수 없는 콘텐츠면 404, 학습 인증이 필요한데 없으면 403
+	 * {@code learning_auth_required}다.
+	 * @param loginSessionId 요청한 로그인 session. 학습 인증 grant는 이 session에 묶인다
+	 */
+	Granted<Started> start(long userId, long loginSessionId, long courseId, long itemId) {
 		for (int attempt = 1;; attempt++) {
 			try {
-				return this.tx.execute((status) -> doStart(userId, courseId, itemId));
+				return this.tx.execute((status) -> doStart(userId, loginSessionId, courseId, itemId));
 			}
 			catch (DuplicateKeyException | PessimisticLockingFailureException ex) {
 				// 같은 사용자의 시작이 동시에 들어오면 활성 session 유일 제약에서 한쪽이 진다. 다시 하면 이긴 쪽을 대체한다.
@@ -77,19 +90,21 @@ class LearningSessionService {
 	}
 
 	/** 하트비트(EP-0050). seq는 session 안에서 증가하는 순번이다. 위치는 이어보기 힌트로만 저장한다. */
-	Granted<HeartbeatResult> heartbeat(long userId, long courseId, long sessionId, long seq, Integer positionSec,
-			Boolean playing) {
-		return this.tx.execute((status) -> doHeartbeat(userId, courseId, sessionId, seq, positionSec, playing))
+	Granted<HeartbeatResult> heartbeat(long userId, long loginSessionId, long courseId, long sessionId, long seq,
+			Integer positionSec, Boolean playing) {
+		return this.tx
+			.execute((status) -> doHeartbeat(userId, loginSessionId, courseId, sessionId, seq, positionSec, playing))
 			.orThrow();
 	}
 
 	/** 명시적 종료(EP-0057, EP-0058). 마지막 기준 시각 뒤 구간을 같은 규칙으로 적립한다. 이미 닫힌 session이면 그 결과를 그대로 돌려준다. */
-	Ended end(long userId, long courseId, long sessionId, Integer positionSec, String reason) {
-		return this.tx.execute((status) -> doEnd(userId, courseId, sessionId, positionSec, reason)).orThrow();
+	Ended end(long userId, long loginSessionId, long courseId, long sessionId, Integer positionSec, String reason) {
+		return this.tx.execute((status) -> doEnd(userId, loginSessionId, courseId, sessionId, positionSec, reason))
+			.orThrow();
 	}
 
 	/**
-	 * lease가 지난 활성 session을 닫는다. 후보를 잠그지 않고 읽은 뒤 session마다 조건부 UPDATE(state = 'active')를 따로 commit한다.
+	 * lease가 지난 열린 session을 닫는다. 후보를 잠그지 않고 읽은 뒤 session마다 조건부 UPDATE(열린 상태일 때만)를 따로 commit한다.
 	 * worker가 둘이어도 session마다 한쪽만 닫고, 한 번에 행 하나만 잠가 서로 기다리다 교착하지 않는다.
 	 * 종료 시각은 마지막 기준 시각이다. 그 뒤 구간은 적립하지 않는다.
 	 *
@@ -107,14 +122,14 @@ class LearningSessionService {
 			closed += this.jdbc.sql("""
 					UPDATE learning_sessions
 					   SET state = 'lease_expired', end_reason = 'lease_expired', ended_at = COALESCE(last_heartbeat_at, started_at)
-					 WHERE learning_session_id = :session AND state = 'active'
+					 WHERE learning_session_id = :session AND state IN ('active', 'reauth_required')
 					   AND TIMESTAMPADD(SECOND, lease_sec, COALESCE(last_heartbeat_at, started_at)) < :now
 					""").param("session", sessionId).param("now", now).update();
 		}
 		return closed;
 	}
 
-	private Granted<Started> doStart(long userId, long courseId, long itemId) {
+	private Granted<Started> doStart(long userId, long loginSessionId, long courseId, long itemId) {
 		Item item = item(itemId, courseId).orElseThrow(ApiException::notFound);
 		String assetKey = LectureVideoController.assetKey(item.contentPath()).orElseThrow(ApiException::notFound);
 		LocalDateTime now = this.clock.now();
@@ -122,22 +137,32 @@ class LearningSessionService {
 		if (!access.visible()) {
 			throw ApiException.notFound();
 		}
+		LocalDateTime authorizedUntil = null;
+		if (access.learner() && this.properties.requireAuthGrant()) {
+			// SC-06-A: 시작할 때 grant가 유효해야 한다. client가 인증을 건너뛰어도 여기서 막힌다(SEC-04).
+			LocalDateTime grantUntil = this.grants.current(loginSessionId)
+				.map(Grant::expiresAt)
+				.filter(now::isBefore)
+				.orElseThrow(() -> new ApiException(HttpStatus.FORBIDDEN, "learning_auth_required",
+						"학습을 시작하려면 본인 인증이 필요합니다."));
+			authorizedUntil = earliest(grantUntil, item.closeAt());
+		}
 		List<DeliveryCookie> issued = this.cookies.forVideo(assetKey);
 		if (issued.isEmpty()) {
 			throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "delivery_unavailable", "영상 전달이 설정되지 않았습니다.");
 		}
-		// 활성 session 유일 제약의 index 행을 잠그고 대체한다. 그 session의 적립은 마지막 기준 시각까지다.
+		// 열린 session 유일 제약의 index 행을 잠그고 대체한다. 그 session의 적립은 마지막 기준 시각까지다.
 		this.jdbc.sql("""
 				UPDATE learning_sessions SET state = 'superseded', end_reason = 'superseded', ended_at = :now
-				 WHERE active_user_key = :user AND state = 'active'
+				 WHERE active_user_key = :user AND state IN ('active', 'reauth_required')
 				""").param("now", now).param("user", userId).update();
 		int interval = (int) this.properties.heartbeatInterval().toSeconds();
 		int lease = CreditRule.leaseSec(interval);
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
 				INSERT INTO learning_sessions (user_id, course_id, activity_id, online_lecture_item_id, state, started_at,
-				                               heartbeat_interval_sec, lease_sec)
-				VALUES (:user, :course, :activity, :item, 'active', :now, :interval, :lease)
+				                               heartbeat_interval_sec, lease_sec, credit_authorized_until)
+				VALUES (:user, :course, :activity, :item, 'active', :now, :interval, :lease, :authorizedUntil)
 				""")
 			.param("user", userId)
 			.param("course", courseId)
@@ -146,19 +171,20 @@ class LearningSessionService {
 			.param("now", now)
 			.param("interval", interval)
 			.param("lease", lease)
+			.param("authorizedUntil", authorizedUntil)
 			.update(key, "learning_session_id");
 		long sessionId = key.getKey().longValue();
 		if (access.learner()) {
 			recordView(userId, courseId, item.activityId(), now);
 		}
 		ItemProgress progress = progress(userId, item);
-		Started started = new Started(sessionId, itemId, interval, lease, access.learner(), item.closeAt(),
-				progress.resumePositionSec(), progress);
+		Started started = new Started(sessionId, itemId, interval, lease, access.learner(),
+				authorizedUntil != null ? authorizedUntil : item.closeAt(), progress.resumePositionSec(), progress);
 		return new Granted<>(started, playback(item, issued), issued);
 	}
 
-	private Step<Granted<HeartbeatResult>> doHeartbeat(long userId, long courseId, long sessionId, long seq,
-			Integer positionSec, Boolean playing) {
+	private Step<Granted<HeartbeatResult>> doHeartbeat(long userId, long loginSessionId, long courseId, long sessionId,
+			long seq, Integer positionSec, Boolean playing) {
 		Session session = lock(userId, courseId, sessionId);
 		LocalDateTime now = this.clock.now();
 		Optional<ApiException> closed = closeIfInvalid(session, now);
@@ -178,17 +204,15 @@ class LearningSessionService {
 		long lastSeq = this.jdbc.sql("""
 				SELECT COALESCE(MAX(seq_no), 0) FROM learning_heartbeats WHERE learning_session_id = :session
 				""").param("session", sessionId).query(Long.class).single();
-		Outcome outcome;
-		int credited;
-		LocalDateTime baseline;
+		Beat beat;
 		if (seq <= lastSeq) {
 			// 재전송, 순서가 바뀐 요청. 원장과 기준 시각을 건드리지 않는다.
-			outcome = Outcome.DUPLICATE;
-			credited = 0;
-			baseline = session.baseline();
+			beat = new Beat(Outcome.DUPLICATE, 0, session.baseline(), session.reauthRequired(),
+					session.creditAuthorizedUntil());
 		}
 		else {
-			Credit credit = credit(session, item, access, now, false);
+			beat = session.bound() ? boundBeat(session, loginSessionId, item, access, positionSec, now)
+					: unboundBeat(session, item, access, positionSec, now);
 			this.jdbc.sql("""
 					INSERT INTO learning_heartbeats (learning_session_id, seq_no, received_at, position_sec, playing_yn, credited_sec)
 					VALUES (:session, :seq, :now, :position, :playing, :credited)
@@ -198,23 +222,78 @@ class LearningSessionService {
 				.param("now", now)
 				.param("position", positionSec)
 				.param("playing", playing)
-				.param("credited", credit.seconds())
+				.param("credited", beat.credited())
 				.update();
-			apply(session, item, credit, positionSec, now);
-			outcome = credit.outcome();
-			credited = credit.seconds();
-			baseline = credit.baseline();
 		}
-		LocalDateTime leaseEnd = baseline.plusSeconds(session.leaseSec());
-		HeartbeatResult result = new HeartbeatResult(sessionId, outcome.code(), credited, creditOpen(access, item, now),
-				leaseEnd, (int) Math.max(0, Duration.between(now, leaseEnd).toSeconds()), progress(userId, item));
+		LocalDateTime creditUntil = session.bound() ? beat.authorizedUntil() : item.closeAt();
+		boolean creditOpen = access.learner() && !beat.reauthRequired()
+				&& (creditUntil == null || now.isBefore(creditUntil));
+		LocalDateTime leaseEnd = beat.baseline().plusSeconds(session.leaseSec());
+		HeartbeatResult result = new HeartbeatResult(sessionId, beat.outcome().code(), beat.credited(), creditOpen,
+				beat.reauthRequired() ? "reauth_required" : "authorized", creditUntil, leaseEnd,
+				(int) Math.max(0, Duration.between(now, leaseEnd).toSeconds()), progress(userId, item));
 		return Step.done(new Granted<>(result, issued.isEmpty() ? null : playback(item, issued), issued));
 	}
 
-	private Step<Ended> doEnd(long userId, long courseId, long sessionId, Integer positionSec, String reason) {
+	/** 규칙 v1 하트비트. */
+	private Beat unboundBeat(Session session, Item item, Access access, Integer positionSec, LocalDateTime now) {
+		Credit credit = credit(session, item, access, now, false, null);
+		apply(session, item, credit, positionSec, now);
+		return new Beat(credit.outcome(), credit.seconds(), credit.baseline(), false, null);
+	}
+
+	/**
+	 * 규칙 v2 하트비트(SC-06-A). 경계는 요청한 로그인 session의 grant로 매번 다시 정한다. 폐기하면 만료가 폐기 시각으로 당겨지고, grant가
+	 * 없으면 기준 시각이 경계라 더 적립하지 않는다.
+	 */
+	private Beat boundBeat(Session session, long loginSessionId, Item item, Access access, Integer positionSec,
+			LocalDateTime now) {
+		LocalDateTime boundary = this.grants.current(loginSessionId)
+			.map(Grant::expiresAt)
+			.orElse(session.baseline());
+		if (session.reauthRequired()) {
+			// 적립하지 않고 기준 시각만 옮긴다. lease는 유지되고 인증이 없던 시간은 나중에도 적립하지 않는다.
+			boolean resumed = access.learner() && now.isBefore(boundary);
+			LocalDateTime authorizedUntil = resumed ? earliest(boundary, item.closeAt())
+					: session.creditAuthorizedUntil();
+			this.jdbc.sql("""
+					UPDATE learning_sessions
+					   SET state = :state, last_heartbeat_at = :now, credit_authorized_until = :until
+					 WHERE learning_session_id = :session
+					""")
+				.param("state", resumed ? "active" : "reauth_required")
+				.param("now", now)
+				.param("until", authorizedUntil)
+				.param("session", session.id())
+				.update();
+			if (positionSec != null) {
+				recordProgress(session.userId(), item, 0, positionSec, now, session.rule());
+			}
+			return new Beat(resumed ? Outcome.RESUMED : Outcome.REAUTH_REQUIRED, 0, now, !resumed, authorizedUntil);
+		}
+		// 인증이 close_at보다 먼저 끝날 때만 재인증 대기가 된다. close_at이 먼저면 기간이 끝난 것이다.
+		boolean authEndsFirst = item.closeAt() == null || boundary.isBefore(item.closeAt());
+		boolean passed = authEndsFirst && !now.isBefore(boundary);
+		Credit credit = credit(session, item, access, now, passed, boundary);
+		apply(session, item, credit, positionSec, now);
+		LocalDateTime authorizedUntil = earliest(boundary, item.closeAt());
+		this.jdbc.sql("""
+				UPDATE learning_sessions SET state = :state, credit_authorized_until = :until
+				 WHERE learning_session_id = :session
+				""")
+			.param("state", passed ? "reauth_required" : "active")
+			.param("until", authorizedUntil)
+			.param("session", session.id())
+			.update();
+		Outcome outcome = passed && credit.seconds() == 0 ? Outcome.REAUTH_REQUIRED : credit.outcome();
+		return new Beat(outcome, credit.seconds(), credit.baseline(), passed, authorizedUntil);
+	}
+
+	private Step<Ended> doEnd(long userId, long loginSessionId, long courseId, long sessionId, Integer positionSec,
+			String reason) {
 		Session session = lock(userId, courseId, sessionId);
 		Item item = item(session.itemId(), courseId).orElse(null);
-		if (!session.active()) {
+		if (!session.open()) {
 			return Step.done(ended(session, session.state(), session.endReason(), 0, item));
 		}
 		LocalDateTime now = this.clock.now();
@@ -228,16 +307,40 @@ class LearningSessionService {
 			return Step.failed(ApiException.notFound());
 		}
 		checkPosition(positionSec, item);
-		Credit credit = credit(session, item, access, now, true);
-		apply(session, item, credit, positionSec, now);
+		int credited = 0;
+		if (session.reauthRequired()) {
+			if (positionSec != null) {
+				recordProgress(session.userId(), item, 0, positionSec, now, session.rule());
+			}
+		}
+		else {
+			LocalDateTime boundary = session.bound()
+					? this.grants.current(loginSessionId).map(Grant::expiresAt).orElse(session.baseline()) : null;
+			Credit credit = credit(session, item, access, now, true, boundary);
+			apply(session, item, credit, positionSec, now);
+			credited = credit.seconds();
+		}
 		close(session, now, reason);
-		return Step.done(ended(session, "ended", reason, credit.seconds(), item));
+		return Step.done(ended(session, "ended", reason, credited, item));
 	}
 
-	private Credit credit(Session session, Item item, Access access, LocalDateTime now, boolean last) {
-		Window window = access.learner() ? new Window(item.openAt(), item.closeAt()) : null;
+	/**
+	 * @param last 최소 간격을 보지 않는다. 종료와 학습 인증 경계를 지난 하트비트다
+	 * @param authBoundary 학습 인증 경계(v2). 없으면 null
+	 */
+	private Credit credit(Session session, Item item, Access access, LocalDateTime now, boolean last,
+			LocalDateTime authBoundary) {
+		Window window = access.learner() ? new Window(item.openAt(), earliest(item.closeAt(), authBoundary)) : null;
 		LocalDateTime frontier = window == null ? null : frontier(session.userId());
 		return CreditRule.apply(session.baseline(), frontier, now, window, session.intervalSec(), last);
+	}
+
+	/** null은 제한 없음이다. */
+	private static LocalDateTime earliest(LocalDateTime a, LocalDateTime b) {
+		if (a == null) {
+			return b;
+		}
+		return b != null && b.isBefore(a) ? b : a;
 	}
 
 	/** 원장, 기준 시각, 진도를 한 transaction에서 바꾼다. 같은 session 행 잠금 아래에서만 부른다. */
@@ -251,7 +354,7 @@ class LearningSessionService {
 				.param("from", credit.from())
 				.param("to", credit.to())
 				.param("seconds", credit.seconds())
-				.param("rule", CreditRule.VERSION)
+				.param("rule", session.rule())
 				.update();
 		}
 		if (credit.outcome() != Outcome.TOO_EARLY) {
@@ -261,14 +364,16 @@ class LearningSessionService {
 				.update();
 		}
 		if (credit.seconds() > 0 || positionSec != null) {
-			recordProgress(session.userId(), item, credit.seconds(), positionSec, now);
+			recordProgress(session.userId(), item, credit.seconds(), positionSec, now, session.rule());
 		}
 		if (credit.seconds() > 0) {
-			decide(session.userId(), item, now);
+			decide(session.userId(), item, now, session.rule());
 		}
 	}
 
-	private void recordProgress(long userId, Item item, int seconds, Integer positionSec, LocalDateTime now) {
+	/** @param rule 이 진도를 바꾼 적립 규칙 버전 */
+	private void recordProgress(long userId, Item item, int seconds, Integer positionSec, LocalDateTime now,
+			String rule) {
 		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
 		this.jdbc.sql("""
 				INSERT INTO online_lecture_item_progress (user_id, online_lecture_item_id, credited_in_sec, max_position_sec,
@@ -290,7 +395,7 @@ class LearningSessionService {
 			.param("position", positionSec)
 			.param("positionAt", positionSec == null ? null : now)
 			.param("status", required == null ? "unknown" : "under_required")
-			.param("rule", CreditRule.VERSION)
+			.param("rule", rule)
 			.update();
 	}
 
@@ -298,7 +403,7 @@ class LearningSessionService {
 	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록한다. 활동의 모든 콘텐츠가 충족되면 활동 완료와 출석부(연결된 차시가 있을 때)에
 	 * 한 번 반영한다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
 	 */
-	private void decide(long userId, Item item, LocalDateTime now) {
+	private void decide(long userId, Item item, LocalDateTime now, String rule) {
 		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
 		if (required == null) {
 			return;
@@ -308,7 +413,7 @@ class LearningSessionService {
 				 WHERE user_id = :user AND online_lecture_item_id = :item AND met_at IS NULL AND credited_in_sec >= :required
 				""")
 			.param("now", now)
-			.param("rule", CreditRule.VERSION)
+			.param("rule", rule)
 			.param("user", userId)
 			.param("item", item.itemId())
 			.param("required", required)
@@ -342,7 +447,7 @@ class LearningSessionService {
 			.param("attendance", item.attendanceSessionId())
 			.param("user", userId)
 			.param("now", now)
-			.param("rule", CreditRule.VERSION)
+			.param("rule", rule)
 			.update();
 		this.jdbc.sql("""
 				UPDATE attendance_records
@@ -352,7 +457,7 @@ class LearningSessionService {
 			.param("attendance", item.attendanceSessionId())
 			.param("user", userId)
 			.param("now", now)
-			.param("rule", CreditRule.VERSION)
+			.param("rule", rule)
 			.update();
 	}
 
@@ -384,7 +489,7 @@ class LearningSessionService {
 	private Session lock(long userId, long courseId, long sessionId) {
 		return this.jdbc.sql("""
 				SELECT learning_session_id, user_id, online_lecture_item_id, state, end_reason, started_at, last_heartbeat_at,
-				       heartbeat_interval_sec, lease_sec
+				       heartbeat_interval_sec, lease_sec, credit_authorized_until
 				  FROM learning_sessions
 				 WHERE learning_session_id = :session AND user_id = :user AND course_id = :course
 				   FOR UPDATE
@@ -393,17 +498,18 @@ class LearningSessionService {
 			.param("user", userId)
 			.param("course", courseId)
 			.query((rs, n) -> new Session(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getString(4), rs.getString(5),
-					rs.getObject(6, LocalDateTime.class), rs.getObject(7, LocalDateTime.class), rs.getInt(8), rs.getInt(9)))
+					rs.getObject(6, LocalDateTime.class), rs.getObject(7, LocalDateTime.class), rs.getInt(8), rs.getInt(9),
+					rs.getObject(10, LocalDateTime.class)))
 			.optional()
 			.orElseThrow(ApiException::notFound);
 	}
 
 	/** 닫힌 session이면 그 사유의 오류. lease가 지났으면 지금 닫고 같은 오류를 낸다. */
 	private Optional<ApiException> closeIfInvalid(Session session, LocalDateTime now) {
-		if (session.active() && !expired(session, now)) {
+		if (session.open() && !expired(session, now)) {
 			return Optional.empty();
 		}
-		if (session.active()) {
+		if (session.open()) {
 			expire(session);
 		}
 		if ("superseded".equals(session.state())) {
@@ -421,14 +527,14 @@ class LearningSessionService {
 		this.jdbc.sql("""
 				UPDATE learning_sessions
 				   SET state = 'lease_expired', end_reason = 'lease_expired', ended_at = COALESCE(last_heartbeat_at, started_at)
-				 WHERE learning_session_id = :session AND state = 'active'
+				 WHERE learning_session_id = :session AND state IN ('active', 'reauth_required')
 				""").param("session", session.id()).update();
 	}
 
 	private void close(Session session, LocalDateTime now, String reason) {
 		this.jdbc.sql("""
 				UPDATE learning_sessions SET state = 'ended', end_reason = :reason, ended_at = :now
-				 WHERE learning_session_id = :session AND state = 'active'
+				 WHERE learning_session_id = :session AND state IN ('active', 'reauth_required')
 				""").param("reason", reason).param("now", now).param("session", session.id()).update();
 	}
 
@@ -448,10 +554,6 @@ class LearningSessionService {
 		boolean open = LearningAccess.open(new Activity(item.activityId(), item.courseId(), item.published(), item.openAt()),
 				now);
 		return open ? new Access(true, true) : Access.NONE;
-	}
-
-	private static boolean creditOpen(Access access, Item item, LocalDateTime now) {
-		return access.learner() && (item.closeAt() == null || now.isBefore(item.closeAt()));
 	}
 
 	private static void checkPosition(Integer positionSec, Item item) {
@@ -508,11 +610,28 @@ class LearningSessionService {
 			Integer requiredSec) {
 	}
 
+	/**
+	 * @param creditAuthorizedUntil 적립 유효기한(SC-06-A). 학습 인증을 요구하지 않을 때 시작한 session은 null이고 규칙 v1을 쓴다
+	 */
 	private record Session(long id, long userId, long itemId, String state, String endReason, LocalDateTime startedAt,
-			LocalDateTime lastHeartbeatAt, int intervalSec, int leaseSec) {
+			LocalDateTime lastHeartbeatAt, int intervalSec, int leaseSec, LocalDateTime creditAuthorizedUntil) {
 
-		boolean active() {
-			return "active".equals(this.state);
+		/** 열려 있다. 하트비트를 받고 lease가 돈다. */
+		boolean open() {
+			return "active".equals(this.state) || reauthRequired();
+		}
+
+		boolean reauthRequired() {
+			return "reauth_required".equals(this.state);
+		}
+
+		/** 학습 인증에 묶인 session이다(규칙 v2). */
+		boolean bound() {
+			return this.creditAuthorizedUntil != null;
+		}
+
+		String rule() {
+			return bound() ? CreditRule.AUTH_BOUND_VERSION : CreditRule.VERSION;
 		}
 
 		/** 적립 기준 시각. 첫 하트비트 전에는 시작 시각이다. */
@@ -520,6 +639,16 @@ class LearningSessionService {
 			return this.lastHeartbeatAt != null ? this.lastHeartbeatAt : this.startedAt;
 		}
 
+	}
+
+	/**
+	 * 하트비트 하나의 결과.
+	 * @param baseline 다음 기준 시각
+	 * @param reauthRequired 이 하트비트 뒤 session이 재인증 대기다
+	 * @param authorizedUntil 적립 유효기한. 학습 인증에 묶이지 않은 session이면 null
+	 */
+	private record Beat(Outcome outcome, int credited, LocalDateTime baseline, boolean reauthRequired,
+			LocalDateTime authorizedUntil) {
 	}
 
 	/**
@@ -564,7 +693,7 @@ class LearningSessionService {
 	 * @param heartbeatIntervalSec player가 하트비트를 보낼 주기. 서버가 정한다
 	 * @param leaseSec 마지막 적립 기준 시각 뒤 이 시간 안에 하트비트가 없으면 session이 닫힌다
 	 * @param creditable 이 session이 출석 인정 시간을 적립하는지. 담당자 미리보기는 false
-	 * @param creditUntil 적립이 끝나는 시각(활동의 close_at). 없으면 null
+	 * @param creditUntil 적립이 끝나는 시각. 활동의 close_at, 학습 인증을 요구하면 min(grant 만료, close_at, 로그인 session 만료). 없으면 null
 	 * @param resumePositionSec 이어보기 위치 힌트
 	 */
 	record Started(long sessionId, long itemId, int heartbeatIntervalSec, int leaseSec, boolean creditable,
@@ -574,11 +703,13 @@ class LearningSessionService {
 	/**
 	 * @param outcome {@link Outcome}의 소문자 이름
 	 * @param creditedSec 이 하트비트가 적립한 초
-	 * @param creditOpen 다음 하트비트가 적립할 수 있는지. close_at이 지났거나 학습자가 아니면 false
+	 * @param creditOpen 다음 하트비트가 적립할 수 있는지. 적립 유효기한이 지났거나, 재인증 대기이거나, 학습자가 아니면 false
+	 * @param creditState authorized | reauth_required. reauth_required면 다시 인증할 때까지 적립하지 않는다(SC-06-A)
+	 * @param creditUntil 적립이 끝나는 시각. {@link Started#creditUntil}과 같은 규칙이다
 	 * @param leaseExpiresAt 이 시각까지 다음 하트비트가 없으면 session이 닫힌다
 	 */
-	record HeartbeatResult(long sessionId, String outcome, int creditedSec, boolean creditOpen,
-			LocalDateTime leaseExpiresAt, int leaseRemainingSec, ItemProgress progress) {
+	record HeartbeatResult(long sessionId, String outcome, int creditedSec, boolean creditOpen, String creditState,
+			LocalDateTime creditUntil, LocalDateTime leaseExpiresAt, int leaseRemainingSec, ItemProgress progress) {
 	}
 
 	/**

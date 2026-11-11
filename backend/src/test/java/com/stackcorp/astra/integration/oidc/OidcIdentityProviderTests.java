@@ -50,7 +50,8 @@ class OidcIdentityProviderTests {
 		Map<String, String> query = MockOpenIdProvider.query(redirect.location().getRawQuery());
 		ExternalLogin login = provider.complete(redirect.binding(), callback(redirect, "20231234"));
 
-		assertThat(login).isEqualTo(new ExternalLogin("20231234", "/courses/7"));
+		assertThat(login).isEqualTo(new ExternalLogin("20231234", "/courses/7", false));
+		assertThat(query).doesNotContainKeys("prompt", "max_age");
 		assertThat(redirect.location().toString()).startsWith(this.idp.issuer() + "/protocol/openid-connect/auth?");
 		assertThat(query).containsEntry("code_challenge_method", "S256").containsEntry("scope", "openid");
 		assertThat(query.get("code_challenge")).hasSize(43);
@@ -205,6 +206,31 @@ class OidcIdentityProviderTests {
 					Duration.ofSeconds(5), Duration.ofSeconds(60)));
 		assertThat(properties(this.idp.issuer(), MockOpenIdProvider.CLIENT_SECRET, List.of(), Duration.ofSeconds(5))
 			.toString()).doesNotContain(MockOpenIdProvider.CLIENT_SECRET);
+	}
+
+	@Test
+	void reauthenticationForcesIdpLoginAndRequiresFreshAuthTime() {
+		OidcIdentityProvider provider = provider(Clock.systemUTC());
+
+		LoginRedirect redirect = provider.beginReauthentication("/me/info");
+		Map<String, String> query = MockOpenIdProvider.query(redirect.location().getRawQuery());
+		assertThat(query).containsEntry("prompt", "login").containsEntry("max_age", "0");
+		assertThat(provider.complete(redirect.binding(), callback(redirect, "20231234")))
+			.isEqualTo(new ExternalLogin("20231234", "/me/info", true));
+
+		// IdP가 기존 IdP session으로 넘어가 auth_time을 주지 않거나 오래된 값을 주면 재인증으로 치지 않는다.
+		this.idp.claims((c) -> c.remove("auth_time"));
+		LoginRedirect missing = provider.beginReauthentication("/");
+		assertReason("auth_time_missing", () -> provider.complete(missing.binding(), callback(missing, "20231234")));
+
+		long stale = Instant.now().minus(Duration.ofMinutes(5)).getEpochSecond();
+		this.idp.claims((c) -> c.put("auth_time", stale));
+		LoginRedirect old = provider.beginReauthentication("/");
+		assertReason("auth_time_stale", () -> provider.complete(old.binding(), callback(old, "20231234")));
+
+		this.idp.claims((c) -> c.put("auth_time", "now"));
+		LoginRedirect odd = provider.beginReauthentication("/");
+		assertReason("auth_time_missing", () -> provider.complete(odd.binding(), callback(odd, "20231234")));
 	}
 
 	private Map<String, String> callback(LoginRedirect redirect, String studentNumber) {

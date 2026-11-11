@@ -36,6 +36,7 @@
 | [ADR-0027](adr/0027-notifications-in-producer-transaction.md) | 알림은 원래 변경과 같은 transaction에서 `catalog` API로 만들고, 미래에 보이는 대상은 알림 사건으로 남겨 worker가 그 시각의 구성원에게 보낸다. 대상을 숨기면 같은 transaction에서 거둔다 |
 | [ADR-0024](adr/0024-course-qna-and-open-board.md) | 강의실 질의응답과 열린게시판도 과목마다 하나인 게시판의 `posts` 행이다. 익명(이름 숨김)과 비공개(작성자·담당자만)를 나누고, 질문은 답글 전까지만 작성자가 고친다 |
 | [ADR-0016](adr/0016-video-upload-and-transcoder.md) | 강의 영상은 본문 스트림으로 받고, 격리한 transcoder가 HLS로 나눈 뒤 files가 AES-128로 암호화해 게시한다. MediaConvert는 port로 남긴다 |
+| [ADR-0029](adr/0029-step-up-and-learning-auth.md) | 민감한 명령의 재인증과 온라인 학습 인증 grant는 로그인 session에 묶은 `session_step_ups` 행이다. 학교 IdP 재인증(`prompt=login`, `auth_time`)이 근거이고, 학습 적립은 grant 만료에서 끊기고 `reauth_required`가 된다 |
 
 ## 2. 부하 가정
 
@@ -241,6 +242,10 @@ flowchart TD
 - 알림은 받는 사람 본인만 본다. 목록, 안 읽은 수, 읽음, 삭제가 같은 조건(본인, 보존 기간 안, 과목 알림이면 지금도 그 과목의 구성원)을 쓰므로 다른 사람의 알림이나 수강을 취소한 과목의 알림은 ID를 알아도 404다. 조회는 읽음을 바꾸지 않고, 읽음은 POST 명령이다(SC-04, CAT-08). 대상(공지, 자료, 과제)을 숨기면 만든 쪽이 같은 transaction에서 알림을 거둔다.
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
 - 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
+- 민감한 명령(연락처 변경, 다른 session 모두 끝내기)은 그 로그인 session의 최근 재인증을 요구한다(`identity.api.RecentAuthentication`, [ADR-0029](adr/0029-step-up-and-learning-auth.md)). 없으면 403 `step_up_required`다. 학교 IdP 계정은 IdP에서 다시 로그인하고(`prompt=login`, `max_age=0`, ID token의 `auth_time` 확인), break-glass 계정은 TOTP를 다시 넣는다. 로그인 자체는 재인증으로 치지 않는다. 재인증은 다른 session으로 옮겨 가지 않는다.
+- 내정보, 개인설정, 로그인 session, 등록 기기, 로그인 기록, 학습 인증은 모두 요청한 사용자의 것만 다룬다. 경로의 session ID, 기기 ID, challenge ID가 다른 사람의 것이면 존재와 관계없이 404다. 이름, 소속, 학년과 학사 원천 연락처는 받지 않는다. 기기를 폐기하면 그 기기의 session도 폐기되고, 폐기한 session은 다음 요청부터 401이다.
+- 로그인하면 브라우저를 등록 기기로 만든다. 기기 쿠키(`ASTRA_DEVICE`, `HttpOnly`, `Path=/api/auth`)는 기기 식별자일 뿐 인증에 쓰지 않는다. 다른 사용자나 폐기한 기기의 값이면 새 기기를 만든다.
+- 학습 인증 grant(SC-06-A)는 2차 인증 challenge를 통과해야 생긴다. 수단은 port(`identity.api.SecondFactorChannel`)이고 지금은 학교 IdP 재인증(`idp`) 하나다. challenge는 로그인 session에 묶이고, 5번 실패하면 잠기며, 사용자의 최근 실패 합이 한도면 새 challenge를 만들지 못한다. 확인 요청의 본문으로는 통과하지 않는다(SEC-04, IDENTITY-03~05).
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -249,6 +254,22 @@ flowchart TD
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
 | `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. IdP 로그아웃은 연계하지 않는다 |
+| `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자. IdP 설정이 없으면 404 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 `/?reauth=failed` |
+| `POST /api/me/step-up/totp` | break-glass session | `{code}`. TOTP 재인증. 로그인과 같은 잠금 |
+| `GET /api/me/profile` | 로그인한 사용자 | 이름, 소속, 학년, 연락처와 원천, 아바타(EP-0270) |
+| `PUT /api/me/profile` | 로그인한 사용자 | `{avatarColor, shortName, version}`. 24색 allowlist, 약칭 2글자. 읽은 `version`이 다르면 409(EP-0271, EP-0278) |
+| `PUT /api/me/contact` | 로그인한 사용자, 최근 재인증 | `{phone, email}`. 학사 원천 연락처면 409 `contact_managed_by_registrar`(EP-0266) |
+| `GET /api/me/preferences` · `PUT` | 로그인한 사용자 | 언어, 시간 표기, 화면 모드, 푸시 알림 에티켓 시간. allowlist와 `version`(EP-0169, EP-0220, EP-0283~EP-0286) |
+| `GET /api/me/sessions` | 로그인한 사용자 | 지금 쓸 수 있는 내 session과 IP, 브라우저, 기기, 지금 session 표시 |
+| `POST /api/me/sessions/{sessionId}/revoke` | 그 session의 주인 | 다른 session 하나를 끝낸다. 지금 session은 409 `current_session`. 204 |
+| `POST /api/me/sessions/revoke-others` | 로그인한 사용자, 최근 재인증 | 지금 session 말고 모두 끝낸다 |
+| `GET /api/me/devices?cursor=&size=` | 로그인한 사용자 | 폐기하지 않은 내 기기. 등록 역순, `nextCursor`(EP-0268) |
+| `DELETE /api/me/devices/{deviceId}` | 그 기기의 주인 | 기기와 그 기기의 session을 폐기한다. 지금 기기면 session 쿠키도 지운다(EP-0267) |
+| `GET /api/me/login-events?cursor=&size=` | 로그인한 사용자 | 최근 7일 로그인 기록. 최신순, `nextCursor` |
+| `GET /api/me/learning-auth` | 로그인한 사용자 | 이 session의 학습 인증 grant 여부와 만료, 쓸 수 있는 수단(EP-0294, EP-0295) |
+| `POST /api/me/learning-auth/challenges` | 로그인한 사용자 | `{channel}`. challenge 시작. 같은 session의 앞 challenge는 취소한다. `Idempotency-Key` 받지 않음. 201(EP-0293) |
+| `POST /api/me/learning-auth/challenges/{challengeId}/verify` | 그 challenge를 만든 session | 서버 근거로만 확인하고 grant를 준다. 실패 400, 잠김·사용함·만료 409(EP-0292) |
+| `POST /api/me/learning-auth/revoke` | 로그인한 사용자 | 이 session의 grant를 지금 끝낸다. 204 |
 
 ## 6. 첫 화면 성능
 
@@ -282,11 +303,12 @@ flowchart TD
 5. 학습할 때 player가 학습 session을 시작한다. 백엔드는 권한을 판정한 뒤 그 강의 경로에만 유효한 짧은 TTL의 signed cookie를 발급하고 manifest 경로를 돌려준다. 하트비트 응답이 볼 수 있는 동안에만 cookie를 다시 발급하고, 권한이 사라지면 발급하지 않는다. 적립 없이 재생만 하는 `POST /api/courses/{courseId}/lecture-items/{itemId}/playback`도 같은 판정으로 남아 있다. CDN URL은 권한을 대신하지 않는다.
 6. player는 manifest의 key URI인 `GET /api/courses/{courseId}/lecture-items/{itemId}/hls-key`에서 key를 받는다. 이 API는 요청마다 권한을 판정하고 `no-store`로 응답한다. key는 영상 asset마다 16 byte이고 `content` bucket의 `vod-keys/`에 있다.
 7. 출석 인정은 서버 시각의 하트비트 적립 원장으로 한다([ADR-0014](adr/0014-learning-session-credit.md)). client가 보낸 경과 시간, 주기는 받지 않고, 재전송·역순·burst는 아무것도 더하지 않으며, 주기의 2배보다 긴 공백과 close_at 뒤는 적립하지 않는다. 사용자당 활성 session은 하나이고 적립은 사용자 단위 구간의 합집합이다. 재생 위치는 이어보기 힌트로만 쓴다(SC-06, SEC-05, SEC-11, CHG-05).
+8. 학습 인증을 요구하는 배포(`astra.learning.require-auth-grant=true`)에서는 학생의 시작에 학습 인증 grant가 있어야 하고, 적립 유효기한 min(grant 만료, close_at, 로그인 session 만료)을 session에 저장한다. 하트비트마다 요청한 로그인 session의 grant를 다시 보고 그 경계에서 적립을 자른다. 경계를 지나면 `reauth_required`(재생은 계속, 적립 0, 이미 적립한 시간은 보존)이고, 다시 인증하면 소급 없이 이어 간다. 적립 규칙은 v2다(SC-06-A, [ADR-0029](adr/0029-step-up-and-learning-auth.md)). 설정을 끄면 v1 그대로다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `POST /api/courses/{courseId}/lecture-items/{itemId}/learning-sessions` | 그 활동을 지금 볼 수 있는 사람(담당자는 적립 없음) | session 시작. 앞 session은 `superseded`. 주기, lease, 이어보기 위치, 영상 cookie. 201 |
-| `POST /api/courses/{courseId}/learning-sessions/{sessionId}/heartbeats` | session 소유자이고 지금도 볼 수 있을 때 | `{seq, positionSec, playing}`. 서버 시각으로 적립하고 진도, lease 남은 시간, 영상 cookie를 돌려준다. 닫힌 session은 409 |
+| `POST /api/courses/{courseId}/lecture-items/{itemId}/learning-sessions` | 그 활동을 지금 볼 수 있는 사람(담당자는 적립 없음). 학습 인증을 요구하면 학생은 grant 필요(없으면 403 `learning_auth_required`) | session 시작. 앞 session은 `superseded`. 주기, lease, 이어보기 위치, 적립이 끝나는 시각, 영상 cookie. 201 |
+| `POST /api/courses/{courseId}/learning-sessions/{sessionId}/heartbeats` | session 소유자이고 지금도 볼 수 있을 때 | `{seq, positionSec, playing}`. 서버 시각으로 적립하고 진도, `creditState`(`authorized`·`reauth_required`), 적립이 끝나는 시각, lease 남은 시간, 영상 cookie를 돌려준다. 닫힌 session은 409 |
 | `POST /api/courses/{courseId}/learning-sessions/{sessionId}/end` | session 소유자 | 마지막 구간을 적립하고 닫는다. 멱등 |
 | `GET /api/courses/{courseId}/lecture-progress` | 과목 구성원 | 내 콘텐츠별 적립 시간, 출석인정 필요 시간, 충족 시각을 주차별로 |
 | `GET /api/courses/{courseId}/lecture-progress/students` | 담당자 | 수강생 전체의 콘텐츠별 진도 |
@@ -613,7 +635,6 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
 | 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
 | 쪽지 보존과 범위 | 읽은 쪽지 30일 삭제(`purge_after_at`)와 임시저장 보존 기한(`expires_at`)을 채우지 않는다. 지난 학기 과목 구성원에게도 보낼 수 있고, 학생끼리는 보낼 수 없다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)) | 기관 정책으로 보존 기한과 학기 종료 뒤 연락 범위를 정하고 worker 정리 작업을 더한다 |
-| 2차 인증 만료와 학습 적립(SC-06-A) | 적립 유효기한이 close_at만 반영한다. 2차 인증 grant가 없다 | `identity`의 grant와 `learning_sessions.credit_authorized_until`, `reauth_required` 상태를 함께 만든다(ADR-0014 결과 절) |
 | 지운 자료의 CDN 쪽 이미지 | CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 cookie가 끝나기 전, GC가 객체를 지우기 전이면 읽힐 수 있다([ADR-0011](adr/0011-material-deletion.md)) | 문서 cookie TTL을 짧게 유지한다. 더 줄여야 하면 삭제 commit 뒤 `doc/{key}/`를 바로 지우는 이벤트를 붙인다 |
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
@@ -625,3 +646,4 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 게시판 남은 범위 | 과목에 열린게시판을 하나만 둔다. 질의응답의 학습활동 연결(EP-0059, EP-0060), 게시글 첨부 교체, 댓글 수정, 알림마당 쓰기와 첨부, 메인 화면의 게시판 안 읽은 수가 없다([ADR-0024](adr/0024-course-qna-and-open-board.md)) | 담당자 게시판 관리, `Attachments`의 교체·해제, 전역 파일 경로를 만들 때 각각 넣는다 |
 | 영상 변환 자원 | 1단계에서는 transcoder가 api·worker와 같은 EC2의 CPU를 쓰고 한 번에 영상 하나만 변환한다. 화질은 720p 하나다([ADR-0016](adr/0016-video-upload-and-transcoder.md)) | compose에서 transcoder container의 CPU·메모리 상한을 정한다. 대기가 길어지면 transcoder를 늘리거나 MediaConvert로 옮긴다(ADR-0016 11번) |
 | 영상과 악성코드 검사 | `lecture_video`는 clamd 검사를 면제한다(통합 때 결정, [ADR-0016](adr/0016-video-upload-and-transcoder.md) 12번). 원본은 누구에게도 그대로 나가지 않고, 학생은 격리한 transcoder가 다시 인코딩한 HLS만 받는다. 다시 인코딩은 원본 안의 악성 데이터가 그대로 전달되는 것을 막지만 transcoder(ffmpeg) 자체의 취약점은 그 container의 격리에 기댄다 | 면제한 내용은 `unscanned`로 두어 다른 용도에 `clean`으로 쓰이지 않게 했다. 검사기가 수 GB를 받게 되면 면제를 다시 검토한다. ffmpeg 보안 갱신은 이미지 재빌드로 받는다 |
+| 학습 인증 수단과 grant 시간(SC-06-A) | 학습 인증 수단은 학교 IdP 재인증(`idp`) 하나다. IdP가 비밀번호만 받으면 같은 요소를 다시 확인하는 데 그친다. grant 2시간, challenge 5분, 실패 한도는 제안값이다. IdP가 `max_age` 요청에 `auth_time`을 주지 않으면 재인증이 언제나 실패한다([ADR-0029](adr/0029-step-up-and-learning-auth.md)) | 학교 정보화본부에 IdP 다요소 인증, `acr`, `auth_time` 지원을 확인한다. 학사 담당과 grant 시간을 정하고 학교 IdP를 붙인 배포에서 `ASTRA_LEARNING_REQUIRE_AUTH_GRANT=true`로 켠다 |

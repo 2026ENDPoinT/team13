@@ -34,4 +34,4 @@
 - 사용자당 하나라 강의 두 개를 동시에 틀 수 없다. 다른 창에서 시작하면 앞 창의 적립이 끝난다는 것을 화면이 알려야 한다(`session_superseded`).
 - 학습 시계는 DB 시계라 api가 여러 대여도 같다. 테스트는 시계 bean을 바꿔 시간을 움직인다.
 - 미결: 지각·결석 판정(기간 안 일부 학습을 지각으로 볼지, close_at 뒤 결석 확정)은 정하지 않았다. 출석 기록은 충족했을 때만 생긴다.
-- 미결 SC-06-A(2차 인증 만료와 적립): 지금 `creditUntil`은 close_at만 반영한다. SC-06-A를 넣으려면 `identity`가 `learning_auth` grant(만료, 폐기)와 조회 API를 공개하고, `learning_sessions`에 `credit_authorized_until`과 `reauth_required` 상태를 추가해, 시작 때 `min(grant 만료, close_at, 로그인 session 만료)`를 저장하고 하트비트마다 grant를 확인해 그 경계에서 구간을 잘라야 한다. 재인증 뒤에는 기준 시각을 지금으로 옮겨 공백을 소급 적립하지 않는다. 그때 규칙 버전을 v2로 올린다.
+- SC-06-A(2차 인증 만료와 적립)는 [ADR-0029](0029-step-up-and-learning-auth.md)에서 정했다. 학습 인증을 요구하는 배포에서 시작한 session은 `credit_authorized_until`을 저장하고 grant 경계에서 구간을 자르며 `reauth_required`를 거쳐 소급 없이 이어 간다. 그 session의 규칙 버전은 v2다.

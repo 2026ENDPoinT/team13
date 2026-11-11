@@ -13,10 +13,20 @@ import java.time.LocalDateTime;
  * 그래서 두 기기, 두 session이 같은 벽시계 시간을 두 번 적립하지 못한다.</li>
  * <li>원장은 초 단위다. 1초 미만의 나머지는 기준 시각에 남겨 다음 구간이 적립한다.</li>
  * </ul>
+ * 규칙 v2(SC-06-A, ADR-0029)는 v1에 학습 인증 경계를 더한다. 학습 인증을 요구하는 배포에서 시작한 session에만 쓴다.
+ * <ul>
+ * <li>구간은 적립 유효기한 min(grant 만료, close_at, 로그인 session 만료)에서 자른다. 경계를 지난 하트비트는 최소 간격을 보지 않고 경계까지
+ * 적립한 뒤 session을 {@code reauth_required}로 바꾼다. 이미 적립한 시간은 그대로 둔다.</li>
+ * <li>{@code reauth_required}에서는 적립하지 않고 기준 시각만 지금으로 옮긴다. 다시 인증하면 {@code active}로 돌아가고 그 사이
+ * 시간은 소급하지 않는다.</li>
+ * </ul>
  */
 final class CreditRule {
 
 	static final String VERSION = "v1";
+
+	/** 학습 인증 경계를 더한 규칙. */
+	static final String AUTH_BOUND_VERSION = "v2";
 
 	private CreditRule() {
 	}
@@ -87,7 +97,11 @@ final class CreditRule {
 		/** close_at이 지났다. 재생은 계속할 수 있지만 적립하지 않는다 */
 		WINDOW_CLOSED,
 		/** 학습자가 아니다(담당자 미리보기) */
-		NOT_CREDITABLE;
+		NOT_CREDITABLE,
+		/** 학습 인증이 끝났거나 폐기됐다. 다시 인증할 때까지 적립하지 않는다(v2) */
+		REAUTH_REQUIRED,
+		/** 다시 인증해 적립을 이어 간다. 인증이 없던 시간은 적립하지 않는다(v2) */
+		RESUMED;
 
 		String code() {
 			return name().toLowerCase();

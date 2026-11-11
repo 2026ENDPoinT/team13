@@ -11,16 +11,20 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.api.ExternalIdentityProvider;
 import com.stackcorp.astra.identity.api.ExternalIdentityProvider.ExternalLogin;
 import com.stackcorp.astra.identity.api.ExternalIdentityProvider.LoginRedirect;
 import com.stackcorp.astra.identity.api.ExternalLoginException;
+import com.stackcorp.astra.identity.session.DeviceCookie;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
 import com.stackcorp.astra.shared.ApiException;
+import com.stackcorp.astra.shared.RateLimiter;
 
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -34,6 +38,8 @@ import jakarta.servlet.http.HttpServletRequest;
  * <li>callback은 성공과 실패 모두 로그인 전용 쿠키를 지운다. 실패는 이유와 관계없이 같은 주소로 보낸다. 이유는 로그에 code로만
  * 남긴다.</li>
  * <li>IdP token, code, state는 응답과 로그에 넣지 않는다(SC-07).</li>
+ * <li>재인증(ADR-0029)은 로그인한 사용자가 시작하고 같은 callback으로 돌아온다. 새 session을 만들지 않고 지금 session에 재인증을
+ * 기록한 뒤 시작할 때의 경로로 보낸다. 실패는 {@code /?reauth=failed}로 보낸다.</li>
  * </ul>
  */
 @RestController
@@ -46,6 +52,9 @@ class SsoController {
 	/** 실패하면 보내는 주소. 화면은 이 값으로 일반적인 실패 안내만 보여 준다. */
 	static final String FAILURE_LOCATION = "/?login=failed";
 
+	/** 재인증에 실패하면 보내는 주소. */
+	static final String REAUTH_FAILURE_LOCATION = "/?reauth=failed";
+
 	static final Duration LOGIN_COOKIE_AGE = Duration.ofMinutes(10);
 
 	private static final Logger log = LoggerFactory.getLogger(SsoController.class);
@@ -54,12 +63,19 @@ class SsoController {
 
 	private final SsoLogin login;
 
+	private final SsoReauthentication reauthentication;
+
 	private final SessionProperties properties;
 
-	SsoController(ObjectProvider<ExternalIdentityProvider> providers, SsoLogin login, SessionProperties properties) {
+	private final RateLimiter rateLimiter;
+
+	SsoController(ObjectProvider<ExternalIdentityProvider> providers, SsoLogin login,
+			SsoReauthentication reauthentication, SessionProperties properties, RateLimiter rateLimiter) {
 		this.providers = providers;
 		this.login = login;
+		this.reauthentication = reauthentication;
 		this.properties = properties;
+		this.rateLimiter = rateLimiter;
 	}
 
 	/** 학교 IdP 로그인을 시작한다. {@code returnTo}가 같은 origin의 상대 경로가 아니면 {@code /}로 돌아온다. */
@@ -78,30 +94,82 @@ class SsoController {
 		}
 		catch (ExternalLoginException ex) {
 			log.warn("SSO login start failed: reason={}", ex.reason());
-			return failure();
+			return failure(FAILURE_LOCATION);
 		}
 	}
 
-	/** IdP가 브라우저를 돌려보내는 주소. 검증에 성공하면 session 쿠키를 주고 시작할 때의 경로로 보낸다. */
-	@GetMapping(CALLBACK_PATH)
-	ResponseEntity<Void> callback(HttpServletRequest request) {
+	/**
+	 * 로그인한 사용자의 재인증을 시작한다(ADR-0029). IdP에서 다시 로그인한 뒤 {@code returnTo}로 돌아온다. break-glass session과
+	 * IdP 설정이 없는 실행은 404다.
+	 */
+	@GetMapping("/api/auth/reauth")
+	ResponseEntity<Void> reauth(@AuthenticationPrincipal Actor actor, HttpServletRequest request) {
 		ExternalIdentityProvider provider = provider();
+		if (actor.breakGlass()) {
+			throw ApiException.notFound();
+		}
+		this.rateLimiter.check("step-up-reauth", actor.userId(), 10, Duration.ofMinutes(10));
+		String[] returnTo = request.getParameterValues("returnTo");
+		String target = ReturnPath.orRoot(returnTo != null && returnTo.length == 1 ? returnTo[0] : null);
 		try {
-			ExternalLogin external = provider.complete(binding(request), parameters(request));
-			IssuedSession session = this.login.signIn(external.externalRef(), request.getRemoteAddr(),
-					request.getHeader(HttpHeaders.USER_AGENT));
+			LoginRedirect redirect = provider.beginReauthentication(target);
 			return ResponseEntity.status(HttpStatus.FOUND)
-				.header(HttpHeaders.LOCATION, ReturnPath.orRoot(external.returnTo()))
-				.header(HttpHeaders.SET_COOKIE, sessionCookie(session.token()).toString(),
-						loginCookie("", Duration.ZERO).toString())
+				.header(HttpHeaders.LOCATION, redirect.location().toString())
+				.header(HttpHeaders.SET_COOKIE, loginCookie(redirect.binding(), LOGIN_COOKIE_AGE).toString())
 				.header(HttpHeaders.CACHE_CONTROL, "no-store")
-				.header("Referrer-Policy", "no-referrer")
 				.build();
 		}
 		catch (ExternalLoginException ex) {
-			log.warn("SSO login rejected: reason={}", ex.reason());
-			return failure();
+			log.warn("SSO reauthentication start failed: reason={}", ex.reason());
+			return failure(REAUTH_FAILURE_LOCATION);
 		}
+	}
+
+	/**
+	 * IdP가 브라우저를 돌려보내는 주소. 로그인이면 검증 뒤 session 쿠키를 주고, 재인증이면 지금 session에 기록한 뒤 시작할 때의 경로로
+	 * 보낸다.
+	 */
+	@GetMapping(CALLBACK_PATH)
+	ResponseEntity<Void> callback(@AuthenticationPrincipal Actor actor, HttpServletRequest request) {
+		ExternalIdentityProvider provider = provider();
+		ExternalLogin external;
+		try {
+			external = provider.complete(binding(request), parameters(request));
+		}
+		catch (ExternalLoginException ex) {
+			log.warn("SSO login rejected: reason={}", ex.reason());
+			return failure(FAILURE_LOCATION);
+		}
+		if (external.reauthentication()) {
+			try {
+				this.reauthentication.record(actor, external.externalRef());
+				return redirect(ReturnPath.orRoot(external.returnTo()), loginCookie("", Duration.ZERO).toString());
+			}
+			catch (ExternalLoginException ex) {
+				log.warn("SSO reauthentication rejected: reason={}", ex.reason());
+				return failure(REAUTH_FAILURE_LOCATION);
+			}
+		}
+		try {
+			IssuedSession session = this.login.signIn(external.externalRef(), DeviceCookie.read(request),
+					request.getRemoteAddr(), request.getHeader(HttpHeaders.USER_AGENT));
+			return redirect(ReturnPath.orRoot(external.returnTo()), sessionCookie(session.token()).toString(),
+					DeviceCookie.issue(session.deviceUuid(), this.properties).toString(),
+					loginCookie("", Duration.ZERO).toString());
+		}
+		catch (ExternalLoginException ex) {
+			log.warn("SSO login rejected: reason={}", ex.reason());
+			return failure(FAILURE_LOCATION);
+		}
+	}
+
+	private static ResponseEntity<Void> redirect(String location, String... cookies) {
+		return ResponseEntity.status(HttpStatus.FOUND)
+			.header(HttpHeaders.LOCATION, location)
+			.header(HttpHeaders.SET_COOKIE, cookies)
+			.header(HttpHeaders.CACHE_CONTROL, "no-store")
+			.header("Referrer-Policy", "no-referrer")
+			.build();
 	}
 
 	private ExternalIdentityProvider provider() {
@@ -112,9 +180,9 @@ class SsoController {
 		return provider;
 	}
 
-	private ResponseEntity<Void> failure() {
+	private ResponseEntity<Void> failure(String location) {
 		return ResponseEntity.status(HttpStatus.FOUND)
-			.header(HttpHeaders.LOCATION, FAILURE_LOCATION)
+			.header(HttpHeaders.LOCATION, location)
 			.header(HttpHeaders.SET_COOKIE, loginCookie("", Duration.ZERO).toString())
 			.header(HttpHeaders.CACHE_CONTROL, "no-store")
 			.header("Referrer-Policy", "no-referrer")

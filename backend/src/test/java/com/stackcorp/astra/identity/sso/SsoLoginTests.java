@@ -13,7 +13,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,41 +20,27 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.stackcorp.astra.ApiClient;
-import com.stackcorp.astra.IntegrationTest;
+import com.stackcorp.astra.OidcIntegrationTest;
 import com.stackcorp.astra.TestData;
-import com.stackcorp.astra.identity.api.ExternalIdentityProvider;
 import com.stackcorp.astra.identity.breakglass.BreakGlassCodes;
-import com.stackcorp.astra.identity.session.DevLoginConfiguration;
 import com.stackcorp.astra.integration.oidc.MockOpenIdProvider;
 
 import jakarta.servlet.http.Cookie;
 
 /**
- * 학교 IdP 로그인 전체 흐름(ADR-0017). 같은 process의 가짜 OpenID Provider를 issuer로 설정한 context에서 실행한다. IdP가 설정된
- * 구성은 공유 context와 달라서 context를 하나 더 쓴다. 로컬 실행처럼 개발용 로그인 구성도 불러온다.
- * <p>
- * 가짜 IdP는 context가 시작하기 전부터 503으로만 응답한다. 시작할 때 IdP를 불렀다면 context가 뜨지 않거나 요청 수가 남는다.
+ * 학교 IdP 로그인 전체 흐름(ADR-0017). 같은 process의 가짜 OpenID Provider를 issuer로 설정한 context({@link OidcIntegrationTest})에서
+ * 실행한다. 가짜 IdP는 context가 시작하기 전부터 503으로만 응답한다. 시작할 때 IdP를 불렀다면 context가 뜨지 않거나 요청 수가 남는다.
  */
-@Import(DevLoginConfiguration.class)
 @ExtendWith(OutputCaptureExtension.class)
-class SsoLoginTests extends IntegrationTest {
-
-	static final String REDIRECT_URI = "http://localhost/api/auth/callback";
-
-	static final MockOpenIdProvider IDP = downAtStartup();
-
-	static final AtomicInteger REQUESTS_AT_STARTUP = new AtomicInteger(-1);
+class SsoLoginTests extends OidcIntegrationTest {
 
 	@Autowired
 	MockMvc mvc;
@@ -65,28 +50,6 @@ class SsoLoginTests extends IntegrationTest {
 
 	@Autowired
 	TestData data;
-
-	@DynamicPropertySource
-	static void oidc(DynamicPropertyRegistry registry) {
-		registry.add("astra.oidc.issuer", IDP::issuer);
-		registry.add("astra.oidc.client-id", () -> MockOpenIdProvider.CLIENT_ID);
-		registry.add("astra.oidc.client-secret", () -> MockOpenIdProvider.CLIENT_SECRET);
-		registry.add("astra.oidc.redirect-uri", () -> REDIRECT_URI);
-		registry.add("astra.oidc.user-claim", () -> MockOpenIdProvider.USER_CLAIM);
-		registry.add("astra.oidc.scopes", () -> "openid,profile");
-	}
-
-	private static MockOpenIdProvider downAtStartup() {
-		MockOpenIdProvider idp = MockOpenIdProvider.start(REDIRECT_URI);
-		idp.down(true);
-		return idp;
-	}
-
-	// context가 다 뜬 뒤 처음 주입될 때 그때까지 IdP가 받은 요청 수를 남긴다.
-	@Autowired
-	void recordRequestsAtStartup(ExternalIdentityProvider provider) {
-		REQUESTS_AT_STARTUP.compareAndSet(-1, IDP.requests());
-	}
 
 	@BeforeEach
 	void idpUp() {

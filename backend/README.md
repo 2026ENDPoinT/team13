@@ -188,6 +188,7 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 |---|---|---|
 | `ASTRA_LEARNING_HEARTBEAT_INTERVAL` | `60s` | 서버가 player에 알려 주는 하트비트 주기(10초~5분). 영상 cookie 유효 시간(10분)보다 짧아야 한다 |
 | `ASTRA_LEARNING_LEASE_SWEEP_INTERVAL` | `30s` | worker가 lease가 지난 학습 session을 닫는 간격 |
+| `ASTRA_LEARNING_REQUIRE_AUTH_GRANT` | `false` | `true`면 학생의 학습 시작과 적립에 학습 인증 grant를 요구하고 그 만료에서 적립을 자른다(SC-06-A, [ADR-0029](docs/adr/0029-step-up-and-learning-auth.md)). 학교 IdP를 붙인 배포에서 켠다 |
 
 ### 알림 설정
 
@@ -277,6 +278,18 @@ api·worker의 환경 변수:
 | `ASTRA_OIDC_CLOCK_SKEW` | `60s` | ID token 시각(`exp`, `iat`, `nbf`) 검사에 허용하는 시계 오차. 5분까지 |
 
 IdP에는 confidential client로 등록하고 ID token 서명 알고리즘은 RS256으로 둔다. 로그인 화면은 `GET /api/auth/methods`로 쓸 수 있는 수단을 받아 `GET /api/auth/login?returnTo=<같은 origin의 경로>`로 이동한다. 실패하면 `/?login=failed`로 돌아온다. `users`에 그 claim 값의 ACTIVE 사용자가 있어야 로그인된다. 사용자를 자동으로 만들지 않는다.
+
+### 재인증과 학습 인증 설정
+
+연락처 변경, 다른 session 모두 끝내기 같은 민감한 명령은 그 session의 최근 재인증을 요구한다. 학교 IdP 계정은 `GET /api/auth/reauth?returnTo=<경로>`로 IdP에서 다시 로그인하고(IdP에 `prompt=login`, `max_age=0`), break-glass 계정은 `POST /api/me/step-up/totp`로 TOTP를 다시 넣는다. 학습 인증 grant는 `POST /api/me/learning-auth/challenges`로 시작해 재인증한 뒤 `…/verify`로 받는다([ADR-0029](docs/adr/0029-step-up-and-learning-auth.md)). IdP는 `max_age` 요청에 `auth_time` claim을 ID token에 넣어야 한다. 로컬 실행(IdP 없음)은 `POST /api/me/step-up/dev`가 재인증을 대신한다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_STEP_UP_RECENT_AUTH` | `10m` | 재인증 한 번이 민감한 명령을 허용하는 최대 시간(1분~1시간) |
+| `ASTRA_STEP_UP_LEARNING_GRANT` | `2h` | 학습 인증 grant의 유효 시간(5분~12시간). 로그인 session의 절대 만료를 넘지 않는다 |
+| `ASTRA_STEP_UP_CHALLENGE` | `5m` | 학습 인증 challenge를 확인할 수 있는 시간(1분~15분) |
+| `ASTRA_STEP_UP_CHALLENGE_ATTEMPTS` | `5` | challenge 하나의 확인 시도 한도. 넘으면 그 challenge는 잠긴다 |
+| `ASTRA_STEP_UP_LOCKOUT_ATTEMPTS` · `ASTRA_STEP_UP_LOCKOUT_WINDOW` | `10` · `15m` | 이 시간 안에 확인 실패 합이 이만큼이면 새 challenge를 만들지 못한다 |
 
 ### 컨테이너로 실행
 
