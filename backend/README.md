@@ -143,15 +143,29 @@ ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-eclass-Frontend에�
 | `ASTRA_FILES_GC_BATCH_SIZE` | `100` | GC 한 번에 단계마다 처리하는 행 수 상한 |
 | `ASTRA_FILES_GC_DERIVATIVE_GRACE` | `10m` | 파일을 지운 뒤 파생물·rendition 객체를 지우기까지 기다리는 시간 |
 | `ASTRA_FILES_GC_BLOB_GRACE` | `1h` | 참조가 0이 된 원본 객체를 지우기까지 기다리는 시간 |
+| `ASTRA_FILES_CONVERSION_POLL_INTERVAL` | `5s` | worker가 미리보기 변환 대기열을 찾는 간격([ADR-0033](docs/adr/0033-document-preview-and-office-conversion.md)) |
+| `ASTRA_FILES_CONVERSION_LEASE` | `15m` | 변환 하나의 lease. converter 제한 시간(`ASTRA_CONVERTER_TIMEOUT`, 기본 10분)보다 길게 둔다 |
+| `ASTRA_FILES_CONVERSION_MAX_ATTEMPTS` | `3` | converter에 닿지 못했거나 worker가 멈춘 변환을 다시 하는 횟수 상한 |
+| `ASTRA_FILES_CONVERSION_RETRY_DELAY` | `1m` | converter에 닿지 못했을 때 다시 시도하기까지 기다리는 시간 |
 
 업로드는 파일 하나에 50 MB까지 받는다. 허용 확장자와 크기는 `upload_policies`에 있고, 확장자와 내용 형식이 맞지 않으면 거부한다([ADR-0010](docs/adr/0010-upload-acceptance.md)). 강의 영상은 `POST /api/uploads/stream`으로 본문을 그대로 받고 `lecture_video` 정책의 `max_file_bytes`(기본 2 GiB)까지 받는다([ADR-0016](docs/adr/0016-video-upload-and-transcoder.md)). 상한을 바꾸려면 새 마이그레이션으로 그 행을 고친다.
 
-요약 작업과 저장소 GC(만료 업로드, 지운 파일의 파생물, 참조 없는 원본 객체 정리, [ADR-0011](docs/adr/0011-material-deletion.md))는 `worker` 프로필(`--spring.profiles.active=worker`)에서만 실행된다. converter는 같은 jar를 다른 main으로 띄운다. 외부 network가 없는 container에서 실행한다.
+요약 작업, 미리보기 변환, 저장소 GC(만료 업로드, 지운 파일의 파생물, 참조 없는 원본 객체 정리, [ADR-0011](docs/adr/0011-material-deletion.md))는 `worker` 프로필(`--spring.profiles.active=worker`)에서만 실행된다. converter는 같은 jar를 다른 main으로 띄운다. 외부 network가 없는 container에서 실행한다.
 
 ```sh
 java -Dloader.main=com.stackcorp.converter.ConverterServer -cp stack-eclass-backend.jar \
   org.springframework.boot.loader.launch.PropertiesLauncher   # CONVERTER_PORT 기본 8090
 ```
+
+converter는 PDF를 받는다. `CONVERTER_SOFFICE`에 LibreOffice 실행 파일의 절대 경로가 있으면 pptx, docx, xlsx도 받아 PDF로 바꾼 뒤 같은 길로 처리한다. HWP, HWPX는 받지 않는다([ADR-0033](docs/adr/0033-document-preview-and-office-conversion.md)). converter 이미지(Dockerfile target `converter`)는 아래 값을 넣어 둔다. 로컬 실행과 테스트의 converter는 LibreOffice 대신 가짜 엔진(`FakeOfficeEngine`)으로 office 문서를 번호만 적힌 쪽으로 바꾼다.
+
+| converter 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `CONVERTER_SOFFICE` | 없음(이미지: `/usr/lib/libreoffice/program/soffice`) | 비우면 office 형식을 `unsupported_format`으로 거부한다 |
+| `CONVERTER_PRLIMIT` | `/usr/bin/prlimit` | soffice의 자원 상한을 거는 실행 파일. 없으면 converter가 뜨지 않는다 |
+| `CONVERTER_OFFICE_TIMEOUT_SECONDS` | `120` | 문서 하나를 PDF로 바꾸는 제한 시간. 넘으면 process tree를 강제로 끝낸다 |
+| `CONVERTER_OFFICE_MAX_PDF_BYTES` | `104857600` | 변환한 PDF의 크기 상한 |
+| `CONVERTER_OFFICE_MEMORY_BYTES` | `3221225472` | soffice의 주소 공간 상한 |
 
 ### 악성코드 검사 설정
 
@@ -345,7 +359,8 @@ IdP에는 confidential client로 등록하고 ID token 서명 알고리즘은 RS
 host 한 대에서 api, worker, converter, transcoder를 container로 띄운다. 구성의 이유는 [ADR-0019](docs/adr/0019-container-image-and-single-host-compose.md)에 있다. Docker Engine과 Compose v2.24 이상이 필요하다.
 
 ```sh
-docker build -t astra-backend:local .     # 이미지 하나. 역할은 command(api | worker | converter | transcoder)로 고른다
+docker build -t astra-backend:local .     # api, worker, transcoder 이미지. 역할은 command(api | worker | converter | transcoder)로 고른다
+docker build --target converter -t astra-backend-converter:local .   # converter 이미지(LibreOffice 포함, ADR-0033)
 cp .env.example .env                       # 값을 채운다. .env는 커밋하지 않는다
 docker compose up -d --wait                # 모든 서비스가 healthcheck를 통과할 때까지 기다린다
 docker compose down                        # 종료. MySQL 데이터 volume까지 지우려면 --volumes
@@ -356,7 +371,8 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 | 변수 | 기본값 | 내용 |
 |---|---|---|
 | `COMPOSE_PROFILES` | 없음 | 함께 띄울 선택 서비스. `mysql`(같은 host의 MySQL 8.4), `scan`(ClamAV). 예: `mysql,scan`. RDS를 쓰면 `mysql`을 빼고 `DB_URL`을 RDS로 바꾼다 |
-| `ASTRA_IMAGE` | `astra-backend:local` | 실행할 이미지. ECR 이미지면 전체 이름과 tag |
+| `ASTRA_IMAGE` | `astra-backend:local` | api, worker가 실행할 이미지. ECR 이미지면 전체 이름과 tag |
+| `ASTRA_CONVERTER_IMAGE` | `astra-backend-converter:local` | converter가 실행할 이미지(Dockerfile target `converter`). 같은 commit으로 만든 것을 쓴다 |
 | `ASTRA_API_BIND` · `ASTRA_API_PORT` | `127.0.0.1` · `8080` | api를 publish할 host 주소와 port. CloudFront VPC origin이 붙는 EC2에서는 `0.0.0.0`으로 두고 security group으로 막는다 |
 | `JAVA_OPTS` | 없음 | JVM option. 이미지 기본값(`-XX:MaxRAMPercentage=60` 등) 뒤에 붙는다 |
 
@@ -364,7 +380,7 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 |---|---|---|---|
 | `api` | host의 `ASTRA_API_BIND:ASTRA_API_PORT` → 8080 | 있음 | HTTP API |
 | `worker` | 없음(container 안의 127.0.0.1) | 있음 | 요약 작업, 영상 변환 작업 등 배경 작업. converter와 transcoder를 부른다 |
-| `converter` | worker만 닿는 내부 network의 8090 | 없음 | PDF → 쪽 이미지·텍스트. 비밀값과 저장소 credential이 없다 |
+| `converter` | worker만 닿는 내부 network의 8090 | 없음 | PDF, pptx, docx, xlsx → 쪽 이미지·텍스트·썸네일. office 문서는 container 안의 LibreOffice가 PDF로 바꾼다. 비밀값과 저장소 credential이 없다 |
 | `transcoder` | worker만 닿는 다른 내부 network의 8091 | 없음 | 영상 → HLS segment(ffmpeg). 비밀값, 저장소 credential, 암호화 key가 없다. 작업 파일은 volume `transcoder-work`(`/work`)에 요청마다 만들고 지운다. 영상 하나(원본 2 GiB, 결과 4 GiB까지)를 담을 디스크 여유를 둔다 |
 | `mysql` (프로필 `mysql`) | api, worker만 닿는 내부 network의 3306 | 없음 | DB. root는 container 안에서만 접속한다 |
 | `clamav` (프로필 `scan`) | api, worker만 닿는 내부 network의 3310 | 없음 | 업로드 검사(clamd). `ASTRA_SCAN_CLAMD_HOST=clamav`, `ASTRA_SCAN_CLAMD_PORT=3310`, `ASTRA_SCAN_REQUIRED=true`를 함께 넣는다 |
@@ -377,7 +393,7 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 - CloudFront 없이 문서와 영상을 보이려면 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)).
 - `docker compose stop`은 api가 처리 중인 요청을 끝낼 때까지, worker가 실행 중인 요약 작업을 `interrupted`로 닫을 때까지 최대 75초를 기다린다.
 
-[docker/smoke-test.sh](docker/smoke-test.sh)는 띄운 구성의 healthcheck, 공개 port, converter·transcoder의 network 차단과 비밀값 없음, transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, 종료 처리를 확인한다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 한다.
+[docker/smoke-test.sh](docker/smoke-test.sh)는 띄운 구성의 healthcheck, 공개 port, converter·transcoder의 network 차단과 비밀값 없음, transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, LibreOffice가 converter에만 있고 docx를 쪽으로 바꾸는지, 종료 처리를 확인한다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 한다.
 
 ## CI
 
@@ -387,7 +403,7 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 |---|---|
 | Build and test | `./gradlew build`. 빌드 전에 `ffmpeg`를 설치한다. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다. `ModuleStructureTests`가 모듈 사이 의존이 [docs/architecture.md](docs/architecture.md) 4.1절 표를 벗어나지 않는지 확인하고 `build/spring-modulith-docs/`에 C4 component diagram을 쓴다 |
 | Schema check and ERD snapshot | 마이그레이션을 MySQL 8.4에 적용한 뒤 `db/tools/check.sql`로 깨진 FK, COMMENT 누락, 고립 테이블을 찾는다. `db/erdcloud/snapshot.json`(ERD A)이 현재 스키마로 다시 만든 결과와 같은지도 확인한다 |
-| Container image and compose smoke test | `Dockerfile`로 이미지를 만들고, `compose.yaml`이 참조하는 변수가 `.env.example`에 모두 있는지 본 뒤, 비밀값 없는 `.env`로 구성을 띄워 `docker/smoke-test.sh`를 실행한다. registry에는 올리지 않는다 |
+| Container image and compose smoke test | `Dockerfile`로 기본 이미지와 converter 이미지(target `converter`)를 만들고, `compose.yaml`이 참조하는 변수가 `.env.example`에 모두 있는지 본 뒤, 비밀값 없는 `.env`로 구성을 띄워 `docker/smoke-test.sh`를 실행한다. registry에는 올리지 않는다 |
 
 마이그레이션을 추가했다면 같은 PR에서 `python db/tools/erdcloud_snapshot.py`로 스냅샷도 갱신해야 CI가 통과한다. CI는 `reference` 서브모듈을 받지 않는다. 빌드에 필요 없고, 비공개 레포라 기본 토큰으로는 받을 수 없기 때문이다.
 

@@ -3,7 +3,7 @@ package com.stackcorp.converter;
 /**
  * 변환할 수 없는 입력. code는 응답 JSON의 code 값이다.
  */
-final class ConversionFailure extends Exception {
+public final class ConversionFailure extends Exception {
 
 	private final String code;
 

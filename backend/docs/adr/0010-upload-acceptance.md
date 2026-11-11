@@ -1,7 +1,7 @@
 # ADR-0010 업로드는 형식을 검사해 받고, 악성코드 검사는 port로 남긴다
 
 ## 상태
-채택 (2026-11-11). 6번의 검사기는 [ADR-0018](0018-malware-scan-clamd.md)로 정했다.
+채택 (2026-11-11). 6번의 검사기는 [ADR-0018](0018-malware-scan-clamd.md)로 정했다. 9번의 inline 금지에는 서버가 판정한 PNG·JPEG 이미지 보기 예외가 있다([ADR-0033](0033-document-preview-and-office-conversion.md) 5번).
 
 ## 맥락
 서버 계약 SC-08은 업로드를 "주체·크기·형식 확인 → 격리 저장 → 검사·변환 → 권한을 가진 객체에 첨부 → 공개" 순서로 처리하도록 정했다. [60_files_integrations.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/60_files_integrations.md) 7절은 `POST /api/uploads` 하나와 `quarantined → clean → attached` 상태를 제안한다.

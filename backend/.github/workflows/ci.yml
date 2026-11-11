@@ -88,9 +88,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 배포 이미지를 만든다. registry에는 올리지 않는다.
-      - name: Build image
-        run: docker build --tag astra-backend:ci .
+      # 배포 이미지를 만든다. registry에는 올리지 않는다. converter 역할은 LibreOffice를 더한 target converter다(ADR-0033).
+      - name: Build images
+        run: |
+          docker build --tag astra-backend:ci .
+          docker build --target converter --tag astra-backend-converter:ci .
 
       # 실제 비밀값 없이 띄운다. S3 주소는 기동에 쓰이지 않으므로 해석되지 않는 이름을 넣는다.
       - name: Write env file
@@ -98,6 +100,7 @@ jobs:
           {
             echo "COMPOSE_PROFILES=mysql"
             echo "ASTRA_IMAGE=astra-backend:ci"
+            echo "ASTRA_CONVERTER_IMAGE=astra-backend-converter:ci"
             echo "DB_URL=jdbc:mysql://mysql:3306/astra"
             echo "DB_USERNAME=astra"
             echo "DB_PASSWORD=$(openssl rand -hex 16)"

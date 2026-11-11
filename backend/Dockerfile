@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 # ASTRA 백엔드 이미지. 이미지 하나를 api, worker, converter, transcoder 역할로 실행한다(ADR-0019).
 # 실행할 역할은 command로 고른다: docker run <image> api | worker | converter | transcoder
+# converter 역할에 office 문서 변환(LibreOffice)을 더한 이미지는 target converter로 만든다(ADR-0033):
+#   docker build --target converter -t astra-backend-converter:local .
+# 기본 target은 LibreOffice가 없는 runtime이다. api, worker, transcoder는 이 이미지로 실행한다.
 # base 이미지는 tag와 digest로 고정한다. 판을 올릴 때는 두 값을 함께 바꾼다.
 
 FROM eclipse-temurin:25.0.5_8-jdk-noble@sha256:95e350ad1eb738f943e141640f7e3d797e483359a3b33c3864255bfd1ad71f8a AS build
@@ -18,7 +21,7 @@ RUN ./gradlew --no-daemon --quiet bootJar \
  && cp "$(find build/libs -name '*.jar' ! -name '*-plain.jar')" app.jar \
  && java -Djarmode=tools -jar app.jar extract --layers --destination extracted
 
-FROM eclipse-temurin:25.0.5_8-jre-noble@sha256:a98128a57de944a72bd31fbc79b898edd5a5864d3652071d5bbd2160ab7d7dce
+FROM eclipse-temurin:25.0.5_8-jre-noble@sha256:a98128a57de944a72bd31fbc79b898edd5a5864d3652071d5bbd2160ab7d7dce AS runtime
 
 RUN groupadd --system --gid 10001 astra \
  && useradd --system --uid 10001 --gid astra --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin astra
@@ -47,3 +50,22 @@ USER 10001:10001
 EXPOSE 8080 8090 8091
 ENTRYPOINT ["/usr/local/bin/astra"]
 CMD ["api"]
+
+# converter 역할 전용. LibreOffice(MPL-2.0) headless와 문서 글꼴을 더한다. api, worker 이미지에는 넣지 않는다.
+# 패키지는 Ubuntu noble(universe)의 LibreOffice 24.2다. GUI가 없는 -nogui 패키지만 받고 Java 연동은 받지 않는다.
+# 판을 고정하지 않으므로 이미지를 다시 만들면 보안 갱신이 들어온다.
+FROM runtime AS converter
+USER root
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends \
+      libreoffice-core-nogui libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui \
+      fonts-nanum fonts-liberation2 fonts-crosextra-carlito fonts-crosextra-caladea \
+ && rm -rf /var/lib/apt/lists/*
+# converter main이 읽는다. 실행 파일은 고정한 인자 목록으로 shell 없이 부른다(com.stackcorp.converter.SofficeEngine).
+ENV CONVERTER_SOFFICE=/usr/lib/libreoffice/program/soffice \
+    CONVERTER_PRLIMIT=/usr/bin/prlimit
+USER 10001:10001
+CMD ["converter"]
+
+# 기본 target. 이 줄이 마지막이어야 docker build가 LibreOffice 없는 이미지를 만든다.
+FROM runtime

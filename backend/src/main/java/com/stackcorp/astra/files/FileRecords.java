@@ -7,6 +7,8 @@ import com.stackcorp.astra.files.scan.ScanMode;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import com.stackcorp.astra.files.api.PageConverter.SourceFormat;
+
 /**
  * files, file_blobs 조회.
  */
@@ -60,6 +62,14 @@ class FileRecords {
 		// converter가 내용을 다시 확인한다.
 		boolean pdf() {
 			return FileTypes.pdf(this.detectedMimeType, this.mimeType, this.extension);
+		}
+
+		Optional<SourceFormat> previewFormat() {
+			return FileTypes.previewFormat(this.detectedMimeType, this.mimeType, this.extension);
+		}
+
+		Optional<String> inlineImageType() {
+			return FileTypes.inlineImage(this.detectedMimeType);
 		}
 
 	}

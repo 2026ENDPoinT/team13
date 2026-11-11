@@ -30,7 +30,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * converter process(com.stackcorp.converter.ConverterServer)를 HTTP로 부른다. 응답 zip은 크기와 순서를 검사하며 읽고, 쪽이
- * 완성될 때마다 넘긴다. 제한 시간이 지나면 연결을 끊는다.
+ * 완성될 때마다 넘긴다. 제한 시간이 지나면 연결을 끊는다. 형식은 {@code format} query로 알린다. 요청에 URL이나 경로를 담지 않고
+ * 문서 바이트만 보낸다(FILES-12).
  */
 final class HttpPageConverter implements PageConverter, AutoCloseable {
 
@@ -61,11 +62,12 @@ final class HttpPageConverter implements PageConverter, AutoCloseable {
 	}
 
 	@Override
-	public ConvertedDocument convert(byte[] pdf, int maxPages, Consumer<ConvertedPage> pages) {
-		HttpRequest request = HttpRequest.newBuilder(URI.create(this.endpoint + "?maxPages=" + maxPages))
-			.header("content-type", "application/pdf")
+	public ConvertedDocument convert(byte[] document, SourceFormat format, int maxPages, Consumer<ConvertedPage> pages) {
+		HttpRequest request = HttpRequest
+			.newBuilder(URI.create(this.endpoint + "?maxPages=" + maxPages + "&format=" + format.code()))
+			.header("content-type", "application/octet-stream")
 			.timeout(this.properties.timeout())
-			.POST(HttpRequest.BodyPublishers.ofByteArray(pdf))
+			.POST(HttpRequest.BodyPublishers.ofByteArray(document))
 			.build();
 		HttpResponse<InputStream> response;
 		try {
@@ -75,14 +77,14 @@ final class HttpPageConverter implements PageConverter, AutoCloseable {
 			throw new ConversionException(Code.UNAVAILABLE, "converter에 연결하지 못했습니다.", ex);
 		}
 		catch (HttpTimeoutException ex) {
-			throw new ConversionException(Code.FAILED, "converter가 제한 시간 안에 응답하지 않았습니다.", ex);
+			throw new ConversionException(Code.TIMEOUT, "converter가 제한 시간 안에 응답하지 않았습니다.", ex);
 		}
 		catch (IOException ex) {
 			throw new ConversionException(Code.UNAVAILABLE, "converter 호출이 실패했습니다.", ex);
 		}
 		catch (InterruptedException ex) {
 			Thread.currentThread().interrupt();
-			throw new ConversionException(Code.FAILED, "변환을 기다리다 중단되었습니다.", ex);
+			throw new ConversionException(Code.INTERRUPTED, "변환을 기다리다 중단되었습니다.", ex);
 		}
 		try (InputStream body = response.body()) {
 			if (response.statusCode() != 200) {
@@ -98,7 +100,7 @@ final class HttpPageConverter implements PageConverter, AutoCloseable {
 			}
 			catch (IOException ex) {
 				if (expired.get()) {
-					throw new ConversionException(Code.FAILED, "변환이 제한 시간을 넘었습니다.", ex);
+					throw new ConversionException(Code.TIMEOUT, "변환이 제한 시간을 넘었습니다.", ex);
 				}
 				throw new ConversionException(Code.FAILED, "converter 응답을 읽지 못했습니다.", ex);
 			}
@@ -125,6 +127,7 @@ final class HttpPageConverter implements PageConverter, AutoCloseable {
 		int expected = 1;
 		JsonNode meta = null;
 		byte[] display = null;
+		byte[] thumbnail = null;
 		try (ZipInputStream zip = new ZipInputStream(body)) {
 			ZipEntry entry;
 			while ((entry = zip.getNextEntry()) != null) {
@@ -140,17 +143,24 @@ final class HttpPageConverter implements PageConverter, AutoCloseable {
 				if (name.equals("error.json")) {
 					throw new ConversionException(Code.FAILED, "converter가 쪽을 변환하지 못했습니다.");
 				}
+				if (name.equals("thumbnail.jpg")) {
+					if (meta != null || display != null || expected == 1 || thumbnail != null) {
+						throw invalid("썸네일 항목 순서가 맞지 않습니다.");
+					}
+					thumbnail = content;
+					continue;
+				}
 				if (name.equals("document.json")) {
 					JsonNode doc = json(content);
 					int count = doc.path("pageCount").asInt(-1);
-					if (meta != null || display != null || count != expected - 1) {
-						throw invalid("쪽 수가 맞지 않습니다.");
+					if (meta != null || display != null || count != expected - 1 || thumbnail == null) {
+						throw invalid("쪽 수가 맞지 않거나 썸네일이 없습니다.");
 					}
 					JsonNode title = doc.path("title");
-					return new ConvertedDocument(count, title.isString() ? title.stringValue() : null);
+					return new ConvertedDocument(count, title.isString() ? title.stringValue() : null, thumbnail);
 				}
 				Matcher m = PAGE_ENTRY.matcher(name);
-				if (!m.matches() || Integer.parseInt(m.group(1)) != expected || expected > maxPages) {
+				if (!m.matches() || Integer.parseInt(m.group(1)) != expected || expected > maxPages || thumbnail != null) {
 					throw invalid("예상하지 않은 zip 항목입니다: " + name);
 				}
 				switch (m.group(2)) {
@@ -202,7 +212,9 @@ final class HttpPageConverter implements PageConverter, AutoCloseable {
 			case "invalid_pdf" -> Code.INVALID_PDF;
 			case "too_many_pages" -> Code.TOO_MANY_PAGES;
 			case "empty" -> Code.EMPTY;
-			case "too_large" -> Code.TOO_LARGE;
+			case "too_large", "output_too_large" -> Code.TOO_LARGE;
+			case "unsupported_format" -> Code.UNSUPPORTED_FORMAT;
+			case "timeout" -> Code.TIMEOUT;
 			default -> status >= 500 ? Code.UNAVAILABLE : Code.FAILED;
 		};
 		return new ConversionException(mapped, message);

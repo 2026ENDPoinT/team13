@@ -31,7 +31,8 @@ import io.micrometer.core.instrument.MeterRegistry;
  * S3 호출은 DB transaction 밖에서 한다.
  * <ol>
  * <li>만료된 미첨부 업로드를 expired로 바꾸고 파일을 지운다. blob 참조 수를 줄인다.</li>
- * <li>지운 파일의 파생물(derivatives/{fileId}/)과 rendition(content renditions/{key}/, delivery doc/{key}/)을 지운다.</li>
+ * <li>지운 파일의 파생물(derivatives/{fileId}/)과 rendition(content renditions/{key}/, delivery doc/{key}/)을 지운다. 미리보기
+ * 썸네일은 renditions/{key}/thumbnails/에 있고 그 행(file_thumbnails)은 rendition을 닫을 때 함께 지운다.</li>
  * <li>참조가 0인 blob을 먼저 지운 것으로 표시한 뒤 객체를 지운다. 표시 뒤에 같은 내용이 오면 새 key로 저장된다.</li>
  * </ol>
  * transaction은 READ COMMITTED다. 다른 행의 index 틈을 잠그지 않아, 이웃한 행을 다루는 다른 worker나 요청과 서로 기다리지 않는다.

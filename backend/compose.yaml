@@ -94,11 +94,21 @@ services:
 
   # 격리한 문서 변환 process(SC-08, ADR-0006). 외부 network, 비밀값, 저장소 credential이 없고 worker만 부를 수 있다.
   # env_file을 주지 않는다.
+  # 이미지는 LibreOffice를 더한 target converter다(ADR-0033). office 문서를 PDF로 바꾸는 soffice를 이 container 안에서만 실행한다.
   converter:
     <<: *app
+    image: ${ASTRA_CONVERTER_IMAGE:-astra-backend-converter:local}
     command: [converter]
+    # soffice가 남긴 손자 process를 거둔다. converter의 java가 PID 1이면 강제로 끝낸 process가 zombie로 남는다.
+    init: true
+    # LibreOffice의 작업 디렉터리(입력, profile, 결과 PDF)는 작업마다 /tmp에 만들고 지운다.
+    tmpfs:
+      - /tmp:size=768m,mode=1777
     environment:
       CONVERTER_PORT: "8090"
+      CONVERTER_OFFICE_TIMEOUT_SECONDS: "120"
+      # container 메모리의 나머지는 soffice가 쓴다. soffice의 주소 공간 상한은 CONVERTER_OFFICE_MEMORY_BYTES(기본 3 GiB)다.
+      JAVA_OPTS: "-XX:MaxRAMPercentage=30"
     networks: [conversion]
     healthcheck:
       test: ["CMD", "astra-health", "8090", "/health"]
@@ -110,7 +120,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 768m
+          memory: 2048m
 
   # 격리한 영상 변환 process(SC-08, ADR-0016). converter와 같이 외부 network, 비밀값, 저장소 credential이 없고 worker만 부를 수
   # 있다. 원본과 결과는 /work volume에 요청마다 만들고 응답 뒤 지운다. 암호화 key는 이 container에 오지 않는다.
