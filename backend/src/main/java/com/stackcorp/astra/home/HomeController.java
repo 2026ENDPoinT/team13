@@ -23,7 +23,7 @@ class HomeController {
 		this.home = home;
 	}
 
-	/** 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 안 읽은 쪽지 수, 서버 시각. */
+	/** 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 안 읽은 쪽지 수, 안 읽은 알림 수, 서버 시각. */
 	@GetMapping("/api/me/home")
 	ResponseEntity<HomeView> home(@AuthenticationPrincipal(expression = "userId()") Long userId) {
 		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(this.home.home(userId));

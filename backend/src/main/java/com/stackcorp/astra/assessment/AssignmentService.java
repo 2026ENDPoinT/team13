@@ -8,7 +8,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 과제 등록과 수정. 활동(learning), 과제 설정, 성적 항목을 한 transaction으로 저장한다(SC-05). 권한은 부르는 쪽이 먼저 판정한다.
+ * 과제 등록과 수정. 활동(learning), 과제 설정, 성적 항목, 수강생 알림(catalog)을 한 transaction으로 저장한다(SC-05, ADR-0027).
+ * 권한은 부르는 쪽이 먼저 판정한다.
  */
 @Service
 class AssignmentService {
@@ -19,10 +20,14 @@ class AssignmentService {
 
 	private final GradebookRecords gradebook;
 
-	AssignmentService(ReportActivities activities, AssignmentRecords records, GradebookRecords gradebook) {
+	private final AssignmentNotifications alerts;
+
+	AssignmentService(ReportActivities activities, AssignmentRecords records, GradebookRecords gradebook,
+			AssignmentNotifications alerts) {
 		this.activities = activities;
 		this.records = records;
 		this.gradebook = gradebook;
+		this.alerts = alerts;
 	}
 
 	/** @return 과제 ID */
@@ -31,6 +36,7 @@ class AssignmentService {
 		long activityId = this.activities.create(courseId, userId, input.activity());
 		long assignmentId = this.records.insert(activityId, input);
 		this.records.insertGradeItem(courseId, activityId, userId, input.activity().title(), input);
+		this.alerts.sync(courseId, activityId, input);
 		return assignmentId;
 	}
 
@@ -51,6 +57,7 @@ class AssignmentService {
 			throw new ApiException(HttpStatus.CONFLICT, "score_exceeds_max", "이미 준 점수보다 배점을 낮출 수 없습니다.");
 		}
 		this.records.updateGradeItem(current.settings().gradeItemId(), input.activity().title(), input);
+		this.alerts.sync(courseId, current.activity().activityId(), input);
 	}
 
 }

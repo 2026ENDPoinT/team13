@@ -4,6 +4,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
+import com.stackcorp.astra.catalog.api.NotificationKind;
+import com.stackcorp.astra.catalog.api.Notifications;
+import com.stackcorp.astra.catalog.api.Notifications.CourseNotification;
 import com.stackcorp.astra.files.api.AttachmentException;
 import com.stackcorp.astra.files.api.Attachments;
 import com.stackcorp.astra.files.api.Attachments.AttachRequest;
@@ -30,9 +34,12 @@ class MaterialService {
 
 	private final Attachments attachments;
 
-	MaterialService(JdbcClient jdbc, Attachments attachments) {
+	private final Notifications notifications;
+
+	MaterialService(JdbcClient jdbc, Attachments attachments, Notifications notifications) {
 		this.jdbc = jdbc;
 		this.attachments = attachments;
+		this.notifications = notifications;
 	}
 
 	/** @return 만든 활동 ID */
@@ -71,6 +78,11 @@ class MaterialService {
 				INSERT INTO learning_material_details (activity_id, published_at)
 				VALUES (:activity, CASE WHEN :published THEN COALESCE(:openAt, CURRENT_TIMESTAMP) END)
 				""").param("activity", activityId).param("published", material.published()).param("openAt", material.openAt()).update();
+		// 공개한 자료만 알린다. 시작 일시가 미래면 그 시각에 그때의 수강생에게 간다(ADR-0027).
+		if (material.published()) {
+			this.notifications.publish(new CourseNotification(NotificationKind.LECTURE_MATERIAL, courseId,
+					CourseRole.STUDENT, activityId, material.title(), material.openAt()));
+		}
 		return activityId;
 	}
 

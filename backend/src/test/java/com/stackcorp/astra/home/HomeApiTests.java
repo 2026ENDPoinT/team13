@@ -228,6 +228,21 @@ class HomeApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void unreadNotificationCountFollowsTheInbox() throws Exception {
+		long c = course();
+		long stu = this.data.user("STUDENT");
+		this.data.enroll(c, stu);
+		notice(c, "{\"title\":\"알림 1\"}");
+		notice(c, "{\"title\":\"알림 2\"}");
+		ApiClient student = new ApiClient(this.mvc, this.data.session(stu));
+
+		student.get("/api/me/home").andExpect(jsonPath("$.unreadNotifications").value(2));
+		this.professor.get("/api/me/home").andExpect(jsonPath("$.unreadNotifications").value(0));
+		student.post("/api/me/notifications/read-all").andExpect(status().isOk());
+		student.get("/api/me/home").andExpect(jsonPath("$.unreadNotifications").value(0));
+	}
+
+	@Test
 	void statementCountDoesNotGrowWithTheNumberOfCourses() throws Exception {
 		ApiClient few = studentWithCourses(2);
 		ApiClient many = studentWithCourses(10);
@@ -235,11 +250,12 @@ class HomeApiTests extends IntegrationTest {
 		many.get("/api/me/home")
 			.andExpect(jsonPath("$.courses.length()").value(10))
 			.andExpect(jsonPath("$.notices.length()").value(5))
-			.andExpect(jsonPath("$.todo.total").value(10));
+			.andExpect(jsonPath("$.todo.total").value(10))
+			.andExpect(jsonPath("$.unreadNotifications").value(10));
 
 		long fewStatements = statements(few);
 		long manyStatements = statements(many);
-		// 과목마다 쿼리를 더 보내지 않는다. 시계, 과목, 할 일 2, 공지 2와 session 확인, transaction 문장뿐이다.
+		// 과목마다 쿼리를 더 보내지 않는다. 시계, 과목, 할 일 2, 공지 2, 알림 수 1과 session 확인, transaction 문장뿐이다.
 		assertThat(manyStatements).isEqualTo(fewStatements);
 		assertThat(manyStatements).isLessThanOrEqualTo(20);
 	}
