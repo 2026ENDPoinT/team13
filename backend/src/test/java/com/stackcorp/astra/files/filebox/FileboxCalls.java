@@ -56,7 +56,7 @@ final class FileboxCalls {
 	}
 
 	static ResultActions command(ApiClient client, String action, long... ids) throws Exception {
-		return client.postJson("/api/filebox/items:" + action, "{\"ids\":" + ids(ids) + "}");
+		return client.postJson("/api/filebox/items/" + action, "{\"ids\":" + ids(ids) + "}");
 	}
 
 	static String ids(long... ids) {
