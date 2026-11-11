@@ -17,6 +17,8 @@
 
 name: astra
 
+# process 수 상한은 서비스마다 deploy.resources.limits.pids에 적는다. pids_limit을 함께 쓰면 compose가
+# 두 값이 다르다고 구성을 거부한다(deploy.resources.limits가 있고 pids가 없을 때도 그렇다).
 x-app: &app
   image: ${ASTRA_IMAGE:-astra-backend:local}
   read_only: true
@@ -25,7 +27,6 @@ x-app: &app
   cap_drop: [ALL]
   security_opt:
     - no-new-privileges:true
-  pids_limit: 512
   restart: unless-stopped
   logging: &logging
     driver: json-file
@@ -63,6 +64,7 @@ services:
         limits:
           cpus: "1.5"
           memory: 1280m
+          pids: 512
 
   worker:
     <<: *app
@@ -96,6 +98,7 @@ services:
         limits:
           cpus: "1.0"
           memory: 1024m
+          pids: 512
 
   # 격리한 문서 변환 process(SC-08, ADR-0006). 외부 network, 비밀값, 저장소 credential이 없고 worker만 부를 수 있다.
   # env_file을 주지 않는다.
@@ -126,6 +129,7 @@ services:
         limits:
           cpus: "1.0"
           memory: 2048m
+          pids: 512
 
   # 격리한 영상 변환 process(SC-08, ADR-0016). converter와 같이 외부 network, 비밀값, 저장소 credential이 없고 worker만 부를 수
   # 있다. 원본과 결과는 /work volume에 요청마다 만들고 응답 뒤 지운다. 암호화 key는 이 container에 오지 않는다.
@@ -144,7 +148,6 @@ services:
     volumes:
       - transcoder-work:/work
     networks: [transcoding]
-    pids_limit: 256
     healthcheck:
       test: ["CMD", "astra-health", "8091", "/health"]
       interval: 10s
@@ -156,6 +159,7 @@ services:
         limits:
           cpus: "2.0"
           memory: 2048m
+          pids: 256
 
   # 같은 host의 MySQL. COMPOSE_PROFILES에 mysql이 있을 때만 뜬다. host에 port를 publish하지 않는다.
   # root는 container 안에서만 접속할 수 있고 비밀번호는 처음 초기화할 때 임의로 만든다. 앱은 DB_USERNAME 계정만 쓴다.
