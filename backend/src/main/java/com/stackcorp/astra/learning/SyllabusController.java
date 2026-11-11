@@ -38,8 +38,8 @@ import org.springframework.web.bind.annotation.RestController;
  * 강의계획서 팝업과 정규과목 상세의 계획서(EP-0218, EP-0219의 대체 계약, 화면 41·22).
  * <ul>
  * <li>과목 구성원은 계획서 전체와 담당자의 연락처(이메일, 연락처, 연구실, 면담시간, 홈페이지)를 본다.</li>
- * <li>구성원이 아닌 로그인 사용자는 과목 목록에 나오는 정규과목에 한해 공개 항목만 본다. 과목 기본 정보, 담당자 사용자 ID와 이름, 소속,
- * 서술 항목, 주별 계획이다. 담당자의 연락처와 version은 응답에 없다(EP-0218 개인정보 노출 범위).</li>
+ * <li>구성원이 아닌 로그인 사용자는 과목 목록에 나오는 정규과목에 한해 공개 항목만 본다. 과목 기본 정보, 담당자 이름과 소속, 서술 항목,
+ * 주별 계획이다. 담당자의 연락처와 version은 응답에 없다(EP-0218 개인정보 노출 범위).</li>
  * <li>담당자는 서술 항목과 주별 계획, 자기 강사 정보를 고친다. 과목명·학점 같은 학사 값은 catalog의 값이고 본문으로 받지 않는다(400).
  * 모두 일반 텍스트이고 HTML로 해석하지 않는다.</li>
  * </ul>
@@ -96,7 +96,7 @@ class SyllabusController {
 		SyllabusRow content = row.orElse(null);
 		List<PublicInstructor> instructors = profile.instructorIds()
 			.stream()
-			.map((id) -> new PublicInstructor(id, instructorNames.get(id),
+			.map((id) -> new PublicInstructor(instructorNames.get(id),
 					cards.containsKey(id) ? cards.get(id).department() : null))
 			.toList();
 		return ResponseEntity.ok()
@@ -271,10 +271,7 @@ class SyllabusController {
 			List<PublicInstructor> instructors, List<WeekPlan> weeks) {
 	}
 
-	/**
-	 * @param userId 담당자 사용자 ID. 화면이 아바타 경로를 만들 때 쓴다. 사진은 아바타 경로가 따로 판정한다(ADR-0038)
-	 */
-	record PublicInstructor(long userId, String name, String department) {
+	record PublicInstructor(String name, String department) {
 	}
 
 }
