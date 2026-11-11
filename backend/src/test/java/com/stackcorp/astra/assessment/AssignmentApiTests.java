@@ -1,0 +1,160 @@
+package com.stackcorp.astra.assessment;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.stackcorp.astra.ApiClient;
+
+import org.junit.jupiter.api.Test;
+
+/**
+ * 담당자의 과제 등록·수정·조회와 학생의 과제 조회. 권한은 과목 관계, 과제의 과목, 공개·시작 일시로만 정해진다(SC-02, SC-03).
+ */
+class AssignmentApiTests extends AssessmentTestSupport {
+
+	@Test
+	void instructorCreatesEditsAndListsAssignmentsOfOwnCourse() throws Exception {
+		long id = ApiClient.json(this.professor.postJson(assignments(this.course), """
+				{"weekNo":3,"title":"  정규화 보고서 ","description":"<b>3NF</b>까지\\n분석","openAt":"2026-01-01T09:00:00.700",
+				 "closeAt":"2999-01-01T23:59:59","latePolicy":"allow_until","lateUntil":"2999-01-02T23:59:59","maxScore":15,
+				 "allowFile":false}
+				""")
+			.andExpect(status().isCreated())
+			.andExpect(header().string("Cache-Control", "no-store"))
+			.andExpect(jsonPath("$.assignment.title").value("정규화 보고서"))
+			.andExpect(jsonPath("$.assignment.description").value("<b>3NF</b>까지\n분석"))
+			.andExpect(jsonPath("$.assignment.openAt").value("2026-01-01T09:00:00"))
+			.andExpect(jsonPath("$.assignment.weekNo").value(3))
+			.andExpect(jsonPath("$.assignment.latePolicy").value("allow_until"))
+			.andExpect(jsonPath("$.assignment.maxScore").value(15.0))
+			.andExpect(jsonPath("$.assignment.allowText").value(true))
+			.andExpect(jsonPath("$.assignment.allowFile").value(false))
+			.andExpect(jsonPath("$.assignment.published").value(true))
+			.andExpect(jsonPath("$.assignment.scoresReleased").value(false))
+			.andExpect(jsonPath("$.revision").value(1))
+			.andExpect(jsonPath("$.phase").value("open"))
+			.andExpect(jsonPath("$.submittedCount").value(0))).get("assignment").get("assignmentId").asLong();
+
+		// 활동은 learning이 가진다. 주차 목록에 과제(report)로 나온다.
+		this.student.get("/api/courses/" + this.course + "/weeks")
+			.andExpect(jsonPath("$[?(@.weekNo == 3)].activities[0].type").value("report"));
+
+		String edit = """
+				{"weekNo":4,"title":"정규화 보고서(수정)","closeAt":"2999-02-01T00:00:00","maxScore":20,"revision":%d}
+				""";
+		this.professor.putJson(assignment(this.course, id), edit.formatted(1))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.assignment.title").value("정규화 보고서(수정)"))
+			.andExpect(jsonPath("$.assignment.weekNo").value(4))
+			.andExpect(jsonPath("$.assignment.latePolicy").value("none"))
+			.andExpect(jsonPath("$.assignment.maxScore").value(20.0))
+			.andExpect(jsonPath("$.revision").value(2));
+		// 다른 탭이 옛 수정 번호로 저장하면 덮어쓰지 않는다.
+		this.professor.putJson(assignment(this.course, id), edit.replace("(수정)", "(옛 탭)").formatted(1))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("edit_conflict"));
+		this.professor.get(assignment(this.course, id))
+			.andExpect(jsonPath("$.assignment.title").value("정규화 보고서(수정)"))
+			.andExpect(jsonPath("$.revision").value(2));
+
+		this.professor.get(assignments(this.course))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.length()").value(1))
+			.andExpect(jsonPath("$[0].assignmentId").value(id))
+			.andExpect(jsonPath("$[0].submittedCount").value(0))
+			.andExpect(jsonPath("$[0].status").doesNotExist());
+	}
+
+	@Test
+	void studentSeesOnlyPublishedStartedAssignmentsAndOnlyOwnStatus() throws Exception {
+		long open = assignment("");
+		long hidden = assignment("\"published\":false");
+		long future = assignment("\"openAt\":\"2998-01-01T00:00:00\"");
+
+		this.professor.get(assignments(this.course)).andExpect(jsonPath("$.length()").value(3));
+		this.student.get(assignments(this.course))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.length()").value(1))
+			.andExpect(jsonPath("$[0].assignmentId").value(open))
+			.andExpect(jsonPath("$[0].status").value("not_submitted"))
+			.andExpect(jsonPath("$[0].submittedCount").doesNotExist());
+		this.student.get(assignment(this.course, open))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.phase").value("open"))
+			.andExpect(jsonPath("$.serverTime").exists())
+			.andExpect(jsonPath("$.revision").doesNotExist())
+			.andExpect(jsonPath("$.submittedCount").doesNotExist())
+			.andExpect(jsonPath("$.submission.status").value("not_submitted"))
+			.andExpect(jsonPath("$.submission.version").value(0))
+			.andExpect(jsonPath("$.submission.grade").doesNotExist());
+		for (long id : new long[] { hidden, future }) {
+			this.student.get(assignment(this.course, id)).andExpect(status().isNotFound());
+			this.student.submit(submission(this.course, id), "k-" + id, submitBody(0, TEXT)).andExpect(status().isNotFound());
+		}
+	}
+
+	@Test
+	void hidesAssignmentsFromEveryoneOutsideTheCourseAndFromOtherCoursePaths() throws Exception {
+		long id = assignment("");
+		long otherCourse = this.data.course();
+		// 두 과목을 모두 담당하는 교수도 다른 과목 경로로는 이 과제에 닿지 않는다(SC-03).
+		this.jdbc.sql("""
+				INSERT INTO course_instructors (course_id, user_id, instructor_role)
+				SELECT :other, user_id, 'PROFESSOR' FROM course_instructors WHERE course_id = :course
+				""").param("other", otherCourse).param("course", this.course).update();
+		String edit = "{\"weekNo\":3,\"title\":\"바꿈\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":15,\"revision\":1}";
+
+		this.professor.get(assignment(otherCourse, id)).andExpect(status().isNotFound());
+		this.professor.putJson(assignment(otherCourse, id), edit).andExpect(status().isNotFound());
+		this.professor.get(assignments(otherCourse)).andExpect(jsonPath("$.length()").value(0));
+
+		this.outsider.get(assignments(this.course)).andExpect(status().isNotFound());
+		this.outsider.get(assignment(this.course, id)).andExpect(status().isNotFound());
+		this.outsider.putJson(assignment(this.course, id), edit).andExpect(status().isNotFound());
+		this.student.putJson(assignment(this.course, id), edit).andExpect(status().isNotFound());
+		this.student.postJson(assignments(this.course),
+				"{\"weekNo\":1,\"title\":\"학생 과제\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":1}")
+			.andExpect(status().isNotFound());
+		this.anonymous.get(assignments(this.course)).andExpect(status().isUnauthorized());
+		this.anonymous.get(assignment(this.course, id)).andExpect(status().isUnauthorized());
+		this.professor.postWithoutCsrf(assignments(this.course),
+				"{\"weekNo\":1,\"title\":\"t\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":1}")
+			.andExpect(status().isForbidden());
+		this.professor.putWithoutCsrf(assignment(this.course, id), edit).andExpect(status().isForbidden());
+		this.professor.get(assignment(this.course, 999_999_999L)).andExpect(status().isNotFound());
+		this.professor.get(assignment(this.course, id)).andExpect(jsonPath("$.assignment.title").value("과제 1"));
+	}
+
+	@Test
+	void rejectsInvalidBodiesActorFieldsAndUnknownFields() throws Exception {
+		String base = "\"weekNo\":1,\"title\":\"과제\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":10";
+		String[] invalid = { "{" + base + ",\"userId\":1}", "{" + base + ",\"courseId\":1}",
+				"{\"weekNo\":1,\"title\":\"과제\",\"maxScore\":10}",
+				"{" + base + ",\"openAt\":\"2999-01-01T00:00:00\"}", "{" + base + ",\"latePolicy\":\"penalty\"}",
+				"{" + base + ",\"latePolicy\":\"allow_until\"}",
+				"{" + base + ",\"latePolicy\":\"allow_until\",\"lateUntil\":\"2998-12-31T00:00:00\"}",
+				"{" + base + ",\"lateUntil\":\"2999-02-01T00:00:00\"}", "{" + base + ",\"allowText\":false,\"allowFile\":false}",
+				"{" + base + ",\"revision\":1}", "{" + base.replace("10", "0") + "}", "{" + base.replace("10", "1.234") + "}",
+				"{" + base.replace("10", "1001") + "}", "{" + base.replace("\"과제\"", "\"a\\u0000b\"") + "}",
+				"{" + base.replace("\"weekNo\":1", "\"weekNo\":0") + "}", "{not json" };
+		for (String body : invalid) {
+			this.professor.postJson(assignments(this.course), body)
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("invalid_request"));
+		}
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM learning_activities WHERE course_id = :c")
+			.param("c", this.course)
+			.query(Long.class)
+			.single()).isZero();
+		long id = assignment("");
+		this.professor.putJson(assignment(this.course, id),
+				"{\"weekNo\":3,\"title\":\"과제\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":15}")
+			.andExpect(status().isBadRequest());
+		this.professor.putJson(assignment(this.course, id),
+				"{\"weekNo\":3,\"title\":\"과제\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":15,\"revision\":1,\"createdBy\":2}")
+			.andExpect(status().isBadRequest());
+	}
+
+}

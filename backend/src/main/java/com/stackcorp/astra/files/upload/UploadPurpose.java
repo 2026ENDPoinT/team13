@@ -10,7 +10,10 @@ import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
  */
 enum UploadPurpose {
 
-	LECTURE_MATERIAL("lecture_material", CourseRole.INSTRUCTOR);
+	LECTURE_MATERIAL("lecture_material", CourseRole.INSTRUCTOR),
+
+	/** 과제 제출 첨부. 그 과목의 수강생만 올린다. */
+	ASSIGNMENT_SUBMISSION("assignment_submission", CourseRole.STUDENT);
 
 	private final String code;
 
