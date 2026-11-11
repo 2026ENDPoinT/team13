@@ -139,7 +139,7 @@ class UploadRecords {
 			.optional();
 	}
 
-	long insertFile(long blobId, String name, String extension, String mime, long size, long uploader, long courseId,
+	long insertFile(long blobId, String name, String extension, String mime, long size, long uploader, Long courseId,
 			String purpose, String scanState) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
@@ -162,7 +162,7 @@ class UploadRecords {
 	}
 
 	/** @throws DuplicateKeyException 같은 사용자가 같은 멱등 key로 이미 올렸을 때 */
-	long insertUpload(long policyId, long owner, long courseId, long fileId, String clientKey, String state,
+	long insertUpload(long policyId, long owner, Long courseId, long fileId, String clientKey, String state,
 			Duration ttl) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""

@@ -37,6 +37,7 @@
 | [ADR-0024](adr/0024-course-qna-and-open-board.md) | 강의실 질의응답과 열린게시판도 과목마다 하나인 게시판의 `posts` 행이다. 익명(이름 숨김)과 비공개(작성자·담당자만)를 나누고, 질문은 답글 전까지만 작성자가 고친다 |
 | [ADR-0016](adr/0016-video-upload-and-transcoder.md) | 강의 영상은 본문 스트림으로 받고, 격리한 transcoder가 HLS로 나눈 뒤 files가 AES-128로 암호화해 게시한다. MediaConvert는 port로 남긴다 |
 | [ADR-0029](adr/0029-step-up-and-learning-auth.md) | 민감한 명령의 재인증과 온라인 학습 인증 grant는 로그인 session에 묶은 `session_step_ups` 행이다. 학교 IdP 재인증(`prompt=login`, `auth_time`)이 근거이고, 학습 적립은 grant 만료에서 끊기고 `reauth_required`가 된다 |
+| [ADR-0028](adr/0028-filebox.md) | 개인 파일함은 사용자별 사용량 행을 잠가 차례로 바꾸고, 다시 쓰기는 같은 내용을 참조하는 새 파일로, ZIP은 worker가 저장소에서 저장소로 흘려 만든다 |
 
 ## 2. 부하 가정
 
@@ -582,6 +583,28 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 worker는 마감이 지난 진행 중 응시를 `astra.quiz.close-interval`(기본 30초)마다 같은 종료 경로로 닫는다. 오프라인 시험은 보이지만 시작할 수 없다.
 
+### 7.8 개인 파일함
+
+결정은 [ADR-0028](adr/0028-filebox.md)에 있다. 로그인한 사용자 누구나 자기 파일함만 쓴다. 항목 ID, 부모 폴더 ID, 이동 대상 가운데 하나라도 남의 것이면 요청 전체가 404이고 아무것도 바뀌지 않는다(SEC-08). 하위 항목은 서버가 계산한다(FILES-07).
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/filebox/items?parentId=&q=&sort=&order=&cursor=&size=` | 로그인한 사용자 | 폴더 하나의 활성 항목, 경로, 사용량. 폴더 먼저. `sort`는 `name`·`size`·`date`, 그 밖은 400. keyset `nextCursor`, 쪽당 100까지 |
+| `GET /api/filebox/trash?cursor=&size=` | 로그인한 사용자 | 휴지통에 넣은 묶음. 넣은 일시 역순 |
+| `POST /api/filebox/folders` | 로그인한 사용자 | 폴더 만들기. 201. 같은 폴더에 같은 이름이면 409. 깊이 10까지. `Idempotency-Key` 지원 |
+| `POST /api/filebox/files` | 로그인한 사용자 | 파일함에 올리기(용도 `filebox`). 용량을 넘으면 409. 이름이 겹치면 접미사. 201. `Idempotency-Key` 지원 |
+| `PATCH /api/filebox/items/{itemId}` | 소유자 | 이름 바꾸기. `If-Match` 필수. 파일 확장자는 못 바꾼다 |
+| `POST /api/filebox/items:move` | 소유자 | `{targetFolderId, items:[{id, version}]}`. 자기 자신이나 그 아래로는 409. 하나라도 안 되면 아무것도 옮기지 않는다 |
+| `POST /api/filebox/items:trash` · `:restore` · `:purge` | 소유자 | `{ids}`. 휴지통에 넣기(하위 포함), 원래 폴더나 루트로 되돌리기(이름이 겹치면 접미사), 영구 삭제(파일 참조를 놓고 GC가 원본 정리). 처리한 수를 돌려준다 |
+| `POST /api/filebox/trash:empty` | 로그인한 사용자 | 휴지통 비우기 |
+| `GET /api/filebox/items/{itemId}/content` | 소유자 | 내 파일. 언제나 attachment. 검사 전이면 409 |
+| `GET /api/filebox/items/{itemId}/references` | 소유자 | 이 파일을 다시 써서 첨부한 곳 가운데 지금 볼 수 있는 것 |
+| `POST /api/uploads:fromFilebox` | 대상 용도의 업로드 권한이 있는 사람 | `{itemIds, courseId, purpose}`. 같은 내용을 참조하는 clean 업로드를 만든다. 정책과 검사 상태를 다시 본다. 201. `Idempotency-Key` 지원 |
+| `POST /api/filebox/zip-jobs` | 소유자 | `{itemIds}`. 202. `Idempotency-Key` 필수. 파일 100개, 합 500 MB, 진행 중 2개까지. 같은 집합의 작업이 있으면 그 작업 |
+| `GET /api/filebox/zip-jobs/{jobId}` · `/download` | 요청한 사람 | 상태, 생성물. 만드는 중이면 409, TTL(2시간)이 지나면 410 |
+
+ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 압축해 content bucket `zips/`에 multipart upload로 쓴다. 메모리에는 part 하나만 두고 디스크에 쓰지 않는다. 항목 이름은 경로 구분자를 없애고 겹치면 접미사를 붙이며 UTF-8 flag를 켠다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -671,3 +694,4 @@ worker는 마감이 지난 진행 중 응시를 `astra.quiz.close-interval`(기�
 | 퀴즈 재채점 | 응시가 생기면 문항과 정답을 바꾸지 않는다([ADR-0021](adr/0021-quiz-attempt-model.md)). 정답이 틀린 것을 응시 뒤에 알면 고칠 API가 없다. 복수 선택에 부분 점수가 없다 | 정답 수정과 기존 응시 재계산을 한 명령으로 하는 재채점을 감사 기록과 함께 만든다. 부분 점수는 학교 기준을 받아 정한다 |
 | 퀴즈와 할 일 | 할 일은 learning의 활동 기간만 보므로 제출한 퀴즈도 마감까지 남는다 | 위 "할 일의 완료 판정"과 함께 `assessment` api로 응시 완료를 받아 뺀다 |
 | 앱 지표의 수신 쪽 | 지표와 trace를 내보낼 collector(또는 CloudWatch agent)와 instance role 권한이 없어 앱 지표 알람([operations/alarms.md](operations/alarms.md) 2절)이 아직 동작하지 않는다 | 수신 쪽을 정하고 `ASTRA_OTLP_ENABLED`를 켠 뒤 알람을 Terraform `monitoring` module에 더한다 |
+| 파일함 휴지통 보존과 자동 등재 | 휴지통 보존 기간이 정해지지 않아 자동 영구 삭제가 없고, 휴지통 파일도 용량을 차지한다. 원본처럼 과제 제출 파일을 파일함에 자동으로 넣지 않는다([ADR-0028](adr/0028-filebox.md)) | 학교와 보존 기간을 정해 worker가 `trashed_at`으로 지우게 한다. 자동 등재가 필요하면 제출 확정과 같은 transaction에서 파일함 항목을 만드는 `files.api`를 더한다 |
