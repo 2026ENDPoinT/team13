@@ -1,8 +1,8 @@
 # DB 설계와 ERD 작업 가이드
 
-ASTRA 재구현용 MySQL 8 스키마(112 테이블, FK 228개)를 어떻게 읽고, 바꾸고, ERDCloud ERD에 반영하는지 정한 문서다. 사람과 에이전트 모두 이 문서의 절차를 따른다. 경로는 이 레포 루트 기준이고, `reference/`는 [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈이다(`git submodule update --init`).
+ASTRA 재구현용 MySQL 8 스키마(113 테이블, FK 229개)를 어떻게 읽고, 바꾸고, ERDCloud ERD에 반영하는지 정한 문서다. 사람과 에이전트 모두 이 문서의 절차를 따른다. 경로는 이 레포 루트 기준이고, `reference/`는 [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈이다(`git submodule update --init`).
 
-- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`ASTRA DB`). 2026-11-12 기준 ERDCloud 화면에는 `V1__baseline.sql`의 97 테이블까지만 올라가 있다. `db/erdcloud/snapshot.json`은 V33까지 적용한 112 테이블이고, 6절대로 올려야 화면이 같아진다.
+- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`ASTRA DB`). 2026-11-12 기준 ERDCloud 화면에는 `V1__baseline.sql`의 97 테이블까지만 올라가 있다. `db/erdcloud/snapshot.json`은 모든 마이그레이션을 적용한 113 테이블이고, 6절대로 올려야 화면이 같아진다.
 - ERD B(캠퍼스 온, PostgreSQL)는 별개 서비스의 ERD라 [STack-Backend](https://github.com/STack-Corp/STack-Backend/blob/main/db/README.md)가 관리한다.
 - 근거 표기는 [reference/backend/README.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/README.md)의 `OBSERVED`/`CLIENT`/`INFERRED`/`PROPOSED`/`UNKNOWN`과 화면 명세의 `[추정]`을 그대로 쓴다. DB 설계 대부분은 화면·JS에서 역으로 추론한 `INFERRED`다. 운영 서버의 실제 테이블이 아니다.
 
@@ -30,7 +30,7 @@ ERDCloud는 보기용 사본이다. ERDCloud 화면에서 직접 고친 내용�
 | 20 catalog | 학기·과목·수강 원장·시간표·비정규 신청·좌석·학사일정·알림 | 15 | `terms`, `courses`, `course_enrollments` | identity, learning(`notifications.activity_id`) |
 | 30 learning | 주차·학습활동·온라인강의 진도·출석·그룹·강의계획서 | 25 | `learning_activities`, `course_weeks`, `attendance_sessions` | catalog, identity, files |
 | 40 assessment | 과제 제출·퀴즈 응시·설문 응답·성적 | 23 | `assignments`, `quiz_attempts`, `surveys`, `grade_items` | learning, catalog, identity, files |
-| 50 communication | 게시판·게시글·댓글·읽음·쪽지·서포터즈 채팅·임시저장 | 11 | `boards`, `posts`, `messages` | catalog, identity, learning, files |
+| 50 communication | 게시판·게시글·댓글·읽음·쪽지·서포터즈 채팅·임시저장·알림마당 운영자 | 12 | `boards`, `posts`, `messages` | catalog, identity, learning, files |
 | 60 files | 업로드·파일·첨부 묶음·파일함·ZIP·미리보기·영상 asset·AI 요약 | 16 | `files`, `attachment_groups`, `filebox_items` | catalog, identity |
 | 70 summary | 강의 자료 쪽별 요약 작업·게시([ADR-0006](../docs/adr/0006-summary-module.md)), 외부 LLM 처리 동의·학습 대화·사용량([ADR-0032](../docs/adr/0032-llm-consent-and-study-chat.md)) | 6 | `summary_jobs`, `llm_consents`, `study_chats` | files, identity, catalog |
 | 80 shared | 감사 기록·멱등 원장([ADR-0012](../docs/adr/0012-idempotency-ledger-and-audit.md)), 주기 작업 잠금([ADR-0034](../docs/adr/0034-observability-and-scheduler-lock.md)) | 3 | `audit_events`, `idempotency_ledger` | identity. `scheduler_locks`는 FK가 없다 |
