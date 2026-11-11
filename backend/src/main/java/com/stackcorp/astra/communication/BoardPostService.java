@@ -148,8 +148,8 @@ class BoardPostService {
 			// 질문은 수강생이 한다(화면 49, 50). 담당자는 답글을 단다.
 			throw ApiException.notFound();
 		}
-		if (body.version() != null) {
-			throw ApiException.invalid("새 글에는 version을 줄 수 없습니다.");
+		if (body.version() != null || body.attachments() != null) {
+			throw ApiException.invalid("새 글에는 version이나 attachments를 줄 수 없습니다. 첨부는 uploadIds로 보냅니다.");
 		}
 		NewPost post = new NewPost(text(kind, body), BoardFiles.validated(body.uploadIds()));
 		this.rateLimiter.check(operation(kind, "create"), actor.userId(), 20, Duration.ofMinutes(10));
@@ -166,7 +166,8 @@ class BoardPostService {
 
 	/**
 	 * 작성자의 전체 수정. 본문의 version이 저장된 값과 다르면 409 version_conflict, 답글이 달린 질문이면 409 already_answered.
-	 * 첨부는 바꾸지 않는다.
+	 * attachments가 있으면 첨부를 그 최종 집합으로 바꾸고, 없으면 그대로 둔다. 쓸 수 없는 업로드나 이 글의 것이 아닌 파일이 있으면 409
+	 * attachment_not_ready이고 글도 바꾸지 않는다. 버전 확인이 먼저라 버전이 다르면 첨부도 그대로다.
 	 */
 	@Transactional
 	PostView update(Actor actor, long courseId, BoardKind kind, long postId, PostRequest body) {
@@ -179,17 +180,23 @@ class BoardPostService {
 			throw ApiException.invalid("version이 필요합니다.");
 		}
 		if (body.uploadIds() != null && !body.uploadIds().isEmpty()) {
-			throw ApiException.invalid("수정할 때는 첨부를 바꿀 수 없습니다.");
+			throw ApiException.invalid("수정할 때는 uploadIds 대신 attachments(keep, add)로 첨부를 보냅니다.");
 		}
 		NewText text = text(kind, body);
+		BoardFiles.Change attachments = BoardFiles.validated(body.attachments(), BoardFiles.MAX_UPLOADS);
 		this.rateLimiter.check(operation(kind, "update"), actor.userId(), 60, Duration.ofMinutes(10));
 		if (this.posts.update(postId, actor.userId(), body.version(), text, kind.answers) == 0) {
 			BoardPostRepository.State state = this.posts.current(postId).orElseThrow(ApiException::notFound);
 			if (kind.answers && state.answerCount() > 0) {
 				throw alreadyAnswered();
 			}
-			throw new ApiException(HttpStatus.CONFLICT, "version_conflict",
-					"다른 곳에서 먼저 수정했습니다. 최신 내용을 다시 불러온 뒤 수정해 주세요.");
+			throw versionConflict();
+		}
+		if (attachments != null) {
+			// 조건부 UPDATE가 글 행을 잠갔다. 같은 글의 다른 수정은 이 transaction이 끝날 때까지 기다린다.
+			Long group = this.files.change(BoardFiles.PURPOSE, actor.userId(), courseId,
+					this.posts.attachmentGroup(postId), attachments, text.title());
+			this.posts.setAttachmentGroup(postId, group);
 		}
 		this.audit.success(actor.userId(), actor.sessionId(), audited(kind, "update"), "post", postId, courseId);
 		return view(viewer, kind, visible(viewer, kind, postId));
@@ -314,6 +321,11 @@ class BoardPostService {
 		return new ApiException(HttpStatus.CONFLICT, "already_answered", "답글이 달린 질문은 고치거나 지울 수 없습니다.");
 	}
 
+	static ApiException versionConflict() {
+		return new ApiException(HttpStatus.CONFLICT, "version_conflict",
+				"다른 곳에서 먼저 수정했습니다. 최신 내용을 다시 불러온 뒤 수정해 주세요.");
+	}
+
 	/** 감사 기록과 멱등 원장의 연산 이름. */
 	private static String audited(BoardKind kind, String verb) {
 		return (kind == BoardKind.QNA ? "qna_question." : "board_post.") + verb;
@@ -329,10 +341,11 @@ class BoardPostService {
 	 * @param anonymous 질의응답만. 다른 학생에게 작성자 이름을 숨긴다. 담당자에게는 보인다
 	 * @param secret 질의응답만. 비공개 질문. 작성자와 담당자만 본다
 	 * @param uploadIds 새 글에만. 본인이 용도 post_attachment로 올린 업로드
+	 * @param attachments 수정할 때만. 첨부의 최종 집합. 없으면 첨부를 바꾸지 않는다
 	 * @param version 수정할 때만. 마지막으로 읽은 글의 version
 	 */
 	record PostRequest(String title, String body, Boolean anonymous, Boolean secret, List<Long> uploadIds,
-			Integer version) {
+			BoardFiles.AttachmentSet attachments, Integer version) {
 	}
 
 	/** 멱등 지문을 만드는 검사된 입력. */

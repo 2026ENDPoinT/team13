@@ -36,12 +36,12 @@ class MessageRepository {
 	}
 
 	long insertMessage(long senderId, Long courseId, String title, String body, int recipientCount, Long originId,
-			String originKind, LocalDateTime now) {
+			String originKind, Long attachmentGroupId, LocalDateTime now) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
 				INSERT INTO messages (sender_id, course_id, title, body_text, recipient_count, origin_message_id, origin_kind,
-				                      created_at)
-				VALUES (:sender, :course, :title, :body, :count, :origin, :kind, :now)
+				                      attachment_group_id, created_at)
+				VALUES (:sender, :course, :title, :body, :count, :origin, :kind, :group, :now)
 				""")
 			.param("sender", senderId)
 			.param("course", courseId)
@@ -50,6 +50,7 @@ class MessageRepository {
 			.param("count", recipientCount)
 			.param("origin", originId)
 			.param("kind", originKind)
+			.param("group", attachmentGroupId)
 			.param("now", now)
 			.update(key);
 		return key.getKey().longValue();
@@ -105,7 +106,8 @@ class MessageRepository {
 
 	Optional<Received> received(long userId, long messageId) {
 		return this.jdbc.sql("""
-				SELECT m.message_id, m.sender_id, m.course_id, m.title, m.body_text, m.origin_kind, r.created_at, r.read_at
+				SELECT m.message_id, m.sender_id, m.course_id, m.title, m.body_text, m.origin_kind, m.attachment_group_id,
+				       r.created_at, r.read_at
 				  FROM message_recipients r JOIN messages m ON m.message_id = r.message_id
 				 WHERE r.message_id = :message AND""" + INBOX_VISIBLE)
 			.param("user", userId)
@@ -189,7 +191,8 @@ class MessageRepository {
 	/** 보낸함에 보이는 쪽지. 발신자가 지웠으면 비어 있다. */
 	Optional<MessageRow> sent(long userId, long messageId) {
 		return this.jdbc.sql("""
-				SELECT m.message_id, m.sender_id, m.course_id, m.title, m.body_text, m.origin_kind, m.created_at
+				SELECT m.message_id, m.sender_id, m.course_id, m.title, m.body_text, m.origin_kind, m.attachment_group_id,
+				       m.created_at
 				  FROM messages m
 				 WHERE m.message_id = :message AND m.sender_id = :user AND m.sender_deleted_at IS NULL
 				""")
@@ -252,6 +255,23 @@ class MessageRepository {
 		return statement.update();
 	}
 
+	/**
+	 * 이 첨부 그룹이 붙은 쪽지를 이 사람이 아직 가지고 있는지. 발신자는 보낸함에서 지우기 전, 수신자는 회수되지 않았고 받은함에서 지우기
+	 * 전이다. 받은 쪽지 상세({@link #received})와 보낸 쪽지 상세({@link #sent})가 보이는 조건과 같다.
+	 */
+	boolean attachmentVisible(long userId, long attachmentGroupId) {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM messages m
+				 WHERE m.attachment_group_id = :group
+				   AND ((m.sender_id = :user AND m.sender_deleted_at IS NULL)
+				        OR EXISTS (SELECT 1 FROM message_recipients r WHERE r.message_id = m.message_id AND""" + INBOX_VISIBLE
+				+ "))")
+			.param("group", attachmentGroupId)
+			.param("user", userId)
+			.query(Long.class)
+			.single() > 0;
+	}
+
 	private static String readFilter(Boolean read) {
 		if (read == null) {
 			return "";
@@ -262,7 +282,7 @@ class MessageRepository {
 	private static MessageRow message(ResultSet rs) throws SQLException {
 		return new MessageRow(rs.getLong("message_id"), rs.getLong("sender_id"), rs.getObject("course_id", Long.class),
 				rs.getString("title"), rs.getString("body_text"), rs.getString("origin_kind"),
-				rs.getObject("created_at", LocalDateTime.class));
+				rs.getObject("attachment_group_id", Long.class), rs.getObject("created_at", LocalDateTime.class));
 	}
 
 	/** LIKE 안에서 사용자 입력의 %, _, \를 글자 그대로 비교하게 escape한다. */
@@ -284,9 +304,10 @@ class MessageRepository {
 
 	/**
 	 * @param originKind REPLY|FORWARD. 새로 쓴 쪽지면 null
+	 * @param attachmentGroupId 첨부가 없으면 null
 	 */
 	record MessageRow(long messageId, long senderId, Long courseId, String title, String body, String originKind,
-			LocalDateTime sentAt) {
+			Long attachmentGroupId, LocalDateTime sentAt) {
 	}
 
 	record Received(MessageRow message, LocalDateTime readAt) {

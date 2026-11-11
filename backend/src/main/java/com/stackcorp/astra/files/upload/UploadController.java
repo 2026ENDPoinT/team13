@@ -22,7 +22,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 업로드 API(EP-0127, EP-0137의 대체 계약). 올린 사람만 자기 업로드를 보고 지운다.
- * 업로드한 파일은 부모 객체에 첨부하기 전에는 누구도 내려받지 못한다.
+ * 업로드한 파일은 부모 객체에 첨부하기 전에는 누구도 내려받지 못한다. 과목 밖 용도(community_material, inquiry_attachment,
+ * message_attachment)는 courseId 없이 올린다(ADR-0035).
  */
 @RestController
 class UploadController {
@@ -38,9 +39,9 @@ class UploadController {
 
 	@PostMapping(path = "/api/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	ResponseEntity<UploadView> upload(@AuthenticationPrincipal Actor actor, @RequestParam("file") MultipartFile file,
-			@RequestParam long courseId, @RequestParam String purpose,
+			@RequestParam(required = false) Long courseId, @RequestParam String purpose,
 			@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey) {
-		Upload upload = this.uploads.receive(actor.userId(), courseId, purpose, file, idempotencyKey);
+		Upload upload = this.uploads.receive(actor, courseId, purpose, file, idempotencyKey);
 		this.audit.success(actor.userId(), actor.sessionId(), "upload.create", "upload", upload.uploadId(), courseId);
 		return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(UploadView.of(upload));
 	}

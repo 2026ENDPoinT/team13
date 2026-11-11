@@ -215,6 +215,98 @@ class OpenBoardApiTests extends BoardTestSupport {
 		}
 	}
 
+	@Test
+	void onlyTheAuthorEditsACommentWithTheVersionTheyRead() throws Exception {
+		long id = created(this.student.postJson(posts(this.course), "{\"title\":\"글\"}"), "postId");
+		String comments = post(this.course, id) + "/comments";
+		long comment = created(this.student.postJson(comments, "{\"body\":\"처음 댓글\"}")
+			.andExpect(jsonPath("$.version").value(1))
+			.andExpect(jsonPath("$.canEdit").value(true)), "commentId");
+		String c = comments + "/" + comment;
+		String edit = "{\"body\":\"고친 댓글\",\"version\":1}";
+		this.classmate.get(comments).andExpect(jsonPath("$.items[0].canEdit").value(false));
+
+		// 담당자도 남의 댓글은 고치지 못한다. 과목 밖 사람과 다른 과목 경로도 404다.
+		put(this.classmate, c, edit).andExpect(status().isNotFound());
+		put(this.professor, c, edit).andExpect(status().isNotFound());
+		put(this.outsider, c, edit).andExpect(status().isNotFound());
+		long otherCourse = this.data.course();
+		this.data.enroll(otherCourse, this.stu);
+		put(this.student, post(otherCourse, id) + "/comments/" + comment, edit).andExpect(status().isNotFound());
+		put(this.anonymous, c, edit).andExpect(status().isUnauthorized());
+		withoutCsrf(MockMvcRequestBuilders.put(c), this.stu).andExpect(status().isForbidden());
+
+		// 작성할 때와 같은 글 규칙이고 version이 필요하다.
+		put(this.student, c, "{\"body\":\"" + "가".repeat(901) + "\",\"version\":1}").andExpect(status().isBadRequest());
+		put(this.student, c, "{\"body\":\" \",\"version\":1}").andExpect(status().isBadRequest());
+		put(this.student, c, "{\"body\":\"x\"}").andExpect(status().isBadRequest());
+		put(this.student, c, edit).andExpect(status().isOk())
+			.andExpect(jsonPath("$.body").value("고친 댓글"))
+			.andExpect(jsonPath("$.version").value(2));
+		put(this.student, c, edit).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("version_conflict"));
+		assertThat(audits("board_comment.update", comment)).isEqualTo(1);
+		this.classmate.get(comments).andExpect(jsonPath("$.items[0].body").value("고친 댓글"));
+
+		// 지운 댓글과 폐강한 과목의 댓글은 고치지 못한다.
+		long gone = created(this.student.postJson(comments, "{\"body\":\"지울 댓글\"}"), "commentId");
+		this.student.delete(comments + "/" + gone).andExpect(status().isNoContent());
+		put(this.student, comments + "/" + gone, edit).andExpect(status().isNotFound());
+		this.jdbc.sql("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :id").param("id", this.course).update();
+		put(this.student, c, "{\"body\":\"폐강 뒤\",\"version\":2}").andExpect(status().isNotFound());
+	}
+
+	@Test
+	void postEditKeepsAddsAndRemovesAttachmentsUnderTheVersionCheck() throws Exception {
+		long first = upload(this.student, "a.txt", "첫 파일");
+		long second = upload(this.student, "b.txt", "둘째 파일");
+		JsonNode created = ApiClient.json(this.student.postJson(posts(this.course),
+				"{\"title\":\"자료\",\"uploadIds\":[" + first + "," + second + "]}").andExpect(status().isCreated()));
+		long id = created.get("postId").asLong();
+		long kept = created.get("attachments").get(0).get("fileId").asLong();
+		long removed = created.get("attachments").get(1).get("fileId").asLong();
+		String p = post(this.course, id);
+
+		long added = upload(this.student, "c.txt", "새 파일");
+		JsonNode edited = ApiClient.json(put(this.student, p,
+				"{\"title\":\"자료\",\"attachments\":{\"keep\":[" + kept + "],\"add\":[" + added + "]},\"version\":1}")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.version").value(2))
+			.andExpect(jsonPath("$.attachments.length()").value(2))
+			.andExpect(jsonPath("$.attachments[0].fileId").value(kept)));
+		long addedFile = edited.get("attachments").get(1).get("fileId").asLong();
+		this.classmate.get(QnaApiTests.file(this.course, kept)).andExpect(status().isOk());
+		this.classmate.get(QnaApiTests.file(this.course, addedFile)).andExpect(status().isOk());
+		this.classmate.get(QnaApiTests.file(this.course, removed)).andExpect(status().isNotFound());
+		this.student.get(QnaApiTests.file(this.course, removed)).andExpect(status().isNotFound());
+
+		// 읽은 version이 낡았으면 글도 첨부도 그대로다. 보낸 업로드는 첨부되지 않는다.
+		long late = upload(this.student, "d.txt", "늦은 파일");
+		put(this.student, p, "{\"title\":\"낡은 수정\",\"attachments\":{\"keep\":[],\"add\":[" + late + "]},\"version\":1}")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("version_conflict"));
+		assertThat(count("SELECT COUNT(*) FROM attachments WHERE upload_id = :id", late)).isZero();
+		// 남의 업로드나 다른 글의 파일은 넣지 못한다. 실패하면 글도 바뀌지 않는다.
+		long others = upload(this.classmate, "e.txt", "남의 파일");
+		long otherPostFile = ApiClient.json(this.classmate.postJson(posts(this.course),
+				"{\"title\":\"다른 글\",\"uploadIds\":[" + others + "]}").andExpect(status().isCreated()))
+			.get("attachments").get(0).get("fileId").asLong();
+		put(this.student, p, "{\"title\":\"남의 것\",\"attachments\":{\"keep\":[" + otherPostFile + "],\"add\":[]},\"version\":2}")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("attachment_not_ready"));
+		put(this.student, p, "{\"title\":\"남의 것\",\"attachments\":{\"keep\":[],\"add\":[" + late + "," + late + "]},\"version\":2}")
+			.andExpect(status().isBadRequest());
+		this.student.get(p).andExpect(jsonPath("$.title").value("자료")).andExpect(jsonPath("$.version").value(2));
+		// attachments를 보내지 않으면 첨부는 그대로다. 수정에서 uploadIds는 받지 않는다.
+		put(this.student, p, "{\"title\":\"제목만\",\"version\":2}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.attachments.length()").value(2));
+		put(this.student, p, "{\"title\":\"x\",\"uploadIds\":[" + late + "],\"version\":3}").andExpect(status().isBadRequest());
+		// 모두 빼면 첨부가 없다.
+		put(this.student, p, "{\"title\":\"빈 첨부\",\"attachments\":{\"keep\":[],\"add\":[]},\"version\":3}")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.attachments.length()").value(0));
+		this.classmate.get(QnaApiTests.file(this.course, kept)).andExpect(status().isNotFound());
+	}
+
 	static String posts(long courseId) {
 		return "/api/courses/" + courseId + "/open-board/posts";
 	}

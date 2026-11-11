@@ -6,10 +6,12 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships;
+import com.stackcorp.astra.files.api.UploadPermission;
 import com.stackcorp.astra.files.scan.ScanMode;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
@@ -17,6 +19,7 @@ import com.stackcorp.astra.files.upload.UploadRecords.Blob;
 import com.stackcorp.astra.files.upload.UploadRecords.Keyed;
 import com.stackcorp.astra.files.upload.UploadRecords.Policy;
 import com.stackcorp.astra.files.upload.UploadRecords.Upload;
+import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.idempotency.Idempotency;
@@ -60,8 +63,11 @@ class UploadService {
 
 	private final ScanMode scan;
 
+	private final List<UploadPermission> permissions;
+
 	UploadService(UploadRecords records, ObjectStore store, CourseMemberships memberships, RateLimiter rateLimiter,
-			TransactionTemplate transaction, UploadProperties properties, ScanMode scan) {
+			TransactionTemplate transaction, UploadProperties properties, ScanMode scan,
+			List<UploadPermission> permissions) {
 		this.records = records;
 		this.store = store;
 		this.memberships = memberships;
@@ -69,9 +75,14 @@ class UploadService {
 		this.transaction = transaction;
 		this.properties = properties;
 		this.scan = scan;
+		this.permissions = permissions;
 	}
 
-	Upload receive(long userId, long courseId, String purposeCode, MultipartFile file, String clientKey) {
+	/**
+	 * @param courseId 과목 용도면 그 과목. 과목 밖 용도(ADR-0035)면 null. 용도와 맞지 않으면 400이다
+	 */
+	Upload receive(Actor actor, Long courseId, String purposeCode, MultipartFile file, String clientKey) {
+		long userId = actor.userId();
 		// 권한이 없는 시도와 거부한 업로드도 센다. 본문은 이미 받은 뒤라 횟수로 막는다.
 		this.rateLimiter.check("upload", userId, this.properties.rateLimit(), this.properties.rateWindow());
 		UploadPurpose purpose = UploadPurpose.of(purposeCode)
@@ -79,7 +90,13 @@ class UploadService {
 		if (purpose.streamed()) {
 			throw ApiException.invalid("이 용도의 파일은 POST /api/uploads/stream으로 올립니다.");
 		}
-		if (!mayUpload(userId, courseId, purpose)) {
+		if (purpose.courseScoped() != (courseId != null)) {
+			throw ApiException.invalid(
+					purpose.courseScoped() ? "이 용도에는 courseId가 필요합니다." : "이 용도에는 courseId를 줄 수 없습니다.");
+		}
+		boolean allowed = courseId != null ? mayUpload(userId, courseId, purpose)
+				: this.permissions.stream().anyMatch((p) -> p.allows(actor, purpose.code()));
+		if (!allowed) {
 			throw ApiException.notFound();
 		}
 		if (clientKey != null && !CLIENT_KEY.matcher(clientKey).matches()) {
@@ -90,9 +107,9 @@ class UploadService {
 		return store(userId, courseId, purpose.code(), policy, file, clientKey, null, Placement.NONE);
 	}
 
-	/** 그 과목에서 이 용도로 올릴 수 있는 역할인지. */
+	/** 그 과목에서 이 용도로 올릴 수 있는 역할인지. 과목 밖 용도는 언제나 false다. */
 	boolean mayUpload(long userId, long courseId, UploadPurpose purpose) {
-		return this.memberships.roleOf(userId, courseId).filter(purpose::allows).isPresent();
+		return purpose.courseScoped() && this.memberships.roleOf(userId, courseId).filter(purpose::allows).isPresent();
 	}
 
 	/**

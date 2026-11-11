@@ -38,7 +38,7 @@ class AttachmentService implements Attachments {
 	@Override
 	@Transactional(propagation = Propagation.MANDATORY)
 	public long attach(AttachRequest request) {
-		Policy policy = policy(request.purpose());
+		Policy policy = policy(purpose(request.purpose(), request.courseId()));
 		List<Long> uploadIds = new ArrayList<>(new LinkedHashSet<>(request.uploadIds()));
 		if (uploadIds.isEmpty() || (policy.maxFileCount() != null && uploadIds.size() > policy.maxFileCount())) {
 			throw new AttachmentException("첨부 개수가 올바르지 않습니다.");
@@ -51,7 +51,7 @@ class AttachmentService implements Attachments {
 	@Override
 	@Transactional(propagation = Propagation.MANDATORY)
 	public Optional<Long> change(ChangeRequest request) {
-		Policy policy = policy(request.purpose());
+		Policy policy = policy(purpose(request.purpose(), request.courseId()));
 		List<Long> keep = new ArrayList<>(new LinkedHashSet<>(request.keepFileIds()));
 		List<Long> add = new ArrayList<>(new LinkedHashSet<>(request.addUploadIds()));
 		if (policy.maxFileCount() != null && keep.size() + add.size() > policy.maxFileCount()) {
@@ -90,9 +90,15 @@ class AttachmentService implements Attachments {
 		}
 	}
 
-	private Policy policy(String purpose) {
-		return UploadPurpose.of(purpose)
-			.flatMap((p) -> this.uploads.policy(p.code()))
+	// 과목 용도는 과목이 있어야 하고 과목 밖 용도는 과목이 없어야 한다. 과목 파일이 과목 밖 부모에 붙거나 그 반대가 되지 않는다.
+	private static UploadPurpose purpose(String code, Long courseId) {
+		return UploadPurpose.of(code)
+			.filter((p) -> p.courseScoped() == (courseId != null))
+			.orElseThrow(() -> new AttachmentException("첨부할 수 없는 용도입니다."));
+	}
+
+	private Policy policy(UploadPurpose purpose) {
+		return this.uploads.policy(purpose.code())
 			.orElseThrow(() -> new AttachmentException("첨부할 수 없는 용도입니다."));
 	}
 
@@ -105,7 +111,7 @@ class AttachmentService implements Attachments {
 		return key.getKey().longValue();
 	}
 
-	private void addUploads(long group, Policy policy, long ownerUserId, long courseId, List<Long> uploadIds,
+	private void addUploads(long group, Policy policy, long ownerUserId, Long courseId, List<Long> uploadIds,
 			int firstOrder) {
 		int order = firstOrder;
 		for (long uploadId : uploadIds) {

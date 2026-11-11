@@ -87,8 +87,8 @@ class QnaAnswerService {
 	AnswerView create(Actor actor, long courseId, long questionId, AnswerRequest body, String idempotencyKey) {
 		Viewer viewer = this.access.viewer(actor.userId(), courseId);
 		question(viewer, questionId);
-		if (body.version() != null) {
-			throw ApiException.invalid("새 답글에는 version을 줄 수 없습니다.");
+		if (body.version() != null || body.attachments() != null) {
+			throw ApiException.invalid("새 답글에는 version이나 attachments를 줄 수 없습니다. 첨부는 uploadIds로 보냅니다.");
 		}
 		NewAnswer answer = new NewAnswer(questionId, body(body), anonymous(viewer, body),
 				BoardFiles.validated(body.uploadIds()));
@@ -114,7 +114,10 @@ class QnaAnswerService {
 				});
 	}
 
-	/** 작성자의 수정. 본문의 version이 다르면 409 version_conflict. 첨부는 바꾸지 않는다. */
+	/**
+	 * 작성자의 수정. 본문의 version이 다르면 409 version_conflict. attachments가 있으면 첨부를 그 최종 집합으로 바꾸고 없으면 그대로
+	 * 둔다. 질문 행을 먼저 잠그므로 답글 삭제·작성과 차례를 지킨다.
+	 */
 	@Transactional
 	AnswerView update(Actor actor, long courseId, long questionId, long answerId, AnswerRequest body) {
 		Viewer viewer = this.access.viewer(actor.userId(), courseId);
@@ -127,15 +130,21 @@ class QnaAnswerService {
 			throw ApiException.invalid("version이 필요합니다.");
 		}
 		if (body.uploadIds() != null && !body.uploadIds().isEmpty()) {
-			throw ApiException.invalid("수정할 때는 첨부를 바꿀 수 없습니다.");
+			throw ApiException.invalid("수정할 때는 uploadIds 대신 attachments(keep, add)로 첨부를 보냅니다.");
 		}
 		String text = body(body);
+		BoardFiles.Change attachments = BoardFiles.validated(body.attachments(), BoardFiles.MAX_UPLOADS);
 		this.rateLimiter.check("qna-answer-update", actor.userId(), 60, Duration.ofMinutes(10));
+		Locked question = this.posts.lockVisible(viewer, BoardKind.QNA, questionId).orElseThrow(ApiException::notFound);
 		if (this.posts.updateAnswer(questionId, answerId, actor.userId(), body.version(), text,
 				anonymous(viewer, body)) == 0) {
 			this.posts.current(answerId).orElseThrow(ApiException::notFound);
-			throw new ApiException(HttpStatus.CONFLICT, "version_conflict",
-					"다른 곳에서 먼저 수정했습니다. 최신 내용을 다시 불러온 뒤 수정해 주세요.");
+			throw BoardPostService.versionConflict();
+		}
+		if (attachments != null) {
+			Long group = this.files.change(BoardFiles.PURPOSE, actor.userId(), courseId,
+					this.posts.attachmentGroup(answerId), attachments, ANSWER_PREFIX + question.title());
+			this.posts.setAttachmentGroup(answerId, group);
 		}
 		this.audit.success(actor.userId(), actor.sessionId(), "qna_answer.update", "post", answerId, courseId);
 		return view(viewer, this.posts.answer(questionId, answerId, actor.userId()).orElseThrow());
@@ -208,9 +217,11 @@ class QnaAnswerService {
 	/**
 	 * @param anonymous 학생만. 다른 학생에게 작성자 이름을 숨긴다. 담당자에게는 보인다
 	 * @param uploadIds 새 답글에만. 본인이 용도 post_attachment로 올린 업로드
+	 * @param attachments 수정할 때만. 첨부의 최종 집합. 없으면 첨부를 바꾸지 않는다
 	 * @param version 수정할 때만
 	 */
-	record AnswerRequest(String body, Boolean anonymous, List<Long> uploadIds, Integer version) {
+	record AnswerRequest(String body, Boolean anonymous, List<Long> uploadIds, BoardFiles.AttachmentSet attachments,
+			Integer version) {
 	}
 
 	/** 멱등 지문을 만드는 검사된 입력. */

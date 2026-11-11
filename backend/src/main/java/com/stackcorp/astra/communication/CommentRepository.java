@@ -1,5 +1,7 @@
 package com.stackcorp.astra.communication;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -24,7 +26,7 @@ class CommentRepository {
 	/** 먼저 쓴 댓글부터 cursor보다 큰 ID를 limit건. */
 	List<CommentRow> list(long postId, Long cursor, int limit) {
 		return this.jdbc.sql("""
-				SELECT c.comment_id, c.parent_comment_id, c.author_id, c.body_text, c.created_at,
+				SELECT c.comment_id, c.parent_comment_id, c.author_id, c.body_text, c.version, c.created_at, c.updated_at,
 				       c.deleted_at IS NOT NULL AS deleted
 				  FROM comments c
 				 WHERE c.post_id = :post
@@ -34,24 +36,38 @@ class CommentRepository {
 			.param("post", postId)
 			.param("cursor", cursor)
 			.param("limit", limit)
-			.query((rs, n) -> new CommentRow(rs.getLong("comment_id"), rs.getObject("parent_comment_id", Long.class),
-					rs.getLong("author_id"), rs.getString("body_text"), rs.getObject("created_at", LocalDateTime.class),
-					rs.getBoolean("deleted")))
+			.query(CommentRepository::row)
 			.list();
 	}
 
 	/** 이 글의 살아 있는 댓글. */
 	Optional<CommentRow> find(long postId, long commentId) {
 		return this.jdbc.sql("""
-				SELECT comment_id, parent_comment_id, author_id, body_text, created_at, FALSE AS deleted
+				SELECT comment_id, parent_comment_id, author_id, body_text, version, created_at, updated_at, FALSE AS deleted
 				  FROM comments WHERE comment_id = :comment AND post_id = :post AND deleted_at IS NULL
 				""")
 			.param("comment", commentId)
 			.param("post", postId)
-			.query((rs, n) -> new CommentRow(rs.getLong("comment_id"), rs.getObject("parent_comment_id", Long.class),
-					rs.getLong("author_id"), rs.getString("body_text"), rs.getObject("created_at", LocalDateTime.class),
-					false))
+			.query(CommentRepository::row)
 			.optional();
+	}
+
+	/**
+	 * 작성자의 본문 수정. 글 행을 잠근 뒤 부른다. 버전이 맞을 때만 바꾸고 버전을 올린다.
+	 * @return 바뀐 행 수. 0이면 없거나, 지웠거나, 작성자가 아니거나, 버전이 다르다
+	 */
+	int update(long postId, long commentId, long authorId, int version, String body) {
+		return this.jdbc.sql("""
+				UPDATE comments SET body_text = :body, version = version + 1
+				 WHERE comment_id = :comment AND post_id = :post AND author_id = :author AND deleted_at IS NULL
+				   AND version = :version
+				""")
+			.param("body", body)
+			.param("comment", commentId)
+			.param("post", postId)
+			.param("author", authorId)
+			.param("version", version)
+			.update();
 	}
 
 	/** 글 행을 잠근 뒤 부른다. */
@@ -93,11 +109,18 @@ class CommentRepository {
 				""").param("delta", delta).param("post", postId).update();
 	}
 
+	private static CommentRow row(ResultSet rs, int n) throws SQLException {
+		return new CommentRow(rs.getLong("comment_id"), rs.getObject("parent_comment_id", Long.class),
+				rs.getLong("author_id"), rs.getString("body_text"), rs.getInt("version"),
+				rs.getObject("created_at", LocalDateTime.class), rs.getObject("updated_at", LocalDateTime.class),
+				rs.getBoolean("deleted"));
+	}
+
 	/**
 	 * @param deleted 지운 댓글이면 true. 본문과 작성자는 응답에 넣지 않는다
 	 */
-	record CommentRow(long commentId, Long parentCommentId, long authorId, String body, LocalDateTime createdAt,
-			boolean deleted) {
+	record CommentRow(long commentId, Long parentCommentId, long authorId, String body, int version,
+			LocalDateTime createdAt, LocalDateTime updatedAt, boolean deleted) {
 	}
 
 }

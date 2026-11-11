@@ -23,10 +23,14 @@ class HomeController {
 		this.home = home;
 	}
 
-	/** 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 새로 공개된 성적 항목 5개(점수 없음), 안 읽은 쪽지 수, 안 읽은 알림 수, 서버 시각. */
+	/**
+	 * 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 알림마당 최근 공지 5개와 읽지 않은 고정 공지(진입 공지), 할 일 앞 5개와 전체 수,
+	 * 새로 공개된 성적 항목 5개(점수 없음), 안 읽은 쪽지 수, 안 읽은 알림 수, 서버 시각. 알림마당 공지의 대상은 session의 기관 역할로 정한다.
+	 */
 	@GetMapping("/api/me/home")
-	ResponseEntity<HomeView> home(@AuthenticationPrincipal(expression = "userId()") Long userId) {
-		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(this.home.home(userId));
+	ResponseEntity<HomeView> home(@AuthenticationPrincipal(expression = "userId()") Long userId,
+			@AuthenticationPrincipal(expression = "role().name()") String role) {
+		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(this.home.home(userId, role));
 	}
 
 	/** 할 일 전체. 마감 임박순이고 nextCursor로 다음 쪽을 받는다. 본인이 끝낸 활동은 없다. 쪽 사이에 마감이 지나도 남은 항목이 겹치거나 빠지지 않는다. */

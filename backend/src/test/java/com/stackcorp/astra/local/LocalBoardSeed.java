@@ -7,7 +7,8 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 
 /**
  * 로컬 실행용 질의응답, 열린게시판, 알림마당 자료실과 1:1 문의. 데이터베이스 과목(bi)에 학생 박민준의 익명 질문과 교수 박은주의 답글, 비공개 질문,
- * 열린게시판 글과 댓글을 넣는다. 알림마당에는 운영자가 올린 자료와 박민준의 1:1 문의를 넣는다. 이미 있으면 넣지 않는다.
+ * 열린게시판 글과 댓글을 넣는다. 알림마당에는 운영자(ADMIN-01, community_operators 행)가 올린 자료와 박민준의 1:1 문의를 넣는다. 이미 있으면
+ * 넣지 않는다.
  */
 final class LocalBoardSeed {
 
@@ -68,6 +69,10 @@ final class LocalBoardSeed {
 			.orElseGet(() -> insert(jdbc,
 					"INSERT INTO users (external_ref, user_name, user_role) VALUES (:ref, '운영자', 'STAFF')",
 					Map.of("ref", STAFF_REF)));
+		// 운영 절차로 넣는 알림마당 운영자 행을 로컬에서는 시드가 넣는다(ADR-0035).
+		jdbc.sql("INSERT IGNORE INTO community_operators (user_id, grant_reference) VALUES (:u, 'local-seed')")
+			.param("u", staff)
+			.update();
 		long material = insert(jdbc, "INSERT INTO boards (board_type, board_name) VALUES ('MATERIAL', '자료실')", Map.of());
 		for (String[] row : new String[][] { { "ALL", "e-Class 이용 안내", "로그인, 강의실, 과제 제출 방법을 정리했습니다." },
 				{ "STUDENT", "학생용 과제 제출 안내", "과제는 PDF로 올리면 미리보기가 됩니다." },

@@ -12,8 +12,8 @@ import java.util.Optional;
 public interface Attachments {
 
 	/**
-	 * 업로드를 첨부로 확정하고 첨부 그룹을 만든다. 업로드는 요청한 사용자가 같은 과목·같은 용도로 올렸고 검사를 통과한 것만 받는다.
-	 * 한 업로드는 한 번만 첨부된다.
+	 * 업로드를 첨부로 확정하고 첨부 그룹을 만든다. 업로드는 요청한 사용자가 같은 과목(과목 밖 용도면 과목 없이)·같은 용도로 올렸고 검사를
+	 * 통과한 것만 받는다. 한 업로드는 한 번만 첨부된다. 과목 용도에 과목이 없거나 과목 밖 용도에 과목이 있으면 거부한다.
 	 *
 	 * @return 첨부 그룹 ID
 	 * @throws AttachmentException 쓸 수 없는 업로드가 하나라도 있을 때. 부모 transaction을 되돌려야 한다
@@ -39,9 +39,10 @@ public interface Attachments {
 	void release(long attachmentGroupId);
 
 	/**
+	 * @param courseId 과목 용도면 그 과목. 과목 밖 용도(알림마당, 쪽지)면 null
 	 * @param purpose 업로드 용도. upload_policies.policy_code
 	 */
-	record AttachRequest(long ownerUserId, long courseId, String purpose, List<Long> uploadIds, String title) {
+	record AttachRequest(long ownerUserId, Long courseId, String purpose, List<Long> uploadIds, String title) {
 		public AttachRequest {
 			uploadIds = List.copyOf(uploadIds);
 		}
@@ -51,11 +52,12 @@ public interface Attachments {
 	}
 
 	/**
+	 * @param courseId 과목 용도면 그 과목. 과목 밖 용도면 null
 	 * @param attachmentGroupId 부모가 지금 가진 첨부 그룹. 없으면 null
 	 * @param keepFileIds 남길 파일. 지금 그룹에 첨부된 파일 ID
 	 * @param addUploadIds 새로 첨부할 업로드 ID
 	 */
-	record ChangeRequest(long ownerUserId, long courseId, String purpose, Long attachmentGroupId,
+	record ChangeRequest(long ownerUserId, Long courseId, String purpose, Long attachmentGroupId,
 			List<Long> keepFileIds, List<Long> addUploadIds, String title) {
 		public ChangeRequest {
 			keepFileIds = List.copyOf(keepFileIds);
