@@ -1,0 +1,582 @@
+package com.stackcorp.astra.learning;
+
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+import com.stackcorp.astra.catalog.api.CourseMemberships;
+import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
+import com.stackcorp.astra.files.api.DeliveryCookies;
+import com.stackcorp.astra.files.api.DeliveryCookies.DeliveryCookie;
+import com.stackcorp.astra.learning.CreditRule.Credit;
+import com.stackcorp.astra.learning.CreditRule.Outcome;
+import com.stackcorp.astra.learning.CreditRule.Window;
+import com.stackcorp.astra.learning.LearningAccess.Activity;
+import com.stackcorp.astra.learning.LectureVideoController.Playback;
+import com.stackcorp.astra.shared.ApiException;
+
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/**
+ * 온라인 강의 학습 session, 하트비트 적립, 출석 인정(ADR-0014). 적립은 서버 시각과 원장으로만 정한다(SC-06, SEC-11, CHG-05).
+ * <ul>
+ * <li>사용자당 활성 session은 하나다(learning_sessions.active_user_key 유일 제약). 새 session은 앞선 session을 superseded로 닫는다.</li>
+ * <li>하트비트와 종료는 session 행을 잠근 뒤 시각을 읽고 권한을 다시 판정한다. 권한이 사라지면 session을 닫고 적립하지 않는다.
+ * 이미 적립한 시간은 그대로 둔다.</li>
+ * <li>출석인정 충족은 콘텐츠마다 한 번, 조건부 UPDATE로 기록하고 이후 어떤 사건으로도 되돌리지 않는다.</li>
+ * </ul>
+ * 404가 되거나 session이 닫히는 응답도 session 상태 변경은 commit한 뒤 오류로 알린다.
+ */
+@Service
+class LearningSessionService {
+
+	private static final int START_ATTEMPTS = 3;
+
+	private final JdbcClient jdbc;
+
+	private final TransactionTemplate tx;
+
+	private final LearningClock clock;
+
+	private final CourseMemberships memberships;
+
+	private final DeliveryCookies cookies;
+
+	private final LearningSessionProperties properties;
+
+	LearningSessionService(JdbcClient jdbc, TransactionTemplate tx, LearningClock clock,
+			CourseMemberships memberships, DeliveryCookies cookies, LearningSessionProperties properties) {
+		this.jdbc = jdbc;
+		this.tx = tx;
+		this.clock = clock;
+		this.memberships = memberships;
+		this.cookies = cookies;
+		this.properties = properties;
+	}
+
+	/** 콘텐츠의 학습 session을 시작한다(EP-0049, EP-0053, EP-0054). 볼 수 없는 콘텐츠면 404다. */
+	Granted<Started> start(long userId, long courseId, long itemId) {
+		for (int attempt = 1;; attempt++) {
+			try {
+				return this.tx.execute((status) -> doStart(userId, courseId, itemId));
+			}
+			catch (DuplicateKeyException | PessimisticLockingFailureException ex) {
+				// 같은 사용자의 시작이 동시에 들어오면 활성 session 유일 제약에서 한쪽이 진다. 다시 하면 이긴 쪽을 대체한다.
+				if (attempt == START_ATTEMPTS) {
+					throw ex;
+				}
+			}
+		}
+	}
+
+	/** 하트비트(EP-0050). seq는 session 안에서 증가하는 순번이다. 위치는 이어보기 힌트로만 저장한다. */
+	Granted<HeartbeatResult> heartbeat(long userId, long courseId, long sessionId, long seq, Integer positionSec,
+			Boolean playing) {
+		return this.tx.execute((status) -> doHeartbeat(userId, courseId, sessionId, seq, positionSec, playing))
+			.orThrow();
+	}
+
+	/** 명시적 종료(EP-0057, EP-0058). 마지막 기준 시각 뒤 구간을 같은 규칙으로 적립한다. 이미 닫힌 session이면 그 결과를 그대로 돌려준다. */
+	Ended end(long userId, long courseId, long sessionId, Integer positionSec, String reason) {
+		return this.tx.execute((status) -> doEnd(userId, courseId, sessionId, positionSec, reason)).orThrow();
+	}
+
+	/**
+	 * lease가 지난 활성 session을 닫는다. 후보를 잠그지 않고 읽은 뒤 session마다 조건부 UPDATE(state = 'active')를 따로 commit한다.
+	 * worker가 둘이어도 session마다 한쪽만 닫고, 한 번에 행 하나만 잠가 서로 기다리다 교착하지 않는다.
+	 * 종료 시각은 마지막 기준 시각이다. 그 뒤 구간은 적립하지 않는다.
+	 *
+	 * @return 이 호출이 닫은 session 수
+	 */
+	int expireLeases() {
+		LocalDateTime now = this.clock.now();
+		List<Long> candidates = this.jdbc.sql("""
+				SELECT learning_session_id FROM learning_sessions
+				 WHERE active_user_key IS NOT NULL
+				   AND TIMESTAMPADD(SECOND, lease_sec, COALESCE(last_heartbeat_at, started_at)) < :now
+				""").param("now", now).query(Long.class).list();
+		int closed = 0;
+		for (long sessionId : candidates) {
+			closed += this.jdbc.sql("""
+					UPDATE learning_sessions
+					   SET state = 'lease_expired', end_reason = 'lease_expired', ended_at = COALESCE(last_heartbeat_at, started_at)
+					 WHERE learning_session_id = :session AND state = 'active'
+					   AND TIMESTAMPADD(SECOND, lease_sec, COALESCE(last_heartbeat_at, started_at)) < :now
+					""").param("session", sessionId).param("now", now).update();
+		}
+		return closed;
+	}
+
+	private Granted<Started> doStart(long userId, long courseId, long itemId) {
+		Item item = item(itemId, courseId).orElseThrow(ApiException::notFound);
+		String assetKey = LectureVideoController.assetKey(item.contentPath()).orElseThrow(ApiException::notFound);
+		LocalDateTime now = this.clock.now();
+		Access access = access(userId, item, now);
+		if (!access.visible()) {
+			throw ApiException.notFound();
+		}
+		List<DeliveryCookie> issued = this.cookies.forVideo(assetKey);
+		if (issued.isEmpty()) {
+			throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "delivery_unavailable", "영상 전달이 설정되지 않았습니다.");
+		}
+		// 활성 session 유일 제약의 index 행을 잠그고 대체한다. 그 session의 적립은 마지막 기준 시각까지다.
+		this.jdbc.sql("""
+				UPDATE learning_sessions SET state = 'superseded', end_reason = 'superseded', ended_at = :now
+				 WHERE active_user_key = :user AND state = 'active'
+				""").param("now", now).param("user", userId).update();
+		int interval = (int) this.properties.heartbeatInterval().toSeconds();
+		int lease = CreditRule.leaseSec(interval);
+		GeneratedKeyHolder key = new GeneratedKeyHolder();
+		this.jdbc.sql("""
+				INSERT INTO learning_sessions (user_id, course_id, activity_id, online_lecture_item_id, state, started_at,
+				                               heartbeat_interval_sec, lease_sec)
+				VALUES (:user, :course, :activity, :item, 'active', :now, :interval, :lease)
+				""")
+			.param("user", userId)
+			.param("course", courseId)
+			.param("activity", item.activityId())
+			.param("item", itemId)
+			.param("now", now)
+			.param("interval", interval)
+			.param("lease", lease)
+			.update(key, "learning_session_id");
+		long sessionId = key.getKey().longValue();
+		if (access.learner()) {
+			recordView(userId, courseId, item.activityId(), now);
+		}
+		ItemProgress progress = progress(userId, item);
+		Started started = new Started(sessionId, itemId, interval, lease, access.learner(), item.closeAt(),
+				progress.resumePositionSec(), progress);
+		return new Granted<>(started, playback(item, issued), issued);
+	}
+
+	private Step<Granted<HeartbeatResult>> doHeartbeat(long userId, long courseId, long sessionId, long seq,
+			Integer positionSec, Boolean playing) {
+		Session session = lock(userId, courseId, sessionId);
+		LocalDateTime now = this.clock.now();
+		Optional<ApiException> closed = closeIfInvalid(session, now);
+		if (closed.isPresent()) {
+			return Step.failed(closed.get());
+		}
+		Item item = item(session.itemId(), courseId).orElse(null);
+		Access access = item == null ? Access.NONE : access(userId, item, now);
+		if (!access.visible()) {
+			close(session, now, "forced");
+			return Step.failed(ApiException.notFound());
+		}
+		checkPosition(positionSec, item);
+		List<DeliveryCookie> issued = LectureVideoController.assetKey(item.contentPath())
+			.map(this.cookies::forVideo)
+			.orElse(List.of());
+		long lastSeq = this.jdbc.sql("""
+				SELECT COALESCE(MAX(seq_no), 0) FROM learning_heartbeats WHERE learning_session_id = :session
+				""").param("session", sessionId).query(Long.class).single();
+		Outcome outcome;
+		int credited;
+		LocalDateTime baseline;
+		if (seq <= lastSeq) {
+			// 재전송, 순서가 바뀐 요청. 원장과 기준 시각을 건드리지 않는다.
+			outcome = Outcome.DUPLICATE;
+			credited = 0;
+			baseline = session.baseline();
+		}
+		else {
+			Credit credit = credit(session, item, access, now, false);
+			this.jdbc.sql("""
+					INSERT INTO learning_heartbeats (learning_session_id, seq_no, received_at, position_sec, playing_yn, credited_sec)
+					VALUES (:session, :seq, :now, :position, :playing, :credited)
+					""")
+				.param("session", sessionId)
+				.param("seq", seq)
+				.param("now", now)
+				.param("position", positionSec)
+				.param("playing", playing)
+				.param("credited", credit.seconds())
+				.update();
+			apply(session, item, credit, positionSec, now);
+			outcome = credit.outcome();
+			credited = credit.seconds();
+			baseline = credit.baseline();
+		}
+		LocalDateTime leaseEnd = baseline.plusSeconds(session.leaseSec());
+		HeartbeatResult result = new HeartbeatResult(sessionId, outcome.code(), credited, creditOpen(access, item, now),
+				leaseEnd, (int) Math.max(0, Duration.between(now, leaseEnd).toSeconds()), progress(userId, item));
+		return Step.done(new Granted<>(result, issued.isEmpty() ? null : playback(item, issued), issued));
+	}
+
+	private Step<Ended> doEnd(long userId, long courseId, long sessionId, Integer positionSec, String reason) {
+		Session session = lock(userId, courseId, sessionId);
+		Item item = item(session.itemId(), courseId).orElse(null);
+		if (!session.active()) {
+			return Step.done(ended(session, session.state(), session.endReason(), 0, item));
+		}
+		LocalDateTime now = this.clock.now();
+		if (expired(session, now)) {
+			expire(session);
+			return Step.done(ended(session, "lease_expired", "lease_expired", 0, item));
+		}
+		Access access = item == null ? Access.NONE : access(userId, item, now);
+		if (!access.visible()) {
+			close(session, now, "forced");
+			return Step.failed(ApiException.notFound());
+		}
+		checkPosition(positionSec, item);
+		Credit credit = credit(session, item, access, now, true);
+		apply(session, item, credit, positionSec, now);
+		close(session, now, reason);
+		return Step.done(ended(session, "ended", reason, credit.seconds(), item));
+	}
+
+	private Credit credit(Session session, Item item, Access access, LocalDateTime now, boolean last) {
+		Window window = access.learner() ? new Window(item.openAt(), item.closeAt()) : null;
+		LocalDateTime frontier = window == null ? null : frontier(session.userId());
+		return CreditRule.apply(session.baseline(), frontier, now, window, session.intervalSec(), last);
+	}
+
+	/** 원장, 기준 시각, 진도를 한 transaction에서 바꾼다. 같은 session 행 잠금 아래에서만 부른다. */
+	private void apply(Session session, Item item, Credit credit, Integer positionSec, LocalDateTime now) {
+		if (credit.seconds() > 0) {
+			this.jdbc.sql("""
+					INSERT INTO learning_credit_ledger (learning_session_id, from_at, to_at, credited_sec, in_period_yn, rule_version)
+					VALUES (:session, :from, :to, :seconds, 1, :rule)
+					""")
+				.param("session", session.id())
+				.param("from", credit.from())
+				.param("to", credit.to())
+				.param("seconds", credit.seconds())
+				.param("rule", CreditRule.VERSION)
+				.update();
+		}
+		if (credit.outcome() != Outcome.TOO_EARLY) {
+			this.jdbc.sql("UPDATE learning_sessions SET last_heartbeat_at = :baseline WHERE learning_session_id = :session")
+				.param("baseline", credit.baseline())
+				.param("session", session.id())
+				.update();
+		}
+		if (credit.seconds() > 0 || positionSec != null) {
+			recordProgress(session.userId(), item, credit.seconds(), positionSec, now);
+		}
+		if (credit.seconds() > 0) {
+			decide(session.userId(), item, now);
+		}
+	}
+
+	private void recordProgress(long userId, Item item, int seconds, Integer positionSec, LocalDateTime now) {
+		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
+		this.jdbc.sql("""
+				INSERT INTO online_lecture_item_progress (user_id, online_lecture_item_id, credited_in_sec, max_position_sec,
+				                                          last_position_sec, last_position_at, decided_status, rule_version)
+				VALUES (:user, :item, :seconds, :maxPosition, :position, :positionAt, :status, :rule) AS n
+				ON DUPLICATE KEY UPDATE
+				  credited_in_sec = online_lecture_item_progress.credited_in_sec + n.credited_in_sec,
+				  max_position_sec = GREATEST(online_lecture_item_progress.max_position_sec, n.max_position_sec),
+				  last_position_sec = COALESCE(n.last_position_sec, online_lecture_item_progress.last_position_sec),
+				  last_position_at = COALESCE(n.last_position_at, online_lecture_item_progress.last_position_at),
+				  decided_status = CASE WHEN online_lecture_item_progress.met_at IS NOT NULL THEN 'met'
+				                        ELSE n.decided_status END,
+				  rule_version = n.rule_version
+				""")
+			.param("user", userId)
+			.param("item", item.itemId())
+			.param("seconds", seconds)
+			.param("maxPosition", positionSec == null ? 0 : positionSec)
+			.param("position", positionSec)
+			.param("positionAt", positionSec == null ? null : now)
+			.param("status", required == null ? "unknown" : "under_required")
+			.param("rule", CreditRule.VERSION)
+			.update();
+	}
+
+	/**
+	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록한다. 활동의 모든 콘텐츠가 충족되면 활동 완료와 출석부(연결된 차시가 있을 때)에
+	 * 한 번 반영한다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
+	 */
+	private void decide(long userId, Item item, LocalDateTime now) {
+		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
+		if (required == null) {
+			return;
+		}
+		int met = this.jdbc.sql("""
+				UPDATE online_lecture_item_progress SET met_at = :now, decided_status = 'met', rule_version = :rule
+				 WHERE user_id = :user AND online_lecture_item_id = :item AND met_at IS NULL AND credited_in_sec >= :required
+				""")
+			.param("now", now)
+			.param("rule", CreditRule.VERSION)
+			.param("user", userId)
+			.param("item", item.itemId())
+			.param("required", required)
+			.update();
+		if (met == 0) {
+			return;
+		}
+		boolean complete = this.jdbc.sql("""
+				SELECT NOT EXISTS (
+				  SELECT 1 FROM online_lecture_items i
+				    LEFT JOIN online_lecture_item_progress p
+				           ON p.online_lecture_item_id = i.online_lecture_item_id AND p.user_id = :user
+				   WHERE i.activity_id = :activity AND p.met_at IS NULL)
+				""").param("user", userId).param("activity", item.activityId()).query(Boolean.class).single();
+		if (!complete) {
+			return;
+		}
+		this.jdbc.sql("""
+				INSERT INTO activity_progress (user_id, activity_id, completed_at) VALUES (:user, :activity, :now) AS n
+				ON DUPLICATE KEY UPDATE completed_at = COALESCE(activity_progress.completed_at, n.completed_at)
+				""").param("user", userId).param("activity", item.activityId()).param("now", now).update();
+		if (item.attendanceSessionId() == null) {
+			return;
+		}
+		this.jdbc.sql("""
+				INSERT INTO attendance_records (attendance_session_id, user_id, status, source, progress_percent, decided_at,
+				                                rule_version)
+				VALUES (:attendance, :user, '출석', 'online', 100.00, :now, :rule)
+				ON DUPLICATE KEY UPDATE attendance_record_id = attendance_record_id
+				""")
+			.param("attendance", item.attendanceSessionId())
+			.param("user", userId)
+			.param("now", now)
+			.param("rule", CreditRule.VERSION)
+			.update();
+		this.jdbc.sql("""
+				UPDATE attendance_records
+				   SET status = '출석', source = 'online', progress_percent = 100.00, decided_at = :now, rule_version = :rule
+				 WHERE attendance_session_id = :attendance AND user_id = :user AND status = '미처리'
+				""")
+			.param("attendance", item.attendanceSessionId())
+			.param("user", userId)
+			.param("now", now)
+			.param("rule", CreditRule.VERSION)
+			.update();
+	}
+
+	/** 학습 시작은 명시적 POST라 열람 기록과 이어보기 포인터를 여기서 남긴다(SC-04). */
+	private void recordView(long userId, long courseId, long activityId, LocalDateTime now) {
+		this.jdbc.sql("""
+				INSERT INTO activity_progress (user_id, activity_id, first_viewed_at, last_viewed_at, view_count)
+				VALUES (:user, :activity, :now, :now, 1) AS n
+				ON DUPLICATE KEY UPDATE first_viewed_at = COALESCE(activity_progress.first_viewed_at, n.first_viewed_at),
+				                        last_viewed_at = n.last_viewed_at, view_count = activity_progress.view_count + 1
+				""").param("user", userId).param("activity", activityId).param("now", now).update();
+		this.jdbc.sql("""
+				INSERT INTO course_continue_pointers (user_id, course_id, activity_id, menu_code, recorded_at)
+				VALUES (:user, :course, :activity, 'lecture_weeks', :now) AS n
+				ON DUPLICATE KEY UPDATE activity_id = n.activity_id, menu_code = n.menu_code, recorded_at = n.recorded_at
+				""").param("user", userId).param("course", courseId).param("activity", activityId).param("now", now).update();
+	}
+
+	/** 이 사용자의 모든 session이 적립한 구간의 끝. 새 구간은 이 뒤에서만 시작한다(SEC-05). */
+	private LocalDateTime frontier(long userId) {
+		return this.jdbc.sql("""
+				SELECT MAX(l.to_at) FROM learning_credit_ledger l
+				  JOIN learning_sessions s ON s.learning_session_id = l.learning_session_id
+				 WHERE s.user_id = :user
+				""").param("user", userId).query(LocalDateTime.class).optional().orElse(null);
+	}
+
+	/** 자기 session이 아니거나 경로의 과목과 다르면 잠그지 않고 404다. */
+	private Session lock(long userId, long courseId, long sessionId) {
+		return this.jdbc.sql("""
+				SELECT learning_session_id, user_id, online_lecture_item_id, state, end_reason, started_at, last_heartbeat_at,
+				       heartbeat_interval_sec, lease_sec
+				  FROM learning_sessions
+				 WHERE learning_session_id = :session AND user_id = :user AND course_id = :course
+				   FOR UPDATE
+				""")
+			.param("session", sessionId)
+			.param("user", userId)
+			.param("course", courseId)
+			.query((rs, n) -> new Session(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getString(4), rs.getString(5),
+					rs.getObject(6, LocalDateTime.class), rs.getObject(7, LocalDateTime.class), rs.getInt(8), rs.getInt(9)))
+			.optional()
+			.orElseThrow(ApiException::notFound);
+	}
+
+	/** 닫힌 session이면 그 사유의 오류. lease가 지났으면 지금 닫고 같은 오류를 낸다. */
+	private Optional<ApiException> closeIfInvalid(Session session, LocalDateTime now) {
+		if (session.active() && !expired(session, now)) {
+			return Optional.empty();
+		}
+		if (session.active()) {
+			expire(session);
+		}
+		if ("superseded".equals(session.state())) {
+			return Optional.of(new ApiException(HttpStatus.CONFLICT, "session_superseded",
+					"다른 창이나 기기에서 학습을 시작해 이 학습이 끝났습니다."));
+		}
+		return Optional.of(new ApiException(HttpStatus.CONFLICT, "session_closed", "학습이 끝났습니다. 다시 시작해 주세요."));
+	}
+
+	private static boolean expired(Session session, LocalDateTime now) {
+		return session.baseline().plusSeconds(session.leaseSec()).isBefore(now);
+	}
+
+	private void expire(Session session) {
+		this.jdbc.sql("""
+				UPDATE learning_sessions
+				   SET state = 'lease_expired', end_reason = 'lease_expired', ended_at = COALESCE(last_heartbeat_at, started_at)
+				 WHERE learning_session_id = :session AND state = 'active'
+				""").param("session", session.id()).update();
+	}
+
+	private void close(Session session, LocalDateTime now, String reason) {
+		this.jdbc.sql("""
+				UPDATE learning_sessions SET state = 'ended', end_reason = :reason, ended_at = :now
+				 WHERE learning_session_id = :session AND state = 'active'
+				""").param("reason", reason).param("now", now).param("session", session.id()).update();
+	}
+
+	private Ended ended(Session session, String state, String reason, int credited, Item item) {
+		return new Ended(session.id(), state, reason, credited, item == null ? null : progress(session.userId(), item));
+	}
+
+	/** 학생은 공개됐고 시작한 활동만 보고 적립 대상이다. 담당자는 언제나 보지만 적립하지 않는다. 시각은 적립과 같은 시계다. */
+	private Access access(long userId, Item item, LocalDateTime now) {
+		Optional<CourseRole> role = this.memberships.roleOf(userId, item.courseId());
+		if (role.isEmpty()) {
+			return Access.NONE;
+		}
+		if (role.get() == CourseRole.INSTRUCTOR) {
+			return new Access(true, false);
+		}
+		boolean open = LearningAccess.open(new Activity(item.activityId(), item.courseId(), item.published(), item.openAt()),
+				now);
+		return open ? new Access(true, true) : Access.NONE;
+	}
+
+	private static boolean creditOpen(Access access, Item item, LocalDateTime now) {
+		return access.learner() && (item.closeAt() == null || now.isBefore(item.closeAt()));
+	}
+
+	private static void checkPosition(Integer positionSec, Item item) {
+		int max = item.durationSec() != null ? item.durationSec() : 86_400;
+		if (positionSec != null && (positionSec < 0 || positionSec > max)) {
+			throw ApiException.invalid("positionSec는 0 이상 콘텐츠 길이 이하여야 합니다.");
+		}
+	}
+
+	private ItemProgress progress(long userId, Item item) {
+		return this.jdbc.sql("""
+				SELECT credited_in_sec, met_at, last_position_sec FROM online_lecture_item_progress
+				 WHERE user_id = :user AND online_lecture_item_id = :item
+				""")
+			.param("user", userId)
+			.param("item", item.itemId())
+			.query((rs, n) -> ItemProgress.of(item.itemId(), item.requiredSec(), item.durationSec(), rs.getInt(1),
+					rs.getObject(2, LocalDateTime.class), rs.getObject(3, Integer.class)))
+			.optional()
+			.orElseGet(() -> ItemProgress.of(item.itemId(), item.requiredSec(), item.durationSec(), 0, null, null));
+	}
+
+	private Playback playback(Item item, List<DeliveryCookie> issued) {
+		return issued.isEmpty() ? null : new Playback("/" + item.contentPath(), this.cookies.videoTtl().toSeconds());
+	}
+
+	private Optional<Item> item(long itemId, long courseId) {
+		return this.jdbc.sql("""
+				SELECT i.online_lecture_item_id, i.activity_id, a.course_id, a.published_yn, a.open_at, a.close_at,
+				       a.attendance_session_id, i.content_path, i.duration_sec, i.required_sec
+				  FROM online_lecture_items i JOIN learning_activities a ON a.activity_id = i.activity_id
+				 WHERE i.online_lecture_item_id = :item AND a.course_id = :course
+				""")
+			.param("item", itemId)
+			.param("course", courseId)
+			.query((rs, n) -> new Item(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getBoolean(4),
+					rs.getObject(5, LocalDateTime.class), rs.getObject(6, LocalDateTime.class),
+					rs.getObject(7, Long.class), rs.getString(8), rs.getObject(9, Integer.class),
+					rs.getObject(10, Integer.class)))
+			.optional();
+	}
+
+	private record Item(long itemId, long activityId, long courseId, boolean published, LocalDateTime openAt,
+			LocalDateTime closeAt, Long attendanceSessionId, String contentPath, Integer durationSec,
+			Integer requiredSec) {
+	}
+
+	private record Session(long id, long userId, long itemId, String state, String endReason, LocalDateTime startedAt,
+			LocalDateTime lastHeartbeatAt, int intervalSec, int leaseSec) {
+
+		boolean active() {
+			return "active".equals(this.state);
+		}
+
+		/** 적립 기준 시각. 첫 하트비트 전에는 시작 시각이다. */
+		LocalDateTime baseline() {
+			return this.lastHeartbeatAt != null ? this.lastHeartbeatAt : this.startedAt;
+		}
+
+	}
+
+	/**
+	 * @param visible 지금 이 콘텐츠를 볼 수 있다
+	 * @param learner 적립 대상(학생)이다
+	 */
+	private record Access(boolean visible, boolean learner) {
+
+		static final Access NONE = new Access(false, false);
+
+	}
+
+	/** commit한 뒤 알릴 결과나 오류. */
+	private record Step<T>(T value, ApiException failure) {
+
+		static <T> Step<T> done(T value) {
+			return new Step<>(value, null);
+		}
+
+		static <T> Step<T> failed(ApiException failure) {
+			return new Step<>(null, failure);
+		}
+
+		T orThrow() {
+			if (this.failure != null) {
+				throw this.failure;
+			}
+			return this.value;
+		}
+
+	}
+
+	/**
+	 * 응답 본문과 함께 내보낼 영상 cookie. 권한이 있는 동안에만 채운다.
+	 *
+	 * @param playback 이번에 cookie를 발급했으면 manifest 경로와 유효 시간, 아니면 null
+	 */
+	record Granted<T>(T body, Playback playback, List<DeliveryCookie> cookies) {
+	}
+
+	/**
+	 * @param heartbeatIntervalSec player가 하트비트를 보낼 주기. 서버가 정한다
+	 * @param leaseSec 마지막 적립 기준 시각 뒤 이 시간 안에 하트비트가 없으면 session이 닫힌다
+	 * @param creditable 이 session이 출석 인정 시간을 적립하는지. 담당자 미리보기는 false
+	 * @param creditUntil 적립이 끝나는 시각(활동의 close_at). 없으면 null
+	 * @param resumePositionSec 이어보기 위치 힌트
+	 */
+	record Started(long sessionId, long itemId, int heartbeatIntervalSec, int leaseSec, boolean creditable,
+			LocalDateTime creditUntil, Integer resumePositionSec, ItemProgress progress) {
+	}
+
+	/**
+	 * @param outcome {@link Outcome}의 소문자 이름
+	 * @param creditedSec 이 하트비트가 적립한 초
+	 * @param creditOpen 다음 하트비트가 적립할 수 있는지. close_at이 지났거나 학습자가 아니면 false
+	 * @param leaseExpiresAt 이 시각까지 다음 하트비트가 없으면 session이 닫힌다
+	 */
+	record HeartbeatResult(long sessionId, String outcome, int creditedSec, boolean creditOpen,
+			LocalDateTime leaseExpiresAt, int leaseRemainingSec, ItemProgress progress) {
+	}
+
+	/**
+	 * @param state ended | superseded | lease_expired
+	 * @param creditedSec 이번 종료 요청이 적립한 초
+	 */
+	record Ended(long sessionId, String state, String endReason, int creditedSec, ItemProgress progress) {
+	}
+
+}
