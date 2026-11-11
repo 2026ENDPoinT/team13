@@ -94,6 +94,10 @@ class DocumentRenditionService implements DocumentRenditions {
 		return "doc/" + key + "/";
 	}
 
+	static String contentPrefix(String key) {
+		return "renditions/" + key + "/";
+	}
+
 	private Rendition convert(FileRow file) {
 		byte[] pdf = this.store.get(Bucket.CONTENT, file.storageKey())
 			.orElseThrow(() -> new RenditionException(Code.STORAGE, null, "원본 파일이 저장소에 없습니다."));
@@ -112,7 +116,10 @@ class DocumentRenditionService implements DocumentRenditions {
 			}
 			this.store.put(Bucket.CONTENT, documentKey(key),
 					JSON.writeValueAsBytes(new StoredDocument(doc.title(), pages)), "application/json");
-			this.conversions.ready(id, pages.size());
+			if (!this.conversions.ready(id, pages.size())) {
+				// 변환하는 동안 파일이 지워져 GC가 이 rendition을 닫았다. 아래 catch가 쓴 객체를 지운다.
+				throw new RenditionException(Code.NOT_FOUND, null, "변환하는 동안 파일이 삭제됐습니다.");
+			}
 			return new Rendition(key, file.fileId(), file.versionNo(), file.sha256(), doc.title(), pages);
 		}
 		catch (ConversionException ex) {
@@ -143,7 +150,7 @@ class DocumentRenditionService implements DocumentRenditions {
 		this.conversions.failed(id, errorCode);
 		try {
 			this.store.deletePrefix(Bucket.DELIVERY, deliveryPrefix(key));
-			this.store.deletePrefix(Bucket.CONTENT, "renditions/" + key + "/");
+			this.store.deletePrefix(Bucket.CONTENT, contentPrefix(key));
 		}
 		catch (RuntimeException ex) {
 			log.warn("failed rendition cleanup conversionJobId={}", id, ex);

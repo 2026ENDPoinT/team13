@@ -93,6 +93,17 @@ class AssignmentApiTests extends AssessmentTestSupport {
 			this.student.get(assignment(this.course, id)).andExpect(status().isNotFound());
 			this.student.submit(submission(this.course, id), "k-" + id, submitBody(0, TEXT)).andExpect(status().isNotFound());
 		}
+		// 지운 활동(ADR-0011 삭제 표시)의 과제는 담당자와 학생 모두에게 목록, 상세, 제출에서 사라진다.
+		this.jdbc.sql("""
+				UPDATE learning_activities a JOIN assignments s ON s.activity_id = a.activity_id
+				   SET a.deleted_at = CURRENT_TIMESTAMP(3) WHERE s.assignment_id = :id
+				""").param("id", open).update();
+		this.professor.get(assignments(this.course)).andExpect(jsonPath("$.length()").value(2));
+		this.student.get(assignments(this.course)).andExpect(jsonPath("$.length()").value(0));
+		this.professor.get(assignment(this.course, open)).andExpect(status().isNotFound());
+		this.student.get(assignment(this.course, open)).andExpect(status().isNotFound());
+		this.student.submit(submission(this.course, open), "k-deleted-" + open, submitBody(0, TEXT))
+			.andExpect(status().isNotFound());
 	}
 
 	@Test

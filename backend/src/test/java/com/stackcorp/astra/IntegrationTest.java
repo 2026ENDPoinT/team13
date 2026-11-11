@@ -24,7 +24,8 @@ import com.stackcorp.astra.summary.FakeLlm;
 		"astra.summary.lease=2h", "astra.break-glass.external-ref=" + IntegrationTest.BREAK_GLASS_REF,
 		"astra.break-glass.totp-secret=" + IntegrationTest.TOTP_SECRET,
 		"astra.cloudfront.base-url=https://lms.example.ac.kr", "astra.cloudfront.key-pair-id=K2TESTKEYPAIR",
-		"astra.upload.rate-limit=6", "astra.learning.lease-sweep-interval=1h" })
+		"astra.upload.rate-limit=6", "astra.learning.lease-sweep-interval=1h",
+		"astra.files.gc.interval=1h" })
 @AutoConfigureMockMvc
 @ActiveProfiles("worker")
 @Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class, TestLearningClock.class })

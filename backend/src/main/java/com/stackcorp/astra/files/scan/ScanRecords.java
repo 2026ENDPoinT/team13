@@ -10,7 +10,8 @@ import org.springframework.stereotype.Repository;
 /**
  * 검사 대기열과 상태 전이. 검사는 내용 단위(file_blobs)로 하고 결과를 같은 내용을 쓰는 files, upload_sessions에 함께 옮긴다(ADR-0018).
  * 전이는 blob_state와 lease 소유자를 조건으로 한 compare-and-set이다(SC-05). 잠금 순서는 업로드 기록과 같은 file_blobs → files →
- * upload_sessions다.
+ * upload_sessions다. GC가 검사 중에 지운 것으로 표시한 blob(purged_at, ADR-0011)의 늦은 판정은 반영하지 않는다. 같은 내용을 다시
+ * 받으면 그 업로드가 새 객체로 되살리고 처음부터 다시 검사한다.
  */
 @Repository
 class ScanRecords {
@@ -47,7 +48,7 @@ class ScanRecords {
 				UPDATE file_blobs
 				   SET blob_state = 'clean', scanned_at = CURRENT_TIMESTAMP(3), scan_next_at = NULL,
 				       scan_lease_owner = NULL, scan_lease_expires_at = NULL
-				 WHERE file_blob_id = :id AND blob_state = 'quarantined' AND scan_lease_owner = :owner
+				 WHERE file_blob_id = :id AND blob_state = 'quarantined' AND scan_lease_owner = :owner AND purged_at IS NULL
 				""").param("id", blobId).param("owner", owner).update();
 		if (updated == 0) {
 			return false;
@@ -74,7 +75,7 @@ class ScanRecords {
 				UPDATE file_blobs
 				   SET blob_state = 'rejected', scan_signature = :signature, scanned_at = CURRENT_TIMESTAMP(3),
 				       scan_next_at = NULL, scan_lease_owner = NULL, scan_lease_expires_at = NULL
-				 WHERE file_blob_id = :id AND blob_state = 'quarantined' AND scan_lease_owner = :owner
+				 WHERE file_blob_id = :id AND blob_state = 'quarantined' AND scan_lease_owner = :owner AND purged_at IS NULL
 				""").param("signature", signature).param("id", blobId).param("owner", owner).update();
 		if (updated == 0) {
 			return false;
@@ -96,7 +97,7 @@ class ScanRecords {
 				UPDATE file_blobs
 				   SET scan_next_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL :delay SECOND),
 				       scan_lease_owner = NULL, scan_lease_expires_at = NULL
-				 WHERE file_blob_id = :id AND blob_state = 'quarantined' AND scan_lease_owner = :owner
+				 WHERE file_blob_id = :id AND blob_state = 'quarantined' AND scan_lease_owner = :owner AND purged_at IS NULL
 				""").param("delay", delay.toSeconds()).param("id", blobId).param("owner", owner).update();
 	}
 

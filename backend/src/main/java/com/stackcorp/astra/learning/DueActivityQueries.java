@@ -17,7 +17,7 @@ class DueActivityQueries implements DueActivities {
 
 	private static final String DUE = """
 			  FROM learning_activities a
-			 WHERE a.course_id IN (:courses) AND a.published_yn = 1
+			 WHERE a.course_id IN (:courses) AND a.published_yn = 1 AND a.deleted_at IS NULL
 			   AND (a.open_at IS NULL OR a.open_at <= :now)
 			   AND a.close_at IS NOT NULL AND a.close_at > :now
 			""";

@@ -161,6 +161,13 @@ class HomeApiTests extends IntegrationTest {
 			.param("a", closingSoon)
 			.update();
 		student.get("/api/me/todo").andExpect(jsonPath("$.total").value(2));
+		// 지운 활동(ADR-0011 삭제 표시)은 할 일에서 바로 사라진다.
+		this.jdbc.sql("UPDATE learning_activities SET deleted_at = CURRENT_TIMESTAMP(3) WHERE activity_id = :a")
+			.param("a", noOpenAt)
+			.update();
+		student.get("/api/me/todo")
+			.andExpect(jsonPath("$.items[*].activityId").value(contains((int) openedNow)))
+			.andExpect(jsonPath("$.total").value(1));
 	}
 
 	@Test

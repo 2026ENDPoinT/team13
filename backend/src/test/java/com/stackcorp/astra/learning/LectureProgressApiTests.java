@@ -135,6 +135,16 @@ class LectureProgressApiTests extends IntegrationTest {
 			.param("u", this.classmate)
 			.query(Integer.class)
 			.single()).isZero();
+
+		// 지운 활동(ADR-0011 삭제 표시)의 콘텐츠는 내 진도와 수강생 진도 모두에서 사라진다.
+		this.jdbc.sql("""
+				UPDATE learning_activities a JOIN online_lecture_items i ON i.activity_id = a.activity_id
+				   SET a.deleted_at = CURRENT_TIMESTAMP(3) WHERE i.online_lecture_item_id = :item
+				""").param("item", this.watched).update();
+		this.student.get(progress(this.course)).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+		JsonNode remaining = ApiClient.json(this.professor.get(progress(this.course) + "/students").andExpect(status().isOk()));
+		assertThat(remaining.get("items")).hasSize(2);
+		assertThat(remaining.get("students").get(0).get("metCount").asInt()).isZero();
 	}
 
 	@Test

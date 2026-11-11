@@ -370,6 +370,17 @@ class LearningSessionApiTests extends IntegrationTest {
 		assertThat(credited(next)).isEqualTo(60);
 
 		this.data.enroll(this.course, this.stu);
+		// 지운 활동(ADR-0011 삭제 표시)은 진행 중인 session의 하트비트도, 새 session 시작도 받지 않는다. 적립한 시간은 남는다.
+		long removed = started(this.student);
+		this.clock.advance(Duration.ofSeconds(60));
+		beat(this.student, removed, 1).andExpect(jsonPath("$.creditedSec").value(60));
+		setDeleted(true);
+		this.clock.advance(Duration.ofSeconds(60));
+		beat(this.student, removed, 2).andExpect(status().isNotFound());
+		this.student.post(start(this.course, this.item)).andExpect(status().isNotFound());
+		assertThat(state(removed)).isEqualTo("ended");
+		assertThat(credited(removed)).isEqualTo(60);
+		setDeleted(false);
 		long third = started(this.student);
 		this.jdbc.sql("UPDATE user_sessions SET revoked_at = CURRENT_TIMESTAMP(3) WHERE user_id = :u")
 			.param("u", this.stu)
@@ -506,6 +517,13 @@ class LearningSessionApiTests extends IntegrationTest {
 	private void setPublished(boolean published) {
 		this.jdbc.sql("UPDATE learning_activities SET published_yn = :p WHERE activity_id = :a")
 			.param("p", published)
+			.param("a", this.activity)
+			.update();
+	}
+
+	private void setDeleted(boolean deleted) {
+		this.jdbc.sql("UPDATE learning_activities SET deleted_at = IF(:d, CURRENT_TIMESTAMP(3), NULL) WHERE activity_id = :a")
+			.param("d", deleted)
 			.param("a", this.activity)
 			.update();
 	}

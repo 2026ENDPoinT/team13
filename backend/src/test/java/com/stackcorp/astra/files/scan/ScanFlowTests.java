@@ -22,17 +22,20 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
+import com.stackcorp.astra.files.StorageGcDriver;
 import com.stackcorp.astra.files.api.ContentScanner;
 import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.files.api.RenditionException;
@@ -89,6 +92,9 @@ class ScanFlowTests extends IntegrationTest {
 	TransactionTemplate transaction;
 
 	@Autowired
+	PlatformTransactionManager transactionManager;
+
+	@Autowired
 	ScanProperties properties;
 
 	@Autowired
@@ -96,6 +102,9 @@ class ScanFlowTests extends IntegrationTest {
 
 	@Autowired
 	DocumentRenditions renditions;
+
+	@Autowired
+	ApplicationContext context;
 
 	long course;
 
@@ -259,7 +268,7 @@ class ScanFlowTests extends IntegrationTest {
 			}
 		}
 		clamd.slow(java.time.Duration.ofMillis(100));
-		ScanWorker other = new ScanWorker(this.records, this.scanner, this.store, this.transaction,
+		ScanWorker other = new ScanWorker(this.records, this.scanner, this.store, this.transactionManager,
 				new ScanProperties(false, this.properties.pollInterval(), this.properties.batchSize(),
 						this.properties.lease(), this.properties.retryBackoff(), this.properties.maxRetryBackoff(),
 						"scan-test-2"));
@@ -312,6 +321,96 @@ class ScanFlowTests extends IntegrationTest {
 		assertThat(row(uploadId)).containsEntry("blob_state", "clean")
 			.containsEntry("scan_state", "clean")
 			.containsEntry("upload_state", "clean");
+	}
+
+	@Test
+	void contentThatComesBackAfterGcPurgedItIsStoredAgainAndScannedAgain() throws Exception {
+		byte[] notes = notes();
+		ApiClient professor = instructor();
+		long first = uploadId(upload(professor, notes));
+		drain();
+		professor.get("/api/uploads/" + first).andExpect(jsonPath("$.state").value("clean"));
+		long blobId = number(row(first), "file_blob_id");
+		String oldKey = (String) row(first).get("storage_key");
+		professor.delete("/api/uploads/" + first).andExpect(status().isNoContent());
+		age(blobId);
+		gc();
+		assertThat(blob(blobId)).containsEntry("purged", 1L);
+
+		// 지우기 전에 clean이었어도 새로 받은 객체는 검사를 다시 받는다(ADR-0011, ADR-0018).
+		long again = uploadId(upload(professor, notes).andExpect(jsonPath("$.state").value("quarantined")));
+		Map<String, Object> revived = row(again);
+		assertThat(number(revived, "file_blob_id")).isEqualTo(blobId);
+		assertThat(revived).containsEntry("blob_state", "quarantined")
+			.containsEntry("scan_state", "pending")
+			.containsEntry("purged_at", null);
+		assertThat(number(revived, "scan_attempt_count")).isZero();
+		assertThat((String) revived.get("storage_key")).startsWith(oldKey + "-");
+		attach(professor, again).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("attachment_not_ready"));
+
+		drain();
+
+		professor.get("/api/uploads/" + again).andExpect(jsonPath("$.state").value("clean"));
+		assertThat(clamd.scansOf(notes)).isEqualTo(2);
+		attach(professor, again).andExpect(status().isCreated());
+	}
+
+	@Test
+	void gcLeavesContentAloneWhileItIsAwaitedOrUnderScanAndALateVerdictCannotRevivePurgedContent() throws Exception {
+		byte[] notes = notes();
+		ApiClient first = instructor();
+		ApiClient second = instructor();
+		long a = uploadId(upload(first, notes));
+		long waiting = uploadId(upload(second, notes));
+		long blobId = number(row(a), "file_blob_id");
+		String key = (String) row(a).get("storage_key");
+
+		// 같은 내용을 기다리는 업로드가 남아 있으면 지우지 않는다.
+		first.delete("/api/uploads/" + a).andExpect(status().isNoContent());
+		age(blobId);
+		gc();
+		assertThat(blob(blobId)).containsEntry("purged", 0L).containsEntry("reference_count", 1L);
+
+		// 참조가 0이 돼도 검사 worker가 lease를 잡고 검사하는 동안에는 지우지 않는다.
+		lease(blobId, "other-worker", "DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL 1 MINUTE)");
+		second.delete("/api/uploads/" + waiting).andExpect(status().isNoContent());
+		age(blobId);
+		gc();
+		assertThat(blob(blobId)).containsEntry("purged", 0L).containsEntry("reference_count", 0L);
+		assertThat(this.store.get(Bucket.CONTENT, key)).isPresent();
+
+		// lease가 끝나면 지운다. 그 뒤 늦게 온 판정은 반영하지 않고, 검사 worker는 지운 내용을 잡지 않는다.
+		lease(blobId, "other-worker", "DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 SECOND)");
+		age(blobId);
+		gc();
+		assertThat(blob(blobId)).containsEntry("purged", 1L).containsEntry("blob_state", "quarantined");
+		assertThat(this.store.get(Bucket.CONTENT, key)).isEmpty();
+		Boolean lateClean = this.transaction.execute((tx) -> this.records.markClean(blobId, "other-worker"));
+		Boolean lateInfected = this.transaction
+			.execute((tx) -> this.records.markInfected(blobId, "other-worker", "Late.Result"));
+		assertThat(lateClean).isFalse();
+		assertThat(lateInfected).isFalse();
+		drain();
+		assertThat(clamd.scansOf(notes)).isZero();
+		assertThat(blob(blobId)).containsEntry("blob_state", "quarantined").containsEntry("purged", 1L);
+	}
+
+	private void gc() {
+		StorageGcDriver.drain(this.context);
+	}
+
+	// 참조 수가 0이 된 지 오래된 것처럼 만든다. 명시한 updated_at은 ON UPDATE로 덮어쓰지 않는다.
+	private void age(long blobId) {
+		this.jdbc.sql("UPDATE file_blobs SET updated_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 DAY) WHERE file_blob_id = :id")
+			.param("id", blobId)
+			.update();
+	}
+
+	private Map<String, Object> blob(long blobId) {
+		return this.jdbc.sql("""
+				SELECT reference_count, blob_state, CAST(purged_at IS NOT NULL AS SIGNED) AS purged FROM file_blobs
+				 WHERE file_blob_id = :id
+				""").param("id", blobId).query().singleRow();
 	}
 
 	private ApiClient instructor() {

@@ -62,7 +62,7 @@ class ReportActivityService implements ReportActivities {
 				UPDATE learning_activities
 				   SET course_week_id = :week, title = :title, description = :description, open_at = :openAt,
 				       close_at = :closeAt, published_yn = :published
-				 WHERE activity_id = :activity AND course_id = :course AND activity_type = 'report'
+				 WHERE activity_id = :activity AND course_id = :course AND activity_type = 'report' AND deleted_at IS NULL
 				""")
 			.param("week", week)
 			.param("title", input.title())
@@ -95,7 +95,7 @@ class ReportActivityService implements ReportActivities {
 	private static final String SELECT = """
 			SELECT a.activity_id, a.course_id, w.week_no, a.title, a.description, a.open_at, a.close_at, a.published_yn
 			  FROM learning_activities a JOIN course_weeks w ON w.course_week_id = a.course_week_id
-			 WHERE a.course_id = :course AND a.activity_type = 'report'
+			 WHERE a.course_id = :course AND a.activity_type = 'report' AND a.deleted_at IS NULL
 			""";
 
 	private static ReportActivity row(java.sql.ResultSet rs, int n) throws java.sql.SQLException {

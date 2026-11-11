@@ -483,7 +483,7 @@ class LearningSessionService {
 				SELECT i.online_lecture_item_id, i.activity_id, a.course_id, a.published_yn, a.open_at, a.close_at,
 				       a.attendance_session_id, i.content_path, i.duration_sec, i.required_sec
 				  FROM online_lecture_items i JOIN learning_activities a ON a.activity_id = i.activity_id
-				 WHERE i.online_lecture_item_id = :item AND a.course_id = :course
+				 WHERE i.online_lecture_item_id = :item AND a.course_id = :course AND a.deleted_at IS NULL
 				""")
 			.param("item", itemId)
 			.param("course", courseId)

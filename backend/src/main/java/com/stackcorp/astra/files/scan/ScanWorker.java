@@ -5,13 +5,17 @@ import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Profile;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.stackcorp.astra.files.api.ContentScanner;
@@ -28,10 +32,16 @@ import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
  * quarantined 내용을 검사한다(SC-08, ADR-0018). 한 번에 batchSize개까지 하나씩 SKIP LOCKED와 lease로 잡으므로 worker가 둘이어도 같은
  * 내용을 함께 검사하지 않는다. 검사기에 닿지 못하면 quarantined로 두고 간격을 늘려 다시 시도한다. clean으로 넘기는 길은 검사기의 clean
  * 판정 하나뿐이다. 거부한 내용의 객체는 지운다. 로그에는 blob ID, 시도 수, 사유 코드, signature 이름만 남긴다.
+ * <p>
+ * 잡기와 판정 기록은 READ COMMITTED로 한다. REPEATABLE READ의 next-key lock은 files, upload_sessions의 이웃한 blob 행까지 잠가 두
+ * worker의 판정 기록이 서로 deadlock을 낸다. 판정 기록은 lease를 조건으로 한 compare-and-set이라 다시 실행해도 안전하므로, 잠금 충돌로
+ * 되돌려지면 몇 번 다시 기록한다.
  */
 @Component
 @Profile("worker")
 class ScanWorker {
+
+	private static final int TRANSITION_ATTEMPTS = 3;
 
 	private static final Logger log = LoggerFactory.getLogger(ScanWorker.class);
 
@@ -48,11 +58,12 @@ class ScanWorker {
 	private final String owner;
 
 	ScanWorker(ScanRecords records, ObjectProvider<ContentScanner> scanner, ObjectStore store,
-			TransactionTemplate transaction, ScanProperties properties) {
+			PlatformTransactionManager transactionManager, ScanProperties properties) {
 		this.records = records;
 		this.scanner = scanner;
 		this.store = store;
-		this.transaction = transaction;
+		this.transaction = new TransactionTemplate(transactionManager);
+		this.transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 		this.properties = properties;
 		this.owner = properties.workerId() != null ? properties.workerId() : defaultOwner();
 	}
@@ -90,35 +101,58 @@ class ScanWorker {
 			verdict = new Unavailable("internal");
 		}
 		try {
-			switch (verdict) {
-				case Clean c -> {
-					if (Boolean.TRUE.equals(this.transaction.execute((tx) -> this.records.markClean(blob.blobId(), this.owner)))) {
-						log.info("scan clean blobId={} attempt={}", blob.blobId(), blob.attempt());
-					}
-					else {
-						log.warn("scan result ignored, lease lost blobId={}", blob.blobId());
-					}
-				}
-				case Infected infected -> {
-					if (Boolean.TRUE.equals(this.transaction.execute(
-							(tx) -> this.records.markInfected(blob.blobId(), this.owner, infected.signature())))) {
-						log.warn("malware detected blobId={} signature={}", blob.blobId(), infected.signature());
-					}
-					else {
-						log.warn("scan result ignored, lease lost blobId={}", blob.blobId());
-					}
-				}
-				case Unavailable unavailable -> {
-					var delay = this.properties.backoff(blob.attempt());
-					this.records.retryLater(blob.blobId(), this.owner, delay);
-					log.warn("scanner unavailable blobId={} attempt={} reason={} retryInSeconds={}", blob.blobId(),
-							blob.attempt(), unavailable.reason(), delay.toSeconds());
-				}
-			}
+			record(blob, verdict);
 		}
 		catch (RuntimeException ex) {
-			// 기록하지 못하면 lease가 끝난 뒤 다시 잡힌다.
+			// 판정을 기록하지 못했다. lease를 풀어 재시도 간격 뒤에 다시 검사받게 한다. 이것도 실패하면 lease가 끝난 뒤 다시 잡힌다.
 			log.warn("scan transition failed blobId={} error={}", blob.blobId(), ex.getClass().getName());
+			try {
+				this.records.retryLater(blob.blobId(), this.owner, this.properties.backoff(blob.attempt()));
+			}
+			catch (RuntimeException release) {
+				log.warn("scan lease release failed blobId={} error={}", blob.blobId(), release.getClass().getName());
+			}
+		}
+	}
+
+	private void record(Pending blob, Verdict verdict) {
+		switch (verdict) {
+			case Clean c -> {
+				if (transition(() -> this.records.markClean(blob.blobId(), this.owner))) {
+					log.info("scan clean blobId={} attempt={}", blob.blobId(), blob.attempt());
+				}
+				else {
+					log.warn("scan result ignored, lease lost blobId={}", blob.blobId());
+				}
+			}
+			case Infected infected -> {
+				if (transition(() -> this.records.markInfected(blob.blobId(), this.owner, infected.signature()))) {
+					log.warn("malware detected blobId={} signature={}", blob.blobId(), infected.signature());
+				}
+				else {
+					log.warn("scan result ignored, lease lost blobId={}", blob.blobId());
+				}
+			}
+			case Unavailable unavailable -> {
+				var delay = this.properties.backoff(blob.attempt());
+				this.records.retryLater(blob.blobId(), this.owner, delay);
+				log.warn("scanner unavailable blobId={} attempt={} reason={} retryInSeconds={}", blob.blobId(),
+						blob.attempt(), unavailable.reason(), delay.toSeconds());
+			}
+		}
+	}
+
+	/** @return lease를 아직 갖고 있어 판정을 기록했는지 */
+	private boolean transition(BooleanSupplier write) {
+		for (int attempt = 1;; attempt++) {
+			try {
+				return Boolean.TRUE.equals(this.transaction.execute((tx) -> write.getAsBoolean()));
+			}
+			catch (TransientDataAccessException ex) {
+				if (attempt >= TRANSITION_ATTEMPTS) {
+					throw ex;
+				}
+			}
 		}
 	}
 
