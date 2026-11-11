@@ -5,8 +5,9 @@ import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
- * 로컬 실행용 수업시간표, 학사일정, 알림. 시간표는 화면 14 캡처의 주간 수업(강의실 미등록)이고, 학사일정은 이번 주와 다음 주에 걸친
- * 두 건이다. 알림은 표본 학생이 받았을 게시된 공지 알림이다(예약 공지는 worker가 게시 시각에 보낸다). 이미 있으면 넣지 않는다.
+ * 로컬 실행용 수업시간표, 학사일정, 공지 알림. 시간표는 화면 14 캡처의 주간 수업(강의실 미등록)이다. 표본을 넣는 날이 주말이면 그 요일에
+ * 고급웹프로그래밍(algo) 실습 시간을 하나 더 두어 오늘 수업이 비지 않게 한다. 학사일정은 오늘 앞뒤의 다섯 건이다. 알림은 수강생이 받았을
+ * 게시된 공지 알림이다(예약 공지는 worker가 게시 시각에 보낸다). 이미 있으면 넣지 않는다.
  */
 final class LocalCatalogSeed {
 
@@ -17,10 +18,12 @@ final class LocalCatalogSeed {
 
 	private static final String EVENT_KEY = "local-seed";
 
+	private static final String MORE_EVENTS_KEY = "local-seed-2";
+
 	private LocalCatalogSeed() {
 	}
 
-	static void seed(JdbcClient jdbc, long student) {
+	static void seed(JdbcClient jdbc) {
 		for (Slot slot : SLOTS) {
 			jdbc.sql("""
 					INSERT INTO course_schedules (course_id, day_of_week, start_time, end_time)
@@ -29,6 +32,12 @@ final class LocalCatalogSeed {
 					   AND NOT EXISTS (SELECT 1 FROM course_schedules s WHERE s.course_id = c.course_id)
 					""").param("key", slot.key()).param("day", slot.day()).param("start", slot.start()).param("end", slot.end()).update();
 		}
+		jdbc.sql("""
+				INSERT INTO course_schedules (course_id, day_of_week, start_time, end_time)
+				SELECT c.course_id, DAYOFWEEK(CURRENT_DATE) - 1, '10:00', '12:00' FROM courses c
+				 WHERE c.legacy_kjkey = 'algo' AND DAYOFWEEK(CURRENT_DATE) IN (1, 7)
+				   AND (SELECT COUNT(*) FROM course_schedules s WHERE s.course_id = c.course_id) = 1
+				""").update();
 		if (jdbc.sql("SELECT COUNT(*) FROM academic_calendar_events WHERE legacy_schedule_key = :k")
 			.param("k", EVENT_KEY)
 			.query(Long.class)
@@ -39,7 +48,18 @@ final class LocalCatalogSeed {
 					       ('개교기념일', 'HOLIDAY', CURRENT_DATE + INTERVAL 8 DAY, CURRENT_DATE + INTERVAL 8 DAY, :k)
 					""").param("k", EVENT_KEY).update();
 		}
-		// 게시된 표본 공지마다 알림 사건 하나와 표본 학생의 알림 하나. 유일 키가 다시 넣지 않게 한다.
+		if (jdbc.sql("SELECT COUNT(*) FROM academic_calendar_events WHERE legacy_schedule_key = :k")
+			.param("k", MORE_EVENTS_KEY)
+			.query(Long.class)
+			.single() == 0) {
+			jdbc.sql("""
+					INSERT INTO academic_calendar_events (event_title, event_type, start_date, end_date, legacy_schedule_key)
+					VALUES ('2026학년도 2학기 중간고사', 'EXAM', CURRENT_DATE - INTERVAL 20 DAY, CURRENT_DATE - INTERVAL 14 DAY, :k),
+					       ('2026학년도 2학기 강의평가', 'ACADEMIC', CURRENT_DATE + INTERVAL 3 DAY, CURRENT_DATE + INTERVAL 24 DAY, :k),
+					       ('2026학년도 2학기 기말고사', 'EXAM', CURRENT_DATE + INTERVAL 30 DAY, CURRENT_DATE + INTERVAL 36 DAY, :k)
+					""").param("k", MORE_EVENTS_KEY).update();
+		}
+		// 게시된 표본 공지마다 알림 사건 하나와 수강생(CourseRosters.students와 같다)마다 알림 하나. 유일 키가 다시 넣지 않게 한다.
 		jdbc.sql("""
 				INSERT INTO notification_events (notification_type, target_ref_id, course_id, audience_role, message_text,
 				                                 visible_at, delivered_at)
@@ -53,13 +73,15 @@ final class LocalCatalogSeed {
 		jdbc.sql("""
 				INSERT INTO notifications (user_id, notification_type, course_id, target_kind, target_ref_id, message_text,
 				                           expires_at, created_at)
-				SELECT :student, e.notification_type, e.course_id, 'ARTICLE', e.target_ref_id, e.message_text,
+				SELECT DISTINCT x.user_id, e.notification_type, e.course_id, 'ARTICLE', e.target_ref_id, e.message_text,
 				       e.delivered_at + INTERVAL 60 DAY, e.delivered_at
 				  FROM notification_events e
+				  JOIN course_enrollments x ON x.course_id = e.course_id AND x.enrollment_status = 'ENROLLED'
+				                           AND x.enrollment_role IN ('STUDENT', 'AUDITOR')
 				 WHERE e.notification_type = 'COURSE_NOTICE' AND e.delivered_at IS NOT NULL
-				   AND EXISTS (SELECT 1 FROM course_enrollments x WHERE x.course_id = e.course_id AND x.user_id = :student)
+				   AND NOT EXISTS (SELECT 1 FROM course_instructors i WHERE i.course_id = x.course_id AND i.user_id = x.user_id)
 				ON DUPLICATE KEY UPDATE notification_id = notification_id
-				""").param("student", student).update();
+				""").update();
 	}
 
 	/**
