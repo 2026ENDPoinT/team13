@@ -1,6 +1,7 @@
 package com.stackcorp.astra.summary.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -211,10 +212,10 @@ class StudyChatApiTests extends IntegrationTest {
 		for (int i = 0; i < StudyChatService.CHAT_PAGE; i++) {
 			opened.add(open(this.student));
 		}
-		// 꼭 한 쪽이면 다음 쪽이 없다.
+		// 꼭 한 쪽이면 다음 쪽이 없다. 속성을 빼지 않고 null로 보낸다.
 		this.student.get(list)
 			.andExpect(jsonPath("$.items.length()").value(StudyChatService.CHAT_PAGE))
-			.andExpect(jsonPath("$.nextBefore").doesNotExist());
+			.andExpect(jsonPath("$.nextBefore").value(nullValue()));
 		long oldest = opened.getFirst();
 		opened.add(open(this.student));
 
@@ -225,7 +226,7 @@ class StudyChatApiTests extends IntegrationTest {
 		this.student.get(list + "?before=" + opened.get(1))
 			.andExpect(jsonPath("$.items.length()").value(1))
 			.andExpect(jsonPath("$.items[0].id").value(oldest))
-			.andExpect(jsonPath("$.nextBefore").doesNotExist());
+			.andExpect(jsonPath("$.nextBefore").value(nullValue()));
 	}
 
 	@Test

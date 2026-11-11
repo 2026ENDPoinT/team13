@@ -4,6 +4,7 @@ import java.io.InputStream;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -483,18 +484,19 @@ class FileboxService {
 	}
 
 	/**
-	 * 파일함 파일을 과목 업로드로 다시 쓴다(EP-0126, POST /api/uploads/from-filebox). 항목은 요청한 사람의 활성 파일이어야 하고,
+	 * 파일함 파일을 업로드로 다시 쓴다(EP-0126, POST /api/uploads/from-filebox). 항목은 요청한 사람의 활성 파일이어야 하고,
 	 * 대상 용도·과목의 업로드 권한, 확장자와 크기 정책, 검사 상태를 다시 본다. 만든 업로드는 부모 저장에서 첨부한다.
+	 * @param courseId 과목 용도면 그 과목. 과목 밖 용도(공지·자료실·문의·쪽지 첨부)면 null
 	 */
-	ReuseReceipt reuse(Actor actor, long courseId, String purpose, List<Long> itemIds, String idempotencyKey) {
+	ReuseReceipt reuse(Actor actor, Long courseId, String purpose, List<Long> itemIds, String idempotencyKey) {
 		long owner = actor.userId();
 		// 권한을 먼저 본다. 권한을 잃은 사람은 저장한 receipt도 받지 못한다.
 		if (owned(owner, itemIds).size() != itemIds.size()) {
 			throw ApiException.notFound();
 		}
-		this.uploads.checkTarget(owner, courseId, purpose);
+		this.uploads.checkTarget(actor, courseId, purpose);
 		return inTransaction(() -> this.idempotency.execute(owner, "upload.from_filebox", idempotencyKey,
-				List.of(courseId, purpose, itemIds), ReuseReceipt.class, () -> {
+				Arrays.asList(courseId, purpose, itemIds), ReuseReceipt.class, () -> {
 					List<Item> items = this.records.itemsForShare(owner, itemIds);
 					if (items.size() != itemIds.size()) {
 						throw ApiException.notFound();
@@ -511,7 +513,7 @@ class FileboxService {
 						.map(byId::get)
 						.map((i) -> new Source(i.id(), i.fileId(), i.name()))
 						.toList();
-					List<Reused> reused = this.uploads.reuse(owner, courseId, purpose, sources);
+					List<Reused> reused = this.uploads.reuse(actor, courseId, purpose, sources);
 					for (Reused r : reused) {
 						this.audit.success(owner, actor.sessionId(), "upload.from_filebox", "upload", r.uploadId(),
 								courseId);

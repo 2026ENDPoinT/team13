@@ -36,7 +36,8 @@ import com.stackcorp.astra.shared.audit.AuditLog;
  * (IDENTITY-10). 사진은 files 모듈의 아바타 사진 경로가 다룬다(ADR-0038).</li>
  * <li>연락처 변경은 2차 인증 수단의 대상을 바꾸므로 최근 재인증을 요구한다(IDENTITY-06, ADR-0029).</li>
  * <li>학사 동기화는 학사시스템 port({@link RegistrarDirectory})로 요청한 사용자의 값을 다시 읽는다. port가 없는 배포는 503
- * {@code not_configured}다.</li>
+ * {@code not_configured}다. 내정보의 {@code registrarSyncAvailable}은 동기화 명령을 시도할 수 있는지(port가 있고 break-glass가
+ * 아닌지)다.</li>
  * </ul>
  */
 @RestController
@@ -84,7 +85,7 @@ class ProfileController {
 	/** 내정보(EP-0270). 연락처는 본인에게 원본 화면처럼 그대로 보인다. */
 	@GetMapping("/api/me/profile")
 	ResponseEntity<Profile> profile(@AuthenticationPrincipal Actor actor) {
-		return ok(this.profiles.find(actor.userId()));
+		return ok(current(actor));
 	}
 
 	/** 아바타 색상과 약칭 저장(EP-0271, EP-0278). 본문의 {@code version}이 저장된 값과 다르면 409 {@code version_conflict}. */
@@ -101,7 +102,7 @@ class ProfileController {
 		this.profiles.updateAvatar(actor.userId(), body.avatarColor(), shortName, body.version());
 		this.audit.success(actor.userId(), actor.sessionId(), "account.profile_update", "user_profile",
 				actor.userId(), null);
-		return ok(this.profiles.find(actor.userId()));
+		return ok(current(actor));
 	}
 
 	/**
@@ -123,7 +124,7 @@ class ProfileController {
 		this.profiles.updateContact(actor.userId(), phone, email);
 		this.audit.success(actor.userId(), actor.sessionId(), "account.contact_update", "user_contact", actor.userId(),
 				null);
-		return ok(this.profiles.find(actor.userId()));
+		return ok(current(actor));
 	}
 
 	/**
@@ -137,7 +138,7 @@ class ProfileController {
 			this.audit.success(actor.userId(), actor.sessionId(), "account.avatar_image_remove", "user_profile",
 					actor.userId(), null);
 		}
-		return ok(this.profiles.find(actor.userId()));
+		return ok(current(actor));
 	}
 
 	/**
@@ -170,7 +171,13 @@ class ProfileController {
 		}
 		this.profiles.applyRegistrar(actor.userId(), record);
 		this.audit.success(actor.userId(), actor.sessionId(), "account.registrar_sync", "user", actor.userId(), null);
-		return ok(this.profiles.find(actor.userId()));
+		return ok(current(actor));
+	}
+
+	// 내정보의 registrarSyncAvailable. 동기화 명령이 요청 전에 거절하는 조건(break-glass 404, port 없음 503)과 같다. 요청 제한과
+	// 학사시스템 응답은 시도해야 알 수 있어 넣지 않는다.
+	private Profile current(Actor actor) {
+		return this.profiles.find(actor.userId(), !actor.breakGlass() && this.registrar.getIfAvailable() != null);
 	}
 
 	// adapter 값도 저장 전에 컬럼 상한과 형식을 본다. 맞지 않으면 학사시스템 응답이 잘못된 것으로 본다.

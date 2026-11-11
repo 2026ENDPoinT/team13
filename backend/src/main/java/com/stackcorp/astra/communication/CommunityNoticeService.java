@@ -120,7 +120,7 @@ class CommunityNoticeService {
 						(int) Math.min((long) (page - 1) * size, Integer.MAX_VALUE), size);
 		return new NoticePage(rows.stream().map((r) -> NoticeItem.of(r, now)).toList(), filtered,
 				new CommunityService.MaterialCounts(common + professor + student, common, professor, student), page,
-				size);
+				size, operator);
 	}
 
 	/** 공지 상세(EP-0156, EP-0196). 읽음을 남기지 않는다. */
@@ -132,12 +132,11 @@ class CommunityNoticeService {
 
 	/** 읽음 표시. 몇 번 보내도 한 행이고 조회수는 처음 한 번만 오른다. 예약 공지는 404다. */
 	@Transactional
-	BoardPostService.ReadState read(Actor actor, long postId) {
+	ReadState read(Actor actor, long postId) {
 		int views = this.notices
 			.lockPublished(CommunityService.audiences(actor, this.operators.is(actor)), this.notices.now(), postId)
 			.orElseThrow(ApiException::notFound);
-		return new BoardPostService.ReadState(postId, true,
-				views + (this.reactions.markRead(postId, actor.userId()) ? 1 : 0));
+		return new ReadState(postId, true, views + (this.reactions.markRead(postId, actor.userId()) ? 1 : 0));
 	}
 
 	/** 운영자의 공지 등록. 같은 Idempotency-Key로 다시 보내면 처음 만든 공지를 돌려준다. 운영자가 아니면 404다. */
@@ -308,10 +307,15 @@ class CommunityNoticeService {
 	/**
 	 * @param total 지금 대상 필터와 검색어에 맞는 공지 수
 	 * @param counts 대상 필터 탭의 수. 볼 수 있는 대상만 센다
+	 * @param canManage 알림마당 운영자면 true. 등록·수정·삭제와 예약 공지 보기를 할 수 있다
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	record NoticePage(List<NoticeItem> items, long total, CommunityService.MaterialCounts counts, int page,
-			int size) {
+			int size, boolean canManage) {
+	}
+
+	/** 공지 읽음 표시의 결과. 목록과 상세처럼 noticeId로 준다. */
+	record ReadState(long noticeId, boolean read, int viewCount) {
 	}
 
 }

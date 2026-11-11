@@ -302,7 +302,23 @@ class SubmissionFlowTests extends AssessmentTestSupport {
 		long textOnly = assignment("\"allowFile\":false");
 		this.student.submit(submission(this.course, textOnly), "text-keep",
 				"{\"expectedVersion\":0,\"body\":\"x\",\"keepFileIds\":[" + reportFile + "]}")
-			.andExpect(status().isBadRequest());
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		this.student.submit(submission(this.course, textOnly), "text-upload",
+				"{\"expectedVersion\":0,\"body\":\"x\",\"uploadIds\":[" + reportFile + "],\"keepFileIds\":[]}")
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		// 파일을 받지 않는 과제에도 빈 목록은 파일 없음과 같다. 다시 제출할 때도 그렇다.
+		this.student.submit(submission(this.course, textOnly), "text-empty",
+				"{\"expectedVersion\":0,\"body\":\"첫 글\",\"uploadIds\":[],\"keepFileIds\":[]}")
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.version").value(1))
+			.andExpect(jsonPath("$.files.length()").value(0));
+		this.student.submit(submission(this.course, textOnly), "text-again",
+				"{\"expectedVersion\":1,\"body\":\"고친 글\",\"keepFileIds\":[]}")
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.version").value(2))
+			.andExpect(jsonPath("$.files.length()").value(0));
 	}
 
 	@Test

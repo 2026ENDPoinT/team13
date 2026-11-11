@@ -224,7 +224,9 @@ class OpenBoardApiTests extends BoardTestSupport {
 			.andExpect(jsonPath("$.canEdit").value(true)), "commentId");
 		String c = comments + "/" + comment;
 		String edit = "{\"body\":\"고친 댓글\",\"version\":1}";
-		this.classmate.get(comments).andExpect(jsonPath("$.items[0].canEdit").value(false));
+		this.classmate.get(comments).andExpect(jsonPath("$.items[0].canEdit").value(false))
+			.andExpect(jsonPath("$.items[0].edited").value(false))
+			.andExpect(jsonPath("$.items[0].updatedAt").doesNotExist());
 
 		// 담당자도 남의 댓글은 고치지 못한다. 과목 밖 사람과 다른 과목 경로도 404다.
 		put(this.classmate, c, edit).andExpect(status().isNotFound());
@@ -242,10 +244,12 @@ class OpenBoardApiTests extends BoardTestSupport {
 		put(this.student, c, "{\"body\":\"x\"}").andExpect(status().isBadRequest());
 		put(this.student, c, edit).andExpect(status().isOk())
 			.andExpect(jsonPath("$.body").value("고친 댓글"))
-			.andExpect(jsonPath("$.version").value(2));
+			.andExpect(jsonPath("$.version").value(2))
+			.andExpect(jsonPath("$.edited").value(true));
 		put(this.student, c, edit).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("version_conflict"));
 		assertThat(audits("board_comment.update", comment)).isEqualTo(1);
-		this.classmate.get(comments).andExpect(jsonPath("$.items[0].body").value("고친 댓글"));
+		this.classmate.get(comments).andExpect(jsonPath("$.items[0].body").value("고친 댓글"))
+			.andExpect(jsonPath("$.items[0].edited").value(true));
 
 		// 지운 댓글과 폐강한 과목의 댓글은 고치지 못한다.
 		long gone = created(this.student.postJson(comments, "{\"body\":\"지울 댓글\"}"), "commentId");
@@ -271,6 +275,7 @@ class OpenBoardApiTests extends BoardTestSupport {
 				"{\"title\":\"자료\",\"attachments\":{\"keep\":[" + kept + "],\"add\":[" + added + "]},\"version\":1}")
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.version").value(2))
+			.andExpect(jsonPath("$.edited").value(true))
 			.andExpect(jsonPath("$.attachments.length()").value(2))
 			.andExpect(jsonPath("$.attachments[0].fileId").value(kept)));
 		long addedFile = edited.get("attachments").get(1).get("fileId").asLong();

@@ -171,6 +171,14 @@ class ProfileImageRecords implements ProfileImages {
 	}
 
 	@Override
+	public boolean processing(long userId) {
+		return this.jdbc.sql("SELECT EXISTS(SELECT 1 FROM profile_images WHERE user_id = :user AND image_status = 'TEMP')")
+			.param("user", userId)
+			.query(Boolean.class)
+			.single();
+	}
+
+	@Override
 	public List<Discarded> discarded(int limit) {
 		return this.jdbc.sql("""
 				SELECT profile_image_id, image_status, storage_key, source_key FROM profile_images

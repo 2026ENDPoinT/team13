@@ -1,5 +1,7 @@
 package com.stackcorp.astra.shared;
 
+import java.time.Duration;
+
 import org.springframework.http.HttpStatus;
 
 /**
@@ -12,10 +14,18 @@ public class ApiException extends RuntimeException {
 
 	private final String code;
 
+	private final Duration retryAfter;
+
 	public ApiException(HttpStatus status, String code, String detail) {
+		this(status, code, detail, null);
+	}
+
+	/** @param retryAfter 응답의 {@code Retry-After}(초). 없으면 null */
+	public ApiException(HttpStatus status, String code, String detail, Duration retryAfter) {
 		super(detail);
 		this.status = status;
 		this.code = code;
+		this.retryAfter = retryAfter;
 	}
 
 	/** 권한이 없거나 대상이 없을 때. 둘을 구분하지 않는다(SC-02). */
@@ -33,6 +43,10 @@ public class ApiException extends RuntimeException {
 
 	public String code() {
 		return this.code;
+	}
+
+	public Duration retryAfter() {
+		return this.retryAfter;
 	}
 
 }

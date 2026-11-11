@@ -57,6 +57,9 @@ class AvatarImages {
 
 	static final Duration RETRY_DELAY = Duration.ofMinutes(1);
 
+	/** 처리 중인 첫 사진의 404에 붙이는 {@code Retry-After}. worker의 기본 poll 간격({@code astra.avatar.poll-interval} 5s)과 같다. */
+	static final Duration PROCESSING_RETRY_AFTER = Duration.ofSeconds(5);
+
 	private static final int SWEEP_BATCH = 100;
 
 	private static final byte[] PNG = { (byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
@@ -126,13 +129,25 @@ class AvatarImages {
 		}
 	}
 
-	/** 본인이거나 함께 있는 과목이 있을 때 그 사람의 지금 사진. */
-	Optional<Photo> visible(long viewerId, long userId) {
+	/**
+	 * 본인이거나 함께 있는 과목이 있을 때 그 사람의 지금 사진.
+	 * @throws ApiException 404 {@code not_found}. 볼 수 있는 사람의 첫 사진이 아직 처리 중이면 {@code Retry-After}
+	 * ({@link #PROCESSING_RETRY_AFTER})를 붙인다
+	 */
+	Photo visible(long viewerId, long userId) {
 		if (viewerId != userId && this.mates.of(viewerId, null, List.of(userId)).isEmpty()) {
-			return Optional.empty();
+			throw ApiException.notFound();
 		}
-		return this.images.current(userId).flatMap((current) -> this.store.get(Bucket.CONTENT, current.storageKey())
-			.map((bytes) -> new Photo(current, bytes)));
+		Optional<Photo> photo = this.images.current(userId)
+			.flatMap((current) -> this.store.get(Bucket.CONTENT, current.storageKey())
+				.map((bytes) -> new Photo(current, bytes)));
+		if (photo.isPresent()) {
+			return photo.get();
+		}
+		if (this.images.processing(userId)) {
+			throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "찾을 수 없습니다.", PROCESSING_RETRY_AFTER);
+		}
+		throw ApiException.notFound();
 	}
 
 	/**

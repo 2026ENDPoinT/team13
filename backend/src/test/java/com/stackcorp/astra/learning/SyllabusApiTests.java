@@ -135,7 +135,8 @@ class SyllabusApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.instructors[0].phone").doesNotExist())
 			.andExpect(jsonPath("$.instructors[0].office").doesNotExist())
 			.andExpect(jsonPath("$.instructors[0].homepage").doesNotExist())
-			.andExpect(jsonPath("$.instructors[0].userId").doesNotExist())
+			.andExpect(jsonPath("$.instructors[0].userId").value(this.prof))
+			.andExpect(jsonPath("$.instructors[0].officeHours").doesNotExist())
 			.andExpect(jsonPath("$.version").doesNotExist());
 		// 비정규 과정과 폐강 과목의 계획서는 구성원이 아니면 없다.
 		long nonRegular = this.data.insert("INSERT INTO courses (course_type, course_name) VALUES ('비정규', '특강')", Map.of());

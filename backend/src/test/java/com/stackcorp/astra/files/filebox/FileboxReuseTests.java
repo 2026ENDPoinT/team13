@@ -152,6 +152,30 @@ class FileboxReuseTests extends IntegrationTest {
 	}
 
 	@Test
+	void reusesForOutsideCoursePurposesWithoutACourse() throws Exception {
+		long item = file(this.student, null, "문의.txt", text());
+
+		// 과목 밖 용도는 일반 업로드처럼 courseId 없이 보낸다. 올릴 수 없는 용도는 404, 과목 용도에 과목이 없으면 400이다.
+		reuseOutsideCourse(this.student, "community_notice", item).andExpect(status().isNotFound());
+		reuseOutsideCourse(this.student, "lecture_material", item).andExpect(status().isBadRequest());
+		reuseOutsideCourse(this.outsider, "inquiry_attachment", item).andExpect(status().isNotFound());
+		assertThat(uploadsFromFilebox(item)).isZero();
+
+		long uploadId = ApiClient.json(reuseOutsideCourse(this.student, "inquiry_attachment", item)
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.uploads[0].state").value("clean"))).get("uploads").get(0).get("uploadId").asLong();
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM upload_sessions WHERE upload_id = :id AND course_id IS NULL")
+			.param("id", uploadId)
+			.query(Integer.class)
+			.single()).isOne();
+		this.student.postJson("/api/community/qna", "{\"title\":\"파일함 첨부\",\"uploadIds\":[" + uploadId + "]}")
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.attachments.length()").value(1));
+		reuseOutsideCourse(this.student, "message_attachment", item).andExpect(status().isCreated());
+		assertThat(uploadsFromFilebox(item)).isEqualTo(2);
+	}
+
+	@Test
 	void appliesTheTargetPolicyAndRefusesContentThatIsNotClean() throws Exception {
 		long item = file(this.professor, null, "notes.txt", text());
 
@@ -190,6 +214,12 @@ class FileboxReuseTests extends IntegrationTest {
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"itemIds\":" + FileboxCalls.ids(itemIds) + ",\"courseId\":"
 					+ (courseId == null ? this.course : courseId) + ",\"purpose\":\"" + purpose + "\"}"));
+	}
+
+	private ResultActions reuseOutsideCourse(ApiClient client, String purpose, long... itemIds) throws Exception {
+		return client.send(MockMvcRequestBuilders.post("/api/uploads/from-filebox")
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"itemIds\":" + FileboxCalls.ids(itemIds) + ",\"purpose\":\"" + purpose + "\"}"));
 	}
 
 	private long createMaterial(long uploadId) throws Exception {

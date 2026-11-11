@@ -46,6 +46,9 @@ public interface ProfileImages {
 	/** 사용자의 현재 사진. 이미지형 프로필일 때만 있다. */
 	Optional<Current> current(long userId);
 
+	/** 사용자에게 검사·재인코딩을 기다리는 대기(TEMP) 사진이 있는지. */
+	boolean processing(long userId);
+
 	/** 지울 객체가 남은 사진. 버렸거나 실패한 사진의 두 객체와, 현재 사진의 남은 원본이다. */
 	List<Discarded> discarded(int limit);
 

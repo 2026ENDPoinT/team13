@@ -113,7 +113,8 @@ class CommunityService {
 	 */
 	@Transactional(readOnly = true)
 	MaterialPage materials(Actor actor, String audience, String query, Long cursor, int size) {
-		Set<String> allowed = audiences(actor, this.operators.is(actor));
+		boolean operator = this.operators.is(actor);
+		Set<String> allowed = audiences(actor, operator);
 		Set<String> selected = selected(allowed, audience);
 		String title = PlainText.query(query);
 		requirePage(cursor, size);
@@ -131,7 +132,7 @@ class CommunityService {
 				: this.community.materials(actor.userId(), selected, title, cursor, size + 1);
 		Long next = rows.size() > size ? rows.get(size - 1).postId() : null;
 		return new MaterialPage(rows.subList(0, Math.min(size, rows.size())).stream().map(MaterialItem::of).toList(),
-				new MaterialCounts(common + professor + student, common, professor, student), next);
+				new MaterialCounts(common + professor + student, common, professor, student), next, operator);
 	}
 
 	@Transactional(readOnly = true)
@@ -224,8 +225,9 @@ class CommunityService {
 	 */
 	@Transactional(readOnly = true)
 	InquiryPage inquiries(Actor actor, String status, String query, Long cursor, int size, boolean all) {
-		if (all) {
-			requireOperator(actor);
+		boolean operator = this.operators.is(actor);
+		if (all && !operator) {
+			throw ApiException.notFound();
 		}
 		Boolean answered = switch (status == null || status.isBlank() ? "all" : status) {
 			case "all" -> null;
@@ -245,7 +247,7 @@ class CommunityService {
 		List<InquiryItem> items = page.stream()
 			.map((r) -> InquiryItem.of(r, all ? names.get(r.authorId()) : null))
 			.toList();
-		return new InquiryPage(items, counts, next);
+		return new InquiryPage(items, counts, next, operator);
 	}
 
 	/** 문의와 답변. 문의 작성자와 운영자만 본다. 조회는 아무것도 바꾸지 않는다. */
@@ -459,8 +461,9 @@ class CommunityService {
 	record MaterialCounts(long total, long common, long professor, long student) {
 	}
 
+	/** @param canManage 알림마당 운영자면 true. 자료를 올리고 고치고 지울 수 있다 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
-	record MaterialPage(List<MaterialItem> items, MaterialCounts counts, Long nextCursor) {
+	record MaterialPage(List<MaterialItem> items, MaterialCounts counts, Long nextCursor, boolean canManage) {
 	}
 
 	/** @param authorName 운영자가 all=true로 본 목록에만 있다 */
@@ -475,8 +478,9 @@ class CommunityService {
 
 	}
 
+	/** @param canManage 알림마당 운영자면 true. all=true로 모든 문의를 보고 답할 수 있다 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
-	record InquiryPage(List<InquiryItem> items, InquiryCounts counts, Long nextCursor) {
+	record InquiryPage(List<InquiryItem> items, InquiryCounts counts, Long nextCursor, boolean canManage) {
 	}
 
 	/**

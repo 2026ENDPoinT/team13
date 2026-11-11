@@ -6,6 +6,7 @@ import java.util.List;
 
 import com.stackcorp.astra.files.upload.UploadRecords.Policy;
 import com.stackcorp.astra.files.upload.UploadRecords.Upload;
+import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 
@@ -88,22 +89,35 @@ public class FileboxUploads {
 	}
 
 	/**
-	 * 다시 쓸 대상 용도와 과목에 올릴 수 있는지 본다. 멱등 원장을 거치기 전에 권한을 판정할 때 쓴다.
+	 * 다시 쓸 대상 용도와 과목에 올릴 수 있는지 본다. 멱등 원장을 거치기 전에 권한을 판정할 때 쓴다. 과목 밖 용도(공지·자료실·문의·쪽지
+	 * 첨부, ADR-0035)는 과목 없이 부르고, 일반 업로드와 같이 부모를 가진 모듈의 권한으로 판정한다.
 	 *
-	 * @throws ApiException 용도가 틀리면 400, 구성원인 과목이지만 역할이 그 용도에 맞지 않으면 400 {@code purpose_not_allowed}, 구성원이
-	 * 아닌 과목이면 404
+	 * @param courseId 과목 용도면 그 과목. 과목 밖 용도면 null
+	 * @throws ApiException 용도가 틀리거나 과목 용도에 과목이 없으면 400, 구성원인 과목이지만 역할이 그 용도에 맞지 않으면 400
+	 * {@code purpose_not_allowed}, 구성원이 아닌 과목이거나 과목 밖 용도를 올릴 수 없는 사람이면 404
 	 */
-	public void checkTarget(long userId, long courseId, String purposeCode) {
-		target(userId, courseId, purposeCode);
+	public void checkTarget(Actor actor, Long courseId, String purposeCode) {
+		target(actor, courseId, purposeCode);
 	}
 
-	private UploadPurpose target(long userId, long courseId, String purposeCode) {
+	private UploadPurpose target(Actor actor, Long courseId, String purposeCode) {
 		UploadPurpose purpose = UploadPurpose.of(purposeCode)
 			.orElseThrow(() -> ApiException.invalid("purpose 값이 올바르지 않습니다."));
 		if (purpose.streamed()) {
 			// 강의 영상은 변환 작업을 만드는 스트림 업로드로만 받는다(ADR-0016).
 			throw ApiException.invalid("이 용도에는 파일함 파일을 쓸 수 없습니다.");
 		}
+		if (courseId == null) {
+			if (purpose.courseScoped()) {
+				throw ApiException.invalid("이 용도에는 courseId가 필요합니다.");
+			}
+			if (!this.uploads.mayUploadOutsideCourse(actor, purpose)) {
+				// 일반 업로드와 같다. 올릴 수 없는 과목 밖 용도는 404다.
+				throw ApiException.notFound();
+			}
+			return purpose;
+		}
+		long userId = actor.userId();
 		if (!this.uploads.mayUpload(userId, courseId, purpose)) {
 			// 구성원이 아닌 과목은 있는지도 드러내지 않는다. 구성원에게 역할이 맞지 않는다고 알리는 것은 본인의 역할만 드러낸다.
 			if (!this.uploads.member(userId, courseId)) {
@@ -116,17 +130,19 @@ public class FileboxUploads {
 	}
 
 	/**
-	 * 파일함 파일을 과목 업로드로 다시 쓴다. 부르는 쪽 transaction 안에서, 파일함 항목을 잠가 소유와 상태를 확인한 뒤 부른다.
+	 * 파일함 파일을 업로드로 다시 쓴다. 부르는 쪽 transaction 안에서, 파일함 항목을 잠가 소유와 상태를 확인한 뒤 부른다.
 	 * 잠금 순서는 filebox_items → file_blobs → files → upload_sessions다. 하나라도 쓸 수 없으면 예외를 던지고, 부르는 쪽
 	 * transaction이 모두 되돌린다.
 	 *
+	 * @param courseId 과목 용도면 그 과목. 과목 밖 용도면 null
 	 * @return 만든 업로드. sources 순서
 	 * @throws ApiException 용도와 과목은 {@link #checkTarget}과 같다. 검사를 마치지 않았거나 거부한 내용이면 409, 정책이 허용하지 않는
 	 * 형식이면 422, 너무 크면 413
 	 */
 	@Transactional(propagation = Propagation.MANDATORY)
-	public List<Reused> reuse(long userId, long courseId, String purposeCode, List<Source> sources) {
-		UploadPurpose purpose = target(userId, courseId, purposeCode);
+	public List<Reused> reuse(Actor actor, Long courseId, String purposeCode, List<Source> sources) {
+		UploadPurpose purpose = target(actor, courseId, purposeCode);
+		long userId = actor.userId();
 		this.rateLimiter.check("upload", userId, this.properties.rateLimit(), this.properties.rateWindow());
 		Policy policy = this.records.policy(purpose.code())
 			.orElseThrow(() -> new IllegalStateException("upload policy가 없습니다: " + purpose.code()));

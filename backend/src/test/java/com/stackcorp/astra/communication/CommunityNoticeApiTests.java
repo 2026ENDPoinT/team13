@@ -81,6 +81,7 @@ class CommunityNoticeApiTests extends BoardTestSupport {
 
 		// 고정 공지가 먼저다. 학생에게는 교수 대상과 예약 공지가 없다.
 		get(this.student, NOTICES, "q", this.tag).andExpect(status().isOk())
+			.andExpect(jsonPath("$.canManage").value(false))
 			.andExpect(jsonPath("$.items.length()").value(2))
 			.andExpect(jsonPath("$.items[0].noticeId").value(pinned))
 			.andExpect(jsonPath("$.items[0].audience").value("common"))
@@ -96,6 +97,7 @@ class CommunityNoticeApiTests extends BoardTestSupport {
 		get(this.professor, NOTICES, "q", this.tag).andExpect(jsonPath("$.items.length()").value(2))
 			.andExpect(jsonPath("$.items[1].noticeId").value(professorNotice));
 		get(this.operator, NOTICES, "q", this.tag).andExpect(jsonPath("$.total").value(4))
+			.andExpect(jsonPath("$.canManage").value(true))
 			.andExpect(jsonPath("$.items[0].noticeId").value(scheduled))
 			.andExpect(jsonPath("$.items[0].published").value(false));
 		get(this.student, NOTICES, "audience", "nobody").andExpect(status().isBadRequest());
@@ -114,7 +116,9 @@ class CommunityNoticeApiTests extends BoardTestSupport {
 		this.student.get(NOTICES + "/" + scheduled).andExpect(status().isNotFound());
 		this.student.post(NOTICES + "/" + scheduled + "/read").andExpect(status().isNotFound());
 		this.operator.post(NOTICES + "/" + scheduled + "/read").andExpect(status().isNotFound());
-		this.student.post(NOTICES + "/" + pinned + "/read").andExpect(jsonPath("$.viewCount").value(1));
+		this.student.post(NOTICES + "/" + pinned + "/read").andExpect(jsonPath("$.noticeId").value(pinned))
+			.andExpect(jsonPath("$.postId").doesNotExist())
+			.andExpect(jsonPath("$.viewCount").value(1));
 		this.student.post(NOTICES + "/" + pinned + "/read").andExpect(jsonPath("$.viewCount").value(1));
 		this.student.get(NOTICES + "/" + pinned).andExpect(jsonPath("$.read").value(true));
 		withoutCsrf(MockMvcRequestBuilders.post(NOTICES + "/" + pinned + "/read"), this.stu)
@@ -194,6 +198,32 @@ class CommunityNoticeApiTests extends BoardTestSupport {
 			this.operator.delete(NOTICES + "/" + id).andExpect(status().isNoContent());
 			assertThat(announcedTo(id)).isNull();
 		}
+	}
+
+	@Test
+	void aScheduledNoticeEditedWithoutPublishAtIsPublishedNowAndAnnounced() throws Exception {
+		String later = this.jdbc.sql("SELECT DATE_FORMAT(CURRENT_TIMESTAMP + INTERVAL 1 DAY, '%Y-%m-%dT%H:%i:%s')")
+			.query(String.class)
+			.single();
+		long scheduled = created(this.operator.postJson(NOTICES, notice("예약", "common", false, later, null))
+			.andExpect(jsonPath("$.published").value(false)), "noticeId");
+		assertThat(announcedLater(scheduled)).isTrue();
+
+		// 만들 때처럼 publishAt을 비우면(생략 또는 null) 지금 게시하고 알림 예약도 지금으로 당긴다.
+		put(this.operator, NOTICES + "/" + scheduled, "{\"title\":\"" + this.tag
+				+ " 예약\",\"audience\":\"common\",\"pinned\":false,\"publishAt\":null,\"version\":1}")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.published").value(true));
+		assertThat(announcedLater(scheduled)).isFalse();
+		this.student.get(NOTICES + "/" + scheduled).andExpect(status().isOk());
+		this.operator.delete(NOTICES + "/" + scheduled).andExpect(status().isNoContent());
+	}
+
+	private boolean announcedLater(long noticeId) {
+		return this.jdbc.sql("""
+				SELECT visible_at > CURRENT_TIMESTAMP(3) FROM notification_events
+				 WHERE notification_type = 'SITE_NOTICE' AND target_ref_id = :id
+				""").param("id", noticeId).query(Boolean.class).single();
 	}
 
 	private String announcedTo(long noticeId) {

@@ -176,22 +176,24 @@ class BoardCommentService {
 	}
 
 	/**
-	 * @param deleted 지운 댓글. 살아 있는 답글이 있어 자리만 남는다. 본문, 작성자, version은 빠진다
+	 * @param edited 작성 뒤 본문을 고친 적이 있으면 true(version이 1보다 크다). updatedAt은 고치기 전에는 null이다
+	 * @param deleted 지운 댓글. 살아 있는 답글이 있어 자리만 남는다. 본문, 작성자, version, edited는 빠진다
 	 * @param canEdit 작성자 본인이면 true
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	record CommentView(long commentId, Long parentCommentId, String authorName, Boolean mine, String body,
-			Integer version, LocalDateTime createdAt, LocalDateTime updatedAt, boolean deleted, Boolean canEdit,
-			Boolean canDelete) {
+			Integer version, Boolean edited, LocalDateTime createdAt, LocalDateTime updatedAt, boolean deleted,
+			Boolean canEdit, Boolean canDelete) {
 
 		static CommentView of(CommentRow row, Viewer viewer, Map<Long, String> names) {
 			if (row.deleted()) {
-				return new CommentView(row.commentId(), row.parentCommentId(), null, null, null, null, row.createdAt(),
-						null, true, null, null);
+				return new CommentView(row.commentId(), row.parentCommentId(), null, null, null, null, null,
+						row.createdAt(), null, true, null, null);
 			}
 			boolean mine = row.authorId() == viewer.userId();
 			return new CommentView(row.commentId(), row.parentCommentId(), names.get(row.authorId()), mine, row.body(),
-					row.version(), row.createdAt(), row.updatedAt(), false, mine, mine || viewer.manager());
+					row.version(), row.version() > 1, row.createdAt(), row.updatedAt(), false, mine,
+					mine || viewer.manager());
 		}
 
 	}

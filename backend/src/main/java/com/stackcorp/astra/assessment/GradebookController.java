@@ -6,6 +6,7 @@ import java.util.List;
 
 import com.stackcorp.astra.assessment.GradebookService.Gradebook;
 import com.stackcorp.astra.assessment.GradebookService.ItemInput;
+import com.stackcorp.astra.assessment.GradebookService.ItemSheet;
 import com.stackcorp.astra.assessment.GradebookService.ItemUpdate;
 import com.stackcorp.astra.assessment.GradebookService.ItemView;
 import com.stackcorp.astra.assessment.GradebookService.MyGrades;
@@ -63,6 +64,14 @@ class GradebookController {
 	ResponseEntity<Gradebook> gradebook(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "50") int size) {
 		return ok(this.service.gradebook(actor.userId(), courseId, page, size));
+	}
+
+	/** 성적부의 항목 하나와 그 항목의 학생별 점수. 오프라인 점수표처럼 항목 하나만 볼 때 성적부 전체를 쪽마다 읽지 않는다. */
+	@GetMapping("/api/courses/{courseId}/gradebook/items/{itemId}")
+	ResponseEntity<ItemSheet> item(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long itemId, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "50") int size) {
+		return ok(this.service.itemSheet(actor.userId(), courseId, itemId, page, size));
 	}
 
 	@PutMapping("/api/courses/{courseId}/grade-settings")

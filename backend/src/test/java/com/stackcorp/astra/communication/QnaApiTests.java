@@ -125,6 +125,7 @@ class QnaApiTests extends BoardTestSupport {
 		put(this.student, question(this.course, id), "{\"title\":\"고친 질문\",\"version\":1,\"anonymous\":false}")
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.version").value(2))
+			.andExpect(jsonPath("$.edited").value(true))
 			.andExpect(jsonPath("$.answerCount").value(0));
 		this.classmate.get(question(this.course, id))
 			.andExpect(jsonPath("$.title").value("고친 질문"))
@@ -257,7 +258,8 @@ class QnaApiTests extends BoardTestSupport {
 		withoutCsrf(MockMvcRequestBuilders.delete(a), this.stu).andExpect(status().isForbidden());
 
 		// 작성자: 자기 답글을 고치고 지운다. 답글이 없으면 질문을 고치고 지운다.
-		put(this.student, a, editAnswer).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(2));
+		put(this.student, a, editAnswer).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(2))
+			.andExpect(jsonPath("$.edited").value(true));
 		put(this.student, a, editAnswer).andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("version_conflict"));
 		this.student.delete(a).andExpect(status().isNoContent());
