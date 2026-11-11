@@ -85,6 +85,10 @@ class LearningController {
 		this.audit = audit;
 	}
 
+	/**
+	 * 주차와 활동 목록. 학생에게는 자료·퀴즈·설문 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 시작 전 활동의 제목과 기간도 내지
+	 * 않는다(SC-06).
+	 */
 	@GetMapping("/api/courses/{courseId}/weeks")
 	ResponseEntity<List<WeekView>> weeks(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		boolean instructor = role(actor, courseId) == CourseRole.INSTRUCTOR;
@@ -108,13 +112,12 @@ class LearningController {
 			}
 			Activity activity = new Activity(activityId, courseId, rs.getBoolean("published_yn"),
 					rs.getObject("open_at", LocalDateTime.class));
-			if (!instructor && !activity.published()) {
+			if (!instructor && !LearningAccess.open(activity, now)) {
 				return;
 			}
 			week.activities()
 				.add(new ActivityItem(activityId, rs.getString("activity_type"), rs.getString("title"), activity.openAt(),
-						rs.getObject("close_at", LocalDateTime.class), activity.published(),
-						instructor || LearningAccess.open(activity, now)));
+						rs.getObject("close_at", LocalDateTime.class), activity.published()));
 		});
 		return ok(List.copyOf(weeks.values()));
 	}
@@ -352,11 +355,8 @@ class LearningController {
 	record WeekView(int weekNo, String title, LocalDate startsOn, LocalDate endsOn, List<ActivityItem> activities) {
 	}
 
-	/**
-	 * @param accessible 지금 상세와 첨부를 볼 수 있는지
-	 */
 	record ActivityItem(long activityId, String type, String title, LocalDateTime openAt, LocalDateTime closeAt,
-			boolean published, boolean accessible) {
+			boolean published) {
 	}
 
 	/**

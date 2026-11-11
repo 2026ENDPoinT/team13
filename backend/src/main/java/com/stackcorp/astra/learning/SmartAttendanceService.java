@@ -494,6 +494,12 @@ class SmartAttendanceService {
 	}
 
 	record QrToken(String token, LocalDateTime refreshAt) {
+
+		@Override
+		public String toString() {
+			return "QrToken[refreshAt=" + this.refreshAt + "]";
+		}
+
 	}
 
 	/**

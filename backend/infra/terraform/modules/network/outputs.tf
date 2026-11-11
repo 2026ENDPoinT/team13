@@ -10,6 +10,11 @@ output "private_subnet_ids" {
   value = aws_subnet.private[*].id
 }
 
+output "private_subnet_cidrs" {
+  description = "IPv4 CIDRs of the private subnets, in the order of private_subnet_ids."
+  value       = aws_subnet.private[*].cidr_block
+}
+
 output "s3_prefix_list_id" {
   description = "Managed prefix list of the S3 gateway endpoint, for security group egress."
   value       = aws_vpc_endpoint.s3.prefix_list_id

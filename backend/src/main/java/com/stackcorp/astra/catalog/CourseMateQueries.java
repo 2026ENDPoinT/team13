@@ -10,33 +10,29 @@ import com.stackcorp.astra.catalog.api.CourseMates;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 
 /**
- * 역할 판정은 {@link CourseMembershipQueries}와 같다. 담당 관계가 있거나 교수·조교로 등록됐으면 INSTRUCTOR, 학생·청강생으로 수강이
- * 확정됐으면 STUDENT다. 한 과목에 두 관계가 다 있으면 INSTRUCTOR로 본다.
+ * 역할 판정은 {@link MembershipRule}이다. 한 과목에 두 관계가 다 있으면 INSTRUCTOR이고, 폐강한 과목에는 구성원이 없다.
  */
 @Service
 class CourseMateQueries implements CourseMates {
 
-	// 기준 사용자의 과목으로 먼저 좁힌 뒤 그 과목들의 구성원만 읽는다. r은 0이면 담당자, 1이면 학생이다.
+	// 기준 사용자가 구성원인 과목으로 먼저 좁힌 뒤 그 과목들의 담당·수강 행에서 구성원만 남긴다. r은 0이면 담당자, 1이면 학생이다.
 	private static final String MATES = """
 			WITH scope AS (
-			  SELECT course_id FROM course_instructors WHERE user_id = :user
+			  SELECT k.course_id FROM (""" + MembershipRule.candidateCourses(":user") + ") k WHERE "
+			+ MembershipRule.memberOf("k.course_id", ":user") + """
+
+			), people AS (
+			  SELECT course_id, user_id FROM course_instructors WHERE course_id IN (SELECT course_id FROM scope)
 			  UNION
-			  SELECT course_id FROM course_enrollments
-			   WHERE user_id = :user AND enrollment_status = 'ENROLLED' AND enrollment_role IN ('STUDENT', 'AUDITOR', 'PROFESSOR', 'TA')
+			  SELECT course_id, user_id FROM course_enrollments WHERE course_id IN (SELECT course_id FROM scope)
 			), members AS (
-			  SELECT course_id, user_id, MIN(r) AS r FROM (
-			    SELECT course_id, user_id, 0 AS r FROM course_instructors WHERE course_id IN (SELECT course_id FROM scope)
-			    UNION ALL
-			    SELECT course_id, user_id, CASE WHEN enrollment_role IN ('PROFESSOR', 'TA') THEN 0 ELSE 1 END
-			      FROM course_enrollments
-			     WHERE course_id IN (SELECT course_id FROM scope) AND enrollment_status = 'ENROLLED'
-			       AND enrollment_role IN ('STUDENT', 'AUDITOR', 'PROFESSOR', 'TA')
-			  ) x GROUP BY course_id, user_id
+			  SELECT p.course_id, p.user_id, CASE WHEN """ + MembershipRule.instructorOf("p.course_id", "p.user_id")
+			+ " THEN 0 ELSE 1 END AS r FROM people p WHERE " + MembershipRule.memberOf("p.course_id", "p.user_id") + """
+
 			)
 			SELECT o.course_id, o.user_id, me.r AS viewer_r, o.r
 			  FROM members me
 			  JOIN members o ON o.course_id = me.course_id AND o.user_id <> me.user_id
-			  JOIN courses c ON c.course_id = me.course_id AND c.course_status <> 'CANCELLED'
 			 WHERE me.user_id = :user
 			""";
 

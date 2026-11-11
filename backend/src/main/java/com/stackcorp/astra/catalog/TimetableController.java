@@ -73,19 +73,15 @@ class TimetableController {
 			throw ApiException.invalid("date는 오늘에서 " + MAX_DISTANCE_DAYS + "일 안이어야 합니다.");
 		}
 		LocalDate weekStart = day.minusDays(day.getDayOfWeek().getValue() % 7);
+		// 구성원과 역할은 MembershipRule이 정한다. 폐강한 과목은 나오지 않는다.
 		List<CourseSlotRow> rows = this.jdbc.sql("""
 				SELECT s.course_id, s.day_of_week, s.period_start, s.period_end, s.start_time, s.end_time, s.room_name,
 				       c.course_name, c.course_code, c.section_no, t.start_date, t.end_date,
-				       (EXISTS (SELECT 1 FROM course_instructors i WHERE i.course_id = c.course_id AND i.user_id = :user)
-				     OR EXISTS (SELECT 1 FROM course_enrollments e WHERE e.course_id = c.course_id AND e.user_id = :user
-				                   AND e.enrollment_status = 'ENROLLED' AND e.enrollment_role IN ('PROFESSOR', 'TA'))) AS instructor
+				""" + MembershipRule.instructorOf("c.course_id", ":user") + """
+				 AS instructor
 				  FROM course_schedules s JOIN courses c ON c.course_id = s.course_id JOIN terms t ON t.term_id = c.term_id
-				 WHERE t.is_current = 1 AND c.course_status <> 'CANCELLED'
-				   AND (c.course_id IN (SELECT course_id FROM course_instructors WHERE user_id = :user)
-				     OR c.course_id IN (SELECT course_id FROM course_enrollments
-				                         WHERE user_id = :user AND enrollment_status = 'ENROLLED'
-				                           AND enrollment_role IN ('STUDENT', 'AUDITOR', 'PROFESSOR', 'TA')))
-				""" + ORDER)
+				 WHERE t.is_current = 1 AND c.course_id IN (""" + MembershipRule.candidateCourses(":user") + ") AND "
+				+ MembershipRule.memberOf("c.course_id", ":user") + ORDER)
 			.param("user", actor.userId())
 			.query(TimetableController::courseSlotRow)
 			.list();

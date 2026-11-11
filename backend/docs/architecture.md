@@ -272,8 +272,9 @@ flowchart TD
 - actor는 session principal 하나다. 요청 본문의 학번, `ud`, role 값은 받지 않는다(SC-02, CHG-01).
 - 과목 범위는 `/api/courses/{courseId}/...`처럼 요청에 명시한다. 서버 session에 현재 과목을 두지 않는다(SC-03, CHG-02).
 - 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06).
-- 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. break-glass 계정은 과목 권한이 없다.
+- 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. 잠금과 재사용 판정은 계정의 `users` 행을 잠근 뒤 하므로 동시에 보낸 시도도 한도를 넘지 못한다. 로그인 전이라 사용자 단위 제한을 쓸 수 없어 브라우저 주소마다 15분에 30번으로 제한한다. break-glass 계정은 과목 권한이 없다.
 - session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
+- 과목 구성원 판정은 `catalog`의 규칙 하나(`MembershipRule`)다. 역할(`CourseMemberships.roleOf`), 수강생 명단, 함께 듣는 사람, 내 과목, 시간표, 알림, 수강 신청 처리 권한이 모두 이 규칙을 쓴다. 폐강(`CANCELLED`)한 과목에는 구성원이 없으므로 조회와 명령 모두 404다. 담당·수강 행과 학습 기록은 지우지 않는다.
 - 파일 권한은 `files`의 `FileAccess`가 첨부한 부모 객체에 묻는다. 학습활동 첨부는 `learning`이 판정한다. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 지운 활동과 지운 파일은 담당자에게도 없다. 권한이 없거나 경로의 과목과 객체가 맞지 않으면 존재를 드러내지 않도록 404로 응답한다.
 - 강의실 공지는 `communication`이 판정한다. 담당자는 임시·예약 공지까지 보고 쓰며, 학생은 게시 일시가 DB 시계로 지난 공지만 본다. 공지 조회는 읽음을 남기지 않고, 읽음과 확인은 각각 POST 명령이다(SC-04).
 - 수정과 삭제처럼 앞선 변경을 덮을 수 있는 명령은 `If-Match`로 마지막으로 읽은 version을 받는다. 없으면 428, 다르면 409이고 아무것도 바꾸지 않는다(SC-05).
@@ -284,8 +285,9 @@ flowchart TD
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
 - `Idempotency-Key`를 받는 명령은 권한 판정과 입력 검사 뒤 멱등 원장을 거친다. 같은 key와 같은 요청이면 처음 응답을, 다른 요청이면 409 `idempotency_conflict`를, 같은 key가 처리 중이면 3초까지 기다린 뒤 409 `idempotency_in_progress`를 돌려준다(SC-05). key는 사용자와 연산마다 따로다. 같은 key에 다른 요청이면 어떤 명령도 처음 만든 객체를 돌려주지 않는다. 자체 key를 두는 업로드(multipart, 스트림, 파일함)도 같은 규칙의 요청 지문(용도, 과목, 이름, 크기, 내용 hash, 폴더)을 저장해 비교한다([ADR-0010](adr/0010-upload-acceptance.md) 10번).
 - 상태를 바꾸거나 민감한 연산은 감사 기록(`audit_events`)을 남긴다. 명령의 transaction 안이면 함께 commit하고, 밖이면 기록 실패가 요청을 실패시키지 않는다. 본문, 파일 이름, 자유 텍스트는 남기지 않는다(SC-09). 남기지 않는 것은 읽음·확인 표시, 본인만 보는 임시저장, 학습 session의 시작·하트비트·종료(학습 원장이 기록이다), 미리보기의 변환 대기 응답뿐이다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md) 2번).
-- 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록·수정, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
-- 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
+- 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록·수정, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. 사용자가 없는 break-glass 로그인만 브라우저 주소 단위로 건다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
+- 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다. 이 판정은 연결한 쪽 주소로만 한다.
+- 로그인 기록, session, break-glass 주소 제한에 쓰는 브라우저 주소는 `identity`의 `ClientAddresses`가 정한다. 연결한 쪽 주소가 `astra.client-address.trusted-proxies`(CloudFront VPC origin이 있는 app subnet) 안일 때만 CloudFront가 만든 `CloudFront-Viewer-Address`를 쓰고, 그 밖에는 연결한 쪽 주소다. 기본은 비어 있어 header를 믿지 않는다. `X-Forwarded-For`는 왼쪽 값을 브라우저가 정할 수 있어 쓰지 않는다.
 - 쪽지는 `communication`이 판정한다. 받는사람은 서버가 과목 관계로 계산한 범위 안에서만 고르고, 범위 밖 ID가 하나라도 있으면 보내지 않는다. 보관함의 주인이 아니면 존재와 관계없이 404다. 쪽지 조회는 읽음을 남기지 않고 읽음은 POST 명령이다. 발송, 받는사람 검색, 임시저장에 사용자 단위 요청 제한이 있다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)).
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
 - 성적은 `assessment`가 판정한다. 담당자만 성적부를 읽고 쓴다. 학생 성적 API는 session 사용자 본인 것만 돌려주고 대상 학생을 고르는 parameter가 없다. 공개하지 않은 항목의 점수, 의견, 그 점수가 들어간 합계는 속성 자체가 없다(SEC-14). 과제 항목의 이름, 배점, 공개, 점수는 과제 화면에서만, 퀴즈 항목은 퀴즈 화면에서만 바꾸고, 퀴즈 항목의 학생 공개는 `Quiz.release` 하나가 정한다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 학생에게는 보이는 과제·퀴즈의 항목만 나오고 지운 활동의 항목은 누구에게도 없다. 점수 쓰기는 행마다 감사 기록을 남긴다.
@@ -440,7 +442,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 |---|---|---|
 | `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간 |
 | `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나 |
-| `GET /api/courses/{courseId}/weeks` | 과목 구성원 | 주차와 활동 목록. 학생에게는 공개한 활동만, 시작 전 활동은 제목과 기간만 |
+| `GET /api/courses/{courseId}/weeks` | 과목 구성원 | 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부, 강의 영상 항목 |
 
 ### 7.5 CDN이 없는 환경
@@ -777,6 +779,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 학습 대화 보존 | 대화 본문은 소유자 삭제와 파일 삭제로만 지운다. 기간 보존(`ASTRA_STUDYCHAT_RETENTION`)은 기본 꺼짐이다 | 기관 보존 정책을 받아 값을 넣는다 |
 | 학습 대화 한도의 정확도 | 사용자별 질문 한도는 process 메모리라 api가 둘이면 따로 센다. 과목 일일 예산은 질문을 받을 때와 시작할 때만 봐서 답 하나만큼 넘을 수 있다 | api를 늘릴 때 8절 Valkey로 옮긴다 |
 | 악성코드 검사 | 검사기(같은 배포의 ClamAV daemon)를 설정해야 동작한다([ADR-0018](adr/0018-malware-scan-clamd.md)). Terraform 배포는 `scan_uploads`(기본 `true`)로 scan 프로필과 `ASTRA_SCAN_REQUIRED=true`를 넣는다([ADR-0020](adr/0020-terraform-layout.md) 7번). Terraform 밖 배포에서 설정하지 않으면 형식만 검사하고 시작 때 경고한다. 검사기가 멈추거나 첫 서명을 받는 동안에는 새 업로드를 첨부할 수 없다. clamd의 크기 상한보다 큰 파일(수 GB 영상 등)은 검사되지 못하고 quarantined에 남는다. 검사를 켠 EC2는 `t3.large`(8 GiB)가 필요하고, 컨테이너 메모리 상한의 합이 이보다 커서 변환과 검사가 한꺼번에 몰리면 메모리가 모자랄 수 있다 | `scan_uploads`를 끄는 배포는 학교 자료를 받지 않는다. clamd 크기 상한을 업로드 상한 이상으로 둔다. quarantined 수와 `scanner unavailable` 로그에 알람을 건다. 3단계 부하 시험에서 host 메모리를 재고 모자라면 instance type을 올린다. 영상 업로드의 검사 범위는 영상 업로드를 만들 때 정한다 |
+| break-glass 잠금 악용 | 계정 이름(`external_ref`)을 아는 사람은 15분에 5번 틀려 break-glass 계정을 계속 잠가 둘 수 있다. 주소 단위 제한(15분에 30번)은 한 주소의 시도만 줄이고, 주소를 바꾸는 공격은 막지 못한다. 학교 IdP 장애와 겹치면 관리자가 로그인하지 못한다 | 계정 이름을 학번 형식이 아닌 추측하기 어려운 값으로 두고 공개 문서에 적지 않는다. `login_events`의 `LOCKED`에 알람을 건다. 필요하면 CloudFront WAF에 이 경로만의 주소 단위 rate rule을 더한다 |
 | 감사 기록 보존과 누락 | `audit_events`의 보존 기간이 정해지지 않아 지우지 않는다(SC-07). transaction 밖의 기록은 저장 실패 때 경고 로그만 남기고 빠진다 | 기관 정책을 받아 보존 기간을 정한다. 빠진 수를 9절 지표에 넣는다 |
 | 멱등 key와 목록 query 규칙 | `Idempotency-Key`는 선택이라 header를 보내지 않는 client는 재전송으로 자료를 두 번 만들 수 있다. SC-09의 page size 상한, cursor, 정렬 key allowlist는 아직 없다 | 수강신청, 제출을 만들 때 key 필수 여부를 정하고 frontend가 header를 보낸다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 query 규칙을 만든다 |
 | 할 일의 완료 판정 | 과제, 퀴즈, 설문은 본인이 끝내면 빠진다(6절). 영상(다 본 영상)과 자료는 완료를 보지 않아 마감까지 남는다. 횟수 제한이 없는 퀴즈와 오프라인 시험도 마감까지 남는다(EP-0144의 "미완료"는 원본에서도 기준 미확인). 마감 전 활동이 500개를 넘으면 마감이 늦은 쪽은 보지 않는다(`truncated`) | `learning`의 진도 완료(출석 인정)를 공개 API로 내어 `home`이 같은 방식으로 뺀다. 횟수 제한이 없는 퀴즈를 언제 끝난 것으로 볼지 학교 기준을 받는다 |

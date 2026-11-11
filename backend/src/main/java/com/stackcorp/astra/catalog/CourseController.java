@@ -74,12 +74,8 @@ class CourseController {
 	ResponseEntity<List<CourseView>> mine(@AuthenticationPrincipal Actor actor,
 			@RequestParam(required = false) String type, @RequestParam(required = false) Long termId,
 			@RequestParam(required = false) String division, @RequestParam(required = false) String q) {
-		StringBuilder where = new StringBuilder("""
-				 WHERE c.course_status <> 'CANCELLED'
-				   AND (c.course_id IN (SELECT course_id FROM course_instructors WHERE user_id = :user)
-				     OR c.course_id IN (SELECT course_id FROM course_enrollments
-				                         WHERE user_id = :user AND enrollment_status = 'ENROLLED'))
-				""");
+		StringBuilder where = new StringBuilder(" WHERE c.course_id IN (" + MembershipRule.candidateCourses(":user")
+				+ ") AND " + MembershipRule.memberOf("c.course_id", ":user"));
 		Map<String, Object> params = new HashMap<>();
 		params.put("user", actor.userId());
 		if (type != null) {

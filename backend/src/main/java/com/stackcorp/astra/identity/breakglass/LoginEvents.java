@@ -30,6 +30,17 @@ public class LoginEvents {
 			.update();
 	}
 
+	/**
+	 * 잠금·재사용 판정 전에 계정의 users 행을 잠근다. 로그인과 TOTP 재인증이 같은 행을 같은 순서로 잠그므로 판정과 기록이 계정마다 차례로
+	 * 일어난다. transaction 안에서 부른다.
+	 */
+	void lockAccount(long userId) {
+		this.jdbc.sql("SELECT user_id FROM users WHERE user_id = :user FOR UPDATE")
+			.param("user", userId)
+			.query(Long.class)
+			.single();
+	}
+
 	int failuresWithin(long userId, Duration window) {
 		return count(userId, "FAILURE", window);
 	}

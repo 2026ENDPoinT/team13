@@ -16,10 +16,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.stackcorp.astra.identity.api.Actor;
+import com.stackcorp.astra.identity.session.ClientAddresses;
 import com.stackcorp.astra.identity.session.DeviceCookie;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
+import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -30,6 +32,14 @@ import jakarta.servlet.http.HttpServletRequest;
 @RestController
 class AuthController {
 
+	/**
+	 * break-glass 로그인의 브라우저 주소 단위 한도. 계정 잠금(15분에 5번 실패)은 그대로이고, 이 한도는 한 주소가 비밀번호 hash 비교를
+	 * 끝없이 시키지 못하게 한다. 관리자가 학교 NAT 뒤에서 몇 번 틀려도 닿지 않을 만큼 넉넉하다.
+	 */
+	static final int ADDRESS_LIMIT = 30;
+
+	static final Duration ADDRESS_WINDOW = Duration.ofMinutes(15);
+
 	private final BreakGlassLogin breakGlass;
 
 	private final SessionStore sessions;
@@ -38,11 +48,18 @@ class AuthController {
 
 	private final AuditLog audit;
 
-	AuthController(BreakGlassLogin breakGlass, SessionStore sessions, SessionProperties properties, AuditLog audit) {
+	private final ClientAddresses clientAddresses;
+
+	private final RateLimiter rateLimiter;
+
+	AuthController(BreakGlassLogin breakGlass, SessionStore sessions, SessionProperties properties, AuditLog audit,
+			ClientAddresses clientAddresses, RateLimiter rateLimiter) {
 		this.breakGlass = breakGlass;
 		this.sessions = sessions;
 		this.properties = properties;
 		this.audit = audit;
+		this.clientAddresses = clientAddresses;
+		this.rateLimiter = rateLimiter;
 	}
 
 	/** CSRF 쿠키(XSRF-TOKEN)를 받는다. 상태를 바꾸는 요청은 이 값을 X-XSRF-TOKEN header로 보낸다. */
@@ -52,10 +69,13 @@ class AuthController {
 		return ResponseEntity.noContent().header(HttpHeaders.CACHE_CONTROL, "no-store").build();
 	}
 
+	/** 한도를 넘은 주소는 계정과 관계없이 429 {@code rate_limited}다. */
 	@PostMapping("/api/auth/break-glass")
 	ResponseEntity<Void> breakGlass(@RequestBody BreakGlassRequest body, HttpServletRequest request) {
+		String address = this.clientAddresses.of(request);
+		this.rateLimiter.checkAddress("break-glass-login", address, ADDRESS_LIMIT, ADDRESS_WINDOW);
 		IssuedSession session = this.breakGlass.login(body.username(), body.password(), body.code(),
-				DeviceCookie.read(request), request.getRemoteAddr(), request.getHeader(HttpHeaders.USER_AGENT));
+				DeviceCookie.read(request), address, request.getHeader(HttpHeaders.USER_AGENT));
 		return ResponseEntity.noContent()
 			.header(HttpHeaders.SET_COOKIE, cookie(session.token(), this.properties.absoluteTimeout()).toString(),
 					DeviceCookie.issue(session.deviceUuid(), this.properties).toString())
@@ -105,6 +125,13 @@ class AuthController {
 	}
 
 	record BreakGlassRequest(String username, String password, String code) {
+
+		// 요청 본문을 로그에 찍는 설정에서도 비밀번호와 TOTP가 나가지 않게 한다(SC-07).
+		@Override
+		public String toString() {
+			return "BreakGlassRequest[]";
+		}
+
 	}
 
 	record Me(long userId, String name, String role, boolean breakGlass) {

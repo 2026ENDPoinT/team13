@@ -138,6 +138,11 @@ run "plan" {
     error_message = "DB_URL must point at the RDS endpoint with TLS required."
   }
 
+  assert {
+    condition     = output.app_environment["ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES"] == "10.40.2.0/24"
+    error_message = "Only the app subnet, where the CloudFront VPC origin ENIs sit, may supply the viewer address."
+  }
+
   # M2: the default deployment runs and requires the malware scanner (ADR-0018).
   assert {
     condition = alltrue([for k, v in {

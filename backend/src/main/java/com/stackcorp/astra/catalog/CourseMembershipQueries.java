@@ -7,8 +7,14 @@ import org.springframework.stereotype.Service;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 
+/**
+ * 판정은 {@link MembershipRule}이다. 폐강한 과목에서는 누구도 역할이 없다.
+ */
 @Service
 class CourseMembershipQueries implements CourseMemberships {
+
+	private static final String ROLE = "SELECT CASE WHEN " + MembershipRule.instructorOf(":course", ":user")
+			+ " THEN 1 WHEN " + MembershipRule.studentOf(":course", ":user") + " THEN 2 ELSE 0 END";
 
 	private final JdbcClient jdbc;
 
@@ -18,19 +24,12 @@ class CourseMembershipQueries implements CourseMemberships {
 
 	@Override
 	public Optional<CourseRole> roleOf(long userId, long courseId) {
-		boolean instructor = this.jdbc.sql("""
-				SELECT EXISTS (SELECT 1 FROM course_instructors WHERE course_id = :course AND user_id = :user)
-				    OR EXISTS (SELECT 1 FROM course_enrollments WHERE course_id = :course AND user_id = :user
-				                  AND enrollment_status = 'ENROLLED' AND enrollment_role IN ('PROFESSOR', 'TA'))
-				""").param("course", courseId).param("user", userId).query(Boolean.class).single();
-		if (instructor) {
-			return Optional.of(CourseRole.INSTRUCTOR);
-		}
-		boolean student = this.jdbc.sql("""
-				SELECT EXISTS (SELECT 1 FROM course_enrollments WHERE course_id = :course AND user_id = :user
-				                  AND enrollment_status = 'ENROLLED' AND enrollment_role IN ('STUDENT', 'AUDITOR'))
-				""").param("course", courseId).param("user", userId).query(Boolean.class).single();
-		return student ? Optional.of(CourseRole.STUDENT) : Optional.empty();
+		int role = this.jdbc.sql(ROLE).param("course", courseId).param("user", userId).query(Integer.class).single();
+		return switch (role) {
+			case 1 -> Optional.of(CourseRole.INSTRUCTOR);
+			case 2 -> Optional.of(CourseRole.STUDENT);
+			default -> Optional.empty();
+		};
 	}
 
 }

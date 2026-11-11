@@ -120,6 +120,9 @@ locals {
     # The VPC origin hop is plain HTTP, so the app cannot derive its public origin from the request.
     ASTRA_SESSION_ALLOWED_ORIGINS = module.edge.base_url
     ASTRA_OIDC_REDIRECT_URI       = "${module.edge.base_url}/api/auth/callback"
+    # CloudFront VPC origin ENIs sit in the app subnet and the app security group admits only them on the
+    # app port, so a peer from this CIDR came through CloudFront and its CloudFront-Viewer-Address is trusted.
+    ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES = module.network.private_subnet_cidrs[0]
   }, { for k, v in local.scan_app_environment : k => v if var.scan_uploads })
 }
 
