@@ -583,6 +583,54 @@ class MessageApiTests extends IntegrationTest {
 		assertThat(rest.get("items").get(0).get("messageId").asLong()).isEqualTo(ids.get(1));
 	}
 
+	/**
+	 * 목록의 기준 시각은 첫 쪽의 serverTime이고 다음 쪽 cursor가 그 시각을 이어 받는다. 그래서 어느 쪽의 serverTime을 전체 삭제의 until로
+	 * 보내도 같고, 기준 시각 뒤에 보낸 쪽지는 다음 쪽과 total에 끼지 않는다.
+	 */
+	@Test
+	void everyPageOfOneListingKeepsTheFirstPagesServerTimeAndTotal() throws Exception {
+		for (int i = 0; i < 3; i++) {
+			sentId(send(this.professor, compose("기준 " + i, "본문", this.course, this.stu1), "snap-" + i));
+		}
+		JsonNode first = ApiClient.json(this.professor.get("/api/messages/sent?size=2"));
+		JsonNode firstInbox = ApiClient.json(this.student1.get("/api/messages/inbox?size=2"));
+		Thread.sleep(20);
+		long later = sentId(send(this.professor, compose("나중에", "본문", this.course, this.stu1), "snap-later"));
+
+		JsonNode second = ApiClient.json(this.professor
+			.get("/api/messages/sent?size=2&cursor=" + first.get("nextCursor").asString())
+			.andExpect(status().isOk()));
+		assertThat(second.get("serverTime").asString()).isEqualTo(first.get("serverTime").asString());
+		assertThat(second.get("total").asLong()).isEqualTo(3);
+		assertThat(second.get("items")).hasSize(1);
+		JsonNode secondInbox = ApiClient.json(this.student1
+			.get("/api/messages/inbox?size=2&cursor=" + firstInbox.get("nextCursor").asString()));
+		assertThat(secondInbox.get("serverTime").asString()).isEqualTo(firstInbox.get("serverTime").asString());
+		assertThat(secondInbox.get("total").asLong()).isEqualTo(3);
+		// 새로 읽는 첫 쪽은 지금이 기준이다.
+		this.professor.get("/api/messages/sent?size=2")
+			.andExpect(jsonPath("$.total").value(4))
+			.andExpect(jsonPath("$.items[0].messageId").value(later));
+
+		// 둘째 쪽의 serverTime으로 전체 삭제해도 첫 쪽과 같은 쪽지만 지워진다.
+		this.professor
+			.postJson("/api/messages/sent/delete",
+					"{\"all\":true,\"until\":\"" + second.get("serverTime").asString() + "\"}")
+			.andExpect(jsonPath("$.deleted").value(3));
+		this.professor.get(sentPath(later)).andExpect(status().isOk());
+
+		// 잘못된 cursor와 고르기 조건은 필드 이름 없이 한국어 문장으로 알린다.
+		this.professor.get("/api/messages/sent?cursor=bm90LWEtY3Vyc29y")
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("다음 쪽 위치가 올바르지 않습니다. 목록을 처음부터 다시 불러 주세요."));
+		this.professor.postJson("/api/messages/sent/delete", "{\"all\":true}")
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("전체 삭제에는 목록을 불러온 시각이 필요하고, 쪽지를 따로 고른 채로 전체 삭제할 수 없습니다."));
+		this.professor.postJson("/api/messages/sent/delete", "{\"messageIds\":[]}")
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("지울 쪽지를 1개 이상 500개 이하로 고르거나 전체 선택으로 지워야 합니다."));
+	}
+
 	@Test
 	void attachmentsAreReadableOnlyByPeopleWhoStillHoldTheMessage() throws Exception {
 		long upload = attachment(this.professor, "range.txt", "시험 범위");

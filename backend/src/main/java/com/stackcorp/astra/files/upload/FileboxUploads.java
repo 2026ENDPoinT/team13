@@ -90,7 +90,8 @@ public class FileboxUploads {
 	/**
 	 * 다시 쓸 대상 용도와 과목에 올릴 수 있는지 본다. 멱등 원장을 거치기 전에 권한을 판정할 때 쓴다.
 	 *
-	 * @throws ApiException 용도가 틀리면 400, 그 과목에 그 용도로 올릴 수 없으면 404
+	 * @throws ApiException 용도가 틀리면 400, 구성원인 과목이지만 역할이 그 용도에 맞지 않으면 400 {@code purpose_not_allowed}, 구성원이
+	 * 아닌 과목이면 404
 	 */
 	public void checkTarget(long userId, long courseId, String purposeCode) {
 		target(userId, courseId, purposeCode);
@@ -104,7 +105,12 @@ public class FileboxUploads {
 			throw ApiException.invalid("이 용도에는 파일함 파일을 쓸 수 없습니다.");
 		}
 		if (!this.uploads.mayUpload(userId, courseId, purpose)) {
-			throw ApiException.notFound();
+			// 구성원이 아닌 과목은 있는지도 드러내지 않는다. 구성원에게 역할이 맞지 않는다고 알리는 것은 본인의 역할만 드러낸다.
+			if (!this.uploads.member(userId, courseId)) {
+				throw ApiException.notFound();
+			}
+			throw new ApiException(HttpStatus.BAD_REQUEST, "purpose_not_allowed",
+					"이 과목에서 고른 용도로는 파일을 올릴 수 없습니다.");
 		}
 		return purpose;
 	}
@@ -115,8 +121,8 @@ public class FileboxUploads {
 	 * transaction이 모두 되돌린다.
 	 *
 	 * @return 만든 업로드. sources 순서
-	 * @throws ApiException 용도가 틀리면 400, 대상 과목에 그 용도로 올릴 수 없으면 404, 검사를 마치지 않았거나 거부한 내용이면 409,
-	 * 정책이 허용하지 않는 형식이면 422, 너무 크면 413
+	 * @throws ApiException 용도와 과목은 {@link #checkTarget}과 같다. 검사를 마치지 않았거나 거부한 내용이면 409, 정책이 허용하지 않는
+	 * 형식이면 422, 너무 크면 413
 	 */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public List<Reused> reuse(long userId, long courseId, String purposeCode, List<Source> sources) {

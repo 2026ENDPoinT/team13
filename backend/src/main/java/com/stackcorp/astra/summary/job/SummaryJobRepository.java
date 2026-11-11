@@ -5,6 +5,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -236,6 +237,14 @@ class SummaryJobRepository {
 			.param("fileId", fileId)
 			.query((rs, n) -> new Publication(fileId, rs.getLong(1), rs.getObject(2, Long.class), instant(rs, 3)))
 			.optional();
+	}
+
+	/** 게시 pointer가 있는 파일. */
+	List<Long> publishedAmong(Collection<Long> fileIds) {
+		return this.jdbc.sql("SELECT file_id FROM summary_publications WHERE file_id IN (:ids)")
+			.param("ids", fileIds)
+			.query(Long.class)
+			.list();
 	}
 
 	private static SummaryJob map(ResultSet rs, int row) throws SQLException {

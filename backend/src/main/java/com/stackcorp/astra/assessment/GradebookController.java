@@ -163,19 +163,19 @@ class GradebookController {
 	}
 
 	private static String name(String value) {
-		return PlainText.line(value, GradebookService.MAX_NAME, "name");
+		return PlainText.line(value, GradebookService.MAX_NAME, "항목 이름");
 	}
 
 	private static BigDecimal maxScore(BigDecimal value) {
-		BigDecimal max = PlainText.points(value, GradebookService.MAX_SCORE, "maxScore");
+		BigDecimal max = PlainText.points(value, GradebookService.MAX_SCORE, "배점");
 		if (max.signum() == 0) {
-			throw ApiException.invalid("maxScore는 0보다 커야 합니다.");
+			throw ApiException.invalid("배점은 0보다 커야 합니다.");
 		}
 		return max;
 	}
 
 	private static BigDecimal weight(BigDecimal value) {
-		return value == null ? null : PlainText.points(value, GradebookService.MAX_WEIGHT, "weight");
+		return value == null ? null : PlainText.points(value, GradebookService.MAX_WEIGHT, "반영 비율");
 	}
 
 	private static long revision(Long value) {

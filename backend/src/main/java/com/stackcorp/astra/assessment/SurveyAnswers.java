@@ -47,7 +47,7 @@ final class SurveyAnswers {
 					|| new HashSet<>(options).size() != options.size()) {
 				throw ApiException.invalid("answers의 optionIds가 올바르지 않습니다.");
 			}
-			String text = PlainText.block(answer.text(), MAX_TEXT, "text");
+			String text = PlainText.block(answer.text(), MAX_TEXT, "응답");
 			result.add(new Answer(answer.questionId(), options.stream().sorted().toList(), text));
 		}
 		result.sort(Comparator.comparingLong(Answer::questionId));

@@ -73,14 +73,16 @@ class MessageRepository {
 
 	// ---- 받은함
 
-	List<InboxRow> inboxPage(long userId, Boolean read, String query, Position after, int limit) {
+	/** @param until 목록의 기준 시각. 이 시각 뒤에 받은 쪽지는 이 목록에 없다 */
+	List<InboxRow> inboxPage(long userId, Boolean read, String query, Position after, LocalDateTime until, int limit) {
 		String sql = """
 				SELECT m.message_id, m.title, m.sender_id, m.course_id, r.created_at, r.read_at
 				  FROM message_recipients r JOIN messages m ON m.message_id = r.message_id
-				 WHERE""" + INBOX_VISIBLE + readFilter(read) + (query == null ? "" : TITLE_MATCH)
+				 WHERE""" + INBOX_VISIBLE + " AND r.created_at <= :until" + readFilter(read)
+				+ (query == null ? "" : TITLE_MATCH)
 				+ (after == null ? "" : " AND (r.created_at < :at OR (r.created_at = :at AND r.message_id < :afterId))")
 				+ " ORDER BY r.created_at DESC, r.message_id DESC LIMIT :limit";
-		var statement = this.jdbc.sql(sql).param("user", userId).param("limit", limit);
+		var statement = this.jdbc.sql(sql).param("user", userId).param("until", until).param("limit", limit);
 		statement = query == null ? statement : statement.param("q", likeLiteral(query));
 		statement = after == null ? statement : statement.param("at", after.sentAt()).param("afterId", after.messageId());
 		return statement.query((rs, n) -> new InboxRow(rs.getLong(1), rs.getString(2), rs.getLong(3),
@@ -88,10 +90,11 @@ class MessageRepository {
 			.list();
 	}
 
-	long inboxCount(long userId, Boolean read, String query) {
+	/** 전체 삭제({@link #deleteInboxMatching})가 같은 until로 지우는 쪽지 수와 같다(exceptIds 전). */
+	long inboxCount(long userId, Boolean read, String query, LocalDateTime until) {
 		String sql = "SELECT COUNT(*) FROM message_recipients r JOIN messages m ON m.message_id = r.message_id WHERE"
-				+ INBOX_VISIBLE + readFilter(read) + (query == null ? "" : TITLE_MATCH);
-		var statement = this.jdbc.sql(sql).param("user", userId);
+				+ INBOX_VISIBLE + " AND r.created_at <= :until" + readFilter(read) + (query == null ? "" : TITLE_MATCH);
+		var statement = this.jdbc.sql(sql).param("user", userId).param("until", until);
 		statement = query == null ? statement : statement.param("q", likeLiteral(query));
 		return statement.query(Long.class).single();
 	}
@@ -157,7 +160,8 @@ class MessageRepository {
 
 	// ---- 보낸함
 
-	List<SentRow> sentPage(long userId, String query, Position after, int limit) {
+	/** @param until 목록의 기준 시각. 이 시각 뒤에 보낸 쪽지는 이 목록에 없다 */
+	List<SentRow> sentPage(long userId, String query, Position after, LocalDateTime until, int limit) {
 		String sql = """
 				SELECT m.message_id, m.title, m.course_id, m.created_at, m.recipient_count,
 				       (SELECT COUNT(*) FROM message_recipients r WHERE r.message_id = m.message_id AND r.read_at IS NOT NULL) AS read_count,
@@ -165,10 +169,11 @@ class MessageRepository {
 				       (SELECT r.recipient_id FROM message_recipients r WHERE r.message_id = m.message_id
 				         ORDER BY r.message_recipient_id LIMIT 1) AS first_recipient
 				  FROM messages m
-				 WHERE m.sender_id = :user AND m.sender_deleted_at IS NULL""" + (query == null ? "" : TITLE_MATCH)
+				 WHERE m.sender_id = :user AND m.sender_deleted_at IS NULL AND m.created_at <= :until"""
+				+ (query == null ? "" : TITLE_MATCH)
 				+ (after == null ? "" : " AND (m.created_at < :at OR (m.created_at = :at AND m.message_id < :afterId))")
 				+ " ORDER BY m.created_at DESC, m.message_id DESC LIMIT :limit";
-		var statement = this.jdbc.sql(sql).param("user", userId).param("limit", limit);
+		var statement = this.jdbc.sql(sql).param("user", userId).param("until", until).param("limit", limit);
 		statement = query == null ? statement : statement.param("q", likeLiteral(query));
 		statement = after == null ? statement : statement.param("at", after.sentAt()).param("afterId", after.messageId());
 		return statement
@@ -179,11 +184,13 @@ class MessageRepository {
 			.list();
 	}
 
-	long sentCount(long userId, String query) {
+	/** 전체 삭제({@link #deleteSentMatching})가 같은 until로 지우는 쪽지 수와 같다(exceptIds 전). */
+	long sentCount(long userId, String query, LocalDateTime until) {
 		var statement = this.jdbc
 			.sql("SELECT COUNT(*) FROM messages m WHERE m.sender_id = :user AND m.sender_deleted_at IS NULL"
-					+ (query == null ? "" : TITLE_MATCH))
-			.param("user", userId);
+					+ " AND m.created_at <= :until" + (query == null ? "" : TITLE_MATCH))
+			.param("user", userId)
+			.param("until", until);
 		statement = query == null ? statement : statement.param("q", likeLiteral(query));
 		return statement.query(Long.class).single();
 	}

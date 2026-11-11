@@ -4,7 +4,7 @@ import com.stackcorp.astra.shared.ApiException;
 
 /**
  * 게시판 글, 쪽지, 임시저장 글의 일반 텍스트 검사. HTML은 받지 않고 받은 글자를 그대로 저장하고 돌려준다(COMM-07). 제어 문자는 거부한다.
- * 본문만 줄바꿈과 탭을 허용한다. 오류 문장에는 입력값을 넣지 않는다(SC-04).
+ * 본문만 줄바꿈과 탭을 허용한다. 오류 문장에는 입력값을 넣지 않는다(SC-04). label은 화면에 보이는 항목 이름(예: 제목)이다.
  */
 final class PlainText {
 
@@ -17,23 +17,23 @@ final class PlainText {
 
 	/** 앞뒤 공백을 지운 제목. 비었거나 길거나 제어 문자가 있으면 400. */
 	static String title(String raw, int max) {
-		return line(raw, max, "title");
+		return line(raw, max, "제목");
 	}
 
 	/** 앞뒤 공백을 지운 한 줄 글. 비어 있으면 거부한다. */
-	static String line(String value, int max, String field) {
+	static String line(String value, int max, String label) {
 		String text = value == null ? "" : value.strip();
 		if (text.isEmpty() || text.length() > max || hasControl(text, false)) {
-			throw ApiException.invalid(field + "은 1자 이상 " + max + "자 이하여야 합니다.");
+			throw ApiException.invalid(topic(label) + " 1자 이상 " + max + "자 이하의 한 줄 글이어야 합니다.");
 		}
 		return text;
 	}
 
 	/** 비어 있어도 되는 한 줄 글. 공백을 지우지 않고 그대로 둔다(임시저장). */
-	static String partialLine(String value, int max, String field) {
+	static String partialLine(String value, int max, String label) {
 		String text = value == null ? "" : value;
 		if (text.length() > max || hasControl(text, false)) {
-			throw ApiException.invalid(field + "은 " + max + "자 이하의 한 줄 글이어야 합니다.");
+			throw ApiException.invalid(topic(label) + " " + max + "자 이하의 한 줄 글이어야 합니다.");
 		}
 		return text;
 	}
@@ -42,7 +42,7 @@ final class PlainText {
 	static String optionalBody(String raw, int max) {
 		String text = raw == null || raw.isBlank() ? null : raw;
 		if (text != null && (text.length() > max || hasControl(text, true))) {
-			throw ApiException.invalid("body는 " + max + "자 이하여야 합니다.");
+			throw ApiException.invalid("본문은 " + max + "자 이하의 일반 텍스트여야 합니다.");
 		}
 		return text;
 	}
@@ -51,18 +51,25 @@ final class PlainText {
 	static String requiredBody(String raw, int max) {
 		String text = optionalBody(raw, max);
 		if (text == null) {
-			throw ApiException.invalid("body를 입력해 주세요.");
+			throw ApiException.invalid("본문을 입력해 주세요.");
 		}
 		return text;
 	}
 
 	/** 줄바꿈과 tab 말고는 제어 문자를 받지 않는 여러 줄 글. 비어 있으면 빈 문자열이다. */
-	static String block(String value, int max, String field) {
+	static String block(String value, int max, String label) {
 		String text = value == null ? "" : value;
 		if (text.length() > max || hasControl(text, true)) {
-			throw ApiException.invalid(field + "은 " + max + "자 이하의 일반 텍스트여야 합니다.");
+			throw ApiException.invalid(topic(label) + " " + max + "자 이하의 일반 텍스트여야 합니다.");
 		}
 		return text;
+	}
+
+	// 받침이 있으면 "은", 없으면 "는"을 붙인다.
+	private static String topic(String label) {
+		char last = label.charAt(label.length() - 1);
+		boolean batchim = last >= '가' && last <= '힣' && (last - '가') % 28 != 0;
+		return label + (batchim ? "은" : "는");
 	}
 
 	/** 제목 검색어. 비어 있으면 null. */
@@ -77,7 +84,7 @@ final class PlainText {
 		}
 		String text = value.strip();
 		if (text.length() > max || hasControl(text, false)) {
-			throw ApiException.invalid("q는 " + max + "자 이하여야 합니다.");
+			throw ApiException.invalid("검색어는 " + max + "자 이하의 한 줄 글이어야 합니다.");
 		}
 		return text;
 	}

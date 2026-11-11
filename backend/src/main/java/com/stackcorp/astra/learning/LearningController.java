@@ -10,16 +10,19 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
-import com.stackcorp.astra.files.api.Attachments;
-import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.learning.LearningAccess.Activity;
+import com.stackcorp.astra.learning.MaterialFiles.MaterialFile;
 import com.stackcorp.astra.learning.MaterialService.MaterialChange;
 import com.stackcorp.astra.learning.MaterialService.NewMaterial;
+import com.stackcorp.astra.learning.api.ActivityTargets;
+import com.stackcorp.astra.learning.api.ActivityTargets.Target;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
@@ -60,11 +63,16 @@ class LearningController {
 
 	private static final Pattern VERSION = Pattern.compile("\"([1-9][0-9]{0,8})\"");
 
+	// 과제·퀴즈·설문 ID가 있는 활동 유형(learning_activities.activity_type)
+	private static final Set<String> ASSESSMENT_TYPES = Set.of("report", "test", "survey");
+
 	private final JdbcClient jdbc;
 
 	private final LearningAccess access;
 
-	private final Attachments attachments;
+	private final MaterialFiles materialFiles;
+
+	private final ActivityTargets targets;
 
 	private final MaterialService materials;
 
@@ -74,11 +82,12 @@ class LearningController {
 
 	private final AuditLog audit;
 
-	LearningController(JdbcClient jdbc, LearningAccess access, Attachments attachments, MaterialService materials,
-			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit) {
+	LearningController(JdbcClient jdbc, LearningAccess access, MaterialFiles materialFiles, ActivityTargets targets,
+			MaterialService materials, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit) {
 		this.jdbc = jdbc;
 		this.access = access;
-		this.attachments = attachments;
+		this.materialFiles = materialFiles;
+		this.targets = targets;
 		this.materials = materials;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
@@ -87,13 +96,15 @@ class LearningController {
 
 	/**
 	 * 주차와 활동 목록. 학생에게는 자료·퀴즈·설문 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 시작 전 활동의 제목과 기간도 내지
-	 * 않는다(SC-06).
+	 * 않는다(SC-06). 활동마다 DB 시계로 정한 구간({@link ActivityPhase})과, 평가 활동이면 과제·퀴즈·설문 ID를 붙인다. 권한 판정 뒤 쿼리는
+	 * 과목 크기와 관계없이 셋(시계, 주차와 활동, 평가 ID)이다.
 	 */
 	@GetMapping("/api/courses/{courseId}/weeks")
-	ResponseEntity<List<WeekView>> weeks(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
+	ResponseEntity<WeekList> weeks(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		boolean instructor = role(actor, courseId) == CourseRole.INSTRUCTOR;
 		LocalDateTime now = this.access.now();
 		Map<Integer, WeekView> weeks = new LinkedHashMap<>();
+		List<WeekRow> rows = new ArrayList<>();
 		this.jdbc.sql("""
 				SELECT w.week_no, w.title AS week_title, w.starts_on, w.ends_on, a.activity_id, a.activity_type, a.title,
 				       a.open_at, a.close_at, a.published_yn
@@ -115,15 +126,25 @@ class LearningController {
 			if (!instructor && !LearningAccess.open(activity, now)) {
 				return;
 			}
-			week.activities()
-				.add(new ActivityItem(activityId, rs.getString("activity_type"), rs.getString("title"), activity.openAt(),
-						rs.getObject("close_at", LocalDateTime.class), activity.published()));
+			rows.add(new WeekRow(week, activity, rs.getString("activity_type"), rs.getString("title"),
+					rs.getObject("close_at", LocalDateTime.class)));
 		});
-		return ok(List.copyOf(weeks.values()));
+		Map<Long, Target> targets = this.targets.of(rows.stream().map((r) -> r.activity().activityId()).toList());
+		for (WeekRow row : rows) {
+			Activity activity = row.activity();
+			Target target = targets.get(activity.activityId());
+			row.week()
+				.activities()
+				.add(new ActivityItem(activity.activityId(), row.type(), row.title(), activity.openAt(), row.closeAt(),
+						activity.published(), phase(activity.openAt(), row.closeAt(), target, now),
+						targetId(target, "assignment"), targetId(target, "quiz"), targetId(target, "survey")));
+		}
+		return ok(new WeekList(now, List.copyOf(weeks.values())));
 	}
 
+	/** 자료 목록. 최근 등록순. 자료마다 구간과 파일별 요약 게시 여부가 있다. 권한 판정 뒤 쿼리는 넷(시계, 자료, 첨부, 게시 여부)이다. */
 	@GetMapping("/api/courses/{courseId}/materials")
-	ResponseEntity<List<MaterialView>> materials(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
+	ResponseEntity<MaterialList> materials(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		boolean instructor = role(actor, courseId) == CourseRole.INSTRUCTOR;
 		LocalDateTime now = this.access.now();
 		List<ActivityRow> rows = this.jdbc.sql(ACTIVITY + """
@@ -136,29 +157,36 @@ class LearningController {
 			.stream()
 			.filter((row) -> instructor || LearningAccess.open(row.activity(), now))
 			.toList();
-		Map<Long, List<AttachedFile>> files = this.attachments
-			.list(rows.stream().map(ActivityRow::attachmentGroupId).filter(Objects::nonNull).toList());
-		return ok(rows.stream().map((row) -> MaterialView.of(row, files(files, row))).toList());
+		Map<Long, List<MaterialFile>> files = this.materialFiles
+			.of(rows.stream().map(ActivityRow::attachmentGroupId).filter(Objects::nonNull).toList());
+		return ok(new MaterialList(now, rows.stream().map((row) -> MaterialView.of(row, files(files, row), now)).toList()));
 	}
 
+	/** 활동 상세. 자료, 영상, 평가 활동 모두 이 경로다. 구간과 판정에 쓴 DB 시각(serverTime)이 있고, 평가 활동이면 과제·퀴즈·설문 ID가 있다. */
 	@GetMapping("/api/courses/{courseId}/activities/{activityId}")
 	ResponseEntity<ActivityView> activity(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long activityId) {
+		CourseRole role = role(actor, courseId);
+		LocalDateTime now = this.access.now();
 		ActivityRow row = this.jdbc.sql(ACTIVITY + " WHERE a.activity_id = :activity AND a.course_id = :course AND a.deleted_at IS NULL")
 			.param("activity", activityId)
 			.param("course", courseId)
 			.query(LearningController::activityRow)
 			.optional()
-			.filter((r) -> this.access.canView(actor.userId(), r.activity()))
+			.filter((r) -> LearningAccess.visible(role, r.activity(), now))
 			.orElseThrow(ApiException::notFound);
-		List<AttachedFile> files = row.attachmentGroupId() == null ? List.of()
-				: files(this.attachments.list(List.of(row.attachmentGroupId())), row);
+		List<MaterialFile> files = row.attachmentGroupId() == null ? List.of()
+				: files(this.materialFiles.of(List.of(row.attachmentGroupId())), row);
 		List<LectureItem> items = lectureItems(this.jdbc, activityId);
+		Target target = ASSESSMENT_TYPES.contains(row.type()) ? this.targets.of(List.of(activityId)).get(activityId)
+				: null;
 		return ResponseEntity.ok()
 			.cacheControl(CacheControl.noStore())
 			.eTag(etag(row.version()))
 			.body(new ActivityView(row.activity().activityId(), row.type(), row.weekNo(), row.title(), row.description(),
-					row.activity().openAt(), row.closeAt(), row.activity().published(), files, items, row.version()));
+					row.activity().openAt(), row.closeAt(), row.activity().published(),
+					phase(row.activity().openAt(), row.closeAt(), target, now), now, files, items, row.version(),
+					targetId(target, "assignment"), targetId(target, "quiz"), targetId(target, "survey")));
 	}
 
 	/** {@code Idempotency-Key}를 보내면 같은 key의 재전송은 처음 응답을 다시 돌려받고 자료를 더 만들지 않는다(SC-05). */
@@ -185,11 +213,11 @@ class LearningController {
 			.param("activity", activityId)
 			.query(LearningController::activityRow)
 			.single();
-		List<AttachedFile> files = row.attachmentGroupId() == null ? List.of()
-				: files(this.attachments.list(List.of(row.attachmentGroupId())), row);
+		List<MaterialFile> files = row.attachmentGroupId() == null ? List.of()
+				: files(this.materialFiles.of(List.of(row.attachmentGroupId())), row);
 		this.audit.success(actor.userId(), actor.sessionId(), "material.create", "learning_activity", activityId,
 				courseId);
-		return MaterialView.of(row, files);
+		return MaterialView.of(row, files, this.access.now());
 	}
 
 	/**
@@ -212,12 +240,12 @@ class LearningController {
 			.param("activity", activityId)
 			.query(LearningController::activityRow)
 			.single();
-		List<AttachedFile> files = row.attachmentGroupId() == null ? List.of()
-				: files(this.attachments.list(List.of(row.attachmentGroupId())), row);
+		List<MaterialFile> files = row.attachmentGroupId() == null ? List.of()
+				: files(this.materialFiles.of(List.of(row.attachmentGroupId())), row);
 		return ResponseEntity.ok()
 			.cacheControl(CacheControl.noStore())
 			.eTag(etag(row.version()))
-			.body(MaterialView.of(row, files));
+			.body(MaterialView.of(row, files, this.access.now()));
 	}
 
 	/**
@@ -288,11 +316,11 @@ class LearningController {
 		}
 		String title = body.title() == null ? "" : body.title().strip();
 		if (title.isEmpty() || title.length() > MAX_TITLE || hasControl(title, false)) {
-			throw ApiException.invalid("title은 1자 이상 " + MAX_TITLE + "자 이하여야 합니다.");
+			throw ApiException.invalid("제목은 1자 이상 " + MAX_TITLE + "자 이하의 한 줄 글이어야 합니다.");
 		}
 		String description = body.description() == null || body.description().isBlank() ? null : body.description();
 		if (description != null && (description.length() > MAX_DESCRIPTION || hasControl(description, true))) {
-			throw ApiException.invalid("description은 " + MAX_DESCRIPTION + "자 이하여야 합니다.");
+			throw ApiException.invalid("설명은 " + MAX_DESCRIPTION + "자 이하의 일반 텍스트여야 합니다.");
 		}
 		List<Long> uploadIds = body.uploadIds() == null ? List.of() : body.uploadIds();
 		if (uploadIds.size() > MAX_UPLOADS || uploadIds.stream().anyMatch((id) -> id == null || id < 1)
@@ -308,8 +336,17 @@ class LearningController {
 			.anyMatch((cp) -> Character.isISOControl(cp) && !(allowLineBreaks && (cp == '\n' || cp == '\r' || cp == '\t')));
 	}
 
-	private static List<AttachedFile> files(Map<Long, List<AttachedFile>> byGroup, ActivityRow row) {
+	private static List<MaterialFile> files(Map<Long, List<MaterialFile>> byGroup, ActivityRow row) {
 		return row.attachmentGroupId() == null ? List.of() : byGroup.getOrDefault(row.attachmentGroupId(), List.of());
+	}
+
+	// 지각 마감은 지각 제출을 받는 과제에만 있다. 과제 화면의 phase와 같은 구간이 된다.
+	private static String phase(LocalDateTime openAt, LocalDateTime closeAt, Target target, LocalDateTime now) {
+		return ActivityPhase.of(openAt, closeAt, target == null ? null : target.lateUntil(), now);
+	}
+
+	private static Long targetId(Target target, String kind) {
+		return target != null && target.kind().equals(kind) ? target.id() : null;
 	}
 
 	private static <T> ResponseEntity<T> ok(T body) {
@@ -352,22 +389,48 @@ class LearningController {
 	record AttachmentSet(List<Long> keep, List<Long> add) {
 	}
 
+	/**
+	 * @param serverTime 구간 판정에 쓴 DB 시각. 남은 시간은 이 값으로 계산한다
+	 */
+	record WeekList(LocalDateTime serverTime, List<WeekView> weeks) {
+	}
+
 	record WeekView(int weekNo, String title, LocalDate startsOn, LocalDate endsOn, List<ActivityItem> activities) {
 	}
 
+	/**
+	 * @param phase not_open, open, late(지각 제출을 받는 과제만), closed. {@link ActivityPhase}
+	 * @param assignmentId 과제 활동만. 과제 화면의 ID
+	 * @param quizId 퀴즈 활동만
+	 * @param surveyId 강의실 설문 활동만
+	 */
 	record ActivityItem(long activityId, String type, String title, LocalDateTime openAt, LocalDateTime closeAt,
-			boolean published) {
+			boolean published, String phase, @JsonInclude(JsonInclude.Include.NON_NULL) Long assignmentId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long quizId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long surveyId) {
+	}
+
+	private record WeekRow(WeekView week, Activity activity, String type, String title, LocalDateTime closeAt) {
 	}
 
 	/**
+	 * @param serverTime 구간 판정에 쓴 DB 시각
+	 */
+	record MaterialList(LocalDateTime serverTime, List<MaterialView> items) {
+	}
+
+	/**
+	 * @param phase not_open(시작 전, 담당자에게만 보인다) 또는 open. 자료에는 마감이 없다
 	 * @param version 수정·삭제할 때 If-Match로 보내는 값
 	 */
 	record MaterialView(long activityId, int weekNo, String title, String description, LocalDateTime openAt,
-			boolean published, Instant createdAt, List<AttachedFile> files, int version) {
+			boolean published, String phase, Instant createdAt, List<MaterialFile> files, int version) {
 
-		static MaterialView of(ActivityRow row, List<AttachedFile> files) {
+		static MaterialView of(ActivityRow row, List<MaterialFile> files, LocalDateTime now) {
 			return new MaterialView(row.activity().activityId(), row.weekNo(), row.title(), row.description(),
-					row.activity().openAt(), row.activity().published(), row.createdAt(), files, row.version());
+					row.activity().openAt(), row.activity().published(),
+					ActivityPhase.of(row.activity().openAt(), row.closeAt(), null, now), row.createdAt(), files,
+					row.version());
 		}
 
 	}
@@ -400,9 +463,19 @@ class LearningController {
 
 	}
 
+	/**
+	 * @param phase not_open, open, late, closed. {@link ActivityPhase}
+	 * @param serverTime 판정에 쓴 DB 시각
+	 * @param assignmentId 과제 활동만
+	 * @param quizId 퀴즈 활동만
+	 * @param surveyId 강의실 설문 활동만
+	 */
 	record ActivityView(long activityId, String type, int weekNo, String title, String description,
-			LocalDateTime openAt, LocalDateTime closeAt, boolean published, List<AttachedFile> files,
-			List<LectureItem> lectureItems, int version) {
+			LocalDateTime openAt, LocalDateTime closeAt, boolean published, String phase, LocalDateTime serverTime,
+			List<MaterialFile> files, List<LectureItem> lectureItems, int version,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long assignmentId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long quizId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long surveyId) {
 	}
 
 }

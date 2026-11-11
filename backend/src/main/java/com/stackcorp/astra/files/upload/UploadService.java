@@ -112,6 +112,11 @@ class UploadService {
 		return purpose.courseScoped() && this.memberships.roleOf(userId, courseId).filter(purpose::allows).isPresent();
 	}
 
+	/** 그 과목의 구성원인지. 역할은 묻지 않는다. */
+	boolean member(long userId, long courseId) {
+		return this.memberships.roleOf(userId, courseId).isPresent();
+	}
+
 	/**
 	 * 이름·확장자·크기·내용 형식을 검사한 뒤 저장하고 기록한다. 권한과 요청 제한은 부르는 쪽이 먼저 판정한다.
 	 * placement는 업로드를 기록하는 transaction 안에서 기록 앞뒤로 부른다. 예외를 던지면 업로드 기록 전체가 되돌아간다.

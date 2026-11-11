@@ -277,10 +277,10 @@ class LectureController {
 		String title = title(rawTitle);
 		String description = rawDescription == null || rawDescription.isBlank() ? null : rawDescription;
 		if (description != null && (description.length() > MAX_DESCRIPTION || hasControl(description, true))) {
-			throw ApiException.invalid("description은 " + MAX_DESCRIPTION + "자 이하여야 합니다.");
+			throw ApiException.invalid("설명은 " + MAX_DESCRIPTION + "자 이하의 일반 텍스트여야 합니다.");
 		}
 		if (openAt != null && closeAt != null && !openAt.isBefore(closeAt)) {
-			throw ApiException.invalid("closeAt은 openAt보다 뒤여야 합니다.");
+			throw ApiException.invalid("마감 일시는 시작 일시보다 뒤여야 합니다.");
 		}
 		return new Fields(weekNo, title, description);
 	}
@@ -305,7 +305,7 @@ class LectureController {
 	private static String title(String raw) {
 		String title = raw == null ? "" : raw.strip();
 		if (title.isEmpty() || title.length() > MAX_TITLE || hasControl(title, false)) {
-			throw ApiException.invalid("title은 1자 이상 " + MAX_TITLE + "자 이하여야 합니다.");
+			throw ApiException.invalid("제목은 1자 이상 " + MAX_TITLE + "자 이하의 한 줄 글이어야 합니다.");
 		}
 		return title;
 	}

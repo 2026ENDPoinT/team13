@@ -48,6 +48,13 @@ class LearningAccess {
 		return role.get() == CourseRole.INSTRUCTOR || open(activity, now());
 	}
 
+	/**
+	 * 그 과목의 역할로 활동을 볼 수 있는지. {@link #canView}와 같은 규칙을, 역할과 시각을 이미 읽은 목록(강의실 파일모음)이 행마다 쓴다.
+	 */
+	static boolean visible(CourseRole role, Activity activity, LocalDateTime now) {
+		return role == CourseRole.INSTRUCTOR || open(activity, now);
+	}
+
 	boolean canManage(long userId, Activity activity) {
 		return canManage(userId, activity.courseId());
 	}

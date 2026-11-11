@@ -70,7 +70,7 @@ class SubmissionController {
 	@PutMapping("/api/courses/{courseId}/assignments/{assignmentId}/submission/draft")
 	ResponseEntity<Draft> saveDraft(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long assignmentId, @RequestBody DraftRequest body) {
-		String text = PlainText.block(body.body(), MAX_BODY, "body");
+		String text = PlainText.block(body.body(), MAX_BODY, "제출 글");
 		return ok(this.service.saveDraft(actor.userId(), courseId, assignmentId, text));
 	}
 
@@ -124,7 +124,7 @@ class SubmissionController {
 	ResponseEntity<GradeView> grade(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long assignmentId, @PathVariable long submissionId, @RequestBody GradeRequest body) {
 		Assignment assignment = this.access.managed(actor.userId(), courseId, assignmentId);
-		String feedback = PlainText.block(body.feedback(), MAX_FEEDBACK, "feedback");
+		String feedback = PlainText.block(body.feedback(), MAX_FEEDBACK, "채점 의견");
 		this.service.grade(actor, courseId, assignment, submissionId, body.score(), feedback);
 		Submission submission = this.records.find(submissionId).orElseThrow();
 		return ok(this.records.grade(assignment.settings().gradeItemId(), submission.userId())
@@ -136,7 +136,7 @@ class SubmissionController {
 		if (body.expectedVersion() == null || body.expectedVersion() < 0) {
 			throw ApiException.invalid("expectedVersion은 0 이상이어야 합니다.");
 		}
-		String text = PlainText.block(body.body(), MAX_BODY, "body");
+		String text = PlainText.block(body.body(), MAX_BODY, "제출 글");
 		List<Long> uploadIds = ids(body.uploadIds(), "uploadIds");
 		List<Long> keepFileIds = ids(body.keepFileIds(), "keepFileIds");
 		if (uploadIds.size() + keepFileIds.size() > MAX_UPLOADS) {

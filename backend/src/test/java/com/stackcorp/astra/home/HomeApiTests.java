@@ -307,10 +307,10 @@ class HomeApiTests extends IntegrationTest {
 		long fewStatements = statements(few);
 		long manyStatements = statements(many);
 		// 과목마다 쿼리를 더 보내지 않는다. 과목마다 과제와 퀴즈가 있고 그 점수를 공개해도 같다.
-		// 시계, 과목, 할 일 1과 완료 판정 4, 공지 2, 알림마당 공지 2, 쪽지 1, 알림 수 1, 새 성적 5(애플리케이션 18)와 session 확인,
-		// transaction 문장뿐이다.
+		// 시계, 과목, 할 일 1과 완료 판정 4와 평가 ID 1, 공지 2, 알림마당 공지 2, 쪽지 1, 알림 수 1, 새 성적 5(애플리케이션 19)와
+		// session 확인, transaction 문장뿐이다.
 		assertThat(manyStatements).isEqualTo(fewStatements);
-		assertThat(manyStatements).isLessThanOrEqualTo(27);
+		assertThat(manyStatements).isLessThanOrEqualTo(28);
 	}
 
 	/** 과목마다 공지, 활동, 과제, 퀴즈를 두고 과제와 퀴즈의 그 학생 점수를 공개한다. */

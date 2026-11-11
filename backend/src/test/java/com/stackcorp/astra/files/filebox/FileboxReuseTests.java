@@ -128,8 +128,11 @@ class FileboxReuseTests extends IntegrationTest {
 		long trashed = file(this.student, null, "old.txt", text());
 		command(this.student, "trash", trashed).andExpect(status().isOk());
 
-		// 수강생은 강의 자료로 올리지 못한다. 과목 밖 사람, 다른 과목, 남의 항목은 모두 404다.
-		reuse(this.student, "lecture_material", null, item).andExpect(status().isNotFound());
+		// 수강생은 강의 자료로 올리지 못한다. 본인 역할의 문제라 400으로 알린다. 과목 밖 사람, 다른 과목, 남의 항목은 모두 404다.
+		reuse(this.student, "lecture_material", null, item).andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("purpose_not_allowed"));
+		reuse(this.student, "community_notice", null, item).andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("purpose_not_allowed"));
 		reuse(this.student, "assignment_submission", this.data.course(), item).andExpect(status().isNotFound());
 		reuse(this.outsider, "assignment_submission", null, item).andExpect(status().isNotFound());
 		reuse(this.professor, "lecture_material", null, item).andExpect(status().isNotFound());

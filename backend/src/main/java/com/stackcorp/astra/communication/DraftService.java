@@ -75,8 +75,8 @@ class DraftService {
 			throw ApiException.invalid("revision은 1 이상 " + MAX_REVISION + " 이하의 정수여야 합니다.");
 		}
 		List<Long> recipients = body.recipientIds() == null ? null : recipientIds(body.recipientIds());
-		Contents contents = new Contents(PlainText.partialLine(body.title(), MAX_TITLE, "title"),
-				PlainText.block(body.body(), MAX_BODY, "body"), body.courseId(), recipients);
+		Contents contents = new Contents(PlainText.partialLine(body.title(), MAX_TITLE, "제목"),
+				PlainText.block(body.body(), MAX_BODY, "본문"), body.courseId(), recipients);
 		// 2초 debounce로 저장하는 화면이 10분 동안 쉬지 않고 쓸 수 있는 횟수다.
 		this.rateLimiter.check("draft-save", userId, 300, Duration.ofMinutes(10));
 		String serialized = this.json.writeValueAsString(contents);

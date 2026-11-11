@@ -244,18 +244,18 @@ class SurveyController {
 
 	private static SurveyInput validated(SurveyRequest body) {
 		if (body.weekNo() == null || body.weekNo() < 1 || body.weekNo() > MAX_WEEK) {
-			throw ApiException.invalid("weekNo는 1 이상 " + MAX_WEEK + " 이하여야 합니다.");
+			throw ApiException.invalid("주차는 1주 이상 " + MAX_WEEK + "주 이하여야 합니다.");
 		}
-		String title = PlainText.line(body.title(), MAX_TITLE, "title");
-		String description = PlainText.block(body.description(), MAX_DESCRIPTION, "description");
+		String title = PlainText.line(body.title(), MAX_TITLE, "제목");
+		String description = PlainText.block(body.description(), MAX_DESCRIPTION, "설명");
 		if (body.closeAt() == null) {
-			throw ApiException.invalid("closeAt은 반드시 보내야 합니다.");
+			throw ApiException.invalid("마감 일시를 정해야 합니다.");
 		}
 		// 활동의 기간 컬럼은 초 단위다. 반올림되지 않도록 초 아래를 버린다.
 		LocalDateTime closeAt = body.closeAt().truncatedTo(ChronoUnit.SECONDS);
 		LocalDateTime openAt = body.openAt() == null ? null : body.openAt().truncatedTo(ChronoUnit.SECONDS);
 		if (openAt != null && !openAt.isBefore(closeAt)) {
-			throw ApiException.invalid("openAt은 closeAt보다 앞이어야 합니다.");
+			throw ApiException.invalid("시작 일시는 마감 일시보다 앞이어야 합니다.");
 		}
 		boolean resultsVisible = body.resultsVisible() != null && body.resultsVisible();
 		LocalDateTime releaseAt = body.resultsReleaseAt() == null ? null
@@ -279,9 +279,9 @@ class SurveyController {
 			if (q == null || q.type() == null) {
 				throw ApiException.invalid("문항의 type은 single, multiple, scale, essay 중 하나여야 합니다.");
 			}
-			String text = PlainText.block(q.text(), MAX_QUESTION_TEXT, "question text");
+			String text = PlainText.block(q.text(), MAX_QUESTION_TEXT, "문항 내용");
 			if (text == null) {
-				throw ApiException.invalid("문항의 text는 반드시 보내야 합니다.");
+				throw ApiException.invalid("문항 내용을 입력해야 합니다.");
 			}
 			boolean required = q.required() == null || q.required();
 			List<String> options = q.options() == null ? List.of() : q.options();
@@ -304,7 +304,7 @@ class SurveyController {
 					int min = q.minSelect() == null ? 1 : q.minSelect();
 					int max = q.maxSelect() == null ? texts.size() : q.maxSelect();
 					if (min < 1 || min > max || max > texts.size()) {
-						throw ApiException.invalid("선택 수는 1 이상 보기 수 이하이고 minSelect는 maxSelect 이하여야 합니다.");
+						throw ApiException.invalid("선택 수는 1 이상 보기 수 이하이고, 최소 선택 수는 최대 선택 수 이하여야 합니다.");
 					}
 					result.add(new QuestionInput("multiple", text, required, min, max, texts));
 				}
@@ -318,7 +318,7 @@ class SurveyController {
 		if (options.size() < 2 || options.size() > max) {
 			throw ApiException.invalid("보기는 2개 이상 " + max + "개 이하여야 합니다.");
 		}
-		return options.stream().map((o) -> PlainText.line(o, MAX_OPTION_TEXT, "option")).toList();
+		return options.stream().map((o) -> PlainText.line(o, MAX_OPTION_TEXT, "보기")).toList();
 	}
 
 	private static <T> ResponseEntity<T> ok(T body) {

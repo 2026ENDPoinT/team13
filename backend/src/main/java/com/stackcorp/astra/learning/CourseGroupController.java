@@ -100,8 +100,8 @@ class CourseGroupController {
 			@RequestBody CreateGroup body,
 			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
 		requireInstructor(actor, courseId);
-		String name = LearningText.required(body.name(), "name", MAX_NAME);
-		String description = LearningText.optional(body.description(), "description", MAX_DESCRIPTION, true);
+		String name = LearningText.required(body.name(), "그룹 이름", MAX_NAME);
+		String description = LearningText.optional(body.description(), "그룹 설명", MAX_DESCRIPTION, true);
 		GroupType type = GroupType.of(body.type() == null ? GroupType.ACTIVITY.code : body.type())
 			.orElseThrow(() -> ApiException.invalid("type은 activity 또는 section이어야 합니다."));
 		this.rateLimiter.check("course-group-write", actor.userId(), 300, Duration.ofMinutes(10));
@@ -123,8 +123,8 @@ class CourseGroupController {
 			@RequestBody UpdateGroup body) {
 		requireInstructor(actor, courseId);
 		int version = Versions.expected(ifMatch);
-		String name = LearningText.required(body.name(), "name", MAX_NAME);
-		String description = LearningText.optional(body.description(), "description", MAX_DESCRIPTION, true);
+		String name = LearningText.required(body.name(), "그룹 이름", MAX_NAME);
+		String description = LearningText.optional(body.description(), "그룹 설명", MAX_DESCRIPTION, true);
 		this.rateLimiter.check("course-group-write", actor.userId(), 300, Duration.ofMinutes(10));
 		this.service.rename(actor, courseId, groupId, version, name, description);
 		GroupView updated = one(courseId, groupId);

@@ -57,6 +57,8 @@ class LectureProgressApiTests extends IntegrationTest {
 
 	long hidden;
 
+	long openLecture;
+
 	long notYetOpen;
 
 	LocalDateTime t0;
@@ -73,6 +75,7 @@ class LectureProgressApiTests extends IntegrationTest {
 		this.student = new ApiClient(this.mvc, this.data.session(this.stu));
 		this.professor = new ApiClient(this.mvc, this.data.session(prof));
 		long open = this.data.activity(this.course, "lecture_weeks", true, null, null);
+		this.openLecture = open;
 		this.watched = item(open, 1, 300, 60);
 		this.unknownLength = item(open, 2, null, null);
 		this.hidden = item(this.data.activity(this.course, "lecture_weeks", false, null, null), 1, 300, 60);
@@ -158,6 +161,43 @@ class LectureProgressApiTests extends IntegrationTest {
 		this.professor.get(progress(this.course))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.length()").value(3));
+	}
+
+	@Test
+	void rosterPagesStudentsInRosterOrderAndFiltersByOneLecture() throws Exception {
+		this.professor.get(progress(this.course) + "/students?size=1")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalStudents").value(2))
+			.andExpect(jsonPath("$.page").value(1))
+			.andExpect(jsonPath("$.size").value(1))
+			.andExpect(jsonPath("$.students.length()").value(1))
+			.andExpect(jsonPath("$.students[0].userId").value(this.stu))
+			.andExpect(jsonPath("$.items.length()").value(4));
+		this.professor.get(progress(this.course) + "/students?size=1&page=2")
+			.andExpect(jsonPath("$.students[0].userId").value(this.classmate))
+			.andExpect(jsonPath("$.students[0].items.length()").value(4));
+		this.professor.get(progress(this.course) + "/students?size=1&page=3")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.students.length()").value(0))
+			.andExpect(jsonPath("$.totalStudents").value(2));
+
+		// 영상 활동 하나만 고르면 그 활동의 콘텐츠만 열이 되고 학생 행도 같은 열이다.
+		JsonNode one = ApiClient.json(this.professor.get(progress(this.course) + "/students?activityId=" + this.openLecture)
+			.andExpect(status().isOk()));
+		assertThat(one.get("items")).hasSize(2);
+		one.get("items").forEach((i) -> assertThat(i.get("activityId").asLong()).isEqualTo(this.openLecture));
+		assertThat(one.get("students").get(0).get("items")).hasSize(2);
+
+		// 영상 활동이 아니거나 다른 과목의 활동이면 없는 활동이다(SC-03).
+		long material = this.data.activity(this.course, "lecture_material", true, null, null);
+		long otherCourse = this.data.course();
+		long elsewhere = this.data.activity(otherCourse, "lecture_weeks", true, null, null);
+		for (long activity : new long[] { material, elsewhere, 999_999_999L }) {
+			this.professor.get(progress(this.course) + "/students?activityId=" + activity).andExpect(status().isNotFound());
+		}
+		for (String bad : new String[] { "size=0", "size=101", "page=0" }) {
+			this.professor.get(progress(this.course) + "/students?" + bad).andExpect(status().isBadRequest());
+		}
 	}
 
 	private long item(long activityId, int linkSeq, Integer durationSec, Integer requiredSec) {

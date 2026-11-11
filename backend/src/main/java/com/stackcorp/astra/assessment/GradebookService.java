@@ -293,7 +293,7 @@ class GradebookService {
 			else {
 				ScoreRow row = rows.get(i);
 				checked.add(new Indexed(i, row.studentId(), row.score(),
-						PlainText.block(row.feedback(), MAX_FEEDBACK, "feedback"), row.version()));
+						PlainText.block(row.feedback(), MAX_FEEDBACK, "채점 의견"), row.version()));
 			}
 		}
 		if (!errors.isEmpty()) {
@@ -356,7 +356,7 @@ class GradebookService {
 			return "invalid_score";
 		}
 		try {
-			PlainText.block(row.feedback(), MAX_FEEDBACK, "feedback");
+			PlainText.block(row.feedback(), MAX_FEEDBACK, "채점 의견");
 		}
 		catch (ApiException ex) {
 			return "invalid_feedback";

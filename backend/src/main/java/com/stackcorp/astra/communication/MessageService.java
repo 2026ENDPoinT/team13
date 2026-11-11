@@ -222,21 +222,27 @@ class MessageService {
 
 	// ---- 받은함
 
+	/**
+	 * 받은함 한 쪽. 첫 쪽의 DB 시각이 목록의 기준 시각(serverTime)이고 다음 쪽 cursor에 담겨 이어진다. 그래서 모든 쪽의 serverTime과
+	 * total이 첫 쪽과 같은 시점의 값이고, 그 시각 뒤에 온 쪽지는 다음 쪽에 끼지 않는다. 전체 삭제의 until에는 어느 쪽의 serverTime을
+	 * 보내도 같다. 기준 시각 뒤에 지운 쪽지는 다음 쪽과 total에서 빠진다.
+	 */
 	@Transactional(readOnly = true)
 	InboxPage inbox(long userId, Boolean read, String query, String cursor, int size) {
 		requireSize(size);
 		String title = PlainText.query(query, MAX_QUERY);
-		Position after = decode(cursor);
-		LocalDateTime now = this.messages.now();
-		List<InboxRow> rows = this.messages.inboxPage(userId, read, title, after, size + 1);
+		Cursor after = decode(cursor);
+		LocalDateTime snapshot = snapshot(after, this.messages.now());
+		List<InboxRow> rows = this.messages.inboxPage(userId, read, title, after == null ? null : after.position(),
+				snapshot, size + 1);
 		List<InboxRow> page = rows.size() > size ? rows.subList(0, size) : rows;
-		String next = rows.size() > size ? encode(page.getLast().sentAt(), page.getLast().messageId()) : null;
+		String next = rows.size() > size ? encode(page.getLast().sentAt(), page.getLast().messageId(), snapshot) : null;
 		Map<Long, String> names = this.userNames.namesOf(page.stream().map(InboxRow::senderId).distinct().toList());
 		List<InboxItem> items = page.stream()
 			.map((r) -> new InboxItem(r.messageId(), r.title(), new Person(r.senderId(), names.get(r.senderId())),
 					r.courseId(), r.sentAt(), r.readAt() != null))
 			.toList();
-		return new InboxPage(now, items, this.messages.inboxCount(userId, read, title),
+		return new InboxPage(snapshot, items, this.messages.inboxCount(userId, read, title, snapshot),
 				this.messages.unreadCount(userId), next);
 	}
 
@@ -310,15 +316,17 @@ class MessageService {
 
 	// ---- 보낸함
 
+	/** 보낸함 한 쪽. 기준 시각과 total의 규칙은 받은함({@link #inbox})과 같다. */
 	@Transactional(readOnly = true)
 	SentPage sentBox(long userId, String query, String cursor, int size) {
 		requireSize(size);
 		String title = PlainText.query(query, MAX_QUERY);
-		Position after = decode(cursor);
-		LocalDateTime now = this.messages.now();
-		List<SentRow> rows = this.messages.sentPage(userId, title, after, size + 1);
+		Cursor after = decode(cursor);
+		LocalDateTime snapshot = snapshot(after, this.messages.now());
+		List<SentRow> rows = this.messages.sentPage(userId, title, after == null ? null : after.position(), snapshot,
+				size + 1);
 		List<SentRow> page = rows.size() > size ? rows.subList(0, size) : rows;
-		String next = rows.size() > size ? encode(page.getLast().sentAt(), page.getLast().messageId()) : null;
+		String next = rows.size() > size ? encode(page.getLast().sentAt(), page.getLast().messageId(), snapshot) : null;
 		Map<Long, String> names = this.userNames
 			.namesOf(page.stream().map(SentRow::firstRecipientId).distinct().toList());
 		List<SentItem> items = page.stream()
@@ -326,7 +334,7 @@ class MessageService {
 					new Person(r.firstRecipientId(), names.get(r.firstRecipientId())), r.recipientCount(), r.readCount(),
 					r.recalledCount()))
 			.toList();
-		return new SentPage(now, items, this.messages.sentCount(userId, title), next);
+		return new SentPage(snapshot, items, this.messages.sentCount(userId, title, snapshot), next);
 	}
 
 	/** 보낸 쪽지 상세와 수신자별 읽음·회수 상태(EP-0235). */
@@ -481,10 +489,10 @@ class MessageService {
 	}
 
 	private static Outgoing outgoing(String title, String body, List<Long> uploadIds) {
-		String t = PlainText.line(title, MAX_TITLE, "title");
-		String text = PlainText.block(body, MAX_BODY_BYTES * 10, "body").strip();
+		String t = PlainText.line(title, MAX_TITLE, "제목");
+		String text = PlainText.block(body, MAX_BODY_BYTES * 10, "본문").strip();
 		if (text.isEmpty() || PlainText.screenBytes(text) > MAX_BODY_BYTES) {
-			throw ApiException.invalid("body는 1byte 이상 " + MAX_BODY_BYTES + "byte 이하여야 합니다.");
+			throw ApiException.invalid("쪽지 내용은 1byte 이상 " + MAX_BODY_BYTES + "byte 이하로 써야 합니다.");
 		}
 		return new Outgoing(t, text, BoardFiles.validated(uploadIds));
 	}
@@ -493,12 +501,13 @@ class MessageService {
 		if (ids == null || ids.isEmpty() || ids.size() > MAX_RECIPIENTS) {
 			throw ApiException.invalid("받는사람은 1명 이상 " + MAX_RECIPIENTS + "명 이하여야 합니다.");
 		}
-		return distinctIds(ids, "recipientIds");
+		return distinctIds(ids, "받는사람");
 	}
 
-	private static List<Long> distinctIds(List<Long> ids, String field) {
+	// what은 화면에서 고른 대상의 이름이다(받는사람, 쪽지).
+	private static List<Long> distinctIds(List<Long> ids, String what) {
 		if (ids.stream().anyMatch((id) -> id == null || id < 1) || new LinkedHashSet<>(ids).size() != ids.size()) {
-			throw ApiException.invalid(field + "에는 서로 다른 ID만 넣어야 합니다.");
+			throw ApiException.invalid("같은 " + what + "을(를) 두 번 고를 수 없습니다.");
 		}
 		return ids.stream().sorted().toList();
 	}
@@ -509,19 +518,19 @@ class MessageService {
 			if (body.messageIds() == null || body.messageIds().isEmpty() || body.messageIds().size() > MAX_BULK
 					|| body.all() != null || body.read() != null || body.q() != null || body.until() != null
 					|| body.exceptIds() != null) {
-				throw ApiException.invalid("messageIds에 1개 이상 " + MAX_BULK + "개 이하의 ID를 넣거나 all을 true로 보내야 합니다.");
+				throw ApiException.invalid("지울 쪽지를 1개 이상 " + MAX_BULK + "개 이하로 고르거나 전체 선택으로 지워야 합니다.");
 			}
-			return new Selection(distinctIds(body.messageIds(), "messageIds"), null, null, null, List.of());
+			return new Selection(distinctIds(body.messageIds(), "쪽지"), null, null, null, List.of());
 		}
 		if (body.messageIds() != null || body.until() == null || (!inbox && body.read() != null)) {
-			throw ApiException.invalid("전체 삭제에는 목록을 받은 시각(until)이 필요하고 messageIds는 줄 수 없습니다.");
+			throw ApiException.invalid("전체 삭제에는 목록을 불러온 시각이 필요하고, 쪽지를 따로 고른 채로 전체 삭제할 수 없습니다.");
 		}
 		List<Long> except = body.exceptIds() == null ? List.of() : body.exceptIds();
 		if (except.size() > MAX_BULK) {
-			throw ApiException.invalid("exceptIds는 " + MAX_BULK + "개 이하여야 합니다.");
+			throw ApiException.invalid("전체 선택에서 뺄 쪽지는 " + MAX_BULK + "개까지 고를 수 있습니다.");
 		}
 		return new Selection(null, body.read(), PlainText.query(body.q(), MAX_QUERY), body.until(),
-				except.isEmpty() ? except : distinctIds(except, "exceptIds"));
+				except.isEmpty() ? except : distinctIds(except, "쪽지"));
 	}
 
 	private static void requireSize(int size) {
@@ -537,24 +546,38 @@ class MessageService {
 		requireSize(size);
 	}
 
-	/** 커서는 마지막 항목의 (발송 일시, 쪽지 ID)다. 다음 쪽의 시작 위치로만 쓰고 권한 판정에는 쓰지 않는다. */
-	private static String encode(LocalDateTime sentAt, long messageId) {
-		String raw = sentAt + "~" + messageId;
+	/**
+	 * 커서는 마지막 항목의 (발송 일시, 쪽지 ID)와 목록의 기준 시각이다. 다음 쪽의 시작 위치와 기준 시각으로만 쓰고 권한 판정에는 쓰지
+	 * 않는다.
+	 */
+	private static String encode(LocalDateTime sentAt, long messageId, LocalDateTime snapshot) {
+		String raw = sentAt + "~" + messageId + "~" + snapshot;
 		return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
 	}
 
-	private static Position decode(String cursor) {
+	private static Cursor decode(String cursor) {
 		if (cursor == null || cursor.isEmpty()) {
 			return null;
 		}
 		try {
-			String raw = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-			int at = raw.indexOf('~');
-			return new Position(LocalDateTime.parse(raw.substring(0, at)), Long.parseLong(raw.substring(at + 1)));
+			String[] parts = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8).split("~", -1);
+			if (parts.length != 3) {
+				throw new IllegalArgumentException("cursor parts");
+			}
+			return new Cursor(new Position(LocalDateTime.parse(parts[0]), Long.parseLong(parts[1])),
+					LocalDateTime.parse(parts[2]));
 		}
 		catch (RuntimeException ex) {
-			throw ApiException.invalid("cursor가 올바르지 않습니다.");
+			throw ApiException.invalid("다음 쪽 위치가 올바르지 않습니다. 목록을 처음부터 다시 불러 주세요.");
 		}
+	}
+
+	// 첫 쪽은 지금이 기준 시각이다. cursor의 기준 시각은 지금보다 뒤일 수 없다.
+	private static LocalDateTime snapshot(Cursor after, LocalDateTime now) {
+		return after == null || after.snapshot().isAfter(now) ? now : after.snapshot();
+	}
+
+	private record Cursor(Position position, LocalDateTime snapshot) {
 	}
 
 	enum Box {
@@ -608,8 +631,8 @@ class MessageService {
 	}
 
 	/**
-	 * @param serverTime 목록을 읽은 DB 시각. 전체 삭제의 until로 쓴다
-	 * @param total 조건에 맞는 쪽지 수
+	 * @param serverTime 목록의 기준 시각. 첫 쪽의 DB 시각이고 nextCursor로 받은 쪽도 같다. 전체 삭제의 until로 쓴다
+	 * @param total 조건에 맞고 기준 시각까지 받은 쪽지 수
 	 * @param unreadCount 받은함 전체의 안 읽은 쪽지 수
 	 */
 	record InboxPage(LocalDateTime serverTime, List<InboxItem> items, long total, int unreadCount,
@@ -648,6 +671,10 @@ class MessageService {
 			int recipientCount, int readCount, int recalledCount) {
 	}
 
+	/**
+	 * @param serverTime 목록의 기준 시각. 받은함과 같다
+	 * @param total 조건에 맞고 기준 시각까지 보낸 쪽지 수
+	 */
 	record SentPage(LocalDateTime serverTime, List<SentItem> items, long total, String nextCursor) {
 	}
 
