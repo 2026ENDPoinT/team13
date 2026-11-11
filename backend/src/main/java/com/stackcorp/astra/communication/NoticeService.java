@@ -52,13 +52,16 @@ class NoticeService {
 
 	private final TransactionTemplate transaction;
 
+	private final NoticeNotifications alerts;
+
 	NoticeService(NoticeRepository notices, CourseMemberships memberships, UserNames userNames, RateLimiter rateLimiter,
-			TransactionTemplate transaction) {
+			TransactionTemplate transaction, NoticeNotifications alerts) {
 		this.notices = notices;
 		this.memberships = memberships;
 		this.userNames = userNames;
 		this.rateLimiter = rateLimiter;
 		this.transaction = transaction;
+		this.alerts = alerts;
 	}
 
 	@Transactional(readOnly = true)
@@ -112,7 +115,9 @@ class NoticeService {
 			return this.transaction.execute((tx) -> {
 				LocalDateTime now = this.notices.now();
 				long noticeId = this.notices.insert(boardId, userId, input, now, clientKey);
-				return new Created(view(visible(userId, courseId, noticeId, true, now), now), true);
+				NoticeRow row = visible(userId, courseId, noticeId, true, now);
+				this.alerts.sync(courseId, noticeId, row.title(), row.publishedAt());
+				return new Created(view(row, now), true);
 			});
 		}
 		catch (DuplicateKeyException ex) {
@@ -140,7 +145,9 @@ class NoticeService {
 			}
 			throw ApiException.notFound();
 		}
-		return view(visible(userId, courseId, noticeId, true, now), now);
+		NoticeRow row = visible(userId, courseId, noticeId, true, now);
+		this.alerts.sync(courseId, noticeId, row.title(), row.publishedAt());
+		return view(row, now);
 	}
 
 	@Transactional
@@ -149,6 +156,7 @@ class NoticeService {
 		if (this.notices.delete(courseId, noticeId) == 0) {
 			throw ApiException.notFound();
 		}
+		this.alerts.withdraw(noticeId);
 	}
 
 	@Transactional

@@ -30,6 +30,7 @@
 | [ADR-0017](adr/0017-school-sso-oidc.md) | 학교 SSO는 OpenID Connect code flow + PKCE adapter로 먼저 만든다. 로그인 전 값은 암호화한 쿠키에 두고 IdP token은 저장하지 않는다 |
 | [ADR-0019](adr/0019-container-image-and-single-host-compose.md) | 이미지 하나를 api, worker, converter 역할로 실행하고, health는 container 안의 관리 port로만 연다 |
 | [ADR-0014](adr/0014-learning-session-credit.md) | 온라인 강의 출석 인정은 서버 시각의 적립 원장으로 하고, 사용자당 활성 학습 session은 하나다. 새 session이 앞 session을 대체한다 |
+| [ADR-0027](adr/0027-notifications-in-producer-transaction.md) | 알림은 원래 변경과 같은 transaction에서 `catalog` API로 만들고, 미래에 보이는 대상은 알림 사건으로 남겨 worker가 그 시각의 구성원에게 보낸다. 대상을 숨기면 같은 transaction에서 거둔다 |
 
 ## 2. 부하 가정
 
@@ -125,7 +126,8 @@ flowchart LR
 
 의존 방향은 [db/README.md](../db/README.md) 2.1절의 FK 방향을 따른다. 순환은 의존 역전으로 끊는다. 이벤트를 써도 listener가 발행 측 타입을 참조하면 의존이 생기므로 순환을 끊지 못한다.
 
-- 알림: `notifications`는 `catalog` 소유이고 `activity_id`로 `learning`을 가리킨다. `catalog`는 `learning`에 의존하지 않는다. 알림 생성 API는 `catalog`가 공개 API로 정의하고, 이미 `catalog`에 의존하는 `learning`, `assessment`, `communication`이 원래 변경과 같은 transaction 안에서 호출한다. `activity_id`는 값으로만 저장한다.
+- 알림: `notifications`는 `catalog` 소유이고 `activity_id`로 `learning`을 가리킨다. `catalog`는 `learning`에 의존하지 않는다. 알림 생성 API(`catalog.api.Notifications`)는 `catalog`가 공개 API로 정의하고, 이미 `catalog`에 의존하는 `learning`, `assessment`, `communication`이 원래 변경과 같은 transaction 안에서 호출한다. transaction 밖에서 부르면 실패한다. 대상 ID와 `activity_id`는 값으로 받고 `catalog`는 그 행을 읽지 않는다. 대상을 숨기는 변경(삭제, 비공개, 예약으로 되돌림)도 같은 transaction에서 `withdraw`를 부른다([ADR-0027](adr/0027-notifications-in-producer-transaction.md)).
+- 캘린더: 학사일정은 `catalog`, 활동 마감은 `learning`에 있어 둘을 함께 읽는 `GET /api/me/calendar`는 `home`에 둔다. 시간표는 `catalog`의 테이블만 쓰므로 `catalog`에 둔다.
 - 할 일: 별도 테이블 없이 활성 수강 × 공개 활동 × serverTime으로 계산한다([reference/db/design/20_catalog.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/db/design/20_catalog.md)). 계산에 `learning`, `assessment`가 필요하므로 `home`에 둔다.
 - 외부 연동: `identity`가 `ExternalIdentityProvider` 같은 포트를 공개 API로 정의하고 `integration`이 구현한다. 다른 모듈도 외부 결과가 필요하면 같은 방식을 쓴다.
 - 요약과 전달: `summary`가 `LlmClient` port를, `files`가 문서 변환 port와 전달 서명 port를 공개 API로 정의하고 `integration`이 구현한다. S3를 읽고 쓰는 모듈은 `files` 하나다([ADR-0007](adr/0007-confidential-content-placement.md)).
@@ -143,7 +145,7 @@ flowchart LR
 | 프로세스 | 프로필 | 하는 일 |
 |---|---|---|
 | api | `api` | HTTP API, WebSocket, api에서 발행한 이벤트의 listener(예: 업로드 확정 뒤 MediaConvert 작업 지시) |
-| worker | `worker` | 미완료 이벤트 재전송, MediaConvert 완료 처리(SQS), 업로드 GC, 업로드 악성코드 검사, ZIP job, 문서 rendition, 요약 작업, 학습 session lease 만료 처리, 학사 동기화, 멱등 원장 정리 |
+| worker | `worker` | 미완료 이벤트 재전송, MediaConvert 완료 처리(SQS), 업로드 GC, 업로드 악성코드 검사, ZIP job, 문서 rendition, 요약 작업, 학습 session lease 만료 처리, 학사 동기화, 멱등 원장 정리, 예약 알림 발송과 보존 기간이 지난 알림 정리 |
 
 - session은 DB(`user_sessions`)에 둔다. 서버 메모리에 사용자 상태를 두지 않는다.
 - 파일은 S3에만 쓴다. 컨테이너 로컬 디스크는 임시 작업 공간으로만 쓰고 요청 사이에 남기지 않는다.
@@ -222,6 +224,7 @@ flowchart TD
 - 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
+- 알림은 받는 사람 본인만 본다. 목록, 안 읽은 수, 읽음, 삭제가 같은 조건(본인, 보존 기간 안, 과목 알림이면 지금도 그 과목의 구성원)을 쓰므로 다른 사람의 알림이나 수강을 취소한 과목의 알림은 ID를 알아도 404다. 조회는 읽음을 바꾸지 않고, 읽음은 POST 명령이다(SC-04, CAT-08). 대상(공지, 자료, 과제)을 숨기면 만든 쪽이 같은 transaction에서 알림을 거둔다.
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
 - 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
 
@@ -246,8 +249,8 @@ flowchart TD
 
 - session이 유효하면 IdP redirect를 거치지 않는다.
 - `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
-- 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수다. 알림(`notifications`) 수는 알림을 만드는 쪽이 아직 없어 넣지 않았다.
-- 쿼리는 과목 수와 관계없이 6개다(DB 시계, 과목, 할 일 목록과 건수, 안 읽은 공지 수, 최근 공지). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
+- 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 안 읽은 알림 수(`unreadNotifications`)다.
+- 쿼리는 과목 수와 관계없이 7개다(DB 시계, 과목, 할 일 목록과 건수, 안 읽은 공지 수, 최근 공지, 안 읽은 알림 수). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
 - 할 일은 학생으로 수강하는 과목의, 공개됐고 `open_at <= now < close_at`인 학습활동이다. 마감 일시가 없는 활동은 넣지 않는다. 제출·완료 여부는 아직 보지 않는다(12절).
 
 ## 7. 영상과 문서 전달
@@ -364,6 +367,31 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 제출 구간은 DB 시계로 `openAt <= now < closeAt`이고, 지각은 정책이 `allow_until`일 때 `closeAt <= now < lateUntil`만 받는다. 본문, 설명, 의견은 일반 텍스트로만 받고 내보낸다.
 
+### 7.8 알림
+
+생성과 예약은 [ADR-0027](adr/0027-notifications-in-producer-transaction.md)에 있다. 지금 알림을 만드는 명령은 공지 작성·수정(게시되면, 예약 공지는 게시 시각에), 자료 등록(공개하면, 시작 일시에), 과제 등록·수정(공개하면 시작 일시에 "새 과제", 점수를 공개하면 "점수 공개")이다. 받는 사람은 알림을 만드는 때의 그 과목 수강생이다. 공지 삭제, 임시 공지로 돌림, 과제 비공개, 점수 공개 취소는 알림을 거둔다. 알림은 60일 뒤 worker가 지운다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/me/notifications?courseId=&kind=&unread=&cursor=&size=` | 로그인한 사용자 | 본인 알림 최신순(기본 10개, 최대 50개). `nextCursor`로 다음 쪽. 항목마다 유형, 문장, 과목, 연결 대상(`targetType`, `targetId`), 읽음. `unreadCount` |
+| `GET /api/me/notifications/unread-count` | 로그인한 사용자 | 안 읽은 알림 수(EP-0138). 쿼리 2개(시계, 건수) |
+| `POST /api/me/notifications/{notificationId}/read` | 그 알림을 받은 사람 | 읽음 표시. 몇 번 보내도 같다. 알림과 남은 안 읽은 수를 돌려준다(EP-0280) |
+| `POST /api/me/notifications/read-all` | 로그인한 사용자 | 지금 볼 수 있는 알림 모두 읽음. 바뀐 수를 돌려준다 |
+| `DELETE /api/me/notifications/{notificationId}` | 그 알림을 받은 사람 | 삭제. 204 |
+
+읽음과 삭제는 `Idempotency-Key`를 받지 않는다. 다시 보내도 결과가 같은 명령이다. 읽음, 모두 읽음, 삭제는 감사 기록을 남긴다.
+
+### 7.9 캘린더와 수업시간표
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/me/calendar?view=month\|week&date=` | 로그인한 사용자 | 그 달을 채우는 주(일요일 시작) 또는 그 주의 공개 학사일정과 내 과목 활동 마감(EP-0178). 활동은 마감일에 놓고, 수강 과목은 학생에게 열린 활동만, 담당 과목은 모두. 최대 500개, 넘으면 `truncated` |
+| `GET /api/me/calendar/days/{date}` | 로그인한 사용자 | 그날에 걸친 학사일정과 그날 마감인 활동(EP-0177, 화면 16) |
+| `GET /api/me/timetable?date=` | 로그인한 사용자 | 그 날짜가 든 주(일~토)의 현재 학기 수업 시간. 담당·수강 과목만. 주 경계와 오늘은 DB 시계(EP-0171, EP-0172). 오늘 수업(EP-0180)은 `date == today`인 항목 |
+| `GET /api/courses/{courseId}/timetable` | 과목 구성원 | 그 과목의 수업 시간, 강의실, 담당자(EP-0170) |
+
+캘린더 쿼리는 과목 수와 관계없이 4개(시계, 과목, 학사일정, 활동)다. 날짜는 오늘에서 400일 안만 받는다. 휴강·보강, 개인 일정, 제출 완료 표시는 스키마에 없어 넣지 않았다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -406,7 +434,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | 2. 기능 확장 | S3 content·delivery와 KMS key, MediaConvert, EventBridge·SQS, converter | files, assessment, communication(Q&A, 게시판, 쪽지), summary, 영상 signed cookie와 key API, ShedLock·event registry. CHG-04, CHG-06, CHG-08~10 |
 | 3. 학교 도입 | 3.2절 전환(ALB, ECS min 2, Valkey, Multi-AZ) | k6 부하 시험(메인 첫 진입, 시험 시작, 정원 경쟁), 백업 복원 리허설, 알람. CHG-11, CHG-12 |
 
-1단계의 `home`은 과목, 공지, 할 일을 채운다. 할 일은 `learning`의 활동 기간만 보므로, 과제·퀴즈를 제출했는지는 2단계 `assessment` 구현 뒤에 반영한다. 알림 수도 알림을 만드는 기능이 생긴 뒤 넣는다.
+1단계의 `home`은 과목, 공지, 할 일, 안 읽은 알림 수를 채운다. 할 일은 `learning`의 활동 기간만 보므로, 과제·퀴즈를 제출했는지는 2단계 `assessment` 구현 뒤에 반영한다.
 
 ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md](../db/README.md) 5절 절차로 추가한다. 0단계는 스키마를 바꾸지 않는다.
 
@@ -437,3 +465,5 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
 | 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
 | 2차 인증 만료와 학습 적립(SC-06-A) | 적립 유효기한이 close_at만 반영한다. 2차 인증 grant가 없다 | `identity`의 grant와 `learning_sessions.credit_authorized_until`, `reauth_required` 상태를 함께 만든다(ADR-0014 결과 절) |
+| 알림 거두기 의무 | 대상을 숨기는 변경마다 만든 쪽이 `Notifications.withdraw`를 불러야 한다. 부르지 않으면 지운 활동의 알림이 남는다. 학습활동 소프트 삭제, 자료 수정·비공개는 아직 이 호출이 없다(ADR-0027) | 활동을 숨기는 명령을 만들 때 같은 transaction에서 부른다. 질의응답 답변, 쪽지는 만들 때 `send`를 붙인다 |
+| 알림 push | 알림은 목록을 다시 불러야 보인다. 헤더 배지는 `unread-count`를 주기적으로 부른다 | WebSocket fan-out(8절)을 붙일 때 알림 행을 만든 뒤 보낸다 |

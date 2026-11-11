@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 import com.stackcorp.astra.catalog.api.MemberCourses;
 import com.stackcorp.astra.catalog.api.MemberCourses.MemberCourse;
+import com.stackcorp.astra.catalog.api.NotificationCounts;
 import com.stackcorp.astra.communication.api.CourseNoticeDigest;
 import com.stackcorp.astra.learning.api.DueActivities;
 import com.stackcorp.astra.learning.api.DueActivities.DueActivity;
@@ -23,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 메인 화면 집계(ADR-0005)와 할 일 목록. 각 모듈의 공개 API만 부르고 다른 모듈의 테이블을 읽지 않는다.
- * 과목 수와 관계없이 쿼리 수가 같다: 시계 1, 과목 1, 할 일 2(목록, 건수), 공지 2(안 읽은 수, 최근 공지).
+ * 과목 수와 관계없이 쿼리 수가 같다: 시계 1, 과목 1, 할 일 2(목록, 건수), 공지 2(안 읽은 수, 최근 공지), 안 읽은 알림 수 1.
  * 읽기 전용 transaction 하나로 묶어 연결 하나와 같은 snapshot에서 읽는다. 시각은 DB 시계 한 번으로 정해 모든 판정에 같이 쓴다(SC-06).
  * 할 일은 학생으로 수강하는 과목의 활동만이다. 담당 과목의 활동은 넣지 않는다.
  */
@@ -44,11 +45,15 @@ class HomeService {
 
 	private final CourseNoticeDigest notices;
 
-	HomeService(JdbcClient jdbc, MemberCourses courses, DueActivities dueActivities, CourseNoticeDigest notices) {
+	private final NotificationCounts notifications;
+
+	HomeService(JdbcClient jdbc, MemberCourses courses, DueActivities dueActivities, CourseNoticeDigest notices,
+			NotificationCounts notifications) {
 		this.jdbc = jdbc;
 		this.courses = courses;
 		this.dueActivities = dueActivities;
 		this.notices = notices;
+		this.notifications = notifications;
 	}
 
 	@Transactional(readOnly = true)
@@ -69,7 +74,7 @@ class HomeService {
 					n.publishedAt(), n.read()))
 			.toList();
 		TodoList todo = todo(byId, studentCourses(mine), now, null, HOME_TODO);
-		return new HomeView(now, courseViews, latest, todo);
+		return new HomeView(now, courseViews, latest, todo, this.notifications.unread(userId, now));
 	}
 
 	/**
@@ -132,8 +137,10 @@ class HomeService {
 
 	/**
 	 * @param serverTime 판정에 쓴 DB 시각. 화면의 D-day와 남은 시간은 이 값으로 계산한다
+	 * @param unreadNotifications 안 읽은 알림 수(헤더 배지, EP-0138). 알림 목록의 안 읽음 필터와 같은 조건이다
 	 */
-	record HomeView(LocalDateTime serverTime, List<HomeCourse> courses, List<HomeNotice> notices, TodoList todo) {
+	record HomeView(LocalDateTime serverTime, List<HomeCourse> courses, List<HomeNotice> notices, TodoList todo,
+			int unreadNotifications) {
 	}
 
 	/**
