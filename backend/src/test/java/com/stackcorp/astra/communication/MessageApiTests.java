@@ -411,10 +411,10 @@ class MessageApiTests extends IntegrationTest {
 		this.student1.post(inbox(id) + "/read").andExpect(status().isOk());
 		// 받는사람마다 알림이 하나 생기고 보낸 사람에게는 생기지 않는다.
 		assertThat(messageNotifications(id)).isEqualTo(2);
-		this.student2.get("/api/notifications")
+		this.student2.get("/api/me/notifications")
 			.andExpect(jsonPath("$.items[0].kind").value("MESSAGE_RECEIVED"))
 			.andExpect(jsonPath("$.items[0].targetId").value(id));
-		this.professor.get("/api/notifications").andExpect(jsonPath("$.items.length()").value(0));
+		this.professor.get("/api/me/notifications").andExpect(jsonPath("$.items.length()").value(0));
 
 		this.professor.post(sentPath(id) + "/recall")
 			.andExpect(status().isOk())

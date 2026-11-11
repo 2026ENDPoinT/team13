@@ -240,6 +240,7 @@ flowchart TD
 - 수강신청과 청강 신청은 `catalog`가 판정한다. 조회(GET)는 신청을 만들지 않고, 신청 명령은 과정 행을 잠근 뒤 기간(DB 시계), 신청대상, 본인 담당 여부, 중복(활성 행 unique), 정원(조건부 갱신)을 한 transaction에서 다시 본다. 승인·반려는 그 과목의 교수와 비정규 담당자만 하고, 신청과 취소는 본인 것만 한다. 학사 원장 수강은 바꾸지 않는다.
 - 설문은 `assessment`가 판정한다. 강의실 설문은 담당자가 언제나 보고, 학생은 공개됐고 시작한 설문만 본다. 알림마당 설문은 `survey_targets`의 대상(전체, 학생, 교직원, 학년)이 session의 역할과 학년에 맞을 때만 보인다. 익명 설문은 참여 원장과 응답 저장부를 잇지 않는다. 응답 행에 사용자와 정밀 시각이 없고, 완료는 공용 멱등 원장 대신 참여 원장의 key로 재전송을 판정하며, 감사 기록에 requestId를 남기지 않는다(SC-05-A, SC-09, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 결과 집계는 익명 설문과 학생에게는 마감 뒤 응답자 5명 이상일 때만 나간다. 설문 등록·수정·완료에도 사용자 단위 요청 제한이 있다.
 - 알림은 받는 사람 본인만 본다. 목록, 안 읽은 수, 읽음, 삭제가 같은 조건(본인, 보존 기간 안, 과목 알림이면 지금도 그 과목의 구성원)을 쓰므로 다른 사람의 알림이나 수강을 취소한 과목의 알림은 ID를 알아도 404다. 조회는 읽음을 바꾸지 않고, 읽음은 POST 명령이다(SC-04, CAT-08). 대상(공지, 자료, 과제)을 숨기면 만든 쪽이 같은 transaction에서 알림을 거둔다.
+- 퀴즈는 `assessment`가 판정한다. 문항은 학생이 응시를 시작한 뒤 본인 응시 조회로만 받고, 정답은 담당자 응답에만 있다. 학생 응답의 총점, 정답, 해설, 문항별 점수는 결과 공개 정책을 판정하는 함수 하나(`Quiz.release`)가 허락할 때만 들어가고, 그 전에는 속성 자체가 없다(SEC-14). 응시 재진입은 client가 지시하지 않고 서버가 정한다(SEC-13, [ADR-0021](adr/0021-quiz-attempt-model.md)).
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
 - 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
 - 민감한 명령(연락처 변경, 다른 session 모두 끝내기)은 그 로그인 session의 최근 재인증을 요구한다(`identity.api.RecentAuthentication`, [ADR-0029](adr/0029-step-up-and-learning-auth.md)). 없으면 403 `step_up_required`다. 학교 IdP 계정은 IdP에서 다시 로그인하고(`prompt=login`, `max_age=0`, ID token의 `auth_time` 확인), break-glass 계정은 TOTP를 다시 넣는다. 로그인 자체는 재인증으로 치지 않는다. 재인증은 다른 session으로 옮겨 가지 않는다.
@@ -561,6 +562,26 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 캘린더 쿼리는 과목 수와 관계없이 4개(시계, 과목, 학사일정, 활동)다. 날짜는 오늘에서 400일 안만 받는다. 휴강·보강, 개인 일정, 제출 완료 표시는 스키마에 없어 넣지 않았다.
 
+### 7.8 퀴즈 출제와 응시
+
+모델, 공개 정책, 잠금 순서는 [ADR-0021](adr/0021-quiz-attempt-model.md)에 있다. 모든 판정은 DB 시계로 하고, 응시 마감 일시는 시작할 때 `min(시작 + 제한 시간, closeAt)`으로 고정한다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `POST /api/courses/{courseId}/quizzes` | 담당자 | 퀴즈 활동, 설정, 문항, 성적 항목을 한 transaction으로 만든다. 201. `Idempotency-Key` 지원 |
+| `PUT /api/courses/{courseId}/quizzes/{quizId}` | 담당자 | 설정 수정(기간, 제한 시간, 응시 횟수, 섞기, 결과 공개 일시, 정답 공개). 읽은 `revision`이 다르면 409 |
+| `PUT /api/courses/{courseId}/quizzes/{quizId}/questions` | 담당자 | 문항 전체 교체. 응시가 있으면 409 `questions_locked` |
+| `GET /api/courses/{courseId}/quizzes` | 과목 구성원 | 퀴즈 목록. 담당자는 응시 수, 학생은 공개됐고 시작한 퀴즈와 본인 상태만 |
+| `GET /api/courses/{courseId}/quizzes/{quizId}` | 담당자, 볼 수 있는 학생 | 퀴즈 정보, 서버 시각, 응시 구간. 담당자는 문항과 정답, 학생은 본인 응시, 시작 가능 여부, 공개한 점수만 |
+| `POST /api/courses/{courseId}/quizzes/{quizId}/attempts` | 수강생 본인 | 응시 시작. 진행 중 응시가 있으면 그 응시(200), 없으면 새 회차(201). 다른 session이면 응시를 옮긴다. 상태로 멱등이라 key를 받지 않는다 |
+| `GET /api/courses/{courseId}/quizzes/{quizId}/attempts` | 담당자 | 응시 목록. 응시 ID 순서, `cursor`와 `size`(100 이하) |
+| `GET /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}` | 응시한 학생, 담당자 | 학생은 응시 순서의 문항과 본인 답안, 담당자는 답안과 채점 내용 |
+| `PUT /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}/answers/{questionId}` | 응시한 학생 | 자동저장. 문항마다 읽은 `revision`을 보낸다. 마감 일시부터 409 |
+| `POST /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}/submit` | 응시한 학생 | 제출. `Idempotency-Key` 필수. 마감 뒤면 마지막 저장 답안으로 닫는다. 선택 문항을 채점하고 성적을 같은 transaction에서 쓴다 |
+| `PUT /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}/answers/{questionId}/grade` | 담당자 | 단답형 채점(0~배점, 의견 일반 텍스트 1000자). 대기 답안이 없어지면 총점과 성적을 확정한다 |
+
+worker는 마감이 지난 진행 중 응시를 `astra.quiz.close-interval`(기본 30초)마다 같은 종료 경로로 닫는다. 오프라인 시험은 보이지만 시작할 수 없다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -647,3 +668,5 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 영상 변환 자원 | 1단계에서는 transcoder가 api·worker와 같은 EC2의 CPU를 쓰고 한 번에 영상 하나만 변환한다. 화질은 720p 하나다([ADR-0016](adr/0016-video-upload-and-transcoder.md)) | compose에서 transcoder container의 CPU·메모리 상한을 정한다. 대기가 길어지면 transcoder를 늘리거나 MediaConvert로 옮긴다(ADR-0016 11번) |
 | 영상과 악성코드 검사 | `lecture_video`는 clamd 검사를 면제한다(통합 때 결정, [ADR-0016](adr/0016-video-upload-and-transcoder.md) 12번). 원본은 누구에게도 그대로 나가지 않고, 학생은 격리한 transcoder가 다시 인코딩한 HLS만 받는다. 다시 인코딩은 원본 안의 악성 데이터가 그대로 전달되는 것을 막지만 transcoder(ffmpeg) 자체의 취약점은 그 container의 격리에 기댄다 | 면제한 내용은 `unscanned`로 두어 다른 용도에 `clean`으로 쓰이지 않게 했다. 검사기가 수 GB를 받게 되면 면제를 다시 검토한다. ffmpeg 보안 갱신은 이미지 재빌드로 받는다 |
 | 학습 인증 수단과 grant 시간(SC-06-A) | 학습 인증 수단은 학교 IdP 재인증(`idp`) 하나다. IdP가 비밀번호만 받으면 같은 요소를 다시 확인하는 데 그친다. grant 2시간, challenge 5분, 실패 한도는 제안값이다. IdP가 `max_age` 요청에 `auth_time`을 주지 않으면 재인증이 언제나 실패한다([ADR-0029](adr/0029-step-up-and-learning-auth.md)) | 학교 정보화본부에 IdP 다요소 인증, `acr`, `auth_time` 지원을 확인한다. 학사 담당과 grant 시간을 정하고 학교 IdP를 붙인 배포에서 `ASTRA_LEARNING_REQUIRE_AUTH_GRANT=true`로 켠다 |
+| 퀴즈 재채점 | 응시가 생기면 문항과 정답을 바꾸지 않는다([ADR-0021](adr/0021-quiz-attempt-model.md)). 정답이 틀린 것을 응시 뒤에 알면 고칠 API가 없다. 복수 선택에 부분 점수가 없다 | 정답 수정과 기존 응시 재계산을 한 명령으로 하는 재채점을 감사 기록과 함께 만든다. 부분 점수는 학교 기준을 받아 정한다 |
+| 퀴즈와 할 일 | 할 일은 learning의 활동 기간만 보므로 제출한 퀴즈도 마감까지 남는다 | 위 "할 일의 완료 판정"과 함께 `assessment` api로 응시 완료를 받아 뺀다 |

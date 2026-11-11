@@ -280,12 +280,12 @@ class MaterialLifecycleTests extends IntegrationTest {
 		put(this.professor, material.id(), "\"2\"", edit("다시 연 자료", true, List.of(file), List.of())).andExpect(status().isOk());
 		put(this.professor, material.id(), "\"3\"", edit("제목만 고친 자료", true, List.of(file), List.of())).andExpect(status().isOk());
 		assertThat(materialNotifications(material.id())).isOne();
-		this.student.get("/api/notifications").andExpect(jsonPath("$.items[0].targetId").value(material.id()));
+		this.student.get("/api/me/notifications").andExpect(jsonPath("$.items[0].targetId").value(material.id()));
 
 		this.professor.send(MockMvcRequestBuilders.delete(material(this.course, material.id())).header("If-Match", "\"4\""))
 			.andExpect(status().isNoContent());
 		assertThat(materialNotifications(material.id())).isZero();
-		this.student.get("/api/notifications").andExpect(jsonPath("$.items.length()").value(0));
+		this.student.get("/api/me/notifications").andExpect(jsonPath("$.items.length()").value(0));
 	}
 
 	@Test

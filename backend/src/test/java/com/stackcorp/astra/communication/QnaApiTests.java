@@ -84,7 +84,7 @@ class QnaApiTests extends BoardTestSupport {
 		long second = created(this.classmate.postJson(question(this.course, id) + "/answers", "{\"body\":\"저도 궁금합니다\"}"),
 				"answerId");
 		assertThat(answerNotifications(id)).isOne();
-		this.student.get("/api/notifications")
+		this.student.get("/api/me/notifications")
 			.andExpect(jsonPath("$.items.length()").value(1))
 			.andExpect(jsonPath("$.items[0].kind").value("QUESTION_ANSWERED"))
 			.andExpect(jsonPath("$.items[0].targetId").value(id));
