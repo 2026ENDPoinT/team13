@@ -2,9 +2,14 @@ package com.stackcorp.astra.learning;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.learning.LearningController.LectureItem;
@@ -24,11 +29,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -52,6 +59,11 @@ class LectureController {
 
 	// 출석인정 필요 시간 상한(초). 변환 상한(4시간)과 같다.
 	private static final int MAX_REQUIRED_SEC = 4 * 60 * 60;
+
+	private static final int MAX_PAGE = 100;
+
+	// 목록 cursor: 주차.주차 안 순서.활동 ID
+	private static final Pattern CURSOR = Pattern.compile("([0-9]{1,9})\\.([0-9]{1,9})\\.([1-9][0-9]{0,17})");
 
 	private final JdbcClient jdbc;
 
@@ -131,6 +143,83 @@ class LectureController {
 		this.lectures.delete(actor.userId(), courseId, activityId, LearningController.expectedVersion(ifMatch));
 		this.audit.success(actor.userId(), actor.sessionId(), "lecture.delete", "learning_activity", activityId, courseId);
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+	}
+
+	/**
+	 * 담당자의 영상 활동 목록. 주차, 주차 안 순서, 활동 ID 순이고 공개 여부와 시작 일시와 관계없이 모두 보인다. 콘텐츠마다 영상 처리 상태가
+	 * 있다. 쪽 크기는 1~{@value #MAX_PAGE}(기본 20)이고 다음 쪽은 nextCursor를 cursor로 보낸다. 과목과 콘텐츠 수와 관계없이 권한 판정
+	 * 뒤 쿼리 두 번(활동, 콘텐츠)이다. 학생 쪽은 같은 순서의 {@code GET …/lecture-progress}가 목록이다.
+	 */
+	@GetMapping("/api/courses/{courseId}/lectures")
+	ResponseEntity<LecturePage> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@RequestParam(required = false) String cursor, @RequestParam(defaultValue = "20") int size) {
+		if (!this.access.canManage(actor.userId(), courseId)) {
+			throw ApiException.notFound();
+		}
+		if (size < 1 || size > MAX_PAGE) {
+			throw ApiException.invalid("size는 1 이상 " + MAX_PAGE + " 이하여야 합니다.");
+		}
+		Long[] after = cursor(cursor);
+		List<LectureRow> rows = this.jdbc.sql("""
+				SELECT a.activity_id, w.week_no, a.sort_order, a.title, a.open_at, a.close_at, a.published_yn, a.row_version
+				  FROM learning_activities a JOIN course_weeks w ON w.course_week_id = a.course_week_id
+				 WHERE a.course_id = :course AND a.activity_type = 'lecture_weeks' AND a.deleted_at IS NULL
+				   AND (:week IS NULL OR (w.week_no, a.sort_order, a.activity_id) > (:week, :order, :activity))
+				 ORDER BY w.week_no, a.sort_order, a.activity_id
+				 LIMIT :limit
+				""")
+			.param("course", courseId)
+			.param("week", after[0])
+			.param("order", after[1])
+			.param("activity", after[2])
+			.param("limit", size + 1)
+			.query((rs, n) -> new LectureRow(rs.getLong(1), rs.getInt(2), rs.getInt(3), rs.getString(4),
+					rs.getObject(5, LocalDateTime.class), rs.getObject(6, LocalDateTime.class), rs.getBoolean(7),
+					rs.getInt(8)))
+			.list();
+		List<LectureRow> page = rows.size() > size ? rows.subList(0, size) : rows;
+		Map<Long, List<LectureItem>> items = items(page.stream().map(LectureRow::activityId).toList());
+		String next = null;
+		if (rows.size() > size) {
+			LectureRow last = page.getLast();
+			next = last.weekNo() + "." + last.sortOrder() + "." + last.activityId();
+		}
+		return ResponseEntity.ok()
+			.cacheControl(CacheControl.noStore())
+			.body(new LecturePage(page.stream()
+				.map((r) -> new LectureView(r.activityId(), r.weekNo(), r.title(), r.openAt(), r.closeAt(), r.published(),
+						items.getOrDefault(r.activityId(), List.of()), r.version()))
+				.toList(), next));
+	}
+
+	// 여러 활동의 지우지 않은 콘텐츠를 한 번에 읽는다. 상태 규칙은 상세(LearningController.lectureItems)와 같다.
+	private Map<Long, List<LectureItem>> items(List<Long> activityIds) {
+		Map<Long, List<LectureItem>> items = new HashMap<>();
+		if (activityIds.isEmpty()) {
+			return items;
+		}
+		this.jdbc.sql("""
+				SELECT activity_id, online_lecture_item_id, title, duration_sec, required_sec, content_path, video_state
+				  FROM online_lecture_items WHERE activity_id IN (:activities) AND deleted_at IS NULL
+				 ORDER BY activity_id, link_seq
+				""").param("activities", activityIds).query((rs) -> {
+			items.computeIfAbsent(rs.getLong(1), (id) -> new ArrayList<>())
+				.add(new LectureItem(rs.getLong(2), rs.getString(3), rs.getObject(4, Integer.class),
+						rs.getObject(5, Integer.class), LectureItem.state(rs.getString(6), rs.getString(7))));
+		});
+		return items;
+	}
+
+	/** @return {week, sortOrder, activityId}. 처음이면 모두 null */
+	private static Long[] cursor(String cursor) {
+		if (cursor == null) {
+			return new Long[3];
+		}
+		Matcher m = CURSOR.matcher(cursor);
+		if (!m.matches()) {
+			throw ApiException.invalid("cursor 값이 올바르지 않습니다.");
+		}
+		return new Long[] { Long.valueOf(m.group(1)), Long.valueOf(m.group(2)), Long.valueOf(m.group(3)) };
 	}
 
 	private LectureView view(long activityId) {
@@ -257,6 +346,14 @@ class LectureController {
 	 */
 	record LectureView(long activityId, int weekNo, String title, LocalDateTime openAt, LocalDateTime closeAt,
 			boolean published, List<LectureItem> items, int version) {
+	}
+
+	/** @param nextCursor 다음 쪽이 있으면 그 cursor, 없으면 null */
+	record LecturePage(List<LectureView> items, String nextCursor) {
+	}
+
+	private record LectureRow(long activityId, int weekNo, int sortOrder, String title, LocalDateTime openAt,
+			LocalDateTime closeAt, boolean published, int version) {
 	}
 
 }

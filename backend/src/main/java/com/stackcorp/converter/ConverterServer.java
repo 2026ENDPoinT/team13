@@ -24,6 +24,8 @@ import com.sun.net.httpserver.HttpServer;
  * office 형식은 {@link OfficeEngine}이 PDF로 바꾼 뒤 PDF와 같은 길로 처리한다. 성공하면 200과 zip을 돌려준다. 형식은
  * {@link PdfRendering#writeZip}에 있다. 변환할 수 없는 입력은 422와 {@code {"code","message"}}를 돌려준다. 받지 않는 형식이거나
  * 엔진이 없는 converter면 code는 {@code unsupported_format}이다.</li>
+ * <li>{@code POST /avatar}: 본문은 PNG나 JPEG 바이트다. 성공하면 200과 {@value AvatarImage#SIZE}px 정사각형 JPEG를 돌려준다
+ * ({@link AvatarImage}). 이미지가 아니면 422 {@code not_image}, 상한을 넘으면 413·422 {@code too_large}다.</li>
  * <li>{@code GET /health}: 200.</li>
  * </ul>
  *
@@ -67,6 +69,7 @@ public final class ConverterServer implements AutoCloseable {
 		ExecutorService executor = Executors.newSingleThreadExecutor();
 		ConverterServer converter = new ConverterServer(server, executor, maxBytes, office);
 		server.createContext("/render", converter::render);
+		server.createContext("/avatar", converter::avatar);
 		server.createContext("/health", (exchange) -> respond(exchange, 200, "application/json", "{}"));
 		server.setExecutor(executor);
 		server.start();
@@ -135,6 +138,33 @@ public final class ConverterServer implements AutoCloseable {
 			exchange.sendResponseHeaders(200, 0);
 			try (OutputStream out = exchange.getResponseBody()) {
 				rendering.writeZip(out);
+			}
+		}
+	}
+
+	private void avatar(HttpExchange exchange) throws IOException {
+		try (exchange) {
+			if (!"POST".equals(exchange.getRequestMethod())) {
+				respond(exchange, 405, "application/json", failure("method_not_allowed", "POST만 받습니다."));
+				return;
+			}
+			byte[] body = readCapped(exchange.getRequestBody(), Math.min(this.maxBytes, AvatarImage.MAX_BYTES));
+			if (body == null) {
+				respond(exchange, 413, "application/json", failure("too_large", "이미지가 크기 상한을 넘습니다."));
+				return;
+			}
+			byte[] jpeg;
+			try {
+				jpeg = AvatarImage.normalize(body);
+			}
+			catch (ConversionFailure ex) {
+				respond(exchange, 422, "application/json", failure(ex.code(), ex.getMessage()));
+				return;
+			}
+			exchange.getResponseHeaders().set("content-type", "image/jpeg");
+			exchange.sendResponseHeaders(200, jpeg.length);
+			try (OutputStream out = exchange.getResponseBody()) {
+				out.write(jpeg);
 			}
 		}
 	}

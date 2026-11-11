@@ -65,7 +65,8 @@ class BreakGlassAuthTests extends IntegrationTest {
 		this.mvc.perform(get("/api/me").cookie(session))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.userId").value(this.adminId))
-			.andExpect(jsonPath("$.breakGlass").value(true));
+			.andExpect(jsonPath("$.breakGlass").value(true))
+			.andExpect(jsonPath("$.stepUpMethod").value("totp"));
 		this.mvc.perform(get("/api/me")).andExpect(status().isUnauthorized());
 		assertThat(token(session)).isNotEqualTo(storedHash(session));
 	}

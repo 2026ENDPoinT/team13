@@ -149,7 +149,7 @@ class LearningSessionApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.endReason").value("button"))
 			.andExpect(jsonPath("$.creditedSec").value(0));
 		beat(this.student, session, 5).andExpect(status().isConflict())
-			.andExpect(jsonPath("$.code").value("session_closed"));
+			.andExpect(jsonPath("$.code").value("session_ended"));
 
 		assertThat(credited(session)).isEqualTo(190);
 		assertThat(this.jdbc.sql("""
@@ -299,7 +299,7 @@ class LearningSessionApiTests extends IntegrationTest {
 
 		this.clock.advance(Duration.ofSeconds(181));
 		beat(this.student, session, 4).andExpect(status().isConflict())
-			.andExpect(jsonPath("$.code").value("session_closed"));
+			.andExpect(jsonPath("$.code").value("session_expired"));
 		assertThat(this.jdbc.sql("SELECT state, ended_at FROM learning_sessions WHERE learning_session_id = :s")
 			.param("s", session)
 			.query((rs, n) -> rs.getString(1) + " " + rs.getObject(2, LocalDateTime.class))
@@ -357,7 +357,8 @@ class LearningSessionApiTests extends IntegrationTest {
 			.query(String.class)
 			.single()).isEqualTo("ended forced");
 		setPublished(true);
-		beat(this.student, session, 3).andExpect(status().isConflict());
+		beat(this.student, session, 3).andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("session_withdrawn"));
 		assertThat(credited(session)).isEqualTo(60);
 
 		long next = started(this.student);

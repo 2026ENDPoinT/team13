@@ -46,6 +46,7 @@
 - 미리보기는 요약과 같은 rendition, 같은 쪽 이미지 경로, 같은 cookie를 쓴다. 뷰어 token, FPP, 외부 뷰어 host가 없다. 화면은 쪽 이미지를 `{pageImageBase}NNN.jpg`로 차례로 불러온다.
 - 첫 미리보기는 worker의 poll 간격(기본 5초)과 변환 시간만큼 기다린다. client는 `Retry-After`(2초)마다 다시 요청한다. 사용자당 10분에 300번으로 제한한다.
 - 실패는 파일 버전마다 끝 상태다. converter가 고쳐져도 실패한 문서의 미리보기는 다시 만들지 않는다. 요약 생성처럼 담당자가 명시적으로 다시 요청하는 흐름만 새 변환을 만든다.
+- 미리보기 응답의 실패 코드는 닫힌 집합(`PreviewService.Failure`)이다. `conversion_jobs.error_code`의 내부 값은 그대로 내보내지 않고 하나씩 바꾼다: `encrypted`, `invalid_pdf` → `invalid_document`, `empty`, `too_many_pages`(200쪽 상한), `too_large`(converter의 입력·결과 상한), `timeout`, `unavailable`·`interrupted`·`storage` → `unavailable`, 그 밖(`failed`, office 변환 실패, 모르는 값) → `failed`. `unsupported_format`은 실패가 아니라 `unsupported` 상태다.
 - LibreOffice의 쪽 모양은 PowerPoint, Word, Excel과 다를 수 있다. 글꼴이 없으면 대체 글꼴(나눔, Liberation, Carlito, Caladea)로 그린다. 넓은 Excel 시트는 쪽이 많아져 200쪽 상한에 걸릴 수 있다.
 - HWP, HWPX 미리보기가 없다. 학교 자료에 많다. H2Orestart를 넣으려면 GPL-3.0 배포 조건 검토와 LibreOffice Java 연동 확인이 먼저다(architecture.md 12절).
 - 실행하지 않은 것: 이 저장소의 빌드 container에는 LibreOffice가 없다. 테스트는 converter의 office 엔진 자리에 가짜 엔진을 넣어 앱 흐름을, soffice 자리에 같은 인자를 받는 Java process를 넣어 인자, 환경, 임시 디렉터리, 제한 시간 강제 종료, 결과 검사를 확인했다. 실제 soffice 실행, profile의 macro·link 설정이 LibreOffice 24.2에서 적용되는지, `prlimit` 주소 공간 상한 아래에서 soffice가 뜨는지, Dockerfile target `converter`의 패키지 설치와 compose 구성, smoke test의 office 변환 단계는 실행하지 않았다. profile 설정 이름과 값은 LibreOffice 24.2의 officecfg schema에서 확인했다.

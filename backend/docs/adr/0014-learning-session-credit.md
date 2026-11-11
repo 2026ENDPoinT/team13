@@ -10,7 +10,7 @@
 
 ## 결정
 1. 학습 session은 `POST /api/courses/{courseId}/lecture-items/{itemId}/learning-sessions`로 시작한다. 권한은 활동을 지금 볼 수 있는지다(담당자는 언제나, 학생은 공개됐고 open_at이 지난 활동). 응답은 session ID, 서버가 정한 하트비트 주기, lease, 이어보기 위치, 적립이 끝나는 시각(close_at), 영상 cookie다. 기존 `POST …/playback`은 적립 없는 재생 허가로 남긴다.
-2. 동시 session 정책은 **대체**다. 같은 사용자가 새 session을 시작하면 활성 session을 `superseded`로 닫는다. 콘텐츠가 달라도 그렇다. 닫힌 session의 하트비트는 409 `session_superseded`이고 아무것도 적립하지 않는다. `active_user_key` 유일 제약이 동시 시작을 직렬화하고, 유일 제약이나 교착으로 진 쪽은 transaction을 다시 실행해 이긴 쪽을 대체한다.
+2. 동시 session 정책은 **대체**다. 같은 사용자가 새 session을 시작하면 활성 session을 `superseded`로 닫는다. 콘텐츠가 달라도 그렇다. 닫힌 session의 하트비트는 409 `session_superseded`이고 아무것도 적립하지 않는다. 다른 사유로 닫힌 session의 하트비트도 409이고 저장한 종료 사유마다 code가 하나다: lease 만료는 `session_expired`, 종료 요청(button, unload)은 `session_ended`, 볼 수 없게 되어 서버가 닫은 것(forced)은 `session_withdrawn`이다. 대체는 어느 창이나 기기에서 이어 갔는지 알리지 않는다. `active_user_key` 유일 제약이 동시 시작을 직렬화하고, 유일 제약이나 교착으로 진 쪽은 transaction을 다시 실행해 이긴 쪽을 대체한다.
    - 기각: 새 session을 거부(409). 창이 죽거나 network가 끊기면 lease가 끝날 때까지 다시 시작하지 못한다. 원본의 `force=Y`(기존 시청 종료)와도 맞지 않는다.
    - 기각: (사용자, 콘텐츠)마다 하나. 두 강의를 동시에 틀어 같은 벽시계 시간을 두 번 적립할 수 있다.
 3. 적립은 서버 시계로만 정한다. 시계는 open_at, close_at과 같은 DB 시계(`CURRENT_TIMESTAMP(3)`)이고 session 행을 `FOR UPDATE`로 잠근 뒤에 읽는다. 규칙 v1(`CreditRule`):

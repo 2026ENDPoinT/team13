@@ -39,6 +39,7 @@
 | [ADR-0029](adr/0029-step-up-and-learning-auth.md) | 민감한 명령의 재인증과 온라인 학습 인증 grant는 로그인 session에 묶은 `session_step_ups` 행이다. 학교 IdP 재인증(`prompt=login`, `auth_time`)이 근거이고, 학습 적립은 grant 만료에서 끊기고 `reauth_required`가 된다 |
 | [ADR-0028](adr/0028-filebox.md) | 개인 파일함은 사용자별 사용량 행을 잠가 차례로 바꾸고, 다시 쓰기는 같은 내용을 참조하는 새 파일로, ZIP은 worker가 저장소에서 저장소로 흘려 만든다 |
 | [ADR-0030](adr/0030-attendance-and-smart-rounds.md) | 출석부는 담당자 판정이 자동 판정보다 강하다. 스마트출석은 서버가 PIN/QR을 직접 검증해 같은 transaction에서 기록하고, 상태는 WebSocket 없이 조회로 알린다 |
+| [ADR-0038](adr/0038-avatar-photo.md) | 아바타 사진은 상태를 identity가, 바이트를 files가 갖는다. 올린 원본은 검사 뒤 격리한 converter가 256px JPEG로 다시 만든 것만 내보내고, 본인과 폐강하지 않은 과목을 함께하는 사람만 본다 |
 
 ## 2. 부하 가정
 
@@ -131,7 +132,7 @@ flowchart LR
 | `learning` | 강의실, 주차, 학습활동, 영상 학습 session, 출석 | `catalog`, `identity`, `files` |
 | `assessment` | 과제, 퀴즈, 설문, 성적 | `learning`, `catalog`, `identity`, `files` |
 | `communication` | 공지, Q&A, 게시판, 쪽지, 임시저장 | `catalog`, `identity`, `learning`, `files` |
-| `files` | 업로드 lifecycle, 첨부, 파일함, 미리보기, 문서 rendition, 영상 asset, 파일 파생물 저장 | `catalog`, `identity` |
+| `files` | 업로드 lifecycle, 첨부, 파일함, 미리보기, 문서 rendition, 영상 asset, 파일 파생물 저장, 아바타 사진의 바이트(상태는 `identity`) | `catalog`, `identity` |
 | `summary` | 강의 자료의 쪽별 요약 생성 작업, 후보 확인, 게시, 조회 | `files`, `identity` |
 | `integration` | 학교 IdP, 학사 동기화, AI, 외부 allowlist client | 각 모듈의 공개 API |
 | `shared` | 오류 형식, requestId, 요청 제한, 멱등 원장, 감사 기록. 목록 query 규칙은 첫 페이지 목록과 함께 만든다 | 없음. 모든 모듈이 쓸 수 있다 |
@@ -297,11 +298,12 @@ flowchart TD
 - 퀴즈는 `assessment`가 판정한다. 문항은 학생이 응시를 시작한 뒤 본인 응시 조회로만 받고, 정답은 담당자 응답에만 있다. 학생 응답의 총점, 정답, 해설, 문항별 점수는 결과 공개 정책을 판정하는 함수 하나(`Quiz.release`)가 허락할 때만 들어가고, 그 전에는 속성 자체가 없다(SEC-14). 응시 재진입은 client가 지시하지 않고 서버가 정한다(SEC-13, [ADR-0021](adr/0021-quiz-attempt-model.md)).
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
 - 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
-- 민감한 명령(연락처 변경, 다른 session 모두 끝내기)은 그 로그인 session의 최근 재인증을 요구한다(`identity.api.RecentAuthentication`, [ADR-0029](adr/0029-step-up-and-learning-auth.md)). 없으면 403 `step_up_required`다. 학교 IdP 계정은 IdP에서 다시 로그인하고(`prompt=login`, `max_age=0`, ID token의 `auth_time` 확인), break-glass 계정은 TOTP를 다시 넣는다. 로그인 자체는 재인증으로 치지 않는다. 재인증은 다른 session으로 옮겨 가지 않는다.
+- 민감한 명령(연락처 변경, 다른 session 모두 끝내기)은 그 로그인 session의 최근 재인증을 요구한다(`identity.api.RecentAuthentication`, [ADR-0029](adr/0029-step-up-and-learning-auth.md)). 없으면 403 `step_up_required`다. 학교 IdP 계정은 IdP에서 다시 로그인하고(`prompt=login`, `max_age=0`, ID token의 `auth_time` 확인), break-glass 계정은 TOTP를 다시 넣는다. 로그인 자체는 재인증으로 치지 않는다. 재인증은 다른 session으로 옮겨 가지 않는다. 이 session이 쓸 수단은 `GET /api/me`의 `stepUpMethod`가 알린다. 계정 종류와 `GET /api/auth/methods`가 이미 알리는 로그인 수단으로만 정한다. 재인증이 실패하면 시작할 때의 경로(로그인과 같은 검사를 거친 값)에 `reauth=failed`를 붙여 돌려보낸다.
 - 내정보, 개인설정, 로그인 session, 등록 기기, 로그인 기록, 학습 인증은 모두 요청한 사용자의 것만 다룬다. 경로의 session ID, 기기 ID, challenge ID가 다른 사람의 것이면 존재와 관계없이 404다. 이름, 소속, 학년과 학사 원천 연락처는 받지 않는다. 기기를 폐기하면 그 기기의 session도 폐기되고, 폐기한 session은 다음 요청부터 401이다.
 - 로그인하면 브라우저를 등록 기기로 만든다. 기기 쿠키(`ASTRA_DEVICE`, `HttpOnly`, `Path=/api/auth`)는 기기 식별자일 뿐 인증에 쓰지 않는다. 다른 사용자나 폐기한 기기의 값이면 새 기기를 만든다.
 - 학습 인증 grant(SC-06-A)는 2차 인증 challenge를 통과해야 생긴다. 수단은 port(`identity.api.SecondFactorChannel`)이고 지금은 학교 IdP 재인증(`idp`) 하나다. challenge는 로그인 session에 묶이고, 5번 실패하면 잠기며, 사용자의 최근 실패 합이 한도면 새 challenge를 만들지 못한다. 확인 요청의 본문으로는 통과하지 않는다(SEC-04, IDENTITY-03~05).
 - 출석, 그룹, 강의계획서는 `learning`이 판정한다([ADR-0030](adr/0030-attendance-and-smart-rounds.md)). 학생은 자기 출석 기록과 자기 그룹(구성원 이름만)만 보고, 다른 학생의 기록, 학번, 다른 그룹은 보지 못한다. 출석 상태는 담당자 지정이 가장 강하고, 온라인 학습과 스마트출석은 빈 칸만 채운다. 스마트출석 회차를 열고 닫고 취소하는 것은 담당자만 한다. 제출은 PIN·QR이 회차·과목·차시·방식에 묶인 서버 증명이고, 회차·학생마다 틀린 횟수 한도와 사용자 단위 요청 제한이 있다. 강의계획서는 구성원이 아닌 로그인 사용자에게 정규과목의 공개 항목만 보이고 담당자 연락처는 보이지 않는다.
+- 아바타 사진은 본인과, 폐강하지 않은 과목을 함께 듣거나 가르치는 사람만 본다(`catalog.api.CourseMates`). 아바타는 과목 화면(교수 표시, 게시판 작성자, 강의실 최근글)과 쪽지에 나오고, 그 화면에서 이름을 볼 수 있는 사람은 과목 구성원이기 때문이다. 사용자 ID만으로는 받을 수 없고, 볼 수 없는 사람과 사진이 없는 사람은 같은 404다. 올린 원본은 내보내지 않는다. 서버는 PNG·JPEG signature와 5MB를 먼저 보고, worker가 다른 업로드와 같은 악성코드 검사를 거친 뒤 격리한 converter가 256px JPEG로 다시 만든 것만 `inline`, `nosniff`, `CSP: sandbox`, `Cache-Control: private, no-cache`와 ETag로 보낸다([ADR-0038](adr/0038-avatar-photo.md)).
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -310,11 +312,16 @@ flowchart TD
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
 | `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. IdP 로그아웃은 연계하지 않는다 |
-| `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자. IdP 설정이 없으면 404 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 `/?reauth=failed` |
+| `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자. IdP 설정이 없으면 404 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 같은 경로에 `reauth=failed`를 붙여 302(경로가 안전하지 않으면 `/?reauth=failed`). ID token 검증 실패는 `/?login=failed` |
 | `POST /api/me/step-up/totp` | break-glass session | `{code}`. TOTP 재인증. 로그인과 같은 잠금 |
-| `GET /api/me/profile` | 로그인한 사용자 | 이름, 소속, 학년, 연락처와 원천, 아바타(EP-0270) |
+| `GET /api/me` | 로그인한 사용자 | `userId`, `name`, `role`, `breakGlass`, `stepUpMethod`(이 session의 재인증 수단: `idp` → `GET /api/auth/reauth`, `totp` → `POST /api/me/step-up/totp`, 로컬 실행의 `dev`, 없으면 null) |
+| `GET /api/me/profile` | 로그인한 사용자 | 이름, 소속, 학년, 연락처와 원천, 아바타(EP-0270). `avatar.photo`는 마지막으로 올린 사진의 `state`(processing\|ready\|failed), 지금 보이는 사진의 `url`, 실패 `errorCode`(not_image\|too_large\|rejected\|unavailable\|failed)이고, 올린 적이 없으면 null |
 | `PUT /api/me/profile` | 로그인한 사용자 | `{avatarColor, shortName, version}`. 24색 allowlist, 약칭 2글자. 읽은 `version`이 다르면 409(EP-0271, EP-0278) |
 | `PUT /api/me/contact` | 로그인한 사용자, 최근 재인증 | `{phone, email}`. 학사 원천 연락처면 409 `contact_managed_by_registrar`(EP-0266) |
+| `POST /api/me/profile/sync` | 로그인한 사용자(break-glass는 404) | 학사시스템 port로 이름, 소속, 학년, 연락처를 다시 읽어 저장하고 내정보를 돌려준다(EP-0279). 연동이 없으면 503 `not_configured`, 학사시스템에 없으면 409 `registrar_record_not_found`, 장애·형식 오류는 503 `registrar_unavailable`. 사용자당 10분에 5번 |
+| `POST /api/me/profile/image` | 로그인한 사용자 | multipart `file` 하나(PNG·JPEG, 5MB 이하, 화면이 정사각형으로 자른 사진). 202 `{state: processing}`. 이미지가 아니면 400 `not_image`, 크면 413 `too_large`. 대기 중인 앞 사진은 버린다. 바꾸는 명령이라 `Idempotency-Key`를 받지 않는다. 10분에 10번(EP-0273~EP-0276) |
+| `DELETE /api/me/profile/image` | 로그인한 사용자 | 사진을 지우고 색상형으로 돌아간다. 색상과 약칭은 그대로다. 내정보를 돌려준다(EP-0278) |
+| `GET /api/users/{userId}/avatar` | 본인과 폐강하지 않은 과목을 함께하는 사람 | 다시 만든 256px JPEG. `If-None-Match`면 304. 그 밖에는 404(EP-0277) |
 | `GET /api/me/preferences` · `PUT` | 로그인한 사용자 | 언어, 시간 표기, 화면 모드, 푸시 알림 에티켓 시간. allowlist와 `version`(EP-0169, EP-0220, EP-0283~EP-0286) |
 | `GET /api/me/sessions` | 로그인한 사용자 | 지금 쓸 수 있는 내 session과 IP, 브라우저, 기기, 지금 session 표시 |
 | `POST /api/me/sessions/{sessionId}/revoke` | 그 session의 주인 | 다른 session 하나를 끝낸다. 지금 session은 409 `current_session`. 204 |
@@ -362,8 +369,8 @@ flowchart TD
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `POST /api/courses/{courseId}/lecture-items/{itemId}/learning-sessions` | 그 활동을 지금 볼 수 있는 사람(담당자는 적립 없음). 학습 인증을 요구하면 학생은 grant 필요(없으면 403 `learning_auth_required`) | session 시작. 앞 session은 `superseded`. 주기, lease, 이어보기 위치, 적립이 끝나는 시각, 영상 cookie. 201 |
-| `POST /api/courses/{courseId}/learning-sessions/{sessionId}/heartbeats` | session 소유자이고 지금도 볼 수 있을 때 | `{seq, positionSec, playing}`. 서버 시각으로 적립하고 진도, `creditState`(`authorized`·`reauth_required`), 적립이 끝나는 시각, lease 남은 시간, 영상 cookie를 돌려준다. 닫힌 session은 409 |
-| `POST /api/courses/{courseId}/learning-sessions/{sessionId}/end` | session 소유자 | 마지막 구간을 적립하고 닫는다. 멱등 |
+| `POST /api/courses/{courseId}/learning-sessions/{sessionId}/heartbeats` | session 소유자이고 지금도 볼 수 있을 때 | `{seq, positionSec, playing}`. 서버 시각으로 적립하고 진도, `creditState`(`authorized`·`reauth_required`), 적립이 끝나는 시각, lease 남은 시간, 영상 cookie를 돌려준다. 닫힌 session은 409이고 code가 저장한 종료 사유를 알린다: `session_superseded`(다른 곳에서 학습을 이어 감. 어느 창·기기인지는 알리지 않는다), `session_expired`(lease 안에 하트비트가 없었다), `session_ended`(종료 요청이 이미 왔다), `session_withdrawn`(볼 수 없게 되어 서버가 닫았다) |
+| `POST /api/courses/{courseId}/learning-sessions/{sessionId}/end` | session 소유자 | 마지막 구간을 적립하고 닫는다. 멱등. 응답의 `endReason`은 저장한 사유(`button`\|`unload`\|`forced`\|`superseded`\|`lease_expired`)이고, 이미 닫혔으면 처음 사유다 |
 | `GET /api/courses/{courseId}/lecture-progress` | 과목 구성원 | 내 콘텐츠별 적립 시간, 출석인정 필요 시간, 충족 시각을 주차별로 |
 | `GET /api/courses/{courseId}/lecture-progress/students` | 담당자 | 수강생 전체의 콘텐츠별 진도 |
 
@@ -374,6 +381,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `POST /api/uploads/stream?courseId&purpose=lecture_video&name` | 그 과목의 담당자 | 본문(`application/octet-stream`, `Content-Length` 필수)을 그대로 받아 저장한다. 201. 응답과 이후 흐름은 `POST /api/uploads`와 같다. 같은 `Idempotency-Key`가 이미 있으면 본문을 저장하지 않고 hash만 계산해, 같은 파일·이름·과목이면 처음 업로드를, 다르면 409 `idempotency_conflict`를 돌려준다 |
+| `GET /api/courses/{courseId}/lectures?cursor=&size=` | 담당자 | 영상 활동 목록. 주차, 주차 안 순서, 활동 ID 순. 공개 전 활동도 나오고 콘텐츠마다 `state`(processing\|ready\|failed). 쪽 크기 1~100(기본 20), `nextCursor`. 쿼리는 과목 크기와 관계없이 권한 판정 뒤 2번. 학생 목록은 같은 순서의 `lecture-progress`다 |
 | `POST /api/courses/{courseId}/lectures` | 담당자 | 영상 활동(`lecture_weeks`)과 콘텐츠를 만들고 영상 업로드를 첨부로 확정하고 변환을 예약한다. 한 transaction. `Idempotency-Key` 선택 |
 | `PUT /api/courses/{courseId}/lectures/{activityId}` | 담당자 | `If-Match` 필수. 활동 값과 콘텐츠 최종 집합(`keep`: 이 활동의 콘텐츠와 제목·`requiredSec`, `add`: 내 영상 업로드). 빠진 콘텐츠의 영상은 지운다 |
 | `DELETE /api/courses/{courseId}/lectures/{activityId}` | 담당자 | `If-Match` 필수. 삭제 표시만 남기고 학습 기록은 둔다. 영상은 지운다(ADR-0011) |
@@ -409,10 +417,10 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 담당 교수자 | 철회. 대기 작업·질문 취소, 게시본은 유지 |
 | `GET /api/courses/{courseId}/llm-usage` | 담당 교수자 | 과목의 호출 수·token 합계와 오늘의 학습 대화 예산 |
 | `POST /api/courses/{courseId}/files/{fileId}/study-chats` | 열람 가능한 사람 | 대화 열기. 게시본과 게시자의 `study_chat` 동의 필요. `Idempotency-Key` 지원 |
-| `GET /api/courses/{courseId}/files/{fileId}/study-chats?before=` | 열람 가능한 사람 | 그 파일에서 내가 연 대화(20개씩, ID 내림차순) |
+| `GET /api/courses/{courseId}/files/{fileId}/study-chats?before=` | 열람 가능한 사람 | 그 파일에서 내가 연 대화(20개씩, ID 내림차순). `{items, nextBefore}`이고 다음 쪽이 없으면 `nextBefore`는 null |
 | `GET` · `DELETE /api/courses/{courseId}/study-chats/{chatId}` | 대화 소유자 | 대화 보기, 지우기(본문 객체까지) |
 | `POST /api/courses/{courseId}/study-chats/{chatId}/exchanges` | 대화 소유자 | 질문. 202. `Idempotency-Key` 필수, 대화마다 대기 질문 하나, 사용자 한도, 과목 일일 token 예산 |
-| `GET /api/courses/{courseId}/study-chats/{chatId}/exchanges?before=` · `/exchanges/{id}` | 대화 소유자 | 질문과 답, 인용 쪽(10개씩). 답을 기다리는 동안 다시 읽는다 |
+| `GET /api/courses/{courseId}/study-chats/{chatId}/exchanges?before=` · `/exchanges/{id}` | 대화 소유자 | 질문과 답, 인용 쪽(10개씩, `{items, nextBefore}`). 답을 기다리는 동안 다시 읽는다 |
 
 대화 소유자의 읽기와 질문은 요청마다 그 파일의 열람 권한을 다시 본다. 담당 교수자도 학생의 대화는 볼 수 없다.
 
@@ -687,10 +695,10 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | `PUT /api/courses/{courseId}/attendance-sessions/{sessionId}/records/{studentId}` | 담당자 | 한 학생의 상태와 사유. `If-Match`는 칸의 version(없으면 0). 사유는 변경 이력에 남는다 |
 | `POST /api/courses/{courseId}/attendance-sessions/{sessionId}/records/fill` | 담당자 | 판정 전 수강생 모두를 한 상태로 채운다. 판정된 칸은 그대로 |
 | `POST /api/courses/{courseId}/attendance-sessions/{sessionId}/smart-rounds` | 담당자 | 스마트출석 회차(`pin`·`qr`, 진행 시간, 지각 기준, 대상 그룹)를 연다. 201. 차시마다 진행 중 하나 |
-| `GET /api/courses/{courseId}/smart-rounds/{roundId}` | 담당자 | PIN, 지금 QR token과 교체 시각, 대상·확정·출석·지각·실패·잠금 수 |
+| `GET /api/courses/{courseId}/smart-rounds/{roundId}` | 담당자 | PIN, 지금 QR token과 교체 시각(`qrRefreshAt`), 대상·확정·출석·지각·실패·잠금 수. PIN은 회차를 열 때 정해져 끝날 때까지 바뀌지 않으므로 PIN 회차의 `qrRefreshAt`은 null이다. `pollAfterSec`은 수를 다시 묻는 간격일 뿐이다 |
 | `POST /api/courses/{courseId}/smart-rounds/{roundId}/close` · `/cancel` | 담당자 | 마감(멱등), 취소(그 회차가 만든 기록을 지운다) |
 | `GET /api/courses/{courseId}/smart-rounds/active` | 과목 구성원 | 진행 중 회차. 담당자는 회차 화면, 학생은 회차마다 자기 상태. `pollAfterSec` |
-| `GET /api/courses/{courseId}/smart-rounds/{roundId}/me` | 그 과목 학생 | `confirmed`(서버 기록 포함), `pending`, `locked`, `expired`, `closed`, `cancelled`, `not_target` |
+| `GET /api/courses/{courseId}/smart-rounds/{roundId}/me` | 그 과목 학생 | `confirmed`(서버 기록 포함), `pending`, `locked`, `expired`, `closed`, `cancelled`, `not_target`. 자기 `failedAttempts`와 `lockedOut`이 함께 있어, 끝난 회차에서 잠긴 뒤 끝났는지(`lockedOut`)와 제출하지 않았는지(`failedAttempts` 0)를 가린다 |
 | `POST /api/courses/{courseId}/smart-rounds/{roundId}/check` | 그 과목 학생 | `{pin}` 또는 `{qrToken}` 제출. 확정 200, 틀림 422, 잠김 429, 만료·마감·취소·대상 아님 409. 다시 보내도 기록은 하나라 `Idempotency-Key`를 받지 않는다 |
 | `GET /api/courses/{courseId}/groups` | 과목 구성원 | 담당자는 모든 그룹과 구성원(학번 포함), 학생은 자기 그룹과 구성원 이름(EP-0039) |
 | `POST /api/courses/{courseId}/groups` · `PUT …/{groupId}` · `DELETE …/{groupId}` | 담당자 | 그룹 생성(`Idempotency-Key` 지원), 이름 바꾸기와 삭제(`If-Match`). 출석에 쓴 그룹은 삭제 409 |
@@ -706,7 +714,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `POST /api/courses/{courseId}/files/{fileId}/preview-sessions` | 그 파일의 부모 활동을 볼 수 있는 사람 | 미리보기 열기. `ready`면 쪽 수, `pageImageBase`(`/doc/{key}/`, 쪽은 `NNN.jpg`), cookie 만료 시각과 그 경로에만 유효한 cookie. 변환이 필요하면 대기열에 넣고 202 `converting`(`Retry-After: 2`). `failed`(코드), `unsupported`. 몇 번 보내도 변환은 하나라 `Idempotency-Key`를 받지 않는다. 사용자당 10분에 300번 |
+| `POST /api/courses/{courseId}/files/{fileId}/preview-sessions` | 그 파일의 부모 활동을 볼 수 있는 사람 | 미리보기 열기. `ready`면 쪽 수, `pageImageBase`(`/doc/{key}/`, 쪽은 `NNN.jpg`), cookie 만료 시각과 그 경로에만 유효한 cookie. 변환이 필요하면 대기열에 넣고 202 `converting`(`Retry-After: 2`). `unsupported`. `failed`면 `code`가 다음 중 하나다: `encrypted`(암호 문서), `invalid_document`(문서로 읽을 수 없음), `empty`(쪽 없음), `too_many_pages`(200쪽 초과), `too_large`(원본·결과 크기 초과), `timeout`, `unavailable`(converter·저장소 장애가 시도 수 동안 이어짐), `failed`(그 밖). 몇 번 보내도 변환은 하나라 `Idempotency-Key`를 받지 않는다. 사용자당 10분에 300번 |
 | `GET /api/courses/{courseId}/files/{fileId}/thumbnail/{variant}` | 같음 | 첫 쪽 썸네일. `variant`는 `thumb_1`(긴 변 360px JPEG)뿐이다. worker가 변환할 때 만든 것만 내보낸다. `nosniff`, `private, max-age=300` |
 | `GET /api/courses/{courseId}/files/{fileId}/image` | 같음 | 서버가 PNG·JPEG로 판정한 이미지만 `inline`으로. `CSP: sandbox`, `nosniff`, `private, no-store`. 그 밖의 파일은 404이고 `/content`(attachment)로만 받는다 |
 
@@ -812,3 +820,5 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | HWP·HWPX 미리보기 | 받지 않는다(`unsupported`). LibreOffice는 HWP 97만 읽고, HWP 5.0·HWPX는 H2Orestart(GPL-3.0) 확장과 LibreOffice Java 연동이 필요하다([ADR-0033](adr/0033-document-preview-and-office-conversion.md) 3번) | GPL-3.0 확장을 converter 이미지에 넣어 배포해도 되는지 학교와 정한 뒤, 표본 HWP로 변환과 격리 설정을 확인하고 형식을 더한다 |
 | LibreOffice 실행 미검증 | 빌드 container에 LibreOffice가 없어 실제 soffice 변환, profile의 macro·link 차단, `prlimit` 주소 공간 상한(3 GiB) 아래 기동, converter 이미지 빌드와 smoke test의 office 단계를 실행하지 않았다. 테스트는 가짜 엔진과 soffice 자리의 Java process로 했다 | CI `container` 작업과 스테이징에서 macro, 외부 link, OLE가 든 표본 문서로 확인한다. 실패하면 상한과 profile 값을 고친다 |
 | 미리보기 실패의 재시도 | 실패한 변환은 파일 버전마다 끝 상태다. converter 장애(연결 불가)와 worker 중단만 3번까지 다시 한다 | 실패 코드별 건수를 9절 지표에 넣는다. 다시 만들 필요가 생기면 담당자용 재변환 명령을 둔다 |
+| 학사 동기화 adapter | 내정보의 동기화 명령과 port(`identity.api.RegistrarDirectory`)만 있고 학사시스템 adapter가 없어 503 `not_configured`다(EP-0279). 학사시스템이 이름·소속·학년·연락처를 어떤 API로 주는지 모른다 | 학교 정보화본부에 학사시스템 조회 API, 인증 방식, 호출 host를 확인하고 `integration`에 adapter를 만든다 |
+| 아바타 사진 처리 | converter는 한 번에 하나만 처리해 긴 문서 변환 뒤에 사진이 기다린다. 사진 대기열의 길이·나이 지표는 없다. JPEG의 EXIF 회전은 적용하지 않는다(화면이 canvas로 그린 사진을 올린다). 카탈로그 과목 상세의 교수 아바타는 구성원이 아닌 사람에게 사진 없이 이름 글자로만 보인다([ADR-0038](adr/0038-avatar-photo.md)) | 사진 대기열 지표를 `FilesBacklog`에 더하고, 대기가 길면 converter에 사진 전용 실행 slot을 둔다. 교수 사진 공개 범위는 학교와 정한다 |

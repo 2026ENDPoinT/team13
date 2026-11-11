@@ -40,7 +40,8 @@ import jakarta.servlet.http.HttpServletRequest;
  * 남긴다.</li>
  * <li>IdP token, code, state는 응답과 로그에 넣지 않는다(SC-07).</li>
  * <li>재인증(ADR-0029)은 로그인한 사용자가 시작하고 같은 callback으로 돌아온다. 새 session을 만들지 않고 지금 session에 재인증을
- * 기록한 뒤 시작할 때의 경로로 보낸다. 실패는 {@code /?reauth=failed}로 보낸다.</li>
+ * 기록한 뒤 시작할 때의 경로로 보낸다. 실패하면 같은 경로에 {@code reauth=failed}를 붙여 보낸다. 경로는 로그인과 같은
+ * {@link ReturnPath} 검사를 거친다. ID token 검증 단계의 실패는 재인증인지 알기 전이라 {@code /?login=failed}다.</li>
  * </ul>
  */
 @RestController
@@ -53,8 +54,10 @@ class SsoController {
 	/** 실패하면 보내는 주소. 화면은 이 값으로 일반적인 실패 안내만 보여 준다. */
 	static final String FAILURE_LOCATION = "/?login=failed";
 
-	/** 재인증에 실패하면 보내는 주소. */
-	static final String REAUTH_FAILURE_LOCATION = "/?reauth=failed";
+	/** 재인증에 실패하면 돌아갈 경로에 붙이는 query 이름과 값. */
+	static final String REAUTH_MARKER = "reauth";
+
+	static final String REAUTH_FAILED = "failed";
 
 	static final Duration LOGIN_COOKIE_AGE = Duration.ofMinutes(10);
 
@@ -126,7 +129,7 @@ class SsoController {
 		}
 		catch (ExternalLoginException ex) {
 			log.warn("SSO reauthentication start failed: reason={}", ex.reason());
-			return failure(REAUTH_FAILURE_LOCATION);
+			return failure(ReturnPath.marked(target, REAUTH_MARKER, REAUTH_FAILED));
 		}
 	}
 
@@ -152,7 +155,7 @@ class SsoController {
 			}
 			catch (ExternalLoginException ex) {
 				log.warn("SSO reauthentication rejected: reason={}", ex.reason());
-				return failure(REAUTH_FAILURE_LOCATION);
+				return failure(ReturnPath.marked(external.returnTo(), REAUTH_MARKER, REAUTH_FAILED));
 			}
 		}
 		try {
