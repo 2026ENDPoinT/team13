@@ -222,6 +222,7 @@ flowchart TD
 - 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
+- 설문은 `assessment`가 판정한다. 강의실 설문은 담당자가 언제나 보고, 학생은 공개됐고 시작한 설문만 본다. 알림마당 설문은 `survey_targets`의 대상(전체, 학생, 교직원, 학년)이 session의 역할과 학년에 맞을 때만 보인다. 익명 설문은 참여 원장과 응답 저장부를 잇지 않는다. 응답 행에 사용자와 정밀 시각이 없고, 완료는 공용 멱등 원장 대신 참여 원장의 key로 재전송을 판정하며, 감사 기록에 requestId를 남기지 않는다(SC-05-A, SC-09, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 결과 집계는 익명 설문과 학생에게는 마감 뒤 응답자 5명 이상일 때만 나간다. 설문 등록·수정·완료에도 사용자 단위 요청 제한이 있다.
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
 - 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
 
@@ -364,6 +365,26 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 제출 구간은 DB 시계로 `openAt <= now < closeAt`이고, 지각은 정책이 `allow_until`일 때 `closeAt <= now < lateUntil`만 받는다. 본문, 설명, 의견은 일반 텍스트로만 받고 내보낸다.
 
+### 7.8 설문
+
+익명성과 멱등 처리는 [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)에 있다. 강의실 설문은 `survey` 학습활동이라 할 일에도 나온다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `POST /api/courses/{courseId}/surveys` | 담당자 | 설문 활동, 설정, 문항(single, multiple, scale, essay)과 보기를 한 transaction으로 만든다. 201. `Idempotency-Key` 선택 |
+| `PUT /api/courses/{courseId}/surveys/{surveyId}` | 담당자 | 전체 수정. 읽은 `revision`이 다르면 409. `anonymous`, `questions`를 빼면 그대로 둔다. 완료한 사람이 있으면 둘은 바꾸지 못한다(409 `survey_has_responses`) |
+| `GET /api/courses/{courseId}/surveys` | 과목 구성원 | 설문 목록. 담당자는 완료 수, 학생은 공개됐고 시작한 설문과 본인 상태만 |
+| `GET /api/courses/{courseId}/surveys/{surveyId}` | 담당자, 볼 수 있는 학생 | 설문, 서버 시각, 응답 구간. 담당자는 문항과 revision, 학생은 본인 상태와 응답 기간 안의 문항만 |
+| `POST /api/courses/{courseId}/surveys/{surveyId}/completion` | 수강생 본인 | 답 전체로 한 번 완료. `Idempotency-Key` 필수. 201과 `{surveyId, state, revision}`. 다시 완료하면 409 `already_completed` |
+| `GET /api/courses/{courseId}/surveys/{surveyId}/results` | 담당자, 결과를 공개한 설문의 학생 | 보기별 선택 수, 척도 평균, 문항별 답한 수. 응답자는 없다 |
+| `GET /api/courses/{courseId}/surveys/{surveyId}/results/questions/{questionId}/texts?page=&size=` | 위와 같다 | 서술형 답변. 문구 순서, size 100 이하 |
+| `GET /api/surveys?page=&size=` | 대상자 | 알림마당 설문 목록. 마감 오름차순, size 100 이하 |
+| `GET /api/surveys/{surveyId}` | 대상자 | 알림마당 설문 상세. 규칙은 강의실 설문의 학생 상세와 같다 |
+| `POST /api/surveys/{surveyId}/completion` | 대상자 | 알림마당 설문 완료. 강의실 설문과 같은 규칙 |
+| `GET /api/surveys/{surveyId}/results` · `/results/questions/{questionId}/texts` | 결과를 공개한 설문의 대상자 | 강의실 설문과 같은 집계 |
+
+응답 구간은 DB 시계로 `openAt <= now < closeAt`이다. 같은 key의 재전송은 익명 설문이면 본문이 달라도 처음 결과를, 실명 설문이면 같은 답일 때만 처음 결과를 돌려준다(다른 답은 409 `idempotency_conflict`). 결과는 익명 설문이면 담당자에게도 마감 뒤 응답자 5명 이상일 때만, 학생에게는 결과 공개를 켜고 공개 일시와 마감이 지나고 응답자 5명 이상일 때만 나간다. 답한 사람이 5명 미만인 문항은 가린다. 실명 설문의 담당자는 기간 중에도 집계를 본다. 설명, 문항, 답은 일반 텍스트로만 받고 내보낸다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -432,6 +453,7 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 할 일의 완료 판정 | 할 일은 기간 안의 공개 활동 전부다. 이미 제출한 과제, 다 본 영상도 마감까지 남는다(EP-0144의 "미완료"는 원본에서도 기준 미확인) | `assessment` 제출 원장과 `learning` 진도를 만들 때 각 모듈의 공개 API로 완료 여부를 받아 `home`에서 뺀다 |
 | 과제 제출 첨부 이어받기 | 다시 제출할 때 이전 버전의 파일을 다시 올려야 한다(ADR-0015). SC-05-B의 `keep` 계약이 없다 | `files.api.Attachments`에 기존 첨부 참조를 더할 때 제출 요청에 `keep`을 받는다 |
 | 과제 제출의 멱등 receipt | 공용 원장 없이 제출 버전 행과 `(submitted_by_user_id, idempotency_key)` 유일 제약으로 처리한다(ADR-0015) | `shared`에 원장을 만들면 receipt 조회를 옮기고 두 컬럼을 정리한다 |
+| 익명 설문의 운영자 재식별 | 참여와 응답을 한 transaction으로 쓰므로 binlog와 행 ID 순서, 감사 기록 순서로 DB 운영자는 응답자를 맞출 수 있다. '익명'은 교수자에게 비식별인 범위다(SC-05-A, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 재응답과 분기 문항은 없다 | 강한 익명성이나 재응답이 필요하면 가명 token과 key 권한을 함께 설계해 결정을 받는다 |
 | 기동 시간과 AOT cache | 3.1절의 JDK AOT cache를 이미지에 넣지 않았다. training run에 DB가 필요해 이미지 빌드 안에서 만들 수 없다 | 배포 중 중단 시간이 문제가 되면 배포 단계에서 training run을 돌려 cache를 만드는 방식을 정한다 |
 | converter의 한글 글꼴 | 실행 이미지에 한글 글꼴이 없다. 글꼴을 포함하지 않은 PDF는 쪽 이미지에서 한글이 빠질 수 있다 | 학교 자료 표본으로 확인하고, 필요하면 converter 역할에 글꼴을 더한다 |
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
