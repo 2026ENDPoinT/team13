@@ -22,7 +22,7 @@ ERDCloud는 보기용 사본이다. ERDCloud 화면에서 직접 고친 내용�
 
 ## 2. 큰 그림
 
-### 2.1 6개 영역
+### 2.1 7개 영역
 
 | 영역 | 담당 | 테이블 | 중심 테이블 | 다른 영역으로 거는 FK |
 |---|---|---:|---|---|
@@ -32,6 +32,7 @@ ERDCloud는 보기용 사본이다. ERDCloud 화면에서 직접 고친 내용�
 | 40 assessment | 과제 제출·퀴즈 응시·설문 응답·성적 | 23 | `assignments`, `quiz_attempts`, `surveys`, `grade_items` | learning, catalog, identity, files |
 | 50 communication | 게시판·게시글·댓글·읽음·쪽지·서포터즈 채팅·임시저장 | 11 | `boards`, `posts`, `messages` | catalog, identity, learning, files |
 | 60 files | 업로드·파일·첨부 묶음·파일함·ZIP·미리보기·AI 요약 | 13 | `files`, `attachment_groups`, `filebox_items` | catalog, identity |
+| 70 summary | 강의 자료 쪽별 요약 작업·게시([ADR-0006](../docs/adr/0006-summary-module.md)) | 2 | `summary_jobs` | files, identity |
 
 ```mermaid
 flowchart LR
@@ -41,11 +42,13 @@ flowchart LR
   ASM["40 assessment"]
   COM["50 communication"]
   FIL["60 files"]
+  SUM["70 summary"]
   CAT --> ID
   LRN --> CAT & ID & FIL
   ASM --> LRN & CAT & ID & FIL
   COM --> CAT & ID & LRN & FIL
   FIL --> CAT & ID
+  SUM --> FIL & ID
 ```
 
 화살표는 FK가 가리키는 방향이다. 이해와 구현 모두 identity → catalog → learning → 나머지 순서로 진행한다.

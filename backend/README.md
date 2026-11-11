@@ -81,7 +81,7 @@ git commit -m "Update reference to <변경 요약>"
 | Gradle | 9.8.2 (wrapper 포함, 따로 설치하지 않음) |
 | DB | MySQL 8.4, Flyway |
 
-테스트와 로컬 실행에는 Docker가 필요하다. Testcontainers가 MySQL 8.4 컨테이너를 띄우고 마이그레이션을 적용한다.
+테스트와 로컬 실행에는 Docker가 필요하다. Testcontainers가 MySQL 8.4와 S3 호환 저장소 컨테이너를 띄우고 마이그레이션을 적용한다.
 
 ```sh
 ./gradlew build          # Windows: gradlew.bat build
@@ -96,13 +96,62 @@ git commit -m "Update reference to <변경 요약>"
 
 실제 DB에 붙여 실행할 때는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경 변수를 넣고 `./gradlew bootRun`을 쓴다.
 
+### LLM 설정
+
+쪽별 요약([ADR-0006](docs/adr/0006-summary-module.md))은 OpenAI Chat Completions 호환 제공자를 부른다([ADR-0008](docs/adr/0008-llm-port-deepseek.md)). 설정은 환경 변수로 넣는다. key가 없으면 앱은 뜨고 요약 생성만 쓸 수 없다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_LLM_API_KEY` | 없음 | 제공자 API key. 저장소와 로그에 남기지 않는다 |
+| `ASTRA_LLM_BASE_URL` | `https://api.deepseek.com` | 이 주소 뒤에 `/chat/completions`를 붙여 부른다. https만 허용한다 |
+| `ASTRA_LLM_MODEL` | `deepseek-flash` | 이미지 입력을 받는 model |
+| `ASTRA_LLM_VISION` | `true` | `false`면 쪽 이미지를 보내지 않고 추출 텍스트만 보낸다 |
+| `ASTRA_LLM_TIMEOUT` | `300s` | 요청 하나의 전체 제한 시간 |
+| `ASTRA_LLM_MAX_CONCURRENCY` | `2` | 동시에 보내는 요청 수 상한 |
+| `ASTRA_LLM_EXTRABODY_*` | 없음 | 요청 본문에 더하는 제공자 전용 값. 예: `ASTRA_LLM_EXTRABODY_THINKING_TYPE=disabled`는 본문에 `{"thinking":{"type":"disabled"}}`를 더한다 |
+
+### 저장소와 문서 변환 설정
+
+파일 원본과 파생물은 S3 API로 읽고 쓴다([ADR-0007](docs/adr/0007-confidential-content-placement.md)). 운영에서는 bucket 이름만 넣고 credential은 EC2 instance role로 받는다. 로컬 실행과 테스트는 Testcontainers가 띄운 S3 호환 저장소(`adobe/s3mock`)와 같은 process의 converter를 쓴다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_STORAGE_CONTENT_BUCKET` | `astra-content` | 원본, 모델 입력용 rendition, 요약 결과 |
+| `ASTRA_STORAGE_DELIVERY_BUCKET` | `astra-delivery` | CloudFront가 읽는 HLS(`vod/`)와 화면용 쪽 이미지(`doc/`) |
+| `ASTRA_STORAGE_REGION` | `ap-northeast-2` | |
+| `ASTRA_CONVERTER_URL` | `http://converter:8090` | converter 주소 |
+| `ASTRA_SUMMARY_POLL_INTERVAL` | `5s` | worker가 대기 중인 요약 작업을 찾는 간격 |
+
+요약 작업은 `worker` 프로필(`--spring.profiles.active=worker`)에서만 실행된다. converter는 같은 jar를 다른 main으로 띄운다. 외부 network가 없는 container에서 실행한다.
+
+```sh
+java -Dloader.main=com.stackcorp.converter.ConverterServer -cp stack-eclass-backend.jar \
+  org.springframework.boot.loader.launch.PropertiesLauncher   # CONVERTER_PORT 기본 8090
+```
+
+### 인증과 CDN 서명 설정
+
+학교 IdP 연결 전까지 로그인은 break-glass 계정 하나만 된다([ADR-0004](docs/adr/0004-sso-bff-session.md) 6번). 비밀번호 hash와 TOTP secret은 DB가 아니라 Secrets Manager에서 환경 변수로 넣는다. 셋 중 하나라도 없으면 로컬 로그인은 꺼진다. 운영자는 `users`에 같은 `external_ref`의 행을 먼저 만든다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_BREAK_GLASS_EXTERNAL_REF` | 없음 | break-glass 계정의 `users.external_ref` |
+| `ASTRA_BREAK_GLASS_PASSWORD_HASH` | 없음 | `{bcrypt}...` 형식의 비밀번호 hash |
+| `ASTRA_BREAK_GLASS_TOTP_SECRET` | 없음 | RFC 6238 TOTP secret(Base32) |
+| `ASTRA_SESSION_ALLOWED_ORIGINS` | 없음 | 상태를 바꾸는 요청에 허용하는 Origin(쉼표 구분). 비우면 요청 자신의 origin만 허용한다 |
+| `ASTRA_CLOUDFRONT_BASE_URL` | 없음 | 서비스 도메인(https). signed cookie 정책의 resource 기준 |
+| `ASTRA_CLOUDFRONT_KEY_PAIR_ID` | 없음 | CloudFront key group의 public key ID. 없으면 signed cookie를 발급하지 않는다 |
+| `ASTRA_CLOUDFRONT_PRIVATE_KEY` | 없음 | PKCS#8 PEM RSA 개인 key |
+
+브라우저는 먼저 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키를 받고, 상태를 바꾸는 요청마다 그 값을 `X-XSRF-TOKEN` header로 보낸다.
+
 ## CI
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 두 작업을 실행한다.
 
 | 작업 | 확인하는 것 |
 |---|---|
-| Build and test | `./gradlew build`. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다 |
+| Build and test | `./gradlew build`. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다. `ModuleStructureTests`가 모듈 사이 의존이 [docs/architecture.md](docs/architecture.md) 4.1절 표를 벗어나지 않는지 확인하고 `build/spring-modulith-docs/`에 C4 component diagram을 쓴다 |
 | Schema check and ERD snapshot | 마이그레이션을 MySQL 8.4에 적용한 뒤 `db/tools/check.sql`로 깨진 FK, COMMENT 누락, 고립 테이블을 찾는다. `db/erdcloud/snapshot.json`(ERD A)이 현재 스키마로 다시 만든 결과와 같은지도 확인한다 |
 
 마이그레이션을 추가했다면 같은 PR에서 `python db/tools/erdcloud_snapshot.py`로 스냅샷도 갱신해야 CI가 통과한다. CI는 `reference` 서브모듈을 받지 않는다. 빌드에 필요 없고, 비공개 레포라 기본 토큰으로는 받을 수 없기 때문이다.
