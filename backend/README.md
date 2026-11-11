@@ -185,6 +185,14 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 | `ASTRA_LEARNING_HEARTBEAT_INTERVAL` | `60s` | 서버가 player에 알려 주는 하트비트 주기(10초~5분). 영상 cookie 유효 시간(10분)보다 짧아야 한다 |
 | `ASTRA_LEARNING_LEASE_SWEEP_INTERVAL` | `30s` | worker가 lease가 지난 학습 session을 닫는 간격 |
 
+### 퀴즈 설정
+
+퀴즈 응시와 채점은 [ADR-0021](docs/adr/0021-quiz-attempt-model.md)을 따른다. 마감 일시가 지난 진행 중 응시는 worker가 마지막으로 저장한 답안으로 닫는다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_QUIZ_CLOSE_INTERVAL` | `30s` | worker가 마감이 지난 진행 중 응시를 찾아 닫는 간격 |
+
 ### 인증과 CDN 서명 설정
 
 학교 IdP 연결 전까지 로그인은 break-glass 계정 하나만 된다([ADR-0004](docs/adr/0004-sso-bff-session.md) 6번). 비밀번호 hash와 TOTP secret은 DB가 아니라 Secrets Manager에서 환경 변수로 넣는다. 셋 중 하나라도 없으면 로컬 로그인은 꺼진다. 운영자는 `users`에 같은 `external_ref`의 행을 먼저 만든다.

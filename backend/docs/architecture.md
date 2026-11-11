@@ -222,6 +222,7 @@ flowchart TD
 - 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
+- 퀴즈는 `assessment`가 판정한다. 문항은 학생이 응시를 시작한 뒤 본인 응시 조회로만 받고, 정답은 담당자 응답에만 있다. 학생 응답의 총점, 정답, 해설, 문항별 점수는 결과 공개 정책을 판정하는 함수 하나(`Quiz.release`)가 허락할 때만 들어가고, 그 전에는 속성 자체가 없다(SEC-14). 응시 재진입은 client가 지시하지 않고 서버가 정한다(SEC-13, [ADR-0021](adr/0021-quiz-attempt-model.md)).
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
 - 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
 
@@ -364,6 +365,26 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 제출 구간은 DB 시계로 `openAt <= now < closeAt`이고, 지각은 정책이 `allow_until`일 때 `closeAt <= now < lateUntil`만 받는다. 본문, 설명, 의견은 일반 텍스트로만 받고 내보낸다.
 
+### 7.8 퀴즈 출제와 응시
+
+모델, 공개 정책, 잠금 순서는 [ADR-0021](adr/0021-quiz-attempt-model.md)에 있다. 모든 판정은 DB 시계로 하고, 응시 마감 일시는 시작할 때 `min(시작 + 제한 시간, closeAt)`으로 고정한다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `POST /api/courses/{courseId}/quizzes` | 담당자 | 퀴즈 활동, 설정, 문항, 성적 항목을 한 transaction으로 만든다. 201. `Idempotency-Key` 지원 |
+| `PUT /api/courses/{courseId}/quizzes/{quizId}` | 담당자 | 설정 수정(기간, 제한 시간, 응시 횟수, 섞기, 결과 공개 일시, 정답 공개). 읽은 `revision`이 다르면 409 |
+| `PUT /api/courses/{courseId}/quizzes/{quizId}/questions` | 담당자 | 문항 전체 교체. 응시가 있으면 409 `questions_locked` |
+| `GET /api/courses/{courseId}/quizzes` | 과목 구성원 | 퀴즈 목록. 담당자는 응시 수, 학생은 공개됐고 시작한 퀴즈와 본인 상태만 |
+| `GET /api/courses/{courseId}/quizzes/{quizId}` | 담당자, 볼 수 있는 학생 | 퀴즈 정보, 서버 시각, 응시 구간. 담당자는 문항과 정답, 학생은 본인 응시, 시작 가능 여부, 공개한 점수만 |
+| `POST /api/courses/{courseId}/quizzes/{quizId}/attempts` | 수강생 본인 | 응시 시작. 진행 중 응시가 있으면 그 응시(200), 없으면 새 회차(201). 다른 session이면 응시를 옮긴다. 상태로 멱등이라 key를 받지 않는다 |
+| `GET /api/courses/{courseId}/quizzes/{quizId}/attempts` | 담당자 | 응시 목록. 응시 ID 순서, `cursor`와 `size`(100 이하) |
+| `GET /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}` | 응시한 학생, 담당자 | 학생은 응시 순서의 문항과 본인 답안, 담당자는 답안과 채점 내용 |
+| `PUT /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}/answers/{questionId}` | 응시한 학생 | 자동저장. 문항마다 읽은 `revision`을 보낸다. 마감 일시부터 409 |
+| `POST /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}/submit` | 응시한 학생 | 제출. `Idempotency-Key` 필수. 마감 뒤면 마지막 저장 답안으로 닫는다. 선택 문항을 채점하고 성적을 같은 transaction에서 쓴다 |
+| `PUT /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}/answers/{questionId}/grade` | 담당자 | 단답형 채점(0~배점, 의견 일반 텍스트 1000자). 대기 답안이 없어지면 총점과 성적을 확정한다 |
+
+worker는 마감이 지난 진행 중 응시를 `astra.quiz.close-interval`(기본 30초)마다 같은 종료 경로로 닫는다. 오프라인 시험은 보이지만 시작할 수 없다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -437,3 +458,5 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
 | 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
 | 2차 인증 만료와 학습 적립(SC-06-A) | 적립 유효기한이 close_at만 반영한다. 2차 인증 grant가 없다 | `identity`의 grant와 `learning_sessions.credit_authorized_until`, `reauth_required` 상태를 함께 만든다(ADR-0014 결과 절) |
+| 퀴즈 재채점 | 응시가 생기면 문항과 정답을 바꾸지 않는다([ADR-0021](adr/0021-quiz-attempt-model.md)). 정답이 틀린 것을 응시 뒤에 알면 고칠 API가 없다. 복수 선택에 부분 점수가 없다 | 정답 수정과 기존 응시 재계산을 한 명령으로 하는 재채점을 감사 기록과 함께 만든다. 부분 점수는 학교 기준을 받아 정한다 |
+| 퀴즈와 할 일 | 할 일은 learning의 활동 기간만 보므로 제출한 퀴즈도 마감까지 남는다 | 위 "할 일의 완료 판정"과 함께 `assessment` api로 응시 완료를 받아 뺀다 |
