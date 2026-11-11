@@ -25,3 +25,4 @@
 - 답글이 달린 뒤에는 학생이 질문을 고칠 수 없어서 오타도 고치지 못한다. 답글이 질문의 원래 내용을 전제로 쓰였기 때문에 담당자의 답이 엉뚱해 보이지 않게 하는 쪽을 택했다.
 - 쪽 번호 목록의 `snapshot`은 ID 할당 순서와 commit 순서가 같다고 본다. 거의 같은 순간에 작은 ID의 transaction이 늦게 commit하면 그 글 하나가 이미 받은 쪽 뒤에 끼어들 수 있다.
 - 첨부를 고치려면 글을 지우고 다시 써야 한다. `files.api.Attachments`에 교체·해제가 생기면 수정 요청에 첨부 목록을 받는다.
+- (2026-11-12 갱신) `Attachments.change`가 생겨 글과 답글의 수정이 첨부 최종 집합(`attachments: {keep, add}`)을 받는다. 버전 확인이 먼저이고 실패하면 글도 첨부도 바뀌지 않는다. 댓글 수정(EP-0026)은 작성자만 하고 `comments.version`(V35)을 비교한다. 알림마당 쓰기와 첨부는 [ADR-0035](0035-community-operators-and-outside-course-files.md)에 있다.

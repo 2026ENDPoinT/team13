@@ -39,6 +39,7 @@
 | [ADR-0029](adr/0029-step-up-and-learning-auth.md) | 민감한 명령의 재인증과 온라인 학습 인증 grant는 로그인 session에 묶은 `session_step_ups` 행이다. 학교 IdP 재인증(`prompt=login`, `auth_time`)이 근거이고, 학습 적립은 grant 만료에서 끊기고 `reauth_required`가 된다 |
 | [ADR-0028](adr/0028-filebox.md) | 개인 파일함은 사용자별 사용량 행을 잠가 차례로 바꾸고, 다시 쓰기는 같은 내용을 참조하는 새 파일로, ZIP은 worker가 저장소에서 저장소로 흘려 만든다 |
 | [ADR-0030](adr/0030-attendance-and-smart-rounds.md) | 출석부는 담당자 판정이 자동 판정보다 강하다. 스마트출석은 서버가 PIN/QR을 직접 검증해 같은 transaction에서 기록하고, 상태는 WebSocket 없이 조회로 알린다 |
+| [ADR-0035](adr/0035-community-operators-and-outside-course-files.md) | 알림마당 공지·자료 쓰기와 1:1 문의 답변은 `community_operators` 행이 있는 운영자만 한다. 과목이 없는 첨부(알림마당, 쪽지)는 과목 없는 용도로 올리고 `GET /api/files/{fileId}/content`로만 연다. 과목 파일은 이 경로로 열리지 않는다 |
 
 ## 2. 부하 가정
 
@@ -279,7 +280,8 @@ flowchart TD
 - 강의실 공지는 `communication`이 판정한다. 담당자는 임시·예약 공지까지 보고 쓰며, 학생은 게시 일시가 DB 시계로 지난 공지만 본다. 공지 조회는 읽음을 남기지 않고, 읽음과 확인은 각각 POST 명령이다(SC-04).
 - 수정과 삭제처럼 앞선 변경을 덮을 수 있는 명령은 `If-Match`로 마지막으로 읽은 version을 받는다. 없으면 428, 다르면 409이고 아무것도 바꾸지 않는다(SC-05).
 - 강의실 질의응답과 열린게시판도 `communication`이 판정한다([ADR-0024](adr/0024-course-qna-and-open-board.md)). 비공개 질문은 작성자와 담당자만 보고, 다른 학생에게는 목록, 건수, 검색, 상세, 답글, 첨부 어디에도 없다. 익명 글의 작성자 이름은 작성자와 담당자만 보고, 작성자 ID는 응답에 넣지 않는다. 글은 작성자만 고치고, 질문은 답글 전까지만 고치고 지운다. 담당자는 그 과목의 글, 답글, 댓글을 지울 수 있고 감사 기록에 `*.moderate`로 남는다. 글·답글·댓글 작성과 수정, 추천에 사용자 단위 요청 제한이 있다.
-- 알림마당 자료실은 과목이 없어 session 사용자의 기관 역할로 대상(공통, 교수, 학생)을 고른다. 1:1 문의는 본인이 쓴 것만 보인다.
+- 알림마당 공지와 자료실은 과목이 없어 session 사용자의 기관 역할로 대상(공통, 교수, 학생)을 고른다. 1:1 문의는 쓴 사람과 알림마당 운영자만 본다. 알림마당 운영자는 `community_operators`의 해제하지 않은 행으로만 정하고 요청마다 읽는다. 기관 역할(`STAFF` 포함)이나 break-glass 계정은 운영자가 아니다. 운영자만 공지·자료를 쓰고 1:1 문의에 답하며, 모두 감사 기록을 남긴다([ADR-0035](adr/0035-community-operators-and-outside-course-files.md)).
+- 과목이 없는 첨부(알림마당 공지·자료·문의, 쪽지)는 과목 없는 용도로 올리고 `GET /api/files/{fileId}/content`로만 연다. 이 경로는 `files.course_id`가 없는 파일만 보고 부모의 `allowedOutsideCourse`에 묻는다. 과목 부모는 이 판정이 언제나 거부이고, 과목 밖 부모는 과목 판정이 언제나 거부다. 쪽지 첨부는 쪽지를 아직 가진 사람(보낸함에서 지우지 않은 발신자, 회수되지 않았고 받은함에서 지우지 않은 수신자)만 읽는다.
 - 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
 - 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 다른 사용자의 ID를 넣지 않는다(SC-04).
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
@@ -422,13 +424,14 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `POST /api/uploads` | 용도가 요구하는 역할(강의 자료는 담당자) | 파일, 과목, 용도를 받아 검사하고 저장한다. 201. `Idempotency-Key` 지원. 같은 key에 다른 파일·이름·용도·과목이면 409 `idempotency_conflict` |
+| `POST /api/uploads` | 용도가 요구하는 역할(강의 자료는 담당자). 과목 밖 용도는 [ADR-0035](adr/0035-community-operators-and-outside-course-files.md)의 판정 | 파일, 과목, 용도를 받아 검사하고 저장한다. 과목 밖 용도(`community_notice`, `community_material`, `inquiry_attachment`, `message_attachment`)는 `courseId` 없이 보낸다. 용도와 과목 유무가 맞지 않으면 400. 201. `Idempotency-Key` 지원. 같은 key에 다른 파일·이름·용도·과목이면 409 `idempotency_conflict` |
 | `GET /api/uploads/{uploadId}` · `DELETE` | 올린 사람 | 상태 조회, 첨부 전 삭제 |
 | `POST /api/courses/{courseId}/materials` | 담당자 | 자료 활동을 만들고 업로드를 첨부로 확정한다. 한 transaction. `Idempotency-Key` 지원 |
 | `PUT /api/courses/{courseId}/materials/{activityId}` | 담당자 | 제목, 설명, 주차, 시작 일시, 공개 여부와 첨부 최종 집합(`keep` 파일, `add` 업로드)을 한 transaction으로 바꾼다. `If-Match` 필수, version이 다르면 409 |
 | `DELETE /api/courses/{courseId}/materials/{activityId}` | 담당자 | 삭제 표시를 남기고 첨부를 끊는다. 학습 기록은 남는다. `If-Match` 필수 |
 | `GET /api/courses/{courseId}/materials` | 과목 구성원 | 자료 목록과 첨부. 학생은 공개됐고 시작한 자료만 |
 | `GET /api/courses/{courseId}/files/{fileId}/content` | 그 파일의 부모 활동을 볼 수 있는 사람 | 원본. 언제나 attachment |
+| `GET /api/files/{fileId}/content` | 과목 밖 부모(알림마당 공지·자료·문의, 쪽지)를 볼 수 있는 사람 | 과목 밖 파일의 원본. 과목 파일은 404 |
 
 설명은 일반 텍스트로만 받고 내보낸다. `learning_material_details.body_html`은 서버 HTML 정규화(SC-08, CHG-07)를 만들 때까지 쓰지 않는다.
 
@@ -473,40 +476,49 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `GET /api/courses/{courseId}/qna?status=&mine=&answered=&q=&page=&size=&snapshot=` | 과목 구성원 | 질문 목록. 최근 질문 먼저, 쪽 번호. `status`는 all, faq, solved, unsolved. 상태별 건수, 다음 쪽에 다시 보낼 `snapshot`. 항목마다 `read`, `liked`, `mine` |
 | `GET /api/courses/{courseId}/qna/{questionId}` | 그 질문을 볼 수 있는 사람 | 질문 상세와 첨부, `canEdit` 등. 읽음을 남기지 않는다 |
 | `POST /api/courses/{courseId}/qna` | 수강생 | 질문 작성. `anonymous`, `secret`, `uploadIds`. 201 |
-| `PUT /api/courses/{courseId}/qna/{questionId}` | 작성자, 답글 전 | 텍스트 전체 수정. `version`이 다르면 409 `version_conflict`, 답글이 있으면 409 `already_answered` |
+| `PUT /api/courses/{courseId}/qna/{questionId}` | 작성자, 답글 전 | 전체 수정. `attachments: {keep, add}`가 있으면 첨부를 그 최종 집합으로 바꾼다. `version`이 다르면 409 `version_conflict`, 답글이 있으면 409 `already_answered`, 쓸 수 없는 첨부면 409 `attachment_not_ready` |
 | `DELETE /api/courses/{courseId}/qna/{questionId}` | 작성자(답글 전), 담당자 | 소프트 삭제. 204 |
 | `PUT /api/courses/{courseId}/qna/{questionId}/status` | 작성자·담당자(`solved`), 담당자(`faq`) | 해결 상태와 FAQ의 목표 상태 |
 | `PUT`·`DELETE /api/courses/{courseId}/qna/{questionId}/like` | 그 질문을 볼 수 있는 사람 | 추천과 취소. 몇 번 보내도 같다. 서버의 추천 수를 돌려준다 |
 | `POST /api/courses/{courseId}/qna/{questionId}/read` | 그 질문을 볼 수 있는 사람 | 읽음 표시. 조회수는 처음 읽을 때만 오른다 |
 | `GET /api/courses/{courseId}/qna/{questionId}/answers?cursor=&size=` | 그 질문을 볼 수 있는 사람 | 답글. 먼저 쓴 것부터 `nextCursor`로 이어 받는다. 담당자 답글은 `instructor` |
 | `POST /api/courses/{courseId}/qna/{questionId}/answers` | 그 질문을 볼 수 있는 구성원 | 답글 작성. 학생만 `anonymous`. 201 |
-| `PUT`·`DELETE /api/courses/{courseId}/qna/{questionId}/answers/{answerId}` | 작성자(수정), 작성자·담당자(삭제) | 답글 수정(`version`), 소프트 삭제 |
+| `PUT`·`DELETE /api/courses/{courseId}/qna/{questionId}/answers/{answerId}` | 작성자(수정), 작성자·담당자(삭제) | 답글 수정(`version`, `attachments`), 소프트 삭제 |
 | `GET /api/courses/{courseId}/open-board/posts?q=&cursor=&size=` | 과목 구성원 | 열린게시판 목록. 최근 글 먼저, `nextCursor`. 전체 수, 항목마다 `read`, `liked`, `mine`, 댓글 수 |
 | `GET /api/courses/{courseId}/open-board/posts/{postId}` | 과목 구성원 | 글 상세와 첨부 |
 | `POST /api/courses/{courseId}/open-board/posts` | 과목 구성원 | 글 작성. 201 |
-| `PUT`·`DELETE /api/courses/{courseId}/open-board/posts/{postId}` | 작성자(수정), 작성자·담당자(삭제) | 텍스트 전체 수정(`version`), 소프트 삭제 |
+| `PUT`·`DELETE /api/courses/{courseId}/open-board/posts/{postId}` | 작성자(수정), 작성자·담당자(삭제) | 전체 수정(`version`, `attachments`), 소프트 삭제 |
 | `PUT`·`DELETE /api/courses/{courseId}/open-board/posts/{postId}/like`, `POST …/read` | 과목 구성원 | 추천, 취소, 읽음 |
 | `GET`·`POST /api/courses/{courseId}/open-board/posts/{postId}/comments` | 과목 구성원 | 댓글 목록(`nextCursor`)과 작성. 답글은 `parentCommentId`로 한 단계. 1800 byte |
+| `PUT /api/courses/{courseId}/open-board/posts/{postId}/comments/{commentId}` | 작성자 | 댓글 수정(EP-0026). `{body, version}`. 작성과 같은 1800 byte 규칙. `version`이 다르면 409 `version_conflict` |
 | `DELETE /api/courses/{courseId}/open-board/posts/{postId}/comments/{commentId}` | 작성자, 담당자 | 소프트 삭제. 답글이 남은 댓글은 본문 없이 자리만 남는다 |
 
-수정은 텍스트만 바꾼다. `files.api.Attachments`에 첨부 교체·해제가 없어 첨부는 글을 쓸 때만 붙인다.
+수정 요청의 첨부는 최종 집합이다. `keep`은 지금 이 글에 첨부된 파일 ID, `add`는 본인의 `post_attachment` 업로드이고 합쳐 5개까지다. `attachments`를 보내지 않으면 첨부는 그대로다. 버전 확인이 먼저라 버전이 다르면 첨부도 바뀌지 않고, 빠진 파일은 같은 commit부터 읽히지 않는다.
 
-### 7.8 알림마당 자료실과 1:1 문의
+### 7.8 알림마당 공지, 자료실, 1:1 문의
+
+운영자 지정과 과목 밖 첨부는 [ADR-0035](adr/0035-community-operators-and-outside-course-files.md)에 있다. 첨부는 `courseId` 없이 공지 `community_notice`, 자료 `community_material`(각 10개, 운영자), 문의 `inquiry_attachment`(5개)로 올리고 `GET /api/files/{fileId}/content`로 받는다. 만들기 명령은 `Idempotency-Key`를 선택으로 받는다. 제목과 본문은 일반 텍스트다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/community/materials?audience=&q=&cursor=&size=` | 로그인한 사용자 | 게시된 자료 목록. 기관 역할에 맞는 대상만. 대상별 건수 |
-| `GET /api/community/materials/{postId}`, `POST …/read` | 그 대상의 사용자 | 자료 상세, 읽음 표시 |
-| `GET /api/community/qna?status=&q=&cursor=&size=` | 로그인한 사용자 | 본인 1:1 문의 목록. `status`는 all, answered, unanswered |
-| `GET /api/community/qna/{postId}` | 문의 작성자 | 문의와 답변 |
+| `GET /api/community/notices?audience=&q=&page=&size=` | 로그인한 사용자 | 게시된 공지 목록(EP-0154). 기관 역할에 맞는 대상만, 고정 먼저 게시 일시 역순, 쪽 번호(size 50 이하). 대상별 건수, `total`. 운영자에게는 예약 공지도(`published:false`) |
+| `GET /api/community/notices/{noticeId}`, `POST …/read` | 그 대상의 사용자 | 공지 상세와 첨부(EP-0156, EP-0196), 읽음 표시. 조회수는 처음 읽을 때만 오른다. 예약 공지는 404 |
+| `POST /api/community/notices` · `PUT`·`DELETE …/{noticeId}` | 알림마당 운영자 | 공지 등록(201), 전체 수정(`version`, `attachments`), 소프트 삭제. `audience`는 common, professor, student, `pinned`, `publishAt`(미래면 예약) |
+| `GET /api/community/materials?audience=&q=&cursor=&size=` | 로그인한 사용자 | 게시된 자료 목록. 기관 역할에 맞는 대상만(운영자는 모두). 대상별 건수 |
+| `GET /api/community/materials/{postId}`, `POST …/read` | 그 대상의 사용자 | 자료 상세와 첨부, 읽음 표시 |
+| `POST /api/community/materials` · `PUT`·`DELETE …/{postId}` | 알림마당 운영자 | 자료 등록(201), 전체 수정(`version`, `attachments`), 삭제(첨부를 끊는다) |
+| `GET /api/community/qna?status=&q=&cursor=&size=&all=` | 로그인한 사용자. `all=true`는 운영자 | 본인 1:1 문의 목록. 운영자의 `all=true`는 모든 문의와 작성자 이름. `status`는 all, answered, unanswered |
+| `GET /api/community/qna/{postId}` | 문의 작성자, 운영자 | 문의와 답변, 각 첨부 |
+| `POST /api/community/qna` | 로그인한 사용자(break-glass 제외) | 1:1 문의 작성(EP-0158). 제목 필수, 본문 선택, `uploadIds`. 201 |
+| `POST /api/community/qna/{postId}/replies` | 알림마당 운영자 | 답변. 답변 수와 답변 일시를 바꾸고 작성자에게 `QUESTION_ANSWERED` 알림(과목 없음). 201 |
 
-쓰기는 운영 화면과 함께 만든다. 첨부는 내려받기 경로가 과목 단위라 아직 돌려주지 않는다.
+원본 화면에 1:1 문의 수정·삭제가 없어 두지 않았다. 알림마당 공지 알림(원본 "[전체공지사항]")은 `SiteNoticeNotifications`까지 잇고 아직 보내지 않는다(12절).
 
 ### 7.9 메인 화면과 할 일
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/home` | 로그인한 사용자 | 6절의 집계 |
+| `GET /api/me/home` | 로그인한 사용자 | 6절의 집계. 알림마당 최근 공지 5개(`communityNotices`, 고정 먼저)와 읽지 않은 알림마당 고정 공지 5개까지(`noticesForMe`, 진입 공지 EP-0190)를 기관 역할의 대상으로 더한다 |
 | `GET /api/me/todo?cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수 |
 
 ### 7.10 과제 등록과 제출
@@ -551,20 +563,20 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `GET /api/messages/recipients?courseId=&q=&page=&size=` | 로그인한 사용자(`courseId`는 그 과목 구성원) | 보낼 수 있는 사람만 이름으로 찾는다. 이름과 그 과목의 역할 |
-| `POST /api/messages` | 로그인한 사용자 | 보내기. `Idempotency-Key` 필수. 범위 밖 받는사람이 있으면 400 `recipient_not_allowed`이고 아무에게도 보내지 않는다. 받는사람 300명, 본문 2000byte까지. 쪽지쓰기 초안을 지운다. 201 |
-| `POST /api/messages/inbox/{messageId}/reply` | 그 쪽지를 받은 사람 | 발신자에게 답장. 받는사람은 서버가 정한다. `Idempotency-Key` 필수. 201 |
-| `POST /api/messages/inbox/{messageId}/forward` · `/api/messages/sent/{messageId}/forward` | 그 쪽지를 받은 사람 · 보낸 사람 | 전달. 받는사람은 보내기와 같은 범위 판정. `Idempotency-Key` 필수. 201 |
+| `POST /api/messages` | 로그인한 사용자 | 보내기. `Idempotency-Key` 필수. 범위 밖 받는사람이 있으면 400 `recipient_not_allowed`이고 아무에게도 보내지 않는다. 받는사람 300명, 본문 2000byte까지. `uploadIds`(본인이 `courseId` 없이 `message_attachment`로 올린 업로드 5개까지)를 같은 transaction에서 첨부하고, 쓸 수 없으면 409 `attachment_not_ready`. 쪽지쓰기 초안을 지운다. 201 |
+| `POST /api/messages/inbox/{messageId}/reply` | 그 쪽지를 받은 사람 | 발신자에게 답장. 받는사람은 서버가 정한다. `uploadIds`는 보내기와 같다. `Idempotency-Key` 필수. 201 |
+| `POST /api/messages/inbox/{messageId}/forward` · `/api/messages/sent/{messageId}/forward` | 그 쪽지를 받은 사람 · 보낸 사람 | 전달. 받는사람은 보내기와 같은 범위 판정. 원래 쪽지의 첨부는 옮기지 않고 새 `uploadIds`만 붙인다. `Idempotency-Key` 필수. 201 |
 | `GET /api/messages/inbox?read=&q=&cursor=&size=` | 로그인한 사용자 | 받은함. 회수·삭제된 쪽지는 없다. `total`, `unreadCount`, 전체 삭제에 쓰는 `serverTime` |
-| `GET /api/messages/inbox/{messageId}` | 그 쪽지를 받은 사람 | 상세. 읽음을 남기지 않는다 |
+| `GET /api/messages/inbox/{messageId}` | 그 쪽지를 받은 사람 | 상세와 첨부. 읽음을 남기지 않는다 |
 | `POST /api/messages/inbox/{messageId}/read` | 그 쪽지를 받은 사람 | 읽음. 처음 한 번만 시각을 남긴다. `wasUnread`, `unreadCount` |
 | `DELETE /api/messages/inbox/{messageId}` · `POST /api/messages/inbox/delete` | 그 쪽지를 받은 사람 | 받은함에서만 지운다. 일괄은 `messageIds`(하나라도 남의 것이면 404, 아무것도 안 지움) 또는 `all`+`read`·`q`+`until`+`exceptIds` |
 | `GET /api/messages/unread-count` | 로그인한 사용자 | 안 읽은 쪽지 수. 색인만 읽는다 |
-| `GET /api/messages/sent?q=&cursor=&size=` · `GET /api/messages/sent/{messageId}` | 보낸 사람 | 보낸함과 상세. 수신자별 읽은 시각과 회수 여부 |
+| `GET /api/messages/sent?q=&cursor=&size=` · `GET /api/messages/sent/{messageId}` | 보낸 사람 | 보낸함과 상세(첨부 포함). 수신자별 읽은 시각과 회수 여부 |
 | `POST /api/messages/sent/{messageId}/recall` | 보낸 사람 | 아직 읽지 않은 수신자에게서만 거둔다. 수신자마다 `recalled` 또는 `read`. 몇 번 보내도 같다 |
 | `DELETE /api/messages/sent/{messageId}` · `POST /api/messages/sent/delete` | 보낸 사람 | 보낸함에서만 지운다. 수신자의 받은함은 그대로다. 일괄 규칙은 받은함과 같다(`read` 없음) |
-| `GET` · `PUT` · `DELETE /api/messages/draft` | 로그인한 사용자(본인 초안만) | 쪽지쓰기 임시저장. `PUT {revision, title, body}`는 저장된 revision보다 클 때만 덮어쓴다. 같은 revision·같은 내용이면 200, 아니면 409 `draft_stale`. 없으면 GET이 204 |
+| `GET` · `PUT` · `DELETE /api/messages/draft` | 로그인한 사용자(본인 초안만) | 쪽지쓰기 임시저장. `PUT {revision, title, body, courseId, recipientIds}`는 저장된 revision보다 클 때만 덮어쓴다. 같은 revision·같은 내용이면 200, 아니면 409 `draft_stale`. `courseId`가 구성원이 아닌 과목이면 404. GET은 과목과 받는사람을 지금 범위로 다시 판정해 `course`, `recipients`(보낼 수 있는 사람만), `droppedRecipients`(뺀 수), `courseDropped`를 준다. 없으면 GET이 204 |
 
-제목과 본문은 일반 텍스트로만 받고 내보낸다. 쪽지 첨부와 도착 알림은 아직 없다.
+제목과 본문은 일반 텍스트로만 받고 내보낸다. 첨부 파일은 쪽지를 아직 가진 사람만 `GET /api/files/{fileId}/content`로 받는다. 회수되거나 받은함·보낸함에서 지우면 그 사람은 받지 못한다([ADR-0035](adr/0035-community-operators-and-outside-course-files.md)). 받는사람 검색은 범위 안에서만 찾으므로 "없음"과 "보낼 수 없음"을 구별하지 않는다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md) 2·3번).
 
 ### 7.13 카탈로그와 수강신청
 
@@ -798,7 +810,9 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 수강신청 정책 미정 항목 | 대기자 명단과 자동 승격, 청강 정원·기간, 졸업생·대학원생 신청대상 판정(identity에 구분 없음), 조교의 승인 위임, 카운터와 원장의 대사 job(C-22)이 없다. 비정규 강의소개는 HTML이라 내보내지 않는다([ADR-0026](adr/0026-enrollment-seat-accounting.md)) | 학사 담당과 정책을 정한 뒤 WAITLISTED 순번, `users`의 신분 구분, 위임 권한을 더한다. 강의소개는 서버 HTML 정규화(SC-08)와 함께 연다 |
 | 알림 거두기 의무 | 대상을 숨기는 변경마다 만든 쪽이 `Notifications.withdraw`를 불러야 한다. 부르지 않으면 지운 활동의 알림이 남는다. 공지, 자료, 과제, 질의응답 답글, 쪽지 회수는 부른다. 알림 유형이 없는 활동(온라인 강의, 퀴즈, 설문)은 알림을 만들지 않는다(ADR-0027) | 알림을 만드는 활동 유형을 더할 때 숨기는 명령(비공개, 삭제, 예약으로 되돌림)에서 같은 transaction으로 부른다 |
 | 알림 push | 알림은 목록을 다시 불러야 보인다. 헤더 배지는 `unread-count`를 주기적으로 부른다 | WebSocket fan-out(8절)을 붙일 때 알림 행을 만든 뒤 보낸다 |
-| 게시판 남은 범위 | 과목에 열린게시판을 하나만 둔다. 질의응답의 학습활동 연결(EP-0059, EP-0060), 게시글 첨부 교체, 댓글 수정, 알림마당 쓰기와 첨부, 메인 화면의 게시판 안 읽은 수가 없다([ADR-0024](adr/0024-course-qna-and-open-board.md)) | 담당자 게시판 관리, `Attachments`의 교체·해제, 전역 파일 경로를 만들 때 각각 넣는다 |
+| 게시판 남은 범위 | 과목에 열린게시판을 하나만 둔다. 질의응답의 학습활동 연결(EP-0059, EP-0060), 메인 화면의 게시판 안 읽은 수가 없다. 과목 밖 첨부(알림마당, 쪽지)에는 쪽 이미지 미리보기와 요약이 없다. 쪽지 첨부는 모든 사본이 지워져도 파일이 남는다(누구도 읽지 못한다, [ADR-0035](adr/0035-community-operators-and-outside-course-files.md)) | 담당자 게시판 관리를 만들 때 넣는다. 과목 밖 미리보기가 필요하면 과목 없는 미리보기 경로를 같은 방식으로 둔다. 쪽지 첨부 해제는 읽은 쪽지 보존 기간(`purge_after_at`)과 함께 정한다 |
+| 알림마당 운영자 지정 | 운영자(`community_operators`)는 관리 화면이 생기기 전까지 운영 절차(runbook)로만 DB에 넣고 해제한다. 그 변경은 앱 감사 기록(`audit_events`)에 남지 않는다. 운영자의 명령은 모두 감사 기록이 있다([ADR-0035](adr/0035-community-operators-and-outside-course-files.md)) | 관리 화면을 만들 때 지정·해제 API, 재인증, 감사 기록을 함께 둔다. 그 전까지 지정·해제는 결재 근거를 `grant_reference`에 적고 DB 변경 기록을 남긴다 |
+| 알림마당 공지 알림 | 원본은 알림마당 공지를 "[전체공지사항]"으로 알리지만, `catalog.api.Notifications`에 기관 역할 단위 발송과 그 알림 유형이 없어 `SiteNoticeNotifications`가 아직 보내지 않는다. 그동안은 메인 화면의 `noticesForMe`(읽지 않은 고정 공지)로만 알린다. 대상 값은 `posts.audience`의 COMMON(모두), PROFESSOR(`users.user_role` PROFESSOR·TA·STAFF), STUDENT(STUDENT·STAFF)다 | catalog가 기관 단위 발송(예약 게시 포함)과 알림 유형을 더한 branch를 병합할 때 `SiteNoticeNotifications.sync`·`withdraw`를 그 API에 잇는다 |
 | 영상 변환 자원 | 1단계에서는 transcoder가 api·worker와 같은 EC2의 CPU를 쓰고 한 번에 영상 하나만 변환한다. 화질은 720p 하나다([ADR-0016](adr/0016-video-upload-and-transcoder.md)) | compose에서 transcoder container의 CPU·메모리 상한을 정한다. 대기가 길어지면 transcoder를 늘리거나 MediaConvert로 옮긴다(ADR-0016 11번) |
 | 영상과 악성코드 검사 | `lecture_video`는 clamd 검사를 면제한다(통합 때 결정, [ADR-0016](adr/0016-video-upload-and-transcoder.md) 12번). 원본은 누구에게도 그대로 나가지 않고, 학생은 격리한 transcoder가 다시 인코딩한 HLS만 받는다. 다시 인코딩은 원본 안의 악성 데이터가 그대로 전달되는 것을 막지만 transcoder(ffmpeg) 자체의 취약점은 그 container의 격리에 기댄다 | 면제한 내용은 `unscanned`로 두어 다른 용도에 `clean`으로 쓰이지 않게 했다. 검사기가 수 GB를 받게 되면 면제를 다시 검토한다. ffmpeg 보안 갱신은 이미지 재빌드로 받는다 |
 | 학습 인증 수단과 grant 시간(SC-06-A) | 학습 인증 수단은 학교 IdP 재인증(`idp`) 하나다. IdP가 비밀번호만 받으면 같은 요소를 다시 확인하는 데 그친다. grant 2시간, challenge 5분, 실패 한도는 제안값이다. IdP가 `max_age` 요청에 `auth_time`을 주지 않으면 재인증이 언제나 실패한다([ADR-0029](adr/0029-step-up-and-learning-auth.md)) | 학교 정보화본부에 IdP 다요소 인증, `acr`, `auth_time` 지원을 확인한다. 학사 담당과 grant 시간을 정하고 학교 IdP를 붙인 배포에서 `ASTRA_LEARNING_REQUIRE_AUTH_GRANT=true`로 켠다 |

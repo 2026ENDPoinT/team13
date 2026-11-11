@@ -153,7 +153,7 @@ class BoardPostRepository {
 	}
 
 	/**
-	 * 작성자의 글 수정. 버전이 맞을 때만 바꾸고 버전을 올린다. 첨부는 바꾸지 않는다.
+	 * 작성자의 글 수정. 버전이 맞을 때만 바꾸고 버전을 올린다. 첨부는 {@link #setAttachmentGroup}으로 따로 바꾼다.
 	 * @param unanswered true면 답글이 없을 때만 바꾼다(질문)
 	 * @return 바뀐 행 수. 0이면 없거나, 버전이 다르거나, 답글이 있다
 	 */
@@ -171,6 +171,22 @@ class BoardPostRepository {
 			.param("post", postId)
 			.param("author", authorId)
 			.param("version", version)
+			.update();
+	}
+
+	/** 글이나 답글의 지금 첨부 그룹. 잠금 읽기라 이 transaction이 잠근 행의 최신 값이다. */
+	Long attachmentGroup(long postId) {
+		return this.jdbc.sql("SELECT attachment_group_id FROM posts WHERE post_id = :post FOR UPDATE")
+			.param("post", postId)
+			.query((rs, n) -> rs.getObject(1, Long.class))
+			.single();
+	}
+
+	/** 첨부를 바꾼 뒤의 그룹을 적는다. 버전을 올린 수정과 같은 transaction에서 부른다. */
+	void setAttachmentGroup(long postId, Long attachmentGroupId) {
+		this.jdbc.sql("UPDATE posts SET attachment_group_id = :group WHERE post_id = :post")
+			.param("group", attachmentGroupId)
+			.param("post", postId)
 			.update();
 	}
 

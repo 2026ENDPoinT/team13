@@ -239,12 +239,13 @@ class UploadRecords {
 	 * 파일 행까지 잠그면 검사 판정(file_blobs → files → upload_sessions)과 반대 순서가 된다. clean 판정은 끝 상태이므로 잠그지 않고
 	 * 읽어도 된다.
 	 *
+	 * @param courseId 과목 밖 용도면 null. 과목 밖 업로드(course_id NULL)만 맞는다
 	 * @return 파일 ID. 조건에 맞지 않으면 비어 있는 값
 	 */
-	Optional<Long> claim(long uploadId, long owner, long courseId, long policyId) {
+	Optional<Long> claim(long uploadId, long owner, Long courseId, long policyId) {
 		Optional<Long> fileId = this.jdbc.sql("""
 				SELECT u.file_id FROM upload_sessions u JOIN files f ON f.file_id = u.file_id
-				 WHERE u.upload_id = :id AND u.owner_user_id = :owner AND u.course_id = :course
+				 WHERE u.upload_id = :id AND u.owner_user_id = :owner AND u.course_id <=> :course
 				   AND u.upload_policy_id = :policy AND u.upload_state = 'clean'
 				   AND u.expires_at > CURRENT_TIMESTAMP(3) AND f.state = 'active' AND f.scan_state = 'clean'
 				   FOR UPDATE OF u

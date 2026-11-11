@@ -2,6 +2,7 @@ package com.stackcorp.astra.communication;
 
 import com.stackcorp.astra.communication.BoardCommentService.CommentPage;
 import com.stackcorp.astra.communication.BoardCommentService.CommentRequest;
+import com.stackcorp.astra.communication.BoardCommentService.CommentUpdate;
 import com.stackcorp.astra.communication.BoardCommentService.CommentView;
 import com.stackcorp.astra.communication.BoardPostService.LikeState;
 import com.stackcorp.astra.communication.BoardPostService.PostPage;
@@ -111,6 +112,13 @@ class OpenBoardController {
 			@PathVariable long postId, @RequestBody CommentRequest body,
 			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
 		return created(this.comments.create(actor, courseId, postId, body, idempotencyKey));
+	}
+
+	/** EP-0026. 작성자만. 본문의 version이 다르면 409 version_conflict. */
+	@PutMapping("/api/courses/{courseId}/open-board/posts/{postId}/comments/{commentId}")
+	ResponseEntity<CommentView> updateComment(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long postId, @PathVariable long commentId, @RequestBody CommentUpdate body) {
+		return ok(this.comments.update(actor, courseId, postId, commentId, body));
 	}
 
 	@DeleteMapping("/api/courses/{courseId}/open-board/posts/{postId}/comments/{commentId}")

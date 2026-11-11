@@ -20,8 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 열린게시판 댓글(화면 48 5.4~5.5의 공통 댓글 모듈). 글을 볼 수 있는 구성원이 쓴다. 답글은 한 단계만 단다. 작성자와 담당자가 지운다.
- * 본문은 일반 텍스트이고 원본처럼 1800 byte(127보다 큰 글자는 2 byte로 센다)까지다.
+ * 열린게시판 댓글(화면 48 5.4~5.5의 공통 댓글 모듈, EP-0023~0026). 글을 볼 수 있는 구성원이 쓴다. 답글은 한 단계만 단다. 작성자만 고치고,
+ * 작성자와 담당자가 지운다. 본문은 일반 텍스트이고 원본처럼 1800 byte(127보다 큰 글자는 2 byte로 센다)까지다. 수정도 같은 규칙이다.
  */
 @Service
 class BoardCommentService {
@@ -93,6 +93,33 @@ class BoardCommentService {
 				});
 	}
 
+	/**
+	 * 작성자의 본문 수정(EP-0026). 본문의 version이 다르면 409 version_conflict. 담당자도 남의 댓글은 고치지 못한다. 답글 관계는
+	 * 바꾸지 않는다.
+	 */
+	@Transactional
+	CommentView update(Actor actor, long courseId, long postId, long commentId, CommentUpdate body) {
+		Viewer viewer = this.access.viewer(actor.userId(), courseId);
+		this.posts.find(viewer, BoardKind.OPEN, postId).orElseThrow(ApiException::notFound);
+		CommentRow row = this.comments.find(postId, commentId).orElseThrow(ApiException::notFound);
+		if (row.authorId() != actor.userId()) {
+			throw ApiException.notFound();
+		}
+		if (body.version() == null || body.version() < 1) {
+			throw ApiException.invalid("version이 필요합니다.");
+		}
+		String text = validated(body.body());
+		this.rateLimiter.check("board-comment-update", actor.userId(), 60, Duration.ofMinutes(10));
+		// 글 행을 먼저 잠근다. 같은 글의 댓글 작성·삭제와 같은 순서다.
+		this.posts.lockVisible(viewer, BoardKind.OPEN, postId).orElseThrow(ApiException::notFound);
+		if (this.comments.update(postId, commentId, actor.userId(), body.version(), text) == 0) {
+			this.comments.find(postId, commentId).orElseThrow(ApiException::notFound);
+			throw BoardPostService.versionConflict();
+		}
+		this.audit.success(actor.userId(), actor.sessionId(), "board_comment.update", "comment", commentId, courseId);
+		return views(viewer, List.of(this.comments.find(postId, commentId).orElseThrow())).getFirst();
+	}
+
 	/** 작성자 또는 담당자의 소프트 삭제. 담당자가 남의 댓글을 지우면 관리 삭제로 감사 기록을 남긴다. */
 	@Transactional
 	void delete(Actor actor, long courseId, long postId, long commentId) {
@@ -140,25 +167,31 @@ class BoardCommentService {
 	record CommentRequest(String body, Long parentCommentId) {
 	}
 
+	/** @param version 마지막으로 읽은 댓글의 version */
+	record CommentUpdate(String body, Integer version) {
+	}
+
 	/** 멱등 지문을 만드는 검사된 입력. */
 	record NewComment(long postId, String body, Long parentCommentId) {
 	}
 
 	/**
-	 * @param deleted 지운 댓글. 살아 있는 답글이 있어 자리만 남는다. 본문과 작성자는 빠진다
+	 * @param deleted 지운 댓글. 살아 있는 답글이 있어 자리만 남는다. 본문, 작성자, version은 빠진다
+	 * @param canEdit 작성자 본인이면 true
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	record CommentView(long commentId, Long parentCommentId, String authorName, Boolean mine, String body,
-			LocalDateTime createdAt, boolean deleted, Boolean canDelete) {
+			Integer version, LocalDateTime createdAt, LocalDateTime updatedAt, boolean deleted, Boolean canEdit,
+			Boolean canDelete) {
 
 		static CommentView of(CommentRow row, Viewer viewer, Map<Long, String> names) {
 			if (row.deleted()) {
-				return new CommentView(row.commentId(), row.parentCommentId(), null, null, null, row.createdAt(), true,
-						null);
+				return new CommentView(row.commentId(), row.parentCommentId(), null, null, null, null, row.createdAt(),
+						null, true, null, null);
 			}
 			boolean mine = row.authorId() == viewer.userId();
 			return new CommentView(row.commentId(), row.parentCommentId(), names.get(row.authorId()), mine, row.body(),
-					row.createdAt(), false, mine || viewer.manager());
+					row.version(), row.createdAt(), row.updatedAt(), false, mine, mine || viewer.manager());
 		}
 
 	}

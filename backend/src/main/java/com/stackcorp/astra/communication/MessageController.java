@@ -1,9 +1,9 @@
 package com.stackcorp.astra.communication;
 
-import com.stackcorp.astra.communication.DraftService.Draft;
 import com.stackcorp.astra.communication.DraftService.DraftRequest;
 import com.stackcorp.astra.communication.DraftService.Saved;
 import com.stackcorp.astra.communication.MessageService.Box;
+import com.stackcorp.astra.communication.MessageService.ComposeDraft;
 import com.stackcorp.astra.communication.MessageService.ContactPage;
 import com.stackcorp.astra.communication.MessageService.DeleteRequest;
 import com.stackcorp.astra.communication.MessageService.Deleted;
@@ -162,18 +162,22 @@ class MessageController {
 		return ok(this.messages.deleteSent(actor, body));
 	}
 
-	/** 쪽지쓰기 임시저장 조회(EP-0117). 없으면 204 */
+	/**
+	 * 쪽지쓰기 임시저장 조회(EP-0117). 저장한 과목과 받는사람을 지금 범위로 다시 판정해 보낼 수 있는 사람만 준다. 없으면 204
+	 */
 	@GetMapping("/api/messages/draft")
-	ResponseEntity<Draft> draft(@AuthenticationPrincipal Actor actor) {
-		return this.drafts.get(actor.userId(), DraftKey.MESSAGE_COMPOSE)
+	ResponseEntity<ComposeDraft> draft(@AuthenticationPrincipal Actor actor) {
+		return this.messages.composeDraft(actor.userId())
 			.map(MessageController::ok)
 			.orElseGet(() -> ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build());
 	}
 
-	/** 쪽지쓰기 임시저장(EP-0115). revision이 저장된 값보다 커야 덮어쓴다. 아니면 409 draft_stale */
+	/**
+	 * 쪽지쓰기 임시저장(EP-0115). 제목, 본문, 과목, 받는사람. revision이 저장된 값보다 커야 덮어쓴다. 아니면 409 draft_stale
+	 */
 	@PutMapping("/api/messages/draft")
 	ResponseEntity<Saved> saveDraft(@AuthenticationPrincipal Actor actor, @RequestBody DraftRequest body) {
-		return ok(this.drafts.save(actor.userId(), DraftKey.MESSAGE_COMPOSE, body));
+		return ok(this.messages.saveComposeDraft(actor.userId(), body));
 	}
 
 	/** 쪽지쓰기 임시저장 삭제(EP-0116). 없어도 204 */

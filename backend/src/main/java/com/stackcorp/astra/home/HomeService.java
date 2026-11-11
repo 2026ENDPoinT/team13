@@ -15,6 +15,9 @@ import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 import com.stackcorp.astra.catalog.api.MemberCourses;
 import com.stackcorp.astra.catalog.api.MemberCourses.MemberCourse;
 import com.stackcorp.astra.catalog.api.NotificationCounts;
+import com.stackcorp.astra.communication.api.CommunityNoticeDigest;
+import com.stackcorp.astra.communication.api.CommunityNoticeDigest.Headline;
+import com.stackcorp.astra.communication.api.CommunityNoticeDigest.Headlines;
 import com.stackcorp.astra.communication.api.CourseNoticeDigest;
 import com.stackcorp.astra.communication.api.MessageCounts;
 import com.stackcorp.astra.learning.api.DueActivities;
@@ -28,9 +31,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 메인 화면 집계(ADR-0005)와 할 일 목록. 각 모듈의 공개 API만 부르고 다른 모듈의 테이블을 읽지 않는다.
- * 과목 수와 관계없이 쿼리 수가 같다: 시계 1, 과목 1, 할 일 1(마감 전 활동)과 완료 판정 4 이하, 공지 2(안 읽은 수, 최근 공지), 안 읽은
- * 쪽지 1, 안 읽은 알림 수 1, 새 성적 5 이하. 읽기 전용 transaction 하나로 묶어 연결 하나와 같은 snapshot에서 읽는다. 시각은 DB 시계 한
- * 번으로 정해 모든 판정에 같이 쓴다(SC-06).
+ * 과목 수와 관계없이 쿼리 수가 같다: 시계 1, 과목 1, 할 일 1(마감 전 활동)과 완료 판정 4 이하, 공지 2(안 읽은 수, 최근 공지), 알림마당
+ * 공지 2(최근 공지, 진입 공지), 안 읽은 쪽지 1, 안 읽은 알림 수 1, 새 성적 5 이하. 읽기 전용 transaction 하나로 묶어 연결 하나와 같은
+ * snapshot에서 읽는다. 시각은 DB 시계 한 번으로 정해 모든 판정에 같이 쓴다(SC-06).
  * <p>
  * 할 일은 학생으로 수강하는 과목의, 마감 전이고 본인이 아직 끝내지 않은 활동이다(원본 할일 팝업의 "미완료 학습활동"). 끝낸 활동은 목록과
  * 건수에서 뺀다. 완료 표시를 달아 남기지 않는 것은 원본 화면과 frontend가 남은 활동만 보여 주고 건수를 배지로 쓰기 때문이다. 완료 판정은
@@ -40,6 +43,11 @@ import org.springframework.transaction.annotation.Transactional;
 class HomeService {
 
 	static final int HOME_NOTICES = 5;
+
+	static final int HOME_COMMUNITY_NOTICES = 5;
+
+	/** 진입 공지(읽지 않은 알림마당 고정 공지) 상한. */
+	static final int NOTICES_FOR_ME = 5;
 
 	static final int HOME_TODO = 5;
 
@@ -69,9 +77,11 @@ class HomeService {
 
 	private final NotificationCounts notifications;
 
+	private final CommunityNoticeDigest communityNotices;
+
 	HomeService(JdbcClient jdbc, MemberCourses courses, DueActivities dueActivities, ActivityCompletions completions,
 			ReleasedGrades releasedGrades, CourseNoticeDigest notices, MessageCounts messages,
-			NotificationCounts notifications) {
+			NotificationCounts notifications, CommunityNoticeDigest communityNotices) {
 		this.jdbc = jdbc;
 		this.courses = courses;
 		this.dueActivities = dueActivities;
@@ -80,10 +90,14 @@ class HomeService {
 		this.notices = notices;
 		this.messages = messages;
 		this.notifications = notifications;
+		this.communityNotices = communityNotices;
 	}
 
+	/**
+	 * @param institutionRole session 사용자의 기관 역할 이름. 알림마당 공지의 대상을 정한다
+	 */
 	@Transactional(readOnly = true)
-	HomeView home(long userId) {
+	HomeView home(long userId, String institutionRole) {
 		LocalDateTime now = now();
 		List<MemberCourse> mine = this.courses.of(userId);
 		Map<Long, MemberCourse> byId = mine.stream()
@@ -107,8 +121,10 @@ class HomeService {
 			.map((g) -> new HomeGrade(g.gradeItemId(), g.courseId(), byId.get(g.courseId()).name(), g.itemType(),
 					g.activityId(), g.itemName(), g.releasedAt()))
 			.toList();
-		return new HomeView(now, courseViews, latest, todo, grades, this.messages.unread(userId),
-				this.notifications.unread(userId, now));
+		Headlines community = this.communityNotices.headlines(userId, institutionRole, now, HOME_COMMUNITY_NOTICES,
+				NOTICES_FOR_ME);
+		return new HomeView(now, courseViews, latest, community.latest(), community.forMe(), todo, grades,
+				this.messages.unread(userId), this.notifications.unread(userId, now));
 	}
 
 	/**
@@ -183,12 +199,15 @@ class HomeService {
 
 	/**
 	 * @param serverTime 판정에 쓴 DB 시각. 화면의 D-day와 남은 시간은 이 값으로 계산한다
+	 * @param communityNotices 알림마당 최근 공지(EP-0191 aside). 고정 공지 먼저. 상세는 {@code GET /api/community/notices/{noticeId}}
+	 * @param noticesForMe 읽지 않은 알림마당 고정 공지(진입 공지, EP-0190). {@code POST /api/community/notices/{noticeId}/read}로 빠진다
 	 * @param newGrades 최근 {@value #NEW_GRADE_DAYS}일 안에 공개된 본인 성적 항목, 최근 공개순 {@value #HOME_GRADES}개. 점수는 없다
 	 * @param unreadMessages 받은함의 안 읽은 쪽지 수(헤더 배지, EP-0239)
 	 * @param unreadNotifications 안 읽은 알림 수(헤더 배지, EP-0138). 알림 목록의 안 읽음 필터와 같은 조건이다
 	 */
-	record HomeView(LocalDateTime serverTime, List<HomeCourse> courses, List<HomeNotice> notices, TodoList todo,
-			List<HomeGrade> newGrades, int unreadMessages, int unreadNotifications) {
+	record HomeView(LocalDateTime serverTime, List<HomeCourse> courses, List<HomeNotice> notices,
+			List<Headline> communityNotices, List<Headline> noticesForMe, TodoList todo, List<HomeGrade> newGrades,
+			int unreadMessages, int unreadNotifications) {
 	}
 
 	/**

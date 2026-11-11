@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import com.stackcorp.astra.catalog.api.CourseMates;
 import com.stackcorp.astra.catalog.api.CourseMates.CourseMate;
@@ -22,6 +23,7 @@ import com.stackcorp.astra.communication.MessageRepository.MessageRow;
 import com.stackcorp.astra.communication.MessageRepository.Position;
 import com.stackcorp.astra.communication.MessageRepository.RecipientRow;
 import com.stackcorp.astra.communication.MessageRepository.SentRow;
+import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.identity.api.UserSearch;
@@ -48,7 +50,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 행만 바꾼다. 두 전이는 같은 행의 서로 배타적인 조건부 UPDATE라 동시에 와도 한쪽만 이긴다(COMM-04). 회수된 쪽지는 받은함에서
  * 사라진다.</li>
  * </ul>
- * 여러 행을 바꾸는 전이는 READ COMMITTED transaction에서 쪽지 행을 먼저 잠그고 수신자 행을 바꾸며, 교착은 정해진 횟수만 다시 시도한다.
+ * 첨부는 courseId 없이 용도 message_attachment로 올리고 보내는 transaction에서 확정한다. 파일은 쪽지를 아직 가진 발신자와 수신자만
+ * 읽는다({@link MessageAttachmentAccess}, ADR-0035). 여러 행을 바꾸는 전이는 READ COMMITTED transaction에서 쪽지 행을 먼저 잠그고
+ * 수신자 행을 바꾸며, 교착은 정해진 횟수만 다시 시도한다.
  */
 @Service
 class MessageService {
@@ -95,9 +99,14 @@ class MessageService {
 
 	private final Notifications notifications;
 
+	private final BoardFiles files;
+
+	private final DraftService draftService;
+
 	MessageService(MessageRepository messages, DraftRepository drafts, CourseMemberships memberships, CourseMates mates,
 			MemberCourses memberCourses, UserNames userNames, UserSearch userSearch, RateLimiter rateLimiter,
-			Idempotency idempotency, AuditLog audit, ReadCommitted readCommitted, Notifications notifications) {
+			Idempotency idempotency, AuditLog audit, ReadCommitted readCommitted, Notifications notifications,
+			BoardFiles files, DraftService draftService) {
 		this.messages = messages;
 		this.drafts = drafts;
 		this.memberships = memberships;
@@ -110,6 +119,8 @@ class MessageService {
 		this.audit = audit;
 		this.readCommitted = readCommitted;
 		this.notifications = notifications;
+		this.files = files;
+		this.draftService = draftService;
 	}
 
 	// ---- 받는사람
@@ -135,7 +146,7 @@ class MessageService {
 
 	SentReceipt send(Actor actor, String key, SendRequest body) {
 		requireKey(key);
-		Outgoing out = outgoing(body.title(), body.body());
+		Outgoing out = outgoing(body.title(), body.body(), body.uploadIds());
 		requireMember(actor.userId(), body.courseId());
 		List<Long> recipients = recipientIds(body.recipientIds());
 		requireReachable(actor.userId(), body.courseId(), recipients);
@@ -154,7 +165,7 @@ class MessageService {
 	/** 받은 쪽지의 발신자에게 답한다(EP-0229). 받는사람과 과목은 원래 쪽지에서 서버가 정한다. */
 	SentReceipt reply(Actor actor, long messageId, String key, ReplyRequest body) {
 		requireKey(key);
-		Outgoing out = outgoing(body.title(), body.body());
+		Outgoing out = outgoing(body.title(), body.body(), body.uploadIds());
 		MessageRow original = this.messages.received(actor.userId(), messageId)
 			.orElseThrow(ApiException::notFound)
 			.message();
@@ -169,10 +180,13 @@ class MessageService {
 		});
 	}
 
-	/** 받은 쪽지나 보낸 쪽지를 전달한다(EP-0224, EP-0232). 받는사람은 새 쪽지와 같은 범위 판정을 거친다. */
+	/**
+	 * 받은 쪽지나 보낸 쪽지를 전달한다(EP-0224, EP-0232). 받는사람은 새 쪽지와 같은 범위 판정을 거친다. 원래 쪽지의 첨부는 옮기지 않고
+	 * 새로 올린 업로드만 붙인다.
+	 */
 	SentReceipt forward(Actor actor, Box box, long messageId, String key, SendRequest body) {
 		requireKey(key);
-		Outgoing out = outgoing(body.title(), body.body());
+		Outgoing out = outgoing(body.title(), body.body(), body.uploadIds());
 		boolean visible = box == Box.INBOX ? this.messages.received(actor.userId(), messageId).isPresent()
 				: this.messages.sent(actor.userId(), messageId).isPresent();
 		if (!visible) {
@@ -191,11 +205,13 @@ class MessageService {
 		});
 	}
 
+	// 쪽지, 첨부, 수신자 행, 알림을 멱등 원장의 transaction 안에서 만든다. 첨부를 확정하지 못하면 쪽지도 보내지 않는다.
 	private SentReceipt deliver(long senderId, Long courseId, Outgoing out, List<Long> recipients, Long originId,
 			String originKind) {
 		LocalDateTime now = this.messages.now();
+		Long group = this.files.attach(BoardFiles.MESSAGE, senderId, null, out.uploadIds(), out.title());
 		long messageId = this.messages.insertMessage(senderId, courseId, out.title(), out.body(), recipients.size(),
-				originId, originKind, now);
+				originId, originKind, group, now);
 		this.messages.insertRecipients(messageId, recipients, courseId, now);
 		// 쪽지는 과목 관계가 끊겨도 받은함에 남으므로 알림에 과목을 묶지 않는다(ADR-0027).
 		this.notifications.send(new DirectNotification(NotificationKind.MESSAGE_RECEIVED, recipients, null, messageId,
@@ -231,7 +247,8 @@ class MessageService {
 		MessageRow m = received.message();
 		String sender = this.userNames.namesOf(List.of(m.senderId())).get(m.senderId());
 		return new ReceivedView(m.messageId(), m.title(), m.body(), m.sentAt(), new Person(m.senderId(), sender),
-				course(userId, m.courseId()), m.originKind(), received.readAt() != null, received.readAt());
+				course(userId, m.courseId()), m.originKind(), this.files.of(m.attachmentGroupId()),
+				received.readAt() != null, received.readAt());
 	}
 
 	/** 읽음 표시. 처음 한 번만 시각을 남기고, 몇 번 보내도 결과가 같다(EP-0228, COMM-02). */
@@ -322,7 +339,7 @@ class MessageService {
 			.map((r) -> new RecipientView(r.recipientId(), names.get(r.recipientId()), r.readAt(), r.recalledAt() != null))
 			.toList();
 		return new SentView(m.messageId(), m.title(), m.body(), m.sentAt(), course(userId, m.courseId()), m.originKind(),
-				recipients);
+				this.files.of(m.attachmentGroupId()), recipients);
 	}
 
 	/**
@@ -382,6 +399,40 @@ class MessageService {
 		});
 	}
 
+	// ---- 쪽지쓰기 임시저장
+
+	/**
+	 * 쪽지쓰기 초안(EP-0117). 저장된 과목과 받는사람을 지금의 범위로 다시 판정한다. 더는 구성원이 아닌 과목은 빼고(courseDropped),
+	 * 더는 보낼 수 없는 받는사람은 빼고 그 수(droppedRecipients)만 알린다. 빠진 사람의 ID와 이름은 돌려주지 않는다. 저장된 행은 바꾸지
+	 * 않는다(SC-04).
+	 */
+	@Transactional(readOnly = true)
+	Optional<ComposeDraft> composeDraft(long userId) {
+		return this.draftService.get(userId, DraftKey.MESSAGE_COMPOSE).map((draft) -> {
+			Long courseId = draft.courseId();
+			boolean courseDropped = courseId != null && this.memberships.roleOf(userId, courseId).isEmpty();
+			Long scope = courseDropped ? null : courseId;
+			List<Long> stored = draft.recipientIds();
+			Map<Long, CourseRole> reach = stored.isEmpty() ? Map.of() : reachable(userId, scope, stored);
+			List<Long> kept = stored.stream().filter(reach::containsKey).toList();
+			Map<Long, String> names = this.userNames.namesOf(kept);
+			List<Contact> recipients = kept.stream()
+				.map((id) -> new Contact(id, names.get(id), reach.get(id).name()))
+				.toList();
+			return new ComposeDraft(draft.revision(), draft.title(), draft.body(), course(userId, scope), recipients,
+					stored.size() - kept.size(), courseDropped, draft.updatedAt());
+		});
+	}
+
+	/**
+	 * 쪽지쓰기 임시저장(EP-0115). 고른 과목은 지금 구성원인 과목이어야 한다(아니면 404). 받는사람은 모양만 보고 저장하며, 읽을 때와 보낼
+	 * 때 범위를 다시 판정한다. 범위 밖 사람은 초안을 읽어도 보이지 않고 보내기는 400 recipient_not_allowed다.
+	 */
+	DraftService.Saved saveComposeDraft(long userId, DraftService.DraftRequest body) {
+		requireMember(userId, body.courseId());
+		return this.draftService.save(userId, DraftKey.MESSAGE_COMPOSE, body);
+	}
+
 	// ---- 판정과 검사
 
 	/**
@@ -435,13 +486,13 @@ class MessageService {
 		}
 	}
 
-	private static Outgoing outgoing(String title, String body) {
+	private static Outgoing outgoing(String title, String body, List<Long> uploadIds) {
 		String t = PlainText.line(title, MAX_TITLE, "title");
 		String text = PlainText.block(body, MAX_BODY_BYTES * 10, "body").strip();
 		if (text.isEmpty() || PlainText.screenBytes(text) > MAX_BODY_BYTES) {
 			throw ApiException.invalid("body는 1byte 이상 " + MAX_BODY_BYTES + "byte 이하여야 합니다.");
 		}
-		return new Outgoing(t, text);
+		return new Outgoing(t, text, BoardFiles.validated(uploadIds));
 	}
 
 	private static List<Long> recipientIds(List<Long> ids) {
@@ -522,11 +573,13 @@ class MessageService {
 	 * 새 쪽지와 전달. 보내는 사람은 받지 않는다(SC-02).
 	 * @param courseId 관련 과목. 고르면 받는사람도 그 과목 안에서만 판정한다. "과목선택 안함"이면 null
 	 * @param recipientIds {@code GET /api/messages/recipients}가 돌려준 사람의 ID
+	 * @param uploadIds 첨부. 본인이 courseId 없이 용도 message_attachment로 올린 업로드(5개까지)
 	 */
-	record SendRequest(String title, String body, Long courseId, List<Long> recipientIds) {
+	record SendRequest(String title, String body, Long courseId, List<Long> recipientIds, List<Long> uploadIds) {
 	}
 
-	record ReplyRequest(String title, String body) {
+	/** @param uploadIds 첨부. 보내기와 같다 */
+	record ReplyRequest(String title, String body, List<Long> uploadIds) {
 	}
 
 	/**
@@ -575,9 +628,10 @@ class MessageService {
 	/**
 	 * @param course 관련 과목. 없거나 보는 사람이 그 과목 구성원이 아니면 null
 	 * @param originKind 답장이면 REPLY, 전달이면 FORWARD
+	 * @param attachments 내려받기는 {@code GET /api/files/{fileId}/content}
 	 */
 	record ReceivedView(long messageId, String title, String body, LocalDateTime sentAt, Person sender,
-			CourseRef course, String originKind, boolean read, LocalDateTime readAt) {
+			CourseRef course, String originKind, List<AttachedFile> attachments, boolean read, LocalDateTime readAt) {
 	}
 
 	/**
@@ -606,8 +660,9 @@ class MessageService {
 	record RecipientView(long userId, String name, LocalDateTime readAt, boolean recalled) {
 	}
 
+	/** @param attachments 내려받기는 {@code GET /api/files/{fileId}/content} */
 	record SentView(long messageId, String title, String body, LocalDateTime sentAt, CourseRef course,
-			String originKind, List<RecipientView> recipients) {
+			String originKind, List<AttachedFile> attachments, List<RecipientView> recipients) {
 	}
 
 	/**
@@ -622,11 +677,23 @@ class MessageService {
 	record RecallResult(long messageId, int recalledNow, List<RecallOutcome> recipients) {
 	}
 
-	record Outgoing(String title, String body) {
+	/** @param uploadIds 검사한 첨부 업로드 ID. 보낸 순서 그대로다 */
+	record Outgoing(String title, String body, List<Long> uploadIds) {
 	}
 
-	/** 멱등 지문. 원래 쪽지, 과목, 검사한 본문, 정렬한 받는사람이다. */
+	/** 멱등 지문. 원래 쪽지, 과목, 검사한 본문과 첨부, 정렬한 받는사람이다. */
 	record Fingerprint(Long originId, Long courseId, Outgoing content, List<Long> recipients) {
+	}
+
+	/**
+	 * 다시 판정한 쪽지쓰기 초안.
+	 * @param course 고른 과목. 없거나 더는 구성원이 아니면 null
+	 * @param recipients 지금도 보낼 수 있는 받는사람. 저장한 순서다
+	 * @param droppedRecipients 저장했지만 더는 보낼 수 없어 뺀 받는사람 수
+	 * @param courseDropped 저장한 과목의 구성원이 아니어서 과목을 뺐으면 true
+	 */
+	record ComposeDraft(long revision, String title, String body, CourseRef course, List<Contact> recipients,
+			int droppedRecipients, boolean courseDropped, LocalDateTime updatedAt) {
 	}
 
 	private record Selection(List<Long> ids, Boolean read, String query, LocalDateTime until, List<Long> except) {

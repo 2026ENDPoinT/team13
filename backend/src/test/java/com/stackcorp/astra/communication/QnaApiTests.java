@@ -463,6 +463,51 @@ class QnaApiTests extends BoardTestSupport {
 		}
 	}
 
+	@Test
+	void questionAndAnswerEditsReplaceAttachmentsAndKeepPrivateQuestionFilesPrivate() throws Exception {
+		long asked = upload(this.student, "q.txt", "질문 파일");
+		JsonNode question = ApiClient.json(this.student.postJson(qna(this.course),
+				"{\"title\":\"비공개 질문\",\"secret\":true,\"uploadIds\":[" + asked + "]}").andExpect(status().isCreated()));
+		long id = question.get("postId").asLong();
+		long askedFile = question.get("attachments").get(0).get("fileId").asLong();
+		long replaced = upload(this.student, "q2.txt", "바꾼 질문 파일");
+		JsonNode edited = ApiClient.json(put(this.student, question(this.course, id),
+				"{\"title\":\"비공개 질문\",\"secret\":true,\"attachments\":{\"keep\":[],\"add\":[" + replaced + "]},\"version\":1}")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.attachments.length()").value(1)));
+		long newFile = edited.get("attachments").get(0).get("fileId").asLong();
+		this.student.get(file(this.course, askedFile)).andExpect(status().isNotFound());
+		this.professor.get(file(this.course, newFile)).andExpect(status().isOk());
+		this.classmate.get(file(this.course, newFile)).andExpect(status().isNotFound());
+
+		long answerUpload = upload(this.professor, "a.txt", "답 파일");
+		JsonNode answer = ApiClient.json(this.professor.postJson(question(this.course, id) + "/answers",
+				"{\"body\":\"답\",\"uploadIds\":[" + answerUpload + "]}").andExpect(status().isCreated()));
+		long answerId = answer.get("answerId").asLong();
+		long answerFile = answer.get("attachments").get(0).get("fileId").asLong();
+		String a = question(this.course, id) + "/answers/" + answerId;
+		long another = upload(this.professor, "a2.txt", "추가 답 파일");
+		put(this.professor, a, "{\"body\":\"고친 답\",\"attachments\":{\"keep\":[" + answerFile + "],\"add\":[" + another
+				+ "]},\"version\":1}")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.attachments.length()").value(2))
+			.andExpect(jsonPath("$.version").value(2));
+		// 남의 답글은 고치지 못하고, 낡은 version이면 첨부도 그대로다.
+		put(this.student, a, "{\"body\":\"x\",\"attachments\":{\"keep\":[],\"add\":[]},\"version\":2}")
+			.andExpect(status().isNotFound());
+		put(this.professor, a, "{\"body\":\"낡음\",\"attachments\":{\"keep\":[],\"add\":[]},\"version\":1}")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("version_conflict"));
+		this.student.get(file(this.course, answerFile)).andExpect(status().isOk());
+		this.classmate.get(file(this.course, answerFile)).andExpect(status().isNotFound());
+		// 답글이 달린 질문은 첨부도 고치지 못한다.
+		put(this.student, question(this.course, id),
+				"{\"title\":\"비공개 질문\",\"secret\":true,\"attachments\":{\"keep\":[],\"add\":[]},\"version\":2}")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("already_answered"));
+		this.professor.get(file(this.course, newFile)).andExpect(status().isOk());
+	}
+
 	static String qna(long courseId) {
 		return "/api/courses/" + courseId + "/qna";
 	}

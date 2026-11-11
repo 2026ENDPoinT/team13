@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -580,6 +581,70 @@ class MessageApiTests extends IntegrationTest {
 		JsonNode rest = ApiClient.json(this.professor
 			.get("/api/messages/sent?size=3&q=쪽지&cursor=" + sent.get("nextCursor").asString()));
 		assertThat(rest.get("items").get(0).get("messageId").asLong()).isEqualTo(ids.get(1));
+	}
+
+	@Test
+	void attachmentsAreReadableOnlyByPeopleWhoStillHoldTheMessage() throws Exception {
+		long upload = attachment(this.professor, "range.txt", "시험 범위");
+		String json = "{\"title\":\"시험 범위\",\"body\":\"첨부 확인\",\"courseId\":" + this.course + ",\"recipientIds\":["
+				+ this.stu1 + "," + this.stu2 + "],\"uploadIds\":[" + upload + "]}";
+		long id = sentId(send(this.professor, json, "attach-1"));
+		send(this.professor, json, "attach-1").andExpect(jsonPath("$.messageId").value(id));
+		long file = ApiClient.json(this.student1.get(inbox(id)).andExpect(jsonPath("$.attachments.length()").value(1)))
+			.get("attachments")
+			.get(0)
+			.get("fileId")
+			.asLong();
+		this.professor.get(sentPath(id)).andExpect(jsonPath("$.attachments[0].fileId").value(file));
+		for (ApiClient holder : List.of(this.professor, this.student1, this.student2)) {
+			holder.get(content(file)).andExpect(status().isOk());
+		}
+		this.outsider.get(content(file)).andExpect(status().isNotFound());
+		this.otherProfessor.get(content(file)).andExpect(status().isNotFound());
+		// 쪽지 첨부는 과목 경로로 열리지 않는다.
+		this.student1.get("/api/courses/" + this.course + "/files/" + file + "/content").andExpect(status().isNotFound());
+
+		// 회수된 수신자, 받은함에서 지운 수신자, 보낸함에서 지운 발신자는 더 읽지 못한다.
+		this.student1.post(inbox(id) + "/read").andExpect(status().isOk());
+		this.professor.post(sentPath(id) + "/recall").andExpect(status().isOk());
+		this.student2.get(content(file)).andExpect(status().isNotFound());
+		this.student1.get(content(file)).andExpect(status().isOk());
+		this.student1.delete(inbox(id)).andExpect(status().isNoContent());
+		this.student1.get(content(file)).andExpect(status().isNotFound());
+		this.professor.get(content(file)).andExpect(status().isOk());
+		this.professor.delete(sentPath(id)).andExpect(status().isNoContent());
+		this.professor.get(content(file)).andExpect(status().isNotFound());
+
+		// 남의 업로드는 붙이지 못하고, 그때는 쪽지도 보내지 않는다. 답장에도 첨부를 붙인다.
+		long others = attachment(this.student1, "mine.txt", "학생 파일");
+		long before = messagesFrom(this.prof);
+		send(this.professor, "{\"title\":\"t\",\"body\":\"b\",\"recipientIds\":[" + this.stu1 + "],\"uploadIds\":[" + others
+				+ "]}", "attach-2").andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("attachment_not_ready"));
+		assertThat(messagesFrom(this.prof)).isEqualTo(before);
+		long question = sentId(send(this.student1, compose("질문", "본문", this.course, this.prof), "attach-3"));
+		long reply = sentId(send(this.professor, "{\"title\":\"답\",\"body\":\"답장\",\"uploadIds\":[" + attachment(this.professor,
+				"answer.txt", "답 파일") + "]}", inbox(question) + "/reply", "attach-4"));
+		long replyFile = ApiClient.json(this.student1.get(inbox(reply))).get("attachments").get(0).get("fileId").asLong();
+		this.student1.get(content(replyFile)).andExpect(status().isOk());
+		this.student2.get(content(replyFile)).andExpect(status().isNotFound());
+		// 과목 용도 업로드는 쪽지에 붙지 않는다.
+		long courseUpload = ApiClient.json(this.professor.upload(this.course, "post_attachment", "c.txt",
+				"과목 파일".getBytes(StandardCharsets.UTF_8), null).andExpect(status().isCreated()))
+			.get("uploadId")
+			.asLong();
+		send(this.professor, "{\"title\":\"t\",\"body\":\"b\",\"recipientIds\":[" + this.stu1 + "],\"uploadIds\":[" + courseUpload
+				+ "]}", "attach-5").andExpect(status().isConflict());
+	}
+
+	private long attachment(ApiClient client, String name, String text) throws Exception {
+		return ApiClient.json(client.uploadOutsideCourse("message_attachment", name,
+				text.getBytes(StandardCharsets.UTF_8)).andExpect(status().isCreated()))
+			.get("uploadId")
+			.asLong();
+	}
+
+	private static String content(long fileId) {
+		return "/api/files/" + fileId + "/content";
 	}
 
 	private long user(String name, String role) {

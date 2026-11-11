@@ -46,6 +46,22 @@ class FileContentController {
 		if (!this.access.allowed(actor.userId(), courseId, fileId, FileAction.READ)) {
 			throw ApiException.notFound();
 		}
+		return download(actor, fileId, courseId);
+	}
+
+	/**
+	 * 과목이 없는 부모(알림마당 자료·1:1 문의, 쪽지)에 붙은 파일(ADR-0035). 과목 파일은 부모가 무엇이든 404다. 과목 파일은 위의 과목
+	 * 경로에서만 연다.
+	 */
+	@GetMapping("/api/files/{fileId}/content")
+	ResponseEntity<InputStreamResource> content(@AuthenticationPrincipal Actor actor, @PathVariable long fileId) {
+		if (!this.access.allowedOutsideCourse(actor, fileId, FileAction.READ)) {
+			throw ApiException.notFound();
+		}
+		return download(actor, fileId, null);
+	}
+
+	private ResponseEntity<InputStreamResource> download(Actor actor, long fileId, Long courseId) {
 		FileRow file = this.files.find(fileId).filter(FileRow::ready).orElseThrow(ApiException::notFound);
 		InputStream content = this.store.open(Bucket.CONTENT, file.storageKey()).orElseThrow(ApiException::notFound);
 		this.audit.success(actor.userId(), actor.sessionId(), "file.download", "file", fileId, courseId);

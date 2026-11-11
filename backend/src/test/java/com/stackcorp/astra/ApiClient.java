@@ -64,6 +64,13 @@ public final class ApiClient {
 		return this.mvc.perform(mutating(request));
 	}
 
+	/** 과목 밖 용도(community_material, inquiry_attachment, message_attachment)의 업로드. courseId를 보내지 않는다. */
+	public ResultActions uploadOutsideCourse(String purpose, String fileName, byte[] content) throws Exception {
+		return this.mvc.perform(mutating(MockMvcRequestBuilders.multipart("/api/uploads")
+			.file(new MockMultipartFile("file", fileName, "application/octet-stream", content))
+			.param("purpose", purpose)));
+	}
+
 	/** 올린 뒤 uploadId를 돌려준다. */
 	public long uploaded(long courseId, String fileName, byte[] content) throws Exception {
 		String body = upload(courseId, "lecture_material", fileName, content, null).andReturn()
