@@ -1,5 +1,6 @@
 package com.stackcorp.astra.files.storage;
 
+import java.io.InputStream;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,6 +38,22 @@ public class ObjectStore {
 	public void put(Bucket bucket, String key, byte[] content, String contentType) {
 		this.s3.putObject((b) -> b.bucket(name(bucket)).key(key).contentType(contentType),
 				RequestBody.fromBytes(content));
+	}
+
+	/** 크기를 아는 stream을 메모리에 올리지 않고 저장한다. */
+	public void put(Bucket bucket, String key, InputStream content, long length, String contentType) {
+		this.s3.putObject((b) -> b.bucket(name(bucket)).key(key).contentType(contentType),
+				RequestBody.fromInputStream(content, length));
+	}
+
+	/** 호출한 쪽이 stream을 닫는다. */
+	public Optional<InputStream> open(Bucket bucket, String key) {
+		try {
+			return Optional.of(this.s3.getObject((b) -> b.bucket(name(bucket)).key(key)));
+		}
+		catch (NoSuchKeyException ex) {
+			return Optional.empty();
+		}
 	}
 
 	public Optional<byte[]> get(Bucket bucket, String key) {

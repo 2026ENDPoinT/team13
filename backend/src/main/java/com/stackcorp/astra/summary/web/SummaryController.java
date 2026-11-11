@@ -1,12 +1,12 @@
 package com.stackcorp.astra.summary.web;
 
+import java.time.Duration;
 import java.util.List;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
-import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -19,6 +19,7 @@ import com.stackcorp.astra.files.api.DeliveryCookies;
 import com.stackcorp.astra.files.api.DeliveryCookies.DeliveryCookie;
 import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.identity.api.Actor;
+import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.summary.job.PublishedSummary;
 import com.stackcorp.astra.summary.job.SummaryJob;
 import com.stackcorp.astra.summary.job.SummaryJobException;
@@ -43,8 +44,11 @@ class SummaryController {
 
 	private final DeliveryCookies cookies;
 
+	private final RateLimiter rateLimiter;
+
 	SummaryController(SummaryJobService jobs, SummaryPolicy policy, DocumentRenditions renditions,
-			DeliveryCookies cookies) {
+			DeliveryCookies cookies, RateLimiter rateLimiter) {
+		this.rateLimiter = rateLimiter;
 		this.jobs = jobs;
 		this.policy = policy;
 		this.renditions = renditions;
@@ -55,6 +59,7 @@ class SummaryController {
 	ResponseEntity<JobView> request(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long fileId) {
 		requireManage(actor, courseId, fileId);
+		limitGeneration(actor);
 		return noStore(HttpStatus.ACCEPTED).body(JobView.of(this.jobs.request(fileId, actor.userId())));
 	}
 
@@ -82,6 +87,7 @@ class SummaryController {
 	ResponseEntity<JobView> retry(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long jobId) {
 		managedJob(actor, courseId, jobId);
+		limitGeneration(actor);
 		return noStore(HttpStatus.ACCEPTED).body(JobView.of(this.jobs.retry(jobId, actor.userId())));
 	}
 
@@ -126,21 +132,12 @@ class SummaryController {
 		SummaryJob job = this.jobs.get(summary.jobId());
 		var key = this.renditions.readyKey(summary.fileId(), job.fileVersionNo());
 		ResponseEntity.BodyBuilder response = noStore(HttpStatus.OK);
-		key.ifPresent((k) -> {
-			for (DeliveryCookie c : this.cookies.forDocument(k)) {
-				response.header(HttpHeaders.SET_COOKIE, ResponseCookie.from(c.name(), c.value())
-					.path(c.path())
-					.maxAge(c.maxAge())
-					.secure(true)
-					.httpOnly(true)
-					.sameSite("Lax")
-					.build()
-					.toString());
-			}
-		});
+		// 전달 서명이 없는 환경에서는 쪽 이미지를 열 수 없으므로 경로도 알리지 않는다.
+		List<DeliveryCookie> issued = key.map(this.cookies::forDocument).orElse(List.of());
+		issued.forEach((c) -> response.header(HttpHeaders.SET_COOKIE, c.header()));
 		var pack = summary.result().pack();
 		return response.body(new PublishedView(summary.fileId(), summary.publishedAt(), pack.question(), pack.story(),
-				pack.slides(), key.map((k) -> "/doc/" + k + "/").orElse(null)));
+				pack.slides(), issued.isEmpty() ? null : "/doc/" + key.get() + "/"));
 	}
 
 	private SummaryJob managedJob(Actor actor, long courseId, long jobId) {
@@ -153,6 +150,11 @@ class SummaryController {
 		}
 		requireManage(actor, courseId, job.fileId());
 		return job;
+	}
+
+	// 생성은 LLM 비용이 드는 연산이라 사용자 단위로 횟수를 제한한다(SC-09).
+	private void limitGeneration(Actor actor) {
+		this.rateLimiter.check("summary-generate", actor.userId(), 20, Duration.ofHours(1));
 	}
 
 	private void requireManage(Actor actor, long courseId, long fileId) {

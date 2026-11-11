@@ -2,7 +2,9 @@ package com.stackcorp.astra.learning;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.Map;
@@ -14,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.files.api.VideoKeys;
@@ -99,6 +102,39 @@ class LectureKeyApiTests extends IntegrationTest {
 
 		this.mvc.perform(get(path(this.course)).cookie(this.student)).andExpect(status().isNotFound());
 		this.mvc.perform(get(path(this.course)).cookie(this.professor)).andExpect(status().isOk());
+	}
+
+	@Test
+	void issuesAPlaybackCookieScopedToThatLectureOnlyToPeopleWhoMayWatchIt() throws Exception {
+		ApiClient viewer = new ApiClient(this.mvc, this.student.getValue());
+		String asset = this.jdbc.sql("SELECT content_path FROM online_lecture_items WHERE online_lecture_item_id = :id")
+			.param("id", this.item)
+			.query(String.class)
+			.single()
+			.split("/")[1];
+		var response = viewer.post(playback(this.course))
+			.andExpect(status().isOk())
+			.andExpect(header().string("Cache-Control", "no-store"))
+			.andExpect(jsonPath("$.manifestUrl").value("/vod/" + asset + "/main.m3u8"))
+			.andExpect(jsonPath("$.expiresInSeconds").value(600))
+			.andReturn()
+			.getResponse();
+		assertThat(response.getHeaders("Set-Cookie")).hasSize(3)
+			.allSatisfy((cookie) -> assertThat(cookie).contains("Path=/vod/" + asset + "/")
+				.contains("HttpOnly")
+				.contains("Secure")
+				.contains("Max-Age=600"));
+
+		ApiClient outsider = new ApiClient(this.mvc, this.data.session(this.data.user("STUDENT")));
+		outsider.post(playback(this.course)).andExpect(status().isNotFound());
+		viewer.post(playback(this.data.course())).andExpect(status().isNotFound());
+		this.mvc.perform(post(playback(this.course)).cookie(this.student)).andExpect(status().isForbidden());
+		this.jdbc.sql("UPDATE learning_activities SET published_yn = 0 WHERE activity_id = :id").param("id", this.activity).update();
+		viewer.post(playback(this.course)).andExpect(status().isNotFound());
+	}
+
+	private String playback(long courseId) {
+		return "/api/courses/" + courseId + "/lecture-items/" + this.item + "/playback";
 	}
 
 	private String path(long courseId) {

@@ -22,7 +22,8 @@ import com.stackcorp.astra.summary.FakeLlm;
 @SpringBootTest(properties = { "astra.summary.poll-interval=1h", "astra.summary.lease-renewal=1h",
 		"astra.summary.lease=2h", "astra.break-glass.external-ref=" + IntegrationTest.BREAK_GLASS_REF,
 		"astra.break-glass.totp-secret=" + IntegrationTest.TOTP_SECRET,
-		"astra.cloudfront.base-url=https://lms.example.ac.kr", "astra.cloudfront.key-pair-id=K2TESTKEYPAIR" })
+		"astra.cloudfront.base-url=https://lms.example.ac.kr", "astra.cloudfront.key-pair-id=K2TESTKEYPAIR",
+		"astra.upload.rate-limit=6" })
 @AutoConfigureMockMvc
 @ActiveProfiles("worker")
 @Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class })

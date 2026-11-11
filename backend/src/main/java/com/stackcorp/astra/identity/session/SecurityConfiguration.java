@@ -40,6 +40,9 @@ class SecurityConfiguration {
 				.permitAll()
 				.requestMatchers("/api/**")
 				.authenticated()
+				// CDN 없이 앱이 전달 경로를 응답할 때만 handler가 있다(ADR-0009). 그때도 session과 경로 서명을 함께 요구한다.
+				.requestMatchers(HttpMethod.GET, "/doc/**", "/vod/**")
+				.authenticated()
 				.anyRequest()
 				.denyAll())
 			.exceptionHandling((e) -> e

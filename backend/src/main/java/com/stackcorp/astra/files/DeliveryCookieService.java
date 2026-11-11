@@ -46,6 +46,11 @@ class DeliveryCookieService implements DeliveryCookies {
 		return issue("vod/" + assetKey + "/", this.properties.videoCookieTtl());
 	}
 
+	@Override
+	public Duration videoTtl() {
+		return this.properties.videoCookieTtl();
+	}
+
 	private List<DeliveryCookie> issue(String prefix, Duration ttl) {
 		DeliverySigner s = this.signer.getIfAvailable();
 		if (s == null) {
@@ -54,7 +59,7 @@ class DeliveryCookieService implements DeliveryCookies {
 		String path = "/" + prefix;
 		return s.sign(path, Instant.now().plus(ttl))
 			.stream()
-			.map((c) -> new DeliveryCookie(c.name(), c.value(), path, ttl))
+			.map((c) -> new DeliveryCookie(c.name(), c.value(), path, ttl, this.properties.secureCookie()))
 			.toList();
 	}
 

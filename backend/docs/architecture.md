@@ -21,6 +21,8 @@
 | [ADR-0006](adr/0006-summary-module.md) | 강의 자료의 쪽별 요약을 `summary` 모듈로 구현한다. LessonViewer container를 붙이지 않는다 |
 | [ADR-0007](adr/0007-confidential-content-placement.md) | 영상, 강의 자료, 요약 본문은 object storage에만 두고 SSE-KMS로 암호화한다. 영상은 HLS AES-128을 적용한다 |
 | [ADR-0008](adr/0008-llm-port-deepseek.md) | LLM 호출은 port 뒤에 두고 DeepSeek로 시작한다. 데이터 처리 정책은 미결이다 |
+| [ADR-0009](adr/0009-origin-delivery-without-cdn.md) | CDN이 없는 환경에서는 앱이 같은 cookie 흐름으로 `/doc`, `/vod`를 직접 응답한다 |
+| [ADR-0010](adr/0010-upload-acceptance.md) | 업로드는 용도, 권한, 이름, 확장자, 크기, 내용 형식을 검사해 받는다. 악성코드 검사는 port로 남긴다 |
 
 ## 2. 부하 가정
 
@@ -202,6 +204,10 @@ flowchart TD
 - 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. break-glass 계정은 과목 권한이 없다.
 - session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
 - 파일 권한은 `files`의 `FileAccess`가 첨부한 부모 객체에 묻는다. 학습활동 첨부는 `learning`이 판정한다. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 권한이 없거나 경로의 과목과 객체가 맞지 않으면 존재를 드러내지 않도록 404로 응답한다.
+- 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
+- 오류는 problem JSON(`status`, `detail`, `code`)으로 응답하고 캐시하지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 다른 사용자의 ID를 넣지 않는다(SC-04).
+- 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록, 요약 생성에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
+- 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 
 ## 6. 첫 화면 성능
 
@@ -227,7 +233,7 @@ flowchart TD
 2. 검사가 끝나면 업로드 확정 이벤트의 listener가 영상 asset의 AES-128 key를 만들어 `content` bucket에 저장하고, MediaConvert에 HLS 멀티비트레이트 작업을 지시한다. 기본 화질은 720p다.
 3. 완료 이벤트는 EventBridge에서 SQS를 거쳐 worker가 받는다. 암호화된 결과는 `delivery` bucket의 `vod/`에 저장된다.
 4. CloudFront는 OAC로 bucket을 읽는다. `delivery` bucket과 `frontend` bucket 모두 CloudFront 외의 공개 접근을 막는다.
-5. 재생할 때 백엔드가 권한을 판정한 뒤, 그 강의 경로에만 유효한 짧은 TTL의 CloudFront signed cookie를 발급한다. 긴 강의를 보는 동안에는 하트비트 응답에서 만료 전에 다시 발급하고, 권한이 사라지면 재발급하지 않는다. CDN URL은 권한을 대신하지 않는다.
+5. 재생할 때 player가 `POST /api/courses/{courseId}/lecture-items/{itemId}/playback`을 부른다. 백엔드는 권한을 판정한 뒤 그 강의 경로에만 유효한 짧은 TTL의 signed cookie를 발급하고 manifest 경로를 돌려준다. player는 만료 전에 다시 부르고, 권한이 사라지면 다시 발급되지 않는다. 학습 session과 하트비트를 만들면 하트비트 응답에서 다시 발급하도록 옮긴다. CDN URL은 권한을 대신하지 않는다.
 6. player는 manifest의 key URI인 `GET /api/courses/{courseId}/lecture-items/{itemId}/hls-key`에서 key를 받는다. 이 API는 요청마다 권한을 판정하고 `no-store`로 응답한다. key는 영상 asset마다 16 byte이고 `content` bucket의 `vod-keys/`에 있다.
 7. 출석 인정은 서버 하트비트 원장으로 한다. 재생 위치는 이어보기 힌트로만 쓴다(SC-06, CHG-05).
 
@@ -251,6 +257,33 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}/result` | 담당자 | 게시 전 후보와 원본 대조가 필요한 쪽 |
 | `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary` | 열람 가능한 사람 | 게시본, `pageImageBase`, 쪽 이미지 signed cookie |
+
+### 7.3 강의 자료 업로드와 내려받기
+
+받는 순서와 저장 방식은 [ADR-0010](adr/0010-upload-acceptance.md)에 있다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `POST /api/uploads` | 용도가 요구하는 역할(강의 자료는 담당자) | 파일, 과목, 용도를 받아 검사하고 저장한다. 201. `Idempotency-Key` 지원 |
+| `GET /api/uploads/{uploadId}` · `DELETE` | 올린 사람 | 상태 조회, 첨부 전 삭제 |
+| `POST /api/courses/{courseId}/materials` | 담당자 | 자료 활동을 만들고 업로드를 첨부로 확정한다. 한 transaction |
+| `GET /api/courses/{courseId}/materials` | 과목 구성원 | 자료 목록과 첨부. 학생은 공개됐고 시작한 자료만 |
+| `GET /api/courses/{courseId}/files/{fileId}/content` | 그 파일의 부모 활동을 볼 수 있는 사람 | 원본. 언제나 attachment |
+
+설명은 일반 텍스트로만 받고 내보낸다. `learning_material_details.body_html`은 서버 HTML 정규화(SC-08, CHG-07)를 만들 때까지 쓰지 않는다.
+
+### 7.4 과목과 강의실 조회
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/me/courses` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할 |
+| `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나 |
+| `GET /api/courses/{courseId}/weeks` | 과목 구성원 | 주차와 활동 목록. 학생에게는 공개한 활동만, 시작 전 활동은 제목과 기간만 |
+| `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부, 강의 영상 항목 |
+
+### 7.5 CDN이 없는 환경
+
+로컬 실행과 CloudFront를 붙이지 않은 시연에서는 앱이 `/doc`, `/vod`를 직접 응답한다([ADR-0009](adr/0009-origin-delivery-without-cdn.md)). 권한 판정과 cookie 발급 API는 같고, cookie의 서명과 검증만 앱이 한다. 학교 도입 구성에서는 쓰지 않는다.
 
 ## 8. Valkey 도입 기준
 
@@ -307,3 +340,5 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 발표 데모(STAC-88)의 백엔드 | 1차 데모는 프론트엔드에 목업 데이터를 넣어 동작만 보여준다(팀 합의 2026-11-08). 이 문서의 단계는 e-class 백엔드 기준이다 | 데모 이후 실제 API 연결 대상을 STAC-91/92에서 정한다 |
 | 외부 LLM 데이터 처리 정책 | 제공자의 보존 기간, 학습 이용 여부, 국외 이전, 교수자 동의 절차가 정해지지 않았다([ADR-0008](adr/0008-llm-port-deepseek.md)) | 학교 자료로 요약을 생성하기 전에 정한다 |
 | 파일 단위 요약 | 자료 상세 화면의 "ASTRA 서포터즈 요약"(`ai_file_summaries`)을 쪽별 요약의 story로 채울지 정하지 않았다 | `summary` 구현 때 정한다 |
+| 악성코드 검사 | 업로드는 형식만 검사한다([ADR-0010](adr/0010-upload-acceptance.md)). 형식이 맞는 문서 안의 악성 내용은 거르지 못한다 | 학교 자료를 받기 전에 검사기를 정해 `files`에 port로 붙인다. 외부 서비스면 데이터 처리 정책을 먼저 정한다 |
+| 멱등 원장과 감사 로그 | SC-05의 `(principal, operation, key)` 원장과 SC-09의 감사 기록이 없다. 업로드만 자체 key로 멱등이다 | 제출, 수강신청처럼 중복이 문제 되는 명령을 만들기 전에 `shared`에 만든다 |
