@@ -34,15 +34,15 @@ class NoticeService {
 
 	static final int MAX_BODY = 20_000;
 
-	static final int MAX_QUERY = 100;
-
 	static final int MAX_PAGE_SIZE = 50;
-
-	private static final int EXCERPT = 150;
 
 	private static final Pattern CLIENT_KEY = Pattern.compile("[A-Za-z0-9._-]{1,64}");
 
 	private final NoticeRepository notices;
+
+	private final CourseBoards boards;
+
+	private final PostReactions reactions;
 
 	private final CourseMemberships memberships;
 
@@ -54,9 +54,11 @@ class NoticeService {
 
 	private final NoticeNotifications alerts;
 
-	NoticeService(NoticeRepository notices, CourseMemberships memberships, UserNames userNames, RateLimiter rateLimiter,
-			TransactionTemplate transaction, NoticeNotifications alerts) {
+	NoticeService(NoticeRepository notices, CourseBoards boards, PostReactions reactions, CourseMemberships memberships,
+			UserNames userNames, RateLimiter rateLimiter, TransactionTemplate transaction, NoticeNotifications alerts) {
 		this.notices = notices;
+		this.boards = boards;
+		this.reactions = reactions;
 		this.memberships = memberships;
 		this.userNames = userNames;
 		this.rateLimiter = rateLimiter;
@@ -67,7 +69,7 @@ class NoticeService {
 	@Transactional(readOnly = true)
 	NoticePage list(long userId, long courseId, String query, int page, int size) {
 		boolean manager = role(userId, courseId) == CourseRole.INSTRUCTOR;
-		String titleQuery = validatedQuery(query);
+		String titleQuery = PlainText.query(query);
 		if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) {
 			throw ApiException.invalid("page는 1 이상, size는 1 이상 " + MAX_PAGE_SIZE + " 이하여야 합니다.");
 		}
@@ -111,7 +113,7 @@ class NoticeService {
 		try {
 			// 게시판은 먼저 따로 commit한다. 같은 transaction에서 만들면, 다른 요청이 먼저 만든 게시판 행이 이 transaction의 snapshot에
 			// 보이지 않아 방금 쓴 공지를 다시 읽지 못한다.
-			long boardId = this.transaction.execute((tx) -> this.notices.boardFor(courseId));
+			long boardId = this.transaction.execute((tx) -> this.boards.boardFor(courseId, BoardKind.NOTICE));
 			return this.transaction.execute((tx) -> {
 				LocalDateTime now = this.notices.now();
 				long noticeId = this.notices.insert(boardId, userId, input, now, clientKey);
@@ -162,7 +164,7 @@ class NoticeService {
 	@Transactional
 	NoticeState markRead(long userId, long courseId, long noticeId) {
 		NoticeRow row = visibleTo(userId, courseId, noticeId);
-		this.notices.markRead(noticeId, userId);
+		this.reactions.markRead(noticeId, userId);
 		return new NoticeState(noticeId, true, row.confirmed());
 	}
 
@@ -205,49 +207,15 @@ class NoticeService {
 		}
 	}
 
-	private static String validatedQuery(String query) {
-		if (query == null || query.isBlank()) {
-			return null;
-		}
-		String q = query.strip();
-		if (q.length() > MAX_QUERY || hasControl(q, false)) {
-			throw ApiException.invalid("q는 " + MAX_QUERY + "자 이하여야 합니다.");
-		}
-		return q;
-	}
-
 	private static NoticeInput validated(NoticeRequest body) {
-		String title = body.title() == null ? "" : body.title().strip();
-		if (title.isEmpty() || title.length() > MAX_TITLE || hasControl(title, false)) {
-			throw ApiException.invalid("title은 1자 이상 " + MAX_TITLE + "자 이하여야 합니다.");
-		}
-		String text = body.body() == null || body.body().isBlank() ? null : body.body();
-		if (text != null && (text.length() > MAX_BODY || hasControl(text, true))) {
-			throw ApiException.invalid("body는 " + MAX_BODY + "자 이하여야 합니다.");
-		}
+		String title = PlainText.title(body.title(), MAX_TITLE);
+		String text = PlainText.optionalBody(body.body(), MAX_BODY);
 		boolean published = body.published() == null || body.published();
 		if (!published && body.publishAt() != null) {
 			throw ApiException.invalid("임시 공지에는 publishAt을 줄 수 없습니다.");
 		}
-		return new NoticeInput(title, text, excerpt(text), Boolean.TRUE.equals(body.pinned()), published,
+		return new NoticeInput(title, text, PlainText.excerpt(text), Boolean.TRUE.equals(body.pinned()), published,
 				body.publishAt());
-	}
-
-	/** 목록 미리보기. 줄바꿈을 공백으로 바꾼 본문 앞 150자다. 서로게이트 쌍을 자르지 않는다. */
-	private static String excerpt(String text) {
-		if (text == null) {
-			return null;
-		}
-		String flat = text.replaceAll("\\s+", " ").strip();
-		if (flat.codePointCount(0, flat.length()) <= EXCERPT) {
-			return flat;
-		}
-		return flat.substring(0, flat.offsetByCodePoints(0, EXCERPT));
-	}
-
-	private static boolean hasControl(String text, boolean allowLineBreaks) {
-		return text.codePoints()
-			.anyMatch((cp) -> Character.isISOControl(cp) && !(allowLineBreaks && (cp == '\n' || cp == '\r' || cp == '\t')));
 	}
 
 	/**

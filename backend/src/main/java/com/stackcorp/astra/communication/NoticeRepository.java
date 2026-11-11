@@ -56,28 +56,6 @@ class NoticeRepository {
 		return this.jdbc.sql("SELECT CURRENT_TIMESTAMP(3)").query(LocalDateTime.class).single();
 	}
 
-	/**
-	 * 과목의 공지 게시판 ID. 없으면 만든다. uq_boards_course_notice가 과목마다 하나만 남긴다. 동시에 만들면 늦은 쪽은 먼저 만든 행을 기다렸다가 그 ID를
-	 * 받는다. 잠금 읽기(FOR UPDATE)는 없는 행에 gap lock을 걸어 두 요청이 서로 기다리게 하므로 쓰지 않는다. transaction 안에서 불러야
-	 * LAST_INSERT_ID()가 같은 연결에서 읽힌다.
-	 */
-	long boardFor(long courseId) {
-		Optional<Long> existing = this.jdbc
-			.sql("SELECT board_id FROM boards WHERE course_id = :course AND board_type = 'K001'")
-			.param("course", courseId)
-			.query(Long.class)
-			.optional();
-		if (existing.isPresent()) {
-			return existing.get();
-		}
-		this.jdbc.sql("""
-				INSERT INTO boards (course_id, board_type, board_name, requires_notice_confirm)
-				VALUES (:course, 'K001', '공지사항', 1)
-				ON DUPLICATE KEY UPDATE board_id = LAST_INSERT_ID(board_id)
-				""").param("course", courseId).update();
-		return this.jdbc.sql("SELECT LAST_INSERT_ID()").query(Long.class).single();
-	}
-
 	long insert(long boardId, long authorId, NoticeInput input, LocalDateTime now, String clientKey) {
 		LocalDateTime publishedAt = !input.published() ? null : input.publishAt() != null ? input.publishAt() : now;
 		this.jdbc.sql("""
@@ -139,7 +117,7 @@ class NoticeRepository {
 			.param("course", courseId)
 			.param("user", userId)
 			.param("now", now)
-			.param("q", likeLiteral(titleQuery))
+			.param("q", PlainText.likeLiteral(titleQuery))
 			.param("size", size)
 			.param("offset", offset)
 			.query((rs, n) -> new NoticeItemRow(rs.getLong("post_id"), rs.getString("title"), rs.getString("excerpt"),
@@ -153,7 +131,7 @@ class NoticeRepository {
 		return this.jdbc.sql("SELECT COUNT(*)" + NOTICES + filter(manager, titleQuery))
 			.param("course", courseId)
 			.param("now", now)
-			.param("q", likeLiteral(titleQuery))
+			.param("q", PlainText.likeLiteral(titleQuery))
 			.query(Long.class)
 			.single();
 	}
@@ -203,31 +181,6 @@ class NoticeRepository {
 				 WHERE b.course_id = :course AND b.board_type = 'K001' AND p.post_kind = 'NOTICE'
 				   AND p.parent_post_id IS NULL AND p.deleted_at IS NULL AND p.post_id = :notice
 				""").param("course", courseId).param("notice", noticeId).update();
-	}
-
-	/**
-	 * 읽음 기록을 남긴다. 처음 읽을 때만 조회수를 올린다. 이미 있으면 최근 열람 일시와 횟수만 바꾼다.
-	 * @return 처음 읽었으면 true
-	 */
-	boolean markRead(long noticeId, long userId) {
-		try {
-			this.jdbc.sql("INSERT INTO post_read_receipts (post_id, user_id, last_read_at) VALUES (:post, :user, CURRENT_TIMESTAMP(3))")
-				.param("post", noticeId)
-				.param("user", userId)
-				.update();
-		}
-		catch (DuplicateKeyException ex) {
-			this.jdbc.sql("""
-					UPDATE post_read_receipts SET last_read_at = CURRENT_TIMESTAMP(3), read_count = read_count + 1
-					 WHERE post_id = :post AND user_id = :user
-					""").param("post", noticeId).param("user", userId).update();
-			return false;
-		}
-		// 조회수는 집계 캐시다. 수정 일시(updated_at)는 내용을 고친 때만 바뀌게 그대로 둔다.
-		this.jdbc.sql("UPDATE posts SET view_count = view_count + 1, updated_at = updated_at WHERE post_id = :post")
-			.param("post", noticeId)
-			.update();
-		return true;
 	}
 
 	/** @return 처음 확인했으면 true */
@@ -285,11 +238,6 @@ class NoticeRepository {
 
 	private static String filter(boolean manager, String titleQuery) {
 		return (manager ? "" : PUBLISHED) + (titleQuery == null ? "" : TITLE_MATCH);
-	}
-
-	/** LIKE 안에서 사용자 입력의 %, _, \를 글자 그대로 비교하게 escape한다. */
-	private static String likeLiteral(String text) {
-		return text == null ? null : text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
 	}
 
 	private static NoticeRow noticeRow(ResultSet rs, int n) throws SQLException {

@@ -77,6 +77,7 @@ public class LocalSeed {
 		LocalEnrollmentSeed.seed(jdbc, term, professor);
 		LocalSurveySeed.seed(jdbc);
 		LocalCatalogSeed.seed(jdbc, student);
+		LocalBoardSeed.seed(jdbc, student, professor);
 	}
 
 	private static long user(JdbcClient jdbc, String ref, String name, String role) {

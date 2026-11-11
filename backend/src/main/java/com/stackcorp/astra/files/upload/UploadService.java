@@ -74,7 +74,7 @@ class UploadService {
 		this.rateLimiter.check("upload", userId, this.properties.rateLimit(), this.properties.rateWindow());
 		UploadPurpose purpose = UploadPurpose.of(purposeCode)
 			.orElseThrow(() -> ApiException.invalid("purpose 값이 올바르지 않습니다."));
-		if (this.memberships.roleOf(userId, courseId).filter((r) -> r == purpose.requiredRole()).isEmpty()) {
+		if (this.memberships.roleOf(userId, courseId).filter(purpose::allows).isEmpty()) {
 			throw ApiException.notFound();
 		}
 		if (clientKey != null && !CLIENT_KEY.matcher(clientKey).matches()) {
