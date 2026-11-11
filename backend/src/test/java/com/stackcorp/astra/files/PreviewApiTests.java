@@ -26,6 +26,8 @@ import jakarta.servlet.http.Cookie;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -307,7 +309,7 @@ class PreviewApiTests extends IntegrationTest {
 					throw new ConversionException(ConversionException.Code.UNAVAILABLE, "converter에 연결하지 못했습니다.");
 				}, new ConversionProperties(Duration.ofHours(1), Duration.ofHours(1), Duration.ofMinutes(15), 2,
 						Duration.ofMinutes(10), "down-worker"),
-				this.transactionManager);
+				this.transactionManager, new SimpleMeterRegistry());
 
 		assertThat(code(() -> down.prepare(fileId))).isEqualTo(RenditionException.Code.CONVERSION_FAILED);
 
