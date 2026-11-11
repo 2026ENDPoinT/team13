@@ -16,8 +16,8 @@ import org.springframework.stereotype.Service;
 @Service
 class CalendarActivityQueries implements CalendarActivities {
 
-	/** 캘린더가 읽는 활동 행. 활동을 지우는 표시가 생기면 이 조건에 더한다. */
-	private static final String ACTIVITIES = " FROM learning_activities a WHERE a.close_at >= :from AND a.close_at < :to";
+	/** 캘린더가 읽는 활동 행. 지운 활동은 빼낸다(ADR-0011). */
+	private static final String ACTIVITIES = " FROM learning_activities a WHERE a.deleted_at IS NULL AND a.close_at >= :from AND a.close_at < :to";
 
 	private static final String TAUGHT = "a.course_id IN (:taught)";
 
