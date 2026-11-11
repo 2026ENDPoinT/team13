@@ -479,6 +479,25 @@ class LearningSessionApiTests extends IntegrationTest {
 			.isEqualTo(this.t0.plusSeconds(60));
 	}
 
+	/** 학습 인증을 요구하지 않는 배포(기본값)는 grant 없이 시작하고 규칙 v1로 적립한다(SC-06-A 스위치 꺼짐). */
+	@Test
+	void creditsWithoutLearningAuthGrantWhenTheSwitchIsOff() throws Exception {
+		long session = started(this.student);
+		this.clock.advance(Duration.ofSeconds(60));
+		beat(this.student, session, 1).andExpect(jsonPath("$.creditedSec").value(60))
+			.andExpect(jsonPath("$.creditState").value("authorized"))
+			.andExpect(jsonPath("$.creditUntil").doesNotExist());
+
+		assertThat(this.jdbc.sql("SELECT credit_authorized_until IS NULL FROM learning_sessions WHERE learning_session_id = :s")
+			.param("s", session)
+			.query(Boolean.class)
+			.single()).isTrue();
+		assertThat(this.jdbc.sql("SELECT rule_version FROM learning_credit_ledger WHERE learning_session_id = :s")
+			.param("s", session)
+			.query(String.class)
+			.list()).containsExactly("v1");
+	}
+
 	private long started(ApiClient client) throws Exception {
 		return ApiClient.json(client.post(start(this.course, this.item)).andExpect(status().isCreated()))
 			.get("sessionId")

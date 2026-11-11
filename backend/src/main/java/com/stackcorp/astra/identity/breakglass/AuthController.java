@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.stackcorp.astra.identity.api.Actor;
+import com.stackcorp.astra.identity.session.DeviceCookie;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
@@ -54,9 +55,10 @@ class AuthController {
 	@PostMapping("/api/auth/break-glass")
 	ResponseEntity<Void> breakGlass(@RequestBody BreakGlassRequest body, HttpServletRequest request) {
 		IssuedSession session = this.breakGlass.login(body.username(), body.password(), body.code(),
-				request.getRemoteAddr(), request.getHeader(HttpHeaders.USER_AGENT));
+				DeviceCookie.read(request), request.getRemoteAddr(), request.getHeader(HttpHeaders.USER_AGENT));
 		return ResponseEntity.noContent()
-			.header(HttpHeaders.SET_COOKIE, cookie(session.token(), this.properties.absoluteTimeout()).toString())
+			.header(HttpHeaders.SET_COOKIE, cookie(session.token(), this.properties.absoluteTimeout()).toString(),
+					DeviceCookie.issue(session.deviceUuid(), this.properties).toString())
 			.header(HttpHeaders.CACHE_CONTROL, "no-store")
 			.build();
 	}

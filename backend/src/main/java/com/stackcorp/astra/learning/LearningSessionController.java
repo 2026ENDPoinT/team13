@@ -44,12 +44,15 @@ class LearningSessionController {
 		this.rateLimiter = rateLimiter;
 	}
 
-	/** 학습 시작. 같은 사용자의 활성 session은 대체된다(superseded). 응답의 주기마다 하트비트를 보낸다. */
+	/**
+	 * 학습 시작. 같은 사용자의 열린 session은 대체된다(superseded). 응답의 주기마다 하트비트를 보낸다. 학습 인증을 요구하는 배포에서
+	 * 학생에게 grant가 없으면 403 {@code learning_auth_required}(SC-06-A).
+	 */
 	@PostMapping("/api/courses/{courseId}/lecture-items/{itemId}/learning-sessions")
 	ResponseEntity<StartedView> start(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long itemId) {
 		this.rateLimiter.check("learning-session-start", actor.userId(), 30, Duration.ofMinutes(10));
-		Granted<Started> started = this.sessions.start(actor.userId(), courseId, itemId);
+		Granted<Started> started = this.sessions.start(actor.userId(), actor.sessionId(), courseId, itemId);
 		return granted(ResponseEntity.status(HttpStatus.CREATED), started)
 			.body(new StartedView(started.body(), started.playback()));
 	}
@@ -61,8 +64,8 @@ class LearningSessionController {
 			throw ApiException.invalid("seq는 1 이상의 증가하는 순번이어야 합니다.");
 		}
 		this.rateLimiter.check("learning-heartbeat", actor.userId(), 120, Duration.ofMinutes(10));
-		Granted<HeartbeatResult> result = this.sessions.heartbeat(actor.userId(), courseId, sessionId, body.seq(),
-				body.positionSec(), body.playing());
+		Granted<HeartbeatResult> result = this.sessions.heartbeat(actor.userId(), actor.sessionId(), courseId,
+				sessionId, body.seq(), body.positionSec(), body.playing());
 		return granted(ResponseEntity.ok(), result).body(new HeartbeatView(result.body(), result.playback()));
 	}
 
@@ -76,8 +79,8 @@ class LearningSessionController {
 		}
 		return ResponseEntity.ok()
 			.cacheControl(CacheControl.noStore())
-			.body(this.sessions.end(actor.userId(), courseId, sessionId, body == null ? null : body.positionSec(),
-					reason));
+			.body(this.sessions.end(actor.userId(), actor.sessionId(), courseId, sessionId,
+					body == null ? null : body.positionSec(), reason));
 	}
 
 	private static ResponseEntity.BodyBuilder granted(ResponseEntity.BodyBuilder response, Granted<?> granted) {
@@ -116,12 +119,13 @@ class LearningSessionController {
 	/**
 	 * @param playback 이번 응답이 cookie를 다시 발급했으면 manifest 경로와 유효 시간
 	 */
-	record HeartbeatView(long sessionId, String outcome, int creditedSec, boolean creditOpen,
-			LocalDateTime leaseExpiresAt, int leaseRemainingSec, ItemProgress progress, Playback playback) {
+	record HeartbeatView(long sessionId, String outcome, int creditedSec, boolean creditOpen, String creditState,
+			LocalDateTime creditUntil, LocalDateTime leaseExpiresAt, int leaseRemainingSec, ItemProgress progress,
+			Playback playback) {
 
 		HeartbeatView(HeartbeatResult r, Playback playback) {
-			this(r.sessionId(), r.outcome(), r.creditedSec(), r.creditOpen(), r.leaseExpiresAt(), r.leaseRemainingSec(),
-					r.progress(), playback);
+			this(r.sessionId(), r.outcome(), r.creditedSec(), r.creditOpen(), r.creditState(), r.creditUntil(),
+					r.leaseExpiresAt(), r.leaseRemainingSec(), r.progress(), playback);
 		}
 
 	}

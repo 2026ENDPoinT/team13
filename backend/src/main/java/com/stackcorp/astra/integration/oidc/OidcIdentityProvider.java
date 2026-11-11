@@ -34,6 +34,9 @@ import tools.jackson.databind.JsonNode;
  * 직접 받으므로 브라우저가 JWKS 재요청을 일으킬 수 없다.</li>
  * <li>IdP가 준 token은 저장하지 않는다. ID token의 claim 하나로 사용자를 찾고 버린다. access token과 refresh token은 쓰지
  * 않는다.</li>
+ * <li>재인증(ADR-0029)은 {@code prompt=login}과 {@code max_age=0}을 보내고, ID token의 {@code auth_time}이 재인증을 시작한
+ * 시각(시계 오차 허용) 뒤여야 받는다. {@code auth_time}이 없으면 IdP가 다시 인증했는지 알 수 없으므로 거부한다(OpenID Connect
+ * Core 3.1.2.1).</li>
  * </ul>
  */
 final class OidcIdentityProvider implements ExternalIdentityProvider {
@@ -71,9 +74,18 @@ final class OidcIdentityProvider implements ExternalIdentityProvider {
 
 	@Override
 	public LoginRedirect begin(String returnTo) {
+		return redirect(returnTo, false);
+	}
+
+	@Override
+	public LoginRedirect beginReauthentication(String returnTo) {
+		return redirect(returnTo, true);
+	}
+
+	private LoginRedirect redirect(String returnTo, boolean reauthentication) {
 		Metadata metadata = metadata();
 		LoginBinding binding = new LoginBinding(LoginBinding.random(), LoginBinding.random(), LoginBinding.random(),
-				returnTo, this.clock.instant().plus(LOGIN_TIMEOUT).getEpochSecond());
+				returnTo, this.clock.instant().plus(LOGIN_TIMEOUT).getEpochSecond(), reauthentication);
 		Map<String, String> query = new LinkedHashMap<>();
 		query.put("response_type", "code");
 		query.put("client_id", this.properties.clientId());
@@ -83,6 +95,10 @@ final class OidcIdentityProvider implements ExternalIdentityProvider {
 		query.put("nonce", binding.nonce());
 		query.put("code_challenge", challenge(binding.verifier()));
 		query.put("code_challenge_method", "S256");
+		if (reauthentication) {
+			query.put("prompt", "login");
+			query.put("max_age", "0");
+		}
 		String base = metadata.authorizationEndpoint().toString();
 		URI location = URI.create(base + (base.contains("?") ? "&" : "?") + IssuerHttp.form(query));
 		return new LoginRedirect(location, binding.seal(this.bindingKey));
@@ -123,7 +139,24 @@ final class OidcIdentityProvider implements ExternalIdentityProvider {
 		}
 		JsonNode claims = this.verifier.verify(idToken.stringValue(), (kid) -> key(metadata, kid), binding.nonce(),
 				now);
-		return new ExternalLogin(externalRef(claims), binding.returnTo());
+		if (binding.reauthentication()) {
+			checkReauthenticated(claims, binding, now);
+		}
+		return new ExternalLogin(externalRef(claims), binding.returnTo(), binding.reauthentication());
+	}
+
+	// 재인증을 시작한 시각은 binding 만료에서 로그인 제한 시간을 뺀 값이다. IdP가 그 뒤에 사용자를 다시 인증했어야 한다.
+	private void checkReauthenticated(JsonNode claims, LoginBinding binding, Instant now) {
+		JsonNode authTime = claims.path("auth_time");
+		if (!authTime.isIntegralNumber()) {
+			throw new ExternalLoginException("auth_time_missing");
+		}
+		long skew = this.properties.clockSkew().toSeconds();
+		long startedAt = binding.expiresAt() - LOGIN_TIMEOUT.toSeconds();
+		long value = authTime.longValue();
+		if (value < startedAt - skew || value > now.getEpochSecond() + skew) {
+			throw new ExternalLoginException("auth_time_stale");
+		}
 	}
 
 	private JsonNode exchange(Metadata metadata, String code, String codeVerifier) {

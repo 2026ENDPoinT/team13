@@ -38,10 +38,11 @@ class SsoLogin {
 
 	/**
 	 * 실패를 login_events에 남긴 채로 예외를 던지므로 그 예외로는 rollback하지 않는다.
+	 * @param device 브라우저의 기기 쿠키 값. 없으면 null
 	 * @throws ExternalLoginException 로그인할 수 없는 사용자일 때
 	 */
 	@Transactional(noRollbackFor = ExternalLoginException.class)
-	IssuedSession signIn(String externalRef, String ip, String userAgent) {
+	IssuedSession signIn(String externalRef, String device, String ip, String userAgent) {
 		Account account = this.jdbc.sql("SELECT user_id, account_status FROM users WHERE external_ref = :ref")
 			.param("ref", externalRef)
 			.query((rs, n) -> new Account(rs.getLong("user_id"), rs.getString("account_status")))
@@ -55,7 +56,7 @@ class SsoLogin {
 			this.events.record(account.userId(), null, ip, false, "SSO_INACTIVE");
 			throw new ExternalLoginException("inactive_account");
 		}
-		IssuedSession session = this.sessions.create(account.userId(), ip, userAgent);
+		IssuedSession session = this.sessions.create(account.userId(), device, ip, userAgent);
 		this.events.record(account.userId(), session.sessionId(), ip, true, null);
 		return session;
 	}

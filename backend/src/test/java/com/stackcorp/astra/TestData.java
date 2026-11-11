@@ -44,7 +44,7 @@ public final class TestData {
 
 	/** @return session 쿠키 값 */
 	public String session(long userId) {
-		return this.sessions.create(userId, "127.0.0.1", "test").token();
+		return this.sessions.create(userId, null, "127.0.0.1", "test").token();
 	}
 
 	public long course() {

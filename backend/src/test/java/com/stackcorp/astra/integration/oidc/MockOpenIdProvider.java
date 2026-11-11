@@ -168,7 +168,8 @@ public final class MockOpenIdProvider implements AutoCloseable {
 	}
 
 	/**
-	 * 사용자가 IdP에서 로그인을 마친 것처럼 code를 만들고 callback 주소를 돌려준다.
+	 * 사용자가 IdP에서 로그인을 마친 것처럼 code를 만들고 callback 주소를 돌려준다. 요청에 {@code max_age}가 있으면 실제 IdP처럼
+	 * 지금 다시 인증한 것으로 보고 ID token에 {@code auth_time}을 넣는다(OpenID Connect Core 3.1.2.1).
 	 * @param location adapter가 만든 authorization 주소
 	 * @param studentNumber {@link #USER_CLAIM}에 넣을 값
 	 */
@@ -182,7 +183,8 @@ public final class MockOpenIdProvider implements AutoCloseable {
 		}
 		String code = UUID.randomUUID().toString();
 		this.issued.add(code);
-		this.codes.put(code, new Pending(query.get("nonce"), query.get("code_challenge"), studentNumber));
+		this.codes.put(code, new Pending(query.get("nonce"), query.get("code_challenge"), studentNumber,
+				query.containsKey("max_age")));
 		return URI.create(this.redirectUri + "?code=" + code + "&state=" + encode(query.get("state")) + "&iss="
 				+ encode(this.issuer));
 	}
@@ -255,6 +257,9 @@ public final class MockOpenIdProvider implements AutoCloseable {
 		claims.put("iat", now);
 		claims.put("nonce", pending.nonce());
 		claims.put(USER_CLAIM, pending.studentNumber());
+		if (pending.reauthenticated()) {
+			claims.put("auth_time", now);
+		}
 		this.claims.accept(claims);
 		Key key = this.signing;
 		Map<String, Object> header = new LinkedHashMap<>();
@@ -321,7 +326,7 @@ public final class MockOpenIdProvider implements AutoCloseable {
 		return Base64.getUrlEncoder().withoutPadding().encodeToString(value);
 	}
 
-	private record Pending(String nonce, String challenge, String studentNumber) {
+	private record Pending(String nonce, String challenge, String studentNumber, boolean reauthenticated) {
 	}
 
 	record Key(String kid, KeyPair pair) {

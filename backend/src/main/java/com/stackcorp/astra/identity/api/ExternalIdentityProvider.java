@@ -21,8 +21,17 @@ public interface ExternalIdentityProvider {
 	LoginRedirect begin(String returnTo);
 
 	/**
+	 * 이미 로그인한 사용자의 재인증을 시작한다(ADR-0029). IdP에 기존 IdP session을 쓰지 말고 다시 인증하라고 요구한다(OIDC
+	 * {@code prompt=login}, {@code max_age=0}). callback에서 IdP가 이 시작 뒤에 인증했다는 근거(OIDC {@code auth_time})를
+	 * 확인하지 못하면 {@link #complete}가 실패한다.
+	 * @param returnTo 재인증 뒤 돌아갈 같은 origin의 상대 경로. 호출자가 이미 검사한 값이다
+	 * @throws ExternalLoginException IdP 정보를 받지 못했을 때
+	 */
+	LoginRedirect beginReauthentication(String returnTo);
+
+	/**
 	 * callback을 검증하고 사용자를 식별한다. 실패 이유는 예외의 reason으로만 구분한다.
-	 * @param binding {@link #begin}이 돌려준 값. 쿠키가 없으면 null
+	 * @param binding {@link #begin} 또는 {@link #beginReauthentication}이 돌려준 값. 쿠키가 없으면 null
 	 * @param callback callback query parameter. 같은 이름이 두 번 온 parameter는 호출자가 거부한다
 	 * @throws ExternalLoginException 검증에 실패했을 때
 	 */
@@ -43,9 +52,10 @@ public interface ExternalIdentityProvider {
 
 	/**
 	 * @param externalRef 설정한 claim의 값. {@code users.external_ref}와 맞춘다
-	 * @param returnTo {@link #begin}에 넘긴 경로
+	 * @param returnTo 시작할 때 넘긴 경로
+	 * @param reauthentication {@link #beginReauthentication}으로 시작했고 IdP가 그 뒤에 다시 인증했다
 	 */
-	record ExternalLogin(String externalRef, String returnTo) {
+	record ExternalLogin(String externalRef, String returnTo, boolean reauthentication) {
 	}
 
 }
