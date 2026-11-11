@@ -12,6 +12,7 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -22,6 +23,7 @@ import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.summary.FakeLlm;
+import com.stackcorp.astra.summary.LlmConsents;
 
 import jakarta.servlet.http.Cookie;
 
@@ -44,6 +46,9 @@ class SummaryApiTests extends IntegrationTest {
 
 	@Autowired
 	FakeLlm llm;
+
+	@Autowired
+	ApplicationContext context;
 
 	long course;
 
@@ -70,6 +75,7 @@ class SummaryApiTests extends IntegrationTest {
 		long prof = this.data.user("PROFESSOR");
 		long stu = this.data.user("STUDENT");
 		this.data.instructor(this.course, prof);
+		LlmConsents.grant(this.context, this.course, prof);
 		this.data.enroll(this.course, stu);
 		this.data.enroll(this.otherCourse, stu);
 		this.fileId = this.data.pdfFile(TestPdfs.pdf(2), "clean");

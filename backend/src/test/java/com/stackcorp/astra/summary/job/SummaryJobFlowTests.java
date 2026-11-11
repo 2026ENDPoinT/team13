@@ -3,11 +3,13 @@ package com.stackcorp.astra.summary.job;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import com.stackcorp.astra.IntegrationTest;
@@ -15,6 +17,7 @@ import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.TestcontainersConfiguration.TestBuckets;
 import com.stackcorp.astra.summary.FakeLlm;
+import com.stackcorp.astra.summary.LlmConsents;
 import com.stackcorp.astra.summary.api.LlmContent;
 import com.stackcorp.astra.summary.api.LlmException;
 import com.stackcorp.astra.summary.api.LlmRequest;
@@ -49,19 +52,29 @@ class SummaryJobFlowTests extends IntegrationTest {
 	@Autowired
 	TestData data;
 
+	@Autowired
+	ApplicationContext context;
+
+	long course;
+
+	long professor;
+
 	@BeforeEach
 	void resetModel() {
 		this.llm.reset(FakeLlm::honest);
 		while (this.runner.runOnce()) {
 			// 앞 테스트가 남긴 대기 작업을 비운다.
 		}
+		List<Long> consented = LlmConsents.consentedCourse(this.context, this.data);
+		this.course = consented.get(0);
+		this.professor = consented.get(1);
 	}
 
 	@Test
 	void requestedJobRendersSummarizesAndPublishes() {
 		long fileId = pdfFile(TestPdfs.pdf(3), "clean");
 
-		SummaryJob queued = this.service.request(fileId, null);
+		SummaryJob queued = request(fileId);
 		assertThat(queued.state()).isEqualTo(JobState.QUEUED);
 		assertThat(this.service.published(fileId)).isEmpty();
 
@@ -99,10 +112,10 @@ class SummaryJobFlowTests extends IntegrationTest {
 	@Test
 	void allowsOneActiveJobPerFile() {
 		long fileId = pdfFile(TestPdfs.pdf(1), "clean");
-		this.service.request(fileId, null);
+		request(fileId);
 
 		SummaryJobException ex = catchThrowableOfType(SummaryJobException.class,
-				() -> this.service.request(fileId, null));
+				() -> request(fileId));
 
 		assertThat(ex.code()).isEqualTo(Code.CONFLICT);
 	}
@@ -116,7 +129,7 @@ class SummaryJobFlowTests extends IntegrationTest {
 			}
 			return FakeLlm.honest(req);
 		});
-		SummaryJob failed = this.service.request(fileId, null);
+		SummaryJob failed = request(fileId);
 		this.runner.runOnce();
 		assertThat(this.service.get(failed.id())).satisfies((j) -> {
 			assertThat(j.state()).isEqualTo(JobState.FAILED);
@@ -125,7 +138,7 @@ class SummaryJobFlowTests extends IntegrationTest {
 		});
 		this.llm.reset(FakeLlm::honest);
 
-		SummaryJob retry = this.service.retry(failed.id(), null);
+		SummaryJob retry = this.service.retry(this.course, failed.id(), this.professor);
 		this.runner.runOnce();
 
 		assertThat(this.service.get(retry.id()).state()).isEqualTo(JobState.COMPLETED);
@@ -136,7 +149,7 @@ class SummaryJobFlowTests extends IntegrationTest {
 	@Test
 	void cancelsQueuedJobOnce() {
 		long fileId = pdfFile(TestPdfs.pdf(1), "clean");
-		SummaryJob job = this.service.request(fileId, null);
+		SummaryJob job = request(fileId);
 
 		assertThat(this.service.cancel(job.id()).state()).isEqualTo(JobState.CANCELLED);
 		assertThat(catchThrowableOfType(SummaryJobException.class, () -> this.service.cancel(job.id())).code())
@@ -152,7 +165,7 @@ class SummaryJobFlowTests extends IntegrationTest {
 			this.service.cancel(jobId.get());
 			return FakeLlm.honest(req);
 		});
-		jobId.set(this.service.request(fileId, null).id());
+		jobId.set(request(fileId).id());
 
 		this.runner.runOnce();
 
@@ -165,7 +178,7 @@ class SummaryJobFlowTests extends IntegrationTest {
 	@Test
 	void closesJobsWhoseWorkerStoppedRenewingLease() {
 		long fileId = pdfFile(TestPdfs.pdf(1), "clean");
-		SummaryJob job = this.service.request(fileId, null);
+		SummaryJob job = request(fileId);
 		this.jdbc.sql("""
 				UPDATE summary_jobs SET job_state = 'running', lease_owner = 'gone',
 				       lease_expires_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 SECOND)
@@ -179,25 +192,25 @@ class SummaryJobFlowTests extends IntegrationTest {
 			assertThat(j.errorCode()).isEqualTo("interrupted");
 		});
 		// 실패한 작업은 자동으로 다시 실행하지 않고, 같은 파일에 새 요청을 받는다.
-		assertThat(this.service.request(fileId, null).state()).isEqualTo(JobState.QUEUED);
+		assertThat(request(fileId).state()).isEqualTo(JobState.QUEUED);
 	}
 
 	@Test
 	void rejectsFilesThatAreNotCleanPdfs() {
 		assertThat(catchThrowableOfType(SummaryJobException.class,
-				() -> this.service.request(pdfFile(TestPdfs.pdf(1), "pending"), null))
+				() -> request(pdfFile(TestPdfs.pdf(1), "pending")))
 			.code()).isEqualTo(Code.FILE_NOT_READY);
 		long text = this.data.file("notes.txt", "text/plain", "hello".getBytes(), "clean");
-		assertThat(catchThrowableOfType(SummaryJobException.class, () -> this.service.request(text, null)).code())
+		assertThat(catchThrowableOfType(SummaryJobException.class, () -> request(text)).code())
 			.isEqualTo(Code.UNSUPPORTED_FILE);
-		assertThat(catchThrowableOfType(SummaryJobException.class, () -> this.service.request(Long.MAX_VALUE, null))
+		assertThat(catchThrowableOfType(SummaryJobException.class, () -> request(Long.MAX_VALUE))
 			.code()).isEqualTo(Code.NOT_FOUND);
 	}
 
 	@Test
 	void failsJobWithoutCallingModelWhenPdfCannotBeConverted() {
 		long fileId = pdfFile(TestPdfs.pdf(1, "user-pw", null), "clean");
-		SummaryJob job = this.service.request(fileId, null);
+		SummaryJob job = request(fileId);
 
 		this.runner.runOnce();
 
@@ -211,6 +224,10 @@ class SummaryJobFlowTests extends IntegrationTest {
 			.param("id", fileId)
 			.query(String.class)
 			.single()).isEqualTo("encrypted");
+	}
+
+	private SummaryJob request(long fileId) {
+		return this.service.request(this.course, fileId, this.professor);
 	}
 
 	private long pdfFile(byte[] pdf, String scanState) {

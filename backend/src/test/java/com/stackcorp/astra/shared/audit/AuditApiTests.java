@@ -22,6 +22,7 @@ import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.files.api.VideoKeys;
 import com.stackcorp.astra.shared.audit.AuditRows.Row;
 import com.stackcorp.astra.summary.FakeLlm;
+import com.stackcorp.astra.summary.LlmConsents;
 import com.stackcorp.astra.summary.job.SummaryRunnerDriver;
 
 import tools.jackson.databind.JsonNode;
@@ -66,6 +67,7 @@ class AuditApiTests extends IntegrationTest {
 		this.professorId = this.data.user("PROFESSOR");
 		this.studentId = this.data.user("STUDENT");
 		this.data.instructor(this.course, this.professorId);
+		LlmConsents.grant(this.context, this.course, this.professorId);
 		this.data.enroll(this.course, this.studentId);
 		this.professor = new ApiClient(this.mvc, this.data.session(this.professorId));
 		this.student = new ApiClient(this.mvc, this.data.session(this.studentId));

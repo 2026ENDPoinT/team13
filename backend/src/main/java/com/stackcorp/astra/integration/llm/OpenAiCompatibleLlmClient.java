@@ -106,19 +106,22 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 		List<Map<String, Object>> messages = new ArrayList<>();
 		messages.add(Map.of("role", "system", "content", request.system()));
 		for (LlmMessage message : request.messages()) {
-			if (message.role() == LlmMessage.Role.USER) {
-				messages.add(Map.of("role", "user", "content", message.content().stream().map(this::part).toList()));
-			}
-			else {
-				messages.add(Map.of("role", "assistant", "content",
-						message.content()
-							.stream()
-							.filter(LlmContent.Text.class::isInstance)
-							.map((c) -> ((LlmContent.Text) c).text())
-							.collect(Collectors.joining("\n"))));
+			switch (message.role()) {
+				case USER -> messages
+					.add(Map.of("role", "user", "content", message.content().stream().map(this::part).toList()));
+				case ASSISTANT -> messages.add(assistant(message));
+				case TOOL -> message.content().forEach((c) -> messages.add(toolResult(c)));
 			}
 		}
 		body.put("messages", messages);
+		if (!request.tools().isEmpty()) {
+			body.put("tools",
+					request.tools()
+						.stream()
+						.map((t) -> Map.of("type", "function", "function",
+								Map.of("name", t.name(), "description", t.description(), "parameters", t.parameters())))
+						.toList());
+		}
 		body.put("stream", false);
 		if (this.official) {
 			body.put("max_completion_tokens", request.maxOutputTokens());
@@ -130,11 +133,44 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 		return body;
 	}
 
+	// 도구를 부른 assistant 차례는 content가 비어 있을 수 있다. Chat Completions는 이때 null을 받는다.
+	private Map<String, Object> assistant(LlmMessage message) {
+		String text = message.content()
+			.stream()
+			.filter(LlmContent.Text.class::isInstance)
+			.map((c) -> ((LlmContent.Text) c).text())
+			.collect(Collectors.joining("\n"));
+		List<Map<String, Object>> calls = message.content()
+			.stream()
+			.filter(LlmContent.ToolCall.class::isInstance)
+			.map((c) -> (LlmContent.ToolCall) c)
+			.map((c) -> Map.<String, Object>of("id", c.id(), "type", "function", "function",
+					Map.of("name", c.name(), "arguments", c.arguments())))
+			.toList();
+		Map<String, Object> out = new LinkedHashMap<>();
+		out.put("role", "assistant");
+		out.put("content", text.isEmpty() && !calls.isEmpty() ? null : text);
+		if (!calls.isEmpty()) {
+			out.put("tool_calls", calls);
+		}
+		return out;
+	}
+
+	private Map<String, Object> toolResult(LlmContent content) {
+		if (!(content instanceof LlmContent.ToolResult result)) {
+			throw new IllegalArgumentException("tool message에는 도구 결과만 넣습니다.");
+		}
+		return Map.of("role", "tool", "tool_call_id", result.callId(), "content", result.text());
+	}
+
 	private Map<String, Object> part(LlmContent content) {
 		return switch (content) {
 			case LlmContent.Text text -> Map.of("type", "text", "text", text.text());
 			case LlmContent.Image image -> Map.of("type", "image_url", "image_url", Map.of("url",
 					"data:" + image.mediaType() + ";base64," + Base64.getEncoder().encodeToString(image.data())));
+			case LlmContent.ToolCall call -> throw new IllegalArgumentException("user message에는 도구 호출을 넣지 않습니다.");
+			case LlmContent.ToolResult result ->
+				throw new IllegalArgumentException("user message에는 도구 결과를 넣지 않습니다.");
 		};
 	}
 
@@ -182,18 +218,38 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 			throw new LlmException(Code.PROTOCOL, "제공자 응답이 JSON이 아닙니다.", ex);
 		}
 		JsonNode choice = root.path("choices").path(0);
-		JsonNode content = choice.path("message").path("content");
-		if (!content.isString()) {
+		JsonNode message = choice.path("message");
+		List<LlmContent.ToolCall> calls = toolCalls(message.path("tool_calls"));
+		JsonNode content = message.path("content");
+		if (!content.isString() && calls.isEmpty()) {
 			throw new LlmException(Code.PROTOCOL, "제공자 응답에 message content가 없습니다.");
 		}
 		StopReason stopReason = switch (choice.path("finish_reason").asString("")) {
 			case "stop" -> StopReason.END;
 			case "length" -> StopReason.MAX_TOKENS;
+			case "tool_calls" -> StopReason.TOOL_USE;
 			default -> StopReason.OTHER;
 		};
 		JsonNode usage = root.path("usage");
-		return new LlmResponse(content.stringValue(), stopReason,
-				new LlmResponse.Usage(usage.path("prompt_tokens").asLong(0), usage.path("completion_tokens").asLong(0)));
+		return new LlmResponse(content.isString() ? content.stringValue() : "", stopReason,
+				new LlmResponse.Usage(usage.path("prompt_tokens").asLong(0), usage.path("completion_tokens").asLong(0)),
+				calls);
+	}
+
+	// 인자는 문자열 그대로 넘긴다. 해석과 검사는 도구를 실행하는 쪽이 한다.
+	private static List<LlmContent.ToolCall> toolCalls(JsonNode array) {
+		List<LlmContent.ToolCall> calls = new ArrayList<>();
+		for (int i = 0; i < array.size(); i++) {
+			JsonNode call = array.path(i);
+			JsonNode function = call.path("function");
+			if (!call.path("id").isString() || !function.path("name").isString()) {
+				throw new LlmException(Code.PROTOCOL, "제공자 응답의 도구 호출에 id나 이름이 없습니다.");
+			}
+			JsonNode arguments = function.path("arguments");
+			calls.add(new LlmContent.ToolCall(call.path("id").stringValue(), function.path("name").stringValue(),
+					arguments.isString() ? arguments.stringValue() : arguments.isMissingNode() ? "{}" : arguments.toString()));
+		}
+		return calls;
 	}
 
 	private LlmException httpFailure(int status, byte[] bytes) {

@@ -28,7 +28,8 @@ import com.stackcorp.astra.summary.FakeLlm;
 		"astra.upload.rate-limit=6", "astra.learning.lease-sweep-interval=1h",
 		"astra.files.gc.interval=1h", "astra.transcoder.worker.poll-interval=1h", "astra.quiz.close-interval=1h",
 		"astra.metrics.backlog-interval=1h", "astra.filebox.zip.poll-interval=1h", "astra.filebox.zip.max-total-size=12MB",
-		"astra.files.conversion.poll-interval=1h", "astra.files.conversion.recovery-interval=1h" })
+		"astra.files.conversion.poll-interval=1h", "astra.files.conversion.recovery-interval=1h",
+		"astra.studychat.poll-interval=1h", "astra.studychat.sweep-interval=1h", "astra.studychat.rate-limit=8" })
 @AutoConfigureMockMvc
 @ActiveProfiles("worker")
 @Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class, TestLearningClock.class,

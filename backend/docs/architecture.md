@@ -339,6 +339,8 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 2. 교수자가 요약 생성을 요청하면 api가 `summary_jobs`에 작업을 기록한다. worker가 작업을 잡아 쪽 묶음마다 LLM을 호출하고 결과를 검사한다. 끝난 쪽은 checkpoint로 `content` bucket에 남긴다.
 3. 완료된 결과는 후보다. 교수자가 게시하면 학생에게 보인다.
 4. 학생이 자료를 열면 api가 권한을 판정한 뒤 요약 본문을 `no-store`로 응답하고, `/doc/{renditionKey}/*`에만 유효한 signed cookie를 발급한다.
+5. 외부 LLM으로 보내기 전에 담당 교수자의 범위별 동의(쪽별 요약, 학습 대화)를 확인하고, 보내는 글은 가림 hook을 거친다. 배포는 제공자 처리 조건을 `astra.llm.policy.*`로 밝히고, `astra.llm.enabled=false`면 외부 호출을 모두 막는다([ADR-0032](adr/0032-llm-consent-and-study-chat.md)).
+6. 학습 대화는 게시한 요약이 있는 파일 하나에 근거한다. api가 질문을 원장에 쓰고 worker가 `search_source`, `read_page` 두 도구로 그 파일의 쪽만 찾아 답한다. client는 질문 조회로 답을 받는다. 질문과 답 본문은 그 파일의 파생물로 `content` bucket에 둔다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -349,6 +351,20 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}/result` | 담당자 | 게시 전 후보와 원본 대조가 필요한 쪽 |
 | `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary` | 열람 가능한 사람 | 게시본, `pageImageBase`, 쪽 이미지 signed cookie |
+| `DELETE /api/courses/{courseId}/files/{fileId}/summary` | 담당자 | 게시 내리기. 파일 요약과 학습 대화도 닫힌다 |
+| `GET /api/courses/{courseId}/files/{fileId}/summary/overview` | 열람 가능한 사람 | 자료 상세의 파일 요약(게시본의 질문과 흐름, 모델 호출 없음) |
+| `GET /api/llm/policy` | 로그인 사용자 | 제공자 처리 조건, 고지 판, profile 지문, 외부 LLM 사용 여부 |
+| `GET /api/courses/{courseId}/llm-consents` | 담당 교수자 | 내 범위별 동의와 현재 profile과의 일치 여부 |
+| `PUT /api/courses/{courseId}/llm-consents/{scope}` | 담당 교수자 | 동의(`page_summary`, `study_chat`). 본 고지 판·지문, 국외 이전·학습 이용 확인 |
+| `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 담당 교수자 | 철회. 대기 작업·질문 취소, 게시본은 유지 |
+| `GET /api/courses/{courseId}/llm-usage` | 담당 교수자 | 과목의 호출 수·token 합계와 오늘의 학습 대화 예산 |
+| `POST /api/courses/{courseId}/files/{fileId}/study-chats` | 열람 가능한 사람 | 대화 열기. 게시본과 게시자의 `study_chat` 동의 필요. `Idempotency-Key` 지원 |
+| `GET /api/courses/{courseId}/files/{fileId}/study-chats?before=` | 열람 가능한 사람 | 그 파일에서 내가 연 대화(20개씩, ID 내림차순) |
+| `GET` · `DELETE /api/courses/{courseId}/study-chats/{chatId}` | 대화 소유자 | 대화 보기, 지우기(본문 객체까지) |
+| `POST /api/courses/{courseId}/study-chats/{chatId}/exchanges` | 대화 소유자 | 질문. 202. `Idempotency-Key` 필수, 대화마다 대기 질문 하나, 사용자 한도, 과목 일일 token 예산 |
+| `GET /api/courses/{courseId}/study-chats/{chatId}/exchanges?before=` · `/exchanges/{id}` | 대화 소유자 | 질문과 답, 인용 쪽(10개씩). 답을 기다리는 동안 다시 읽는다 |
+
+대화 소유자의 읽기와 질문은 요청마다 그 파일의 열람 권한을 다시 본다. 담당 교수자도 학생의 대화는 볼 수 없다.
 
 ### 7.3 강의 자료 업로드와 내려받기
 
@@ -708,8 +724,10 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 배포 중 API 중단 | 3.1절 | 사용량이 적은 시간에 배포한다. 불만이 생기면 3.2절 전환을 앞당긴다 |
 | [db/README.md](../db/README.md) 7절 미결 결정 | 시험, 출석, 익명 설문 등 해당 기능 구현 | 구현 전에 STAC-76 하위 일감에 결정을 남긴다 |
 | 발표 데모(STAC-88)의 백엔드 | 1차 데모는 프론트엔드에 목업 데이터를 넣어 동작만 보여준다(팀 합의 2026-11-08). 이 문서의 단계는 e-class 백엔드 기준이다 | 데모 이후 실제 API 연결 대상을 STAC-91/92에서 정한다 |
-| 외부 LLM 데이터 처리 정책 | 제공자의 보존 기간, 학습 이용 여부, 국외 이전, 교수자 동의 절차가 정해지지 않았다([ADR-0008](adr/0008-llm-port-deepseek.md)) | 학교 자료로 요약을 생성하기 전에 정한다 |
-| 파일 단위 요약 | 자료 상세 화면의 "ASTRA 서포터즈 요약"(`ai_file_summaries`)을 쪽별 요약의 story로 채울지 정하지 않았다 | `summary` 구현 때 정한다 |
+| 외부 LLM 계약과 고지 | 교수자 동의, 처리 조건 공개, 배포 스위치, 가림 hook은 만들었다([ADR-0032](adr/0032-llm-consent-and-study-chat.md)). 제공자 계약(처리위탁·DPA, 학습 이용 배제, 무보관), 국외 이전 근거, 처리방침과 학생 고지, 고지 문구 본문은 없다. 기본 profile(DeepSeek)은 중국 처리, 보관 미공개, 학습 이용 가능이다 | 학교 자료로 쓰기 전에 학교 법무·정보보호 담당과 정하고 `astra.llm.policy.*`와 `notice-version`을 맞춘다 |
+| 개인정보 가림의 한계 | 기본 가림은 전자우편, 휴대전화, 학번 형식 숫자만 가린다. 이름과 쪽 이미지 속 글자는 지나간다 | 고지에 교수자 확인을 넣는다. 필요하면 `TextRedactor`의 다른 구현을 둔다 |
+| 학습 대화 보존 | 대화 본문은 소유자 삭제와 파일 삭제로만 지운다. 기간 보존(`ASTRA_STUDYCHAT_RETENTION`)은 기본 꺼짐이다 | 기관 보존 정책을 받아 값을 넣는다 |
+| 학습 대화 한도의 정확도 | 사용자별 질문 한도는 process 메모리라 api가 둘이면 따로 센다. 과목 일일 예산은 질문을 받을 때와 시작할 때만 봐서 답 하나만큼 넘을 수 있다 | api를 늘릴 때 8절 Valkey로 옮긴다 |
 | 악성코드 검사 | 검사기(같은 배포의 ClamAV daemon)를 설정해야 동작한다([ADR-0018](adr/0018-malware-scan-clamd.md)). 설정하지 않으면 형식만 검사하고 시작 때 경고한다. 검사기가 멈추면 새 업로드를 첨부할 수 없다. clamd의 크기 상한보다 큰 파일(수 GB 영상 등)은 검사되지 못하고 quarantined에 남는다 | 학교 자료를 받는 배포는 `ASTRA_SCAN_REQUIRED=true`로 띄운다. clamd 크기 상한을 업로드 상한 이상으로 둔다. quarantined 수와 `scanner unavailable` 로그에 알람을 건다. 영상 업로드의 검사 범위는 영상 업로드를 만들 때 정한다 |
 | 감사 기록 보존과 누락 | `audit_events`의 보존 기간이 정해지지 않아 지우지 않는다(SC-07). transaction 밖의 기록은 저장 실패 때 경고 로그만 남기고 빠진다 | 기관 정책을 받아 보존 기간을 정한다. 빠진 수를 9절 지표에 넣는다 |
 | 멱등 key와 목록 query 규칙 | `Idempotency-Key`는 선택이라 header를 보내지 않는 client는 재전송으로 자료를 두 번 만들 수 있다. SC-09의 page size 상한, cursor, 정렬 key allowlist는 아직 없다 | 수강신청, 제출을 만들 때 key 필수 여부를 정하고 frontend가 header를 보낸다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 query 규칙을 만든다 |

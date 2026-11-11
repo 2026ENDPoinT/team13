@@ -22,6 +22,7 @@ import com.stackcorp.astra.TestcontainersConfiguration.TestBuckets;
 import com.stackcorp.astra.files.api.DeliveryObjects;
 import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.summary.FakeLlm;
+import com.stackcorp.astra.summary.LlmConsents;
 import com.stackcorp.astra.summary.job.SummaryRunnerDriver;
 
 import jakarta.servlet.http.Cookie;
@@ -95,6 +96,7 @@ class MaterialLifecycleTests extends IntegrationTest {
 		long prof = this.data.user("PROFESSOR");
 		this.studentId = this.data.user("STUDENT");
 		this.data.instructor(this.course, prof);
+		LlmConsents.grant(this.context, this.course, prof);
 		this.data.enroll(this.course, this.studentId);
 		this.professorSession = this.data.session(prof);
 		this.professor = new ApiClient(this.mvc, this.professorSession);
