@@ -30,6 +30,7 @@
 | [ADR-0017](adr/0017-school-sso-oidc.md) | 학교 SSO는 OpenID Connect code flow + PKCE adapter로 먼저 만든다. 로그인 전 값은 암호화한 쿠키에 두고 IdP token은 저장하지 않는다 |
 | [ADR-0019](adr/0019-container-image-and-single-host-compose.md) | 이미지 하나를 api, worker, converter 역할로 실행하고, health는 container 안의 관리 port로만 연다 |
 | [ADR-0014](adr/0014-learning-session-credit.md) | 온라인 강의 출석 인정은 서버 시각의 적립 원장으로 하고, 사용자당 활성 학습 session은 하나다. 새 session이 앞 session을 대체한다 |
+| [ADR-0024](adr/0024-course-qna-and-open-board.md) | 강의실 질의응답과 열린게시판도 과목마다 하나인 게시판의 `posts` 행이다. 익명(이름 숨김)과 비공개(작성자·담당자만)를 나누고, 질문은 답글 전까지만 작성자가 고친다 |
 
 ## 2. 부하 가정
 
@@ -214,6 +215,8 @@ flowchart TD
 - session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
 - 파일 권한은 `files`의 `FileAccess`가 첨부한 부모 객체에 묻는다. 학습활동 첨부는 `learning`이 판정한다. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 권한이 없거나 경로의 과목과 객체가 맞지 않으면 존재를 드러내지 않도록 404로 응답한다.
 - 강의실 공지는 `communication`이 판정한다. 담당자는 임시·예약 공지까지 보고 쓰며, 학생은 게시 일시가 DB 시계로 지난 공지만 본다. 공지 조회는 읽음을 남기지 않고, 읽음과 확인은 각각 POST 명령이다(SC-04).
+- 강의실 질의응답과 열린게시판도 `communication`이 판정한다([ADR-0024](adr/0024-course-qna-and-open-board.md)). 비공개 질문은 작성자와 담당자만 보고, 다른 학생에게는 목록, 건수, 검색, 상세, 답글, 첨부 어디에도 없다. 익명 글의 작성자 이름은 작성자와 담당자만 보고, 작성자 ID는 응답에 넣지 않는다. 글은 작성자만 고치고, 질문은 답글 전까지만 고치고 지운다. 담당자는 그 과목의 글, 답글, 댓글을 지울 수 있고 감사 기록에 `*.moderate`로 남는다. 글·답글·댓글 작성과 수정, 추천에 사용자 단위 요청 제한이 있다.
+- 알림마당 자료실은 과목이 없어 session 사용자의 기관 역할로 대상(공통, 교수, 학생)을 고른다. 1:1 문의는 본인이 쓴 것만 보인다.
 - 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
 - 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 다른 사용자의 ID를 넣지 않는다(SC-04).
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
@@ -339,6 +342,44 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 제목과 본문은 일반 텍스트로만 받고 내보낸다. 첨부는 아직 받지 않는다.
 
+### 7.6.1 강의실 질의응답과 열린게시판
+
+저장 방식과 권한은 [ADR-0024](adr/0024-course-qna-and-open-board.md)에 있다. 첨부는 `POST /api/uploads`에 용도 `post_attachment`(그 과목의 구성원)로 올린다. 만들기 명령은 `Idempotency-Key`를 선택으로 받는다. 제목, 본문, 댓글은 일반 텍스트로만 받고 내보낸다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/courses/{courseId}/qna?status=&mine=&answered=&q=&page=&size=&snapshot=` | 과목 구성원 | 질문 목록. 최근 질문 먼저, 쪽 번호. `status`는 all, faq, solved, unsolved. 상태별 건수, 다음 쪽에 다시 보낼 `snapshot`. 항목마다 `read`, `liked`, `mine` |
+| `GET /api/courses/{courseId}/qna/{questionId}` | 그 질문을 볼 수 있는 사람 | 질문 상세와 첨부, `canEdit` 등. 읽음을 남기지 않는다 |
+| `POST /api/courses/{courseId}/qna` | 수강생 | 질문 작성. `anonymous`, `secret`, `uploadIds`. 201 |
+| `PUT /api/courses/{courseId}/qna/{questionId}` | 작성자, 답글 전 | 텍스트 전체 수정. `version`이 다르면 409 `version_conflict`, 답글이 있으면 409 `already_answered` |
+| `DELETE /api/courses/{courseId}/qna/{questionId}` | 작성자(답글 전), 담당자 | 소프트 삭제. 204 |
+| `PUT /api/courses/{courseId}/qna/{questionId}/status` | 작성자·담당자(`solved`), 담당자(`faq`) | 해결 상태와 FAQ의 목표 상태 |
+| `PUT`·`DELETE /api/courses/{courseId}/qna/{questionId}/like` | 그 질문을 볼 수 있는 사람 | 추천과 취소. 몇 번 보내도 같다. 서버의 추천 수를 돌려준다 |
+| `POST /api/courses/{courseId}/qna/{questionId}/read` | 그 질문을 볼 수 있는 사람 | 읽음 표시. 조회수는 처음 읽을 때만 오른다 |
+| `GET /api/courses/{courseId}/qna/{questionId}/answers?cursor=&size=` | 그 질문을 볼 수 있는 사람 | 답글. 먼저 쓴 것부터 `nextCursor`로 이어 받는다. 담당자 답글은 `instructor` |
+| `POST /api/courses/{courseId}/qna/{questionId}/answers` | 그 질문을 볼 수 있는 구성원 | 답글 작성. 학생만 `anonymous`. 201 |
+| `PUT`·`DELETE /api/courses/{courseId}/qna/{questionId}/answers/{answerId}` | 작성자(수정), 작성자·담당자(삭제) | 답글 수정(`version`), 소프트 삭제 |
+| `GET /api/courses/{courseId}/open-board/posts?q=&cursor=&size=` | 과목 구성원 | 열린게시판 목록. 최근 글 먼저, `nextCursor`. 전체 수, 항목마다 `read`, `liked`, `mine`, 댓글 수 |
+| `GET /api/courses/{courseId}/open-board/posts/{postId}` | 과목 구성원 | 글 상세와 첨부 |
+| `POST /api/courses/{courseId}/open-board/posts` | 과목 구성원 | 글 작성. 201 |
+| `PUT`·`DELETE /api/courses/{courseId}/open-board/posts/{postId}` | 작성자(수정), 작성자·담당자(삭제) | 텍스트 전체 수정(`version`), 소프트 삭제 |
+| `PUT`·`DELETE /api/courses/{courseId}/open-board/posts/{postId}/like`, `POST …/read` | 과목 구성원 | 추천, 취소, 읽음 |
+| `GET`·`POST /api/courses/{courseId}/open-board/posts/{postId}/comments` | 과목 구성원 | 댓글 목록(`nextCursor`)과 작성. 답글은 `parentCommentId`로 한 단계. 1800 byte |
+| `DELETE /api/courses/{courseId}/open-board/posts/{postId}/comments/{commentId}` | 작성자, 담당자 | 소프트 삭제. 답글이 남은 댓글은 본문 없이 자리만 남는다 |
+
+수정은 텍스트만 바꾼다. `files.api.Attachments`에 첨부 교체·해제가 없어 첨부는 글을 쓸 때만 붙인다.
+
+### 7.6.2 알림마당 자료실과 1:1 문의
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/community/materials?audience=&q=&cursor=&size=` | 로그인한 사용자 | 게시된 자료 목록. 기관 역할에 맞는 대상만. 대상별 건수 |
+| `GET /api/community/materials/{postId}`, `POST …/read` | 그 대상의 사용자 | 자료 상세, 읽음 표시 |
+| `GET /api/community/qna?status=&q=&cursor=&size=` | 로그인한 사용자 | 본인 1:1 문의 목록. `status`는 all, answered, unanswered |
+| `GET /api/community/qna/{postId}` | 문의 작성자 | 문의와 답변 |
+
+쓰기는 운영 화면과 함께 만든다. 첨부는 내려받기 경로가 과목 단위라 아직 돌려주지 않는다.
+
 ### 7.7 메인 화면과 할 일
 
 | API | 권한 | 하는 일 |
@@ -437,3 +478,4 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
 | 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
 | 2차 인증 만료와 학습 적립(SC-06-A) | 적립 유효기한이 close_at만 반영한다. 2차 인증 grant가 없다 | `identity`의 grant와 `learning_sessions.credit_authorized_until`, `reauth_required` 상태를 함께 만든다(ADR-0014 결과 절) |
+| 게시판 남은 범위 | 과목에 열린게시판을 하나만 둔다. 질의응답의 학습활동 연결(EP-0059, EP-0060), 게시글 첨부 교체, 댓글 수정, 알림마당 쓰기와 첨부, 메인 화면의 게시판 안 읽은 수가 없다([ADR-0024](adr/0024-course-qna-and-open-board.md)) | 담당자 게시판 관리, `Attachments`의 교체·해제, 전역 파일 경로를 만들 때 각각 넣는다 |

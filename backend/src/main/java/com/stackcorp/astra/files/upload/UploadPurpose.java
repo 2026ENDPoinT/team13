@@ -13,10 +13,14 @@ enum UploadPurpose {
 	LECTURE_MATERIAL("lecture_material", CourseRole.INSTRUCTOR),
 
 	/** 과제 제출 첨부. 그 과목의 수강생만 올린다. */
-	ASSIGNMENT_SUBMISSION("assignment_submission", CourseRole.STUDENT);
+	ASSIGNMENT_SUBMISSION("assignment_submission", CourseRole.STUDENT),
+
+	/** 게시글(질의응답, 열린게시판) 첨부. 그 과목의 담당자와 수강생이 올린다. */
+	POST_ATTACHMENT("post_attachment", null);
 
 	private final String code;
 
+	/** null이면 과목 구성원 누구나 */
 	private final CourseRole requiredRole;
 
 	UploadPurpose(String code, CourseRole requiredRole) {
@@ -28,8 +32,9 @@ enum UploadPurpose {
 		return this.code;
 	}
 
-	CourseRole requiredRole() {
-		return this.requiredRole;
+	/** 그 과목에서 이 역할이면 이 용도로 올릴 수 있는지. */
+	boolean allows(CourseRole role) {
+		return this.requiredRole == null || this.requiredRole == role;
 	}
 
 	static Optional<UploadPurpose> of(String code) {
