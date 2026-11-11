@@ -2,6 +2,7 @@ package com.stackcorp.astra.catalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.LocalDateTime;
@@ -45,8 +46,10 @@ class NotificationFlowTests extends NotificationTestSupport {
 
 		long notice = ApiClient.json(professor.send(post("/api/courses/" + course + "/notices", key, "{\"title\":\"중간고사 안내\"}"))
 			.andExpect(status().isCreated())).get("noticeId").asLong();
+		// 같은 key와 같은 요청의 재전송은 멱등 원장이 처음 응답을 그대로 돌려준다(ADR-0012).
 		professor.send(post("/api/courses/" + course + "/notices", key, "{\"title\":\"중간고사 안내\"}"))
-			.andExpect(status().isOk());
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.noticeId").value(notice));
 
 		assertThat(rows(alice, NotificationKind.COURSE_NOTICE, notice)).isEqualTo(1);
 		assertThat(rows(bob, NotificationKind.COURSE_NOTICE, notice)).isEqualTo(1);
