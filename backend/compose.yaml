@@ -172,6 +172,9 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"
       MYSQL_ROOT_HOST: localhost
+      # 서버 기본 시간대. 앱은 연결마다 session 시간대를 기관 offset으로 정하므로 이 값에 기대지 않는다(ADR-0039). 운영자가 mysql
+      # client로 본 NOW()가 저장된 일시와 같은 벽시계가 되도록 맞춘다.
+      TZ: ${ASTRA_TIME_ZONE:-Asia/Seoul}
     volumes:
       - mysql-data:/var/lib/mysql
     networks: [data]

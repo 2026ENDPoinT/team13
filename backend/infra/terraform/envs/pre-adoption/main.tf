@@ -44,6 +44,7 @@ module "database" {
   maintenance_window    = var.db_maintenance_window
   slow_query_seconds    = var.db_slow_query_seconds
   log_retention_days    = var.log_retention_days
+  time_zone             = var.institution_time_zone
 }
 
 module "app" {
@@ -123,6 +124,8 @@ locals {
     # CloudFront VPC origin ENIs sit in the app subnet and the app security group admits only them on the
     # app port, so a peer from this CIDR came through CloudFront and its CloudFront-Viewer-Address is trusted.
     ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES = module.network.private_subnet_cidrs[0]
+    # The same zone as the RDS default time_zone. The app pins each session itself and refuses to start on a mismatch.
+    ASTRA_TIME_ZONE = var.institution_time_zone
   }, { for k, v in local.scan_app_environment : k => v if var.scan_uploads })
 }
 

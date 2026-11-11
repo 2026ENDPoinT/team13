@@ -160,6 +160,17 @@ variable "app_origin_read_timeout" {
   }
 }
 
+variable "institution_time_zone" {
+  description = "Institution wall-clock zone (ADR-0039): the app's ASTRA_TIME_ZONE and the RDS default time_zone. DATETIME values and offset-less API times are in this zone. Use an IANA name without daylight saving time."
+  type        = string
+  default     = "Asia/Seoul"
+
+  validation {
+    condition     = can(regex("^[A-Z][A-Za-z_]+(/[A-Z][A-Za-z_]+)+$", var.institution_time_zone))
+    error_message = "institution_time_zone must be an IANA zone name such as Asia/Seoul."
+  }
+}
+
 variable "app_environment" {
   description = "Extra non-secret app settings written to /opt/astra/.env on each deploy, e.g. ASTRA_LLM_MODEL, ASTRA_OIDC_ISSUER, ASTRA_OIDC_CLIENT_ID. Terraform-derived keys, secret keys and the scanner switch (use scan_uploads) are rejected."
   type        = map(string)
@@ -185,7 +196,7 @@ variable "app_environment" {
       "ASTRA_OIDC_CLIENT_SECRET",
       "ASTRA_LLM_API_KEY", "ASTRA_BREAK_GLASS_EXTERNAL_REF", "ASTRA_BREAK_GLASS_PASSWORD_HASH",
       "ASTRA_BREAK_GLASS_TOTP_SECRET", "ASTRA_DELIVERY_ORIGIN_ENABLED", "ASTRA_DELIVERY_ORIGIN_SIGNING_KEY",
-      "ASTRA_SCAN_CLAMD_HOST", "ASTRA_SCAN_CLAMD_PORT", "ASTRA_SCAN_REQUIRED", "COMPOSE_PROFILES",
+      "ASTRA_SCAN_CLAMD_HOST", "ASTRA_SCAN_CLAMD_PORT", "ASTRA_SCAN_REQUIRED", "COMPOSE_PROFILES", "ASTRA_TIME_ZONE",
     ])) == 0
     error_message = "app_environment must not set Terraform-derived, secret, local-only, scanner switch or compose control keys."
   }

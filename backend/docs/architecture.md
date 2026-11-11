@@ -10,6 +10,7 @@
 | 규모 | 1개 기관, 사용자 수백 명. 수만 명 규모를 전제로 설계하지 않는다 |
 | 서버 계약 | [00_server_contract.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/00_server_contract.md)의 SC-01~SC-10, [90_changes.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/90_changes.md)의 CHG-01~CHG-12 |
 | 실행 환경 | Java 25, Spring Boot 4.1, MySQL 8.4, AWS 서울 리전(`ap-northeast-2`) |
+| 시간 | 기관 시간대 하나(`astra.time.zone`, 기본 `Asia/Seoul`). DB의 일시와 API의 offset 없는 일시는 이 시간대의 벽시계이고, "DB 시계"는 이 시간대로 고정한 DB session의 `CURRENT_TIMESTAMP`다([ADR-0039](adr/0039-institution-wall-clock-time.md)) |
 
 | ADR | 결정 |
 |---|---|
@@ -39,6 +40,7 @@
 | [ADR-0029](adr/0029-step-up-and-learning-auth.md) | 민감한 명령의 재인증과 온라인 학습 인증 grant는 로그인 session에 묶은 `session_step_ups` 행이다. 학교 IdP 재인증(`prompt=login`, `auth_time`)이 근거이고, 학습 적립은 grant 만료에서 끊기고 `reauth_required`가 된다 |
 | [ADR-0028](adr/0028-filebox.md) | 개인 파일함은 사용자별 사용량 행을 잠가 차례로 바꾸고, 다시 쓰기는 같은 내용을 참조하는 새 파일로, ZIP은 worker가 저장소에서 저장소로 흘려 만든다 |
 | [ADR-0030](adr/0030-attendance-and-smart-rounds.md) | 출석부는 담당자 판정이 자동 판정보다 강하다. 스마트출석은 서버가 PIN/QR을 직접 검증해 같은 transaction에서 기록하고, 상태는 WebSocket 없이 조회로 알린다 |
+| [ADR-0039](adr/0039-institution-wall-clock-time.md) | 일시는 기관 시간대(기본 `Asia/Seoul`)의 벽시계로 두고, DB session과 JVM을 그 시간대에 고정한 뒤 시작할 때 세 값이 같은지 확인한다. `Instant`는 절대 시각이고 기관 시간대는 `GET /api/auth/methods`가 알린다 |
 
 ## 2. 부하 가정
 
@@ -271,7 +273,7 @@ flowchart TD
 - SAML HTTP-POST 응답은 IdP에서 오는 cross-site POST라 `SameSite=Lax` 쿠키가 전송되지 않는다. SAML이면 로그인 전 요청 상태를 session 대신 `RelayState` 기준 저장소에 두거나, 로그인 전용 쿠키만 `SameSite=None`으로 둔다. OIDC의 GET callback에는 이 문제가 없다.
 - actor는 session principal 하나다. 요청 본문의 학번, `ud`, role 값은 받지 않는다(SC-02, CHG-01).
 - 과목 범위는 `/api/courses/{courseId}/...`처럼 요청에 명시한다. 서버 session에 현재 과목을 두지 않는다(SC-03, CHG-02).
-- 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06).
+- 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06). `serverTime`은 DB 시계, 곧 기관 시간대로 고정한 DB session의 `CURRENT_TIMESTAMP`다. client 시계는 쓰지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
 - 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. 잠금과 재사용 판정은 계정의 `users` 행을 잠근 뒤 하므로 동시에 보낸 시도도 한도를 넘지 못한다. 로그인 전이라 사용자 단위 제한을 쓸 수 없어 브라우저 주소마다 15분에 30번으로 제한한다. break-glass 계정은 과목 권한이 없다.
 - session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
 - 과목 구성원 판정은 `catalog`의 규칙 하나(`MembershipRule`)다. 역할(`CourseMemberships.roleOf`), 수강생 명단, 함께 듣는 사람, 내 과목, 시간표, 알림, 수강 신청 처리 권한이 모두 이 규칙을 쓴다. 폐강(`CANCELLED`)한 과목에는 구성원이 없으므로 조회와 명령 모두 404다. 담당·수강 행과 학습 기록은 지우지 않는다.
@@ -281,6 +283,7 @@ flowchart TD
 - 강의실 질의응답과 열린게시판도 `communication`이 판정한다([ADR-0024](adr/0024-course-qna-and-open-board.md)). 비공개 질문은 작성자와 담당자만 보고, 다른 학생에게는 목록, 건수, 검색, 상세, 답글, 첨부 어디에도 없다. 익명 글의 작성자 이름은 작성자와 담당자만 보고, 작성자 ID는 응답에 넣지 않는다. 글은 작성자만 고치고, 질문은 답글 전까지만 고치고 지운다. 담당자는 그 과목의 글, 답글, 댓글을 지울 수 있고 감사 기록에 `*.moderate`로 남는다. 글·답글·댓글 작성과 수정, 추천에 사용자 단위 요청 제한이 있다.
 - 알림마당 자료실은 과목이 없어 session 사용자의 기관 역할로 대상(공통, 교수, 학생)을 고른다. 1:1 문의는 본인이 쓴 것만 보인다.
 - 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
+- 일시 형식: offset 없는 일시(`openAt`, `closeAt`, `serverTime` 등 `2026-11-12T10:00:00`)는 기관 시간대의 벽시계이고 그대로 주고받는다. 요청의 이런 값에 `Z`나 offset이 붙으면 400이다. 날짜(`2026-11-12`)와 수업 시각(`10:00`)도 기관 시간대 기준이다. `Z`가 붙은 값(`createdAt` 등)은 절대 시각(UTC)이다. 기관 시간대는 `GET /api/auth/methods`의 `timeZone`(IANA ID)이 알린다. 시작할 때 설정, JVM, DB session의 시간대가 다르면 서버가 뜨지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
 - 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 다른 사용자의 ID를 넣지 않는다(SC-04).
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
 - `Idempotency-Key`를 받는 명령은 권한 판정과 입력 검사 뒤 멱등 원장을 거친다. 같은 key와 같은 요청이면 처음 응답을, 다른 요청이면 409 `idempotency_conflict`를, 같은 key가 처리 중이면 3초까지 기다린 뒤 409 `idempotency_in_progress`를 돌려준다(SC-05). key는 사용자와 연산마다 따로다. 같은 key에 다른 요청이면 어떤 명령도 처음 만든 객체를 돌려주지 않는다. 자체 key를 두는 업로드(multipart, 스트림, 파일함)도 같은 규칙의 요청 지문(용도, 과목, 이름, 크기, 내용 hash, 폴더)을 저장해 비교한다([ADR-0010](adr/0010-upload-acceptance.md) 10번).
@@ -305,7 +308,7 @@ flowchart TD
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, 로컬 실행의 `devLogin`) |
+| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, 로컬 실행의 `devLogin`)과 기관 시간대(`timeZone`) |
 | `GET /api/auth/login?returnTo=` | 누구나. IdP 설정이 없으면 404 | 로그인 전용 쿠키를 주고 IdP로 302 |
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
@@ -812,3 +815,4 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | HWP·HWPX 미리보기 | 받지 않는다(`unsupported`). LibreOffice는 HWP 97만 읽고, HWP 5.0·HWPX는 H2Orestart(GPL-3.0) 확장과 LibreOffice Java 연동이 필요하다([ADR-0033](adr/0033-document-preview-and-office-conversion.md) 3번) | GPL-3.0 확장을 converter 이미지에 넣어 배포해도 되는지 학교와 정한 뒤, 표본 HWP로 변환과 격리 설정을 확인하고 형식을 더한다 |
 | LibreOffice 실행 미검증 | 빌드 container에 LibreOffice가 없어 실제 soffice 변환, profile의 macro·link 차단, `prlimit` 주소 공간 상한(3 GiB) 아래 기동, converter 이미지 빌드와 smoke test의 office 단계를 실행하지 않았다. 테스트는 가짜 엔진과 soffice 자리의 Java process로 했다 | CI `container` 작업과 스테이징에서 macro, 외부 link, OLE가 든 표본 문서로 확인한다. 실패하면 상한과 profile 값을 고친다 |
 | 미리보기 실패의 재시도 | 실패한 변환은 파일 버전마다 끝 상태다. converter 장애(연결 불가)와 worker 중단만 3번까지 다시 한다 | 실패 코드별 건수를 9절 지표에 넣는다. 다시 만들 필요가 생기면 담당자용 재변환 명령을 둔다 |
+| 한국 밖 브라우저의 일시 표시 | offset 없는 일시는 기관 시간대의 벽시계다. 프론트엔드가 `new Date(문자열)`로 읽으면 브라우저 시간대로 해석해 한국 밖에서 시각이 어긋난다([ADR-0039](adr/0039-institution-wall-clock-time.md)) | 프론트엔드가 `GET /api/auth/methods`의 `timeZone`으로 읽고 표시한다. 입력은 `datetime-local` 값을 그대로 보낸다 |
