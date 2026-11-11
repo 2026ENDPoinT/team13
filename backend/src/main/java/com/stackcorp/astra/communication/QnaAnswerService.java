@@ -9,6 +9,9 @@ import java.util.Objects;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import com.stackcorp.astra.catalog.api.NotificationKind;
+import com.stackcorp.astra.catalog.api.Notifications;
+import com.stackcorp.astra.catalog.api.Notifications.DirectNotification;
 import com.stackcorp.astra.communication.BoardAccess.Viewer;
 import com.stackcorp.astra.communication.BoardPostRepository.Locked;
 import com.stackcorp.astra.communication.BoardPostRepository.NewText;
@@ -53,8 +56,10 @@ class QnaAnswerService {
 
 	private final AuditLog audit;
 
+	private final Notifications notifications;
+
 	QnaAnswerService(BoardPostRepository posts, BoardAccess access, BoardFiles files, UserNames userNames,
-			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit) {
+			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit, Notifications notifications) {
 		this.posts = posts;
 		this.access = access;
 		this.files = files;
@@ -62,6 +67,7 @@ class QnaAnswerService {
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 		this.audit = audit;
+		this.notifications = notifications;
 	}
 
 	/** 먼저 쓴 답글부터. 다음 묶음은 nextCursor를 cursor로 보내 받는다(EP-0065). */
@@ -99,6 +105,11 @@ class QnaAnswerService {
 							new NewText(title, answer.body(), answer.anonymous(), false), group);
 					this.audit.success(actor.userId(), actor.sessionId(), "qna_answer.create", "post", answerId,
 							courseId);
+					// 질문 작성자에게 알린다. 자기 질문에 단 답글은 알리지 않는다. 질문마다 알림은 하나다(ADR-0027).
+					if (question.authorId() != actor.userId()) {
+						this.notifications.send(new DirectNotification(NotificationKind.QUESTION_ANSWERED,
+								List.of(question.authorId()), courseId, questionId, question.title()));
+					}
 					return view(viewer, this.posts.answer(questionId, answerId, actor.userId()).orElseThrow());
 				});
 	}
@@ -144,6 +155,10 @@ class QnaAnswerService {
 			throw ApiException.notFound();
 		}
 		this.posts.countAnswer(questionId, -1);
+		// 남은 답글이 없으면 "답변이 등록되었습니다" 알림도 거둔다.
+		if (this.posts.current(questionId).map((state) -> state.answerCount() == 0).orElse(true)) {
+			this.notifications.withdraw(NotificationKind.QUESTION_ANSWERED, questionId);
+		}
 		this.audit.success(actor.userId(), actor.sessionId(), own ? "qna_answer.delete" : "qna_answer.moderate", "post",
 				answerId, courseId);
 	}

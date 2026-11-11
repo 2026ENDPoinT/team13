@@ -79,6 +79,18 @@ class QnaApiTests extends BoardTestSupport {
 			.andExpect(jsonPath("$.items[0].canDelete").value(false))
 			.andExpect(jsonPath("$.nextCursor").doesNotExist());
 		this.classmate.get(qna(this.course)).andExpect(jsonPath("$.items[0].answerCount").value(1));
+		// 질문 작성자만 답변 알림을 받는다. 자기 질문에 단 답글은 알리지 않고, 답글이 늘어도 알림은 하나다.
+		long own = created(this.student.postJson(question(this.course, id) + "/answers", "{\"body\":\"추가 질문\"}"), "answerId");
+		long second = created(this.classmate.postJson(question(this.course, id) + "/answers", "{\"body\":\"저도 궁금합니다\"}"),
+				"answerId");
+		assertThat(answerNotifications(id)).isOne();
+		this.student.get("/api/notifications")
+			.andExpect(jsonPath("$.items.length()").value(1))
+			.andExpect(jsonPath("$.items[0].kind").value("QUESTION_ANSWERED"))
+			.andExpect(jsonPath("$.items[0].targetId").value(id));
+		this.classmate.delete(question(this.course, id) + "/answers/" + second).andExpect(status().isNoContent());
+		this.student.delete(question(this.course, id) + "/answers/" + own).andExpect(status().isNoContent());
+		assertThat(answerNotifications(id)).isOne();
 
 		// 답글이 달린 질문은 작성자가 고치거나 지우지 못한다. 학생은 담당자의 답글을 지우지 못한다.
 		put(this.student, question(this.course, id), "{\"title\":\"고친 질문\",\"version\":1}").andExpect(status().isConflict())
@@ -109,6 +121,7 @@ class QnaApiTests extends BoardTestSupport {
 		// 담당자가 답글을 지우면 질문은 다시 답글 전이라 작성자가 고칠 수 있다. 익명을 풀면 이름이 보인다.
 		this.professor.delete(question(this.course, id) + "/answers/" + answer).andExpect(status().isNoContent());
 		assertThat(audits("qna_answer.delete", answer)).isEqualTo(1);
+		assertThat(answerNotifications(id)).isZero();
 		put(this.student, question(this.course, id), "{\"title\":\"고친 질문\",\"version\":1,\"anonymous\":false}")
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.version").value(2))
@@ -460,6 +473,11 @@ class QnaApiTests extends BoardTestSupport {
 
 	static String file(long courseId, long fileId) {
 		return "/api/courses/" + courseId + "/files/" + fileId + "/content";
+	}
+
+	private long answerNotifications(long questionId) {
+		return count("SELECT COUNT(*) FROM notifications WHERE notification_type = 'QUESTION_ANSWERED' AND target_ref_id = :id",
+				questionId);
 	}
 
 }

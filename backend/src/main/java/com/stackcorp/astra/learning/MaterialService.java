@@ -125,6 +125,14 @@ class MaterialService {
 				   SET published_at = CASE WHEN :published THEN COALESCE(:openAt, published_at, CURRENT_TIMESTAMP) END
 				 WHERE activity_id = :activity
 				""").param("published", change.published()).param("openAt", change.openAt()).param("activity", activityId).update();
+		// 알림을 자료의 지금 상태에 맞춘다. 비공개가 되면 보낸 알림과 예약을 거둔다(ADR-0027).
+		if (change.published()) {
+			this.notifications.publish(new CourseNotification(NotificationKind.LECTURE_MATERIAL, courseId,
+					CourseRole.STUDENT, activityId, change.title(), change.openAt()));
+		}
+		else {
+			this.notifications.withdraw(NotificationKind.LECTURE_MATERIAL, activityId);
+		}
 	}
 
 	/**
@@ -143,6 +151,7 @@ class MaterialService {
 		if (current.attachmentGroupId() != null) {
 			this.attachments.release(current.attachmentGroupId());
 		}
+		this.notifications.withdraw(NotificationKind.LECTURE_MATERIAL, activityId);
 	}
 
 	// 과목의 지우지 않은 강의 자료를 잠근다. 같은 자료를 동시에 고치는 요청은 여기서 차례를 기다리고, 늦은 쪽은 version이 달라 거부된다.

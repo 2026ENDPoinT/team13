@@ -269,6 +269,26 @@ class MaterialLifecycleTests extends IntegrationTest {
 	}
 
 	@Test
+	void notificationFollowsTheMaterialThroughUnpublishRepublishAndDelete() throws Exception {
+		Material material = register(6, this.professor.uploaded(this.course, "a.pdf", unique(1)));
+		long file = material.files().getFirst();
+		assertThat(materialNotifications(material.id())).isOne();
+
+		// 비공개로 돌리면 보낸 알림을 거두고, 다시 공개하면 한 번만 다시 보낸다.
+		put(this.professor, material.id(), "\"1\"", edit("숨긴 자료", false, List.of(file), List.of())).andExpect(status().isOk());
+		assertThat(materialNotifications(material.id())).isZero();
+		put(this.professor, material.id(), "\"2\"", edit("다시 연 자료", true, List.of(file), List.of())).andExpect(status().isOk());
+		put(this.professor, material.id(), "\"3\"", edit("제목만 고친 자료", true, List.of(file), List.of())).andExpect(status().isOk());
+		assertThat(materialNotifications(material.id())).isOne();
+		this.student.get("/api/notifications").andExpect(jsonPath("$.items[0].targetId").value(material.id()));
+
+		this.professor.send(MockMvcRequestBuilders.delete(material(this.course, material.id())).header("If-Match", "\"4\""))
+			.andExpect(status().isNoContent());
+		assertThat(materialNotifications(material.id())).isZero();
+		this.student.get("/api/notifications").andExpect(jsonPath("$.items.length()").value(0));
+	}
+
+	@Test
 	void onlyTheCourseInstructorCanEditOrDeleteThroughThatCoursePath() throws Exception {
 		Material material = register(9, this.professor.uploaded(this.course, "a.pdf", unique(1)));
 		long file = material.files().getFirst();
@@ -404,6 +424,13 @@ class MaterialLifecycleTests extends IntegrationTest {
 			.param("id", jobId)
 			.query()
 			.singleRow();
+	}
+
+	private long materialNotifications(long activityId) {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM notifications
+				 WHERE user_id = :u AND notification_type = 'LECTURE_MATERIAL' AND target_ref_id = :a
+				""").param("u", this.studentId).param("a", activityId).query(Long.class).single();
 	}
 
 	private Material register(int weekNo, long... uploadIds) throws Exception {

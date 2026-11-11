@@ -14,6 +14,9 @@ import com.stackcorp.astra.catalog.api.CourseMates.CourseMate;
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 import com.stackcorp.astra.catalog.api.MemberCourses;
+import com.stackcorp.astra.catalog.api.NotificationKind;
+import com.stackcorp.astra.catalog.api.Notifications;
+import com.stackcorp.astra.catalog.api.Notifications.DirectNotification;
 import com.stackcorp.astra.communication.MessageRepository.InboxRow;
 import com.stackcorp.astra.communication.MessageRepository.MessageRow;
 import com.stackcorp.astra.communication.MessageRepository.Position;
@@ -90,9 +93,11 @@ class MessageService {
 
 	private final ReadCommitted readCommitted;
 
+	private final Notifications notifications;
+
 	MessageService(MessageRepository messages, DraftRepository drafts, CourseMemberships memberships, CourseMates mates,
 			MemberCourses memberCourses, UserNames userNames, UserSearch userSearch, RateLimiter rateLimiter,
-			Idempotency idempotency, AuditLog audit, ReadCommitted readCommitted) {
+			Idempotency idempotency, AuditLog audit, ReadCommitted readCommitted, Notifications notifications) {
 		this.messages = messages;
 		this.drafts = drafts;
 		this.memberships = memberships;
@@ -104,6 +109,7 @@ class MessageService {
 		this.idempotency = idempotency;
 		this.audit = audit;
 		this.readCommitted = readCommitted;
+		this.notifications = notifications;
 	}
 
 	// ---- 받는사람
@@ -191,6 +197,9 @@ class MessageService {
 		long messageId = this.messages.insertMessage(senderId, courseId, out.title(), out.body(), recipients.size(),
 				originId, originKind, now);
 		this.messages.insertRecipients(messageId, recipients, courseId, now);
+		// 쪽지는 과목 관계가 끊겨도 받은함에 남으므로 알림에 과목을 묶지 않는다(ADR-0027).
+		this.notifications.send(new DirectNotification(NotificationKind.MESSAGE_RECEIVED, recipients, null, messageId,
+				out.title()));
 		Map<Long, String> names = this.userNames.namesOf(recipients);
 		return new SentReceipt(messageId, now, recipients.stream().map((id) -> new Person(id, names.get(id))).toList());
 	}
@@ -324,6 +333,10 @@ class MessageService {
 		return this.readCommitted.execute(() -> {
 			this.messages.lockSent(actor.userId(), messageId).orElseThrow(ApiException::notFound);
 			int recalled = this.messages.recall(messageId, this.messages.now());
+			if (recalled > 0) {
+				// 거둔 쪽지는 받은함에서 사라지므로 알림도 거둔다. 이미 읽은 수신자의 알림도 함께 지워진다.
+				this.notifications.withdraw(NotificationKind.MESSAGE_RECEIVED, messageId);
+			}
 			List<RecipientRow> rows = this.messages.recipients(messageId);
 			Map<Long, String> names = this.userNames.namesOf(rows.stream().map(RecipientRow::recipientId).toList());
 			List<RecallOutcome> outcomes = rows.stream()

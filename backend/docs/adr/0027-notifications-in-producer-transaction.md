@@ -28,9 +28,10 @@
 - 알림은 원래 변경과 함께 commit되거나 함께 사라진다. 이벤트 listener가 commit 뒤 따로 만드는 방식은 그 사이 실패를 다시 보낼 outbox가 필요하고, listener가 발행 측 타입을 참조하면 `catalog`가 그 모듈에 의존하게 된다(4.1절).
 - 예약을 알림 행의 "보일 시각" 열로 처리하고 읽을 때 거르는 방식은 worker가 필요 없지만, 받는 사람을 쓴 때 정해 나중에 수강한 학생이 받지 못하고, 예약을 바꿀 때마다 모든 받는 사람 행을 고쳐야 하며, 보이기 시작하는 순간을 알 수 없어 push를 붙일 수 없다. 그래서 쓰지 않았다.
 - worker가 각 모듈의 테이블(`posts.published_at`, `learning_activities.open_at`)을 cursor로 훑는 방식은 `catalog`가 다른 모듈의 테이블을 읽어야 하고, 모듈마다 sweeper와 cursor 상태를 따로 둬야 한다. 사건 행은 만든 쪽 transaction에 함께 쓰여 하나의 sweeper로 끝난다.
-- 읽을 때 대상 모듈에 볼 수 있는지 묻는 port 방식은 대상 공개 상태가 바뀌는 길을 놓치지 않지만, 안 읽은 수를 셀 때 안 읽은 알림 전부를 세 모듈에 물어야 해서 배지 polling이 비싸지고 목록과 수의 조건이 갈린다. 대신 만든 쪽이 숨기는 모든 길에서 `withdraw`를 불러야 한다. 부르지 않은 길(지금은 학습활동 소프트 삭제, 자료 수정·비공개가 없다)은 알림이 남는다. architecture.md 12절에 남겼다.
+- 읽을 때 대상 모듈에 볼 수 있는지 묻는 port 방식은 대상 공개 상태가 바뀌는 길을 놓치지 않지만, 안 읽은 수를 셀 때 안 읽은 알림 전부를 세 모듈에 물어야 해서 배지 polling이 비싸지고 목록과 수의 조건이 갈린다. 대신 만든 쪽이 숨기는 모든 길에서 `withdraw`를 불러야 한다. 부르지 않은 길은 알림이 남는다. 강의 자료는 수정(비공개)과 삭제에서 거둔다. architecture.md 12절에 남겼다.
 - 원본의 "취소된 알림"(`notification_canceled`, `is_canceled`)처럼 거둔 알림을 흐리게 남기는 방식은 제목이 그대로 보여 쓰지 않았다. `is_canceled`는 쓰지 않는다.
 - 알림 문장은 만든 때의 제목이다. 이미 보낸 뒤 제목을 고치면 `publish`가 문장을 바꾼다.
 - `notifications.activity_id`와 `notification_events.activity_id`에는 `learning_activities` FK가 있다. 활동은 소프트 삭제만 하므로 막히지 않지만, 활동 행을 물리 삭제하려면 알림을 먼저 지워야 한다.
-- 질의응답 답변(`QUESTION_ANSWERED`)과 쪽지(`MESSAGE_RECEIVED`)는 유형과 `send`만 있고 부르는 명령은 아직 없다. 그 기능을 만들 때 같은 transaction에서 부른다.
+- 질의응답 답변(`QUESTION_ANSWERED`)은 답글을 만드는 transaction에서 질문 작성자에게 보낸다. 자기 질문에 단 답글은 보내지 않는다. 질문마다 알림은 하나이고, 남은 답글이 없어지거나 질문을 지우면 거둔다.
+- 쪽지(`MESSAGE_RECEIVED`)는 보내는 transaction에서 받는사람에게 보낸다. 쪽지는 과목 관계가 끊겨도 받은함에 남으므로 알림에 과목을 묶지 않는다. 회수하면 그 쪽지의 알림을 모두 거둔다. 이미 읽은 수신자의 알림도 함께 지워진다.
 - 알림 push는 없다. WebSocket fan-out(8절)을 붙이면 알림 행을 만든 transaction이 commit된 뒤 보낸다.

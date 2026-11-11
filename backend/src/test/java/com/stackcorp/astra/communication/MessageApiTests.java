@@ -409,6 +409,12 @@ class MessageApiTests extends IntegrationTest {
 		long id = sentId(send(this.professor, compose("잘못 보낸 쪽지", "본문", this.course, this.stu1, this.stu2),
 				"recall-1"));
 		this.student1.post(inbox(id) + "/read").andExpect(status().isOk());
+		// 받는사람마다 알림이 하나 생기고 보낸 사람에게는 생기지 않는다.
+		assertThat(messageNotifications(id)).isEqualTo(2);
+		this.student2.get("/api/notifications")
+			.andExpect(jsonPath("$.items[0].kind").value("MESSAGE_RECEIVED"))
+			.andExpect(jsonPath("$.items[0].targetId").value(id));
+		this.professor.get("/api/notifications").andExpect(jsonPath("$.items.length()").value(0));
 
 		this.professor.post(sentPath(id) + "/recall")
 			.andExpect(status().isOk())
@@ -423,6 +429,7 @@ class MessageApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.total").value(0))
 			.andExpect(jsonPath("$.unreadCount").value(0));
 		this.student2.get(inbox(id)).andExpect(status().isNotFound());
+		assertThat(messageNotifications(id)).isZero();
 		this.student2.post(inbox(id) + "/read").andExpect(status().isNotFound());
 		send(this.student2, "{\"title\":\"답\",\"body\":\"답\"}", inbox(id) + "/reply", "recall-2")
 			.andExpect(status().isNotFound());
@@ -629,6 +636,12 @@ class MessageApiTests extends IntegrationTest {
 			.query(String.class)
 			.optional()
 			.orElse(null);
+	}
+
+	private long messageNotifications(long messageId) {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM notifications WHERE notification_type = 'MESSAGE_RECEIVED' AND target_ref_id = :m
+				""").param("m", messageId).query(Long.class).single();
 	}
 
 	private long messagesFrom(long senderId) {

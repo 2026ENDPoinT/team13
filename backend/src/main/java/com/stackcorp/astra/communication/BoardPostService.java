@@ -8,6 +8,8 @@ import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import com.stackcorp.astra.catalog.api.NotificationKind;
+import com.stackcorp.astra.catalog.api.Notifications;
 import com.stackcorp.astra.communication.BoardAccess.Viewer;
 import com.stackcorp.astra.communication.BoardPostRepository.Filter;
 import com.stackcorp.astra.communication.BoardPostRepository.Locked;
@@ -69,9 +71,11 @@ class BoardPostService {
 
 	private final TransactionTemplate transaction;
 
+	private final Notifications notifications;
+
 	BoardPostService(BoardPostRepository posts, CourseBoards boards, PostReactions reactions, BoardAccess access,
 			BoardFiles files, UserNames userNames, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit,
-			TransactionTemplate transaction) {
+			TransactionTemplate transaction, Notifications notifications) {
 		this.posts = posts;
 		this.boards = boards;
 		this.reactions = reactions;
@@ -82,6 +86,7 @@ class BoardPostService {
 		this.idempotency = idempotency;
 		this.audit = audit;
 		this.transaction = transaction;
+		this.notifications = notifications;
 	}
 
 	/**
@@ -208,6 +213,9 @@ class BoardPostService {
 				throw ApiException.notFound();
 			}
 			throw alreadyAnswered();
+		}
+		if (kind.answers) {
+			this.notifications.withdraw(NotificationKind.QUESTION_ANSWERED, postId);
 		}
 		this.audit.success(actor.userId(), actor.sessionId(), audited(kind, own ? "delete" : "moderate"), "post", postId,
 				courseId);
