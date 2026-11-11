@@ -4,6 +4,7 @@ import java.time.Instant;
 
 import com.stackcorp.astra.files.upload.UploadRecords.Upload;
 import com.stackcorp.astra.identity.api.Actor;
+import com.stackcorp.astra.shared.audit.AuditLog;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -28,8 +29,11 @@ class UploadController {
 
 	private final UploadService uploads;
 
-	UploadController(UploadService uploads) {
+	private final AuditLog audit;
+
+	UploadController(UploadService uploads, AuditLog audit) {
 		this.uploads = uploads;
+		this.audit = audit;
 	}
 
 	@PostMapping(path = "/api/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -37,6 +41,7 @@ class UploadController {
 			@RequestParam long courseId, @RequestParam String purpose,
 			@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey) {
 		Upload upload = this.uploads.receive(actor.userId(), courseId, purpose, file, idempotencyKey);
+		this.audit.success(actor.userId(), actor.sessionId(), "upload.create", "upload", upload.uploadId(), courseId);
 		return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(UploadView.of(upload));
 	}
 
@@ -50,6 +55,7 @@ class UploadController {
 	@DeleteMapping("/api/uploads/{uploadId}")
 	ResponseEntity<Void> delete(@AuthenticationPrincipal Actor actor, @PathVariable long uploadId) {
 		this.uploads.delete(actor.userId(), uploadId);
+		this.audit.success(actor.userId(), actor.sessionId(), "upload.delete", "upload", uploadId, null);
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 
