@@ -78,7 +78,7 @@ class AssignmentController {
 		}
 		AssignmentInput input = validated(body);
 		this.rateLimiter.check("assignment-create", actor.userId(), 60, Duration.ofMinutes(10));
-		long assignmentId = this.assignments.create(actor.userId(), courseId, input);
+		long assignmentId = this.assignments.create(actor, courseId, input);
 		Assignment created = this.access.find(courseId, assignmentId).orElseThrow();
 		return ResponseEntity.status(HttpStatus.CREATED)
 			.cacheControl(CacheControl.noStore())
@@ -94,7 +94,7 @@ class AssignmentController {
 		}
 		AssignmentInput input = validated(body);
 		this.rateLimiter.check("assignment-update", actor.userId(), 120, Duration.ofMinutes(10));
-		this.assignments.update(courseId, current, body.revision(), input);
+		this.assignments.update(actor, courseId, current, body.revision(), input);
 		Assignment updated = this.access.find(courseId, assignmentId).orElseThrow();
 		return ok(instructorView(updated, this.access.now()));
 	}

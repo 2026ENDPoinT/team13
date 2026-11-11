@@ -223,18 +223,20 @@ class BoardPostService {
 
 	/**
 	 * 추천과 추천 취소. 목표 상태를 정하는 명령이라 몇 번 보내도 결과가 같다. 응답의 추천 수는 서버 값이다(EP-0061, EP-0062, COMM-10).
+	 * 다른 사람에게 보이는 추천 수가 바뀐 요청만 감사 기록을 남긴다. 이미 그 상태였던 재전송은 남기지 않는다.
 	 */
 	@Transactional
-	LikeState like(long userId, long courseId, BoardKind kind, long postId, boolean liked) {
+	LikeState like(Actor actor, long courseId, BoardKind kind, long postId, boolean liked) {
+		long userId = actor.userId();
 		Viewer viewer = this.access.viewer(userId, courseId);
 		this.rateLimiter.check("board-like", userId, 120, Duration.ofMinutes(10));
 		Locked post = this.posts.lockVisible(viewer, kind, postId).orElseThrow(ApiException::notFound);
 		int count = post.likeCount();
-		if (liked && this.reactions.like(postId, userId)) {
-			count++;
-		}
-		else if (!liked && this.reactions.unlike(postId, userId)) {
-			count = Math.max(0, count - 1);
+		boolean changed = liked ? this.reactions.like(postId, userId) : this.reactions.unlike(postId, userId);
+		if (changed) {
+			count = liked ? count + 1 : Math.max(0, count - 1);
+			this.audit.success(userId, actor.sessionId(), audited(kind, liked ? "like" : "unlike"), "post", postId,
+					courseId);
 		}
 		return new LikeState(postId, liked, count);
 	}

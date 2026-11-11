@@ -19,7 +19,7 @@
 5. **점수 일괄 저장은 전부 아니면 전무다.** 행마다 학생(그 과목 수강생), 점수(0~배점, 소수 둘째 자리, null이면 비움), 의견(일반 텍스트 1000자, 점수 없이 의견만은 거부), 읽은 수정 번호를 검사한다. 한 행이라도 틀리면 아무것도 쓰지 않고 400 `invalid_rows`, 수정 번호가 다른 행이 있으면 409 `version_conflict`이며, problem JSON의 `rows`에 틀린 행의 순번과 이유 코드만 담는다. 한 번에 200행까지다.
    - 기각: 행 단위 부분 저장 — 성적표 일부만 반영된 상태를 학생이 볼 수 있고, 재시도할 때 어느 행이 들어갔는지 client가 다시 맞춰야 한다. 순번과 코드를 돌려주면 client는 틀린 행만 고쳐 같은 요청을 다시 보낼 수 있다.
 6. **동시 수정.** `grade_settings`, `grade_items`, `grade_scores`에 `revision_no`를 둔다(V22). 수정 요청은 읽은 번호를 보내고 다르면 409다. 점수 행은 행마다 번호를 비교하고, 아직 없는 행은 0이다. 항목을 바꾸거나 그 항목의 점수를 쓰는 transaction은 먼저 항목 행을 `FOR UPDATE`로 잠근다. 과제 채점과 과제 수정도 같은 행을 먼저 잠그므로, 배점을 낮추는 수정과 더 높은 점수 쓰기가 겹쳐도 점수가 배점을 넘지 않는다. 점수 쓰기는 학생 ID 순서로 하고 READ COMMITTED로 실행해 이웃 항목에 걸치는 gap 잠금을 피한다. deadlock과 잠금 시간 초과는 처음부터 세 번까지 다시 실행하고, 그래도 안 되면 409 `write_busy`로 아무것도 저장하지 않았음을 알린다.
-7. **감사.** 점수 쓰기는 성적부든 과제 채점이든 행마다 `grade_score.write`(대상 `grade_score` ID)를 같은 transaction에 남긴다. 항목 생성·수정·공개·거둠·삭제와 설정 변경도 남긴다. 점수 값과 의견은 남기지 않는다.
+7. **감사.** 점수 쓰기는 성적부든 과제 채점이든 행마다 `grade_score.write`(대상 `grade_score` ID)를 같은 transaction에 남긴다. 항목 생성·수정·공개·거둠·삭제와 설정 변경도 남긴다. 과제 등록과 수정으로 점수 공개가 바뀌면 과제 감사 기록(`assignment.create`, `assignment.update`)과 함께 성적부와 같은 이름(`grade_item.release`, `grade_item.withhold`, 대상 `grade_item` ID)을 남긴다. 점수 값과 의견은 남기지 않는다.
 8. **삭제.** 점수나 의견이 남은 학생이 있는 항목은 지우지 않는다(409 `item_has_scores`). 성적 원장은 물리 삭제하지 않는다는 SC-05 표의 원칙을 따른다. 점수를 모두 비운 뒤에만 지운다.
 9. **학습활동 읽기.** 성적부는 learning의 테이블을 읽지 않는다. 과제와 퀴즈 항목이 살아 있는지와 학생이 볼 수 있는지는 `AssignmentAccess`(`learning.api.ReportActivities`)와 `QuizAccess`(`learning.api.QuizActivities`)로만 정하고, 거기에 없는 활동(지운 활동 포함)의 항목은 없는 것으로 본다. 여러 과목을 다루는 공개 목록은 후보 항목의 활동만 ID로 한 번에 읽는다(`findAll`).
 

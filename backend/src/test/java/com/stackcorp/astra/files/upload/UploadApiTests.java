@@ -152,25 +152,50 @@ class UploadApiTests extends IntegrationTest {
 	}
 
 	@Test
-	void replaysTheFirstUploadForTheSameIdempotencyKey() throws Exception {
+	void replaysAnIdempotentUploadOnlyForTheSameRequest() throws Exception {
 		byte[] pdf = TestPdfs.pdf(1);
 		long first = ApiClient.json(this.professor.upload(this.course, "lecture_material", "week9.pdf", pdf, "key-1"))
 			.get("uploadId")
 			.asLong();
-		this.professor.upload(this.course, "lecture_material", "other-name.pdf", TestPdfs.pdf(2), "key-1")
+		long owner = this.jdbc.sql("SELECT owner_user_id FROM upload_sessions WHERE upload_id = :id")
+			.param("id", first)
+			.query(Long.class)
+			.single();
+		this.professor.upload(this.course, "lecture_material", "week9.pdf", pdf, "key-1")
 			.andExpect(status().isCreated())
 			.andExpect(jsonPath("$.uploadId").value(first))
 			.andExpect(jsonPath("$.name").value("week9.pdf"));
+		// 같은 key에 다른 파일이나 다른 이름이면 처음 업로드를 돌려주지 않는다. 아무것도 저장하지 않는다(보안 검토 L1).
+		this.professor.upload(this.course, "lecture_material", "week9.pdf", TestPdfs.pdf(2), "key-1")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		this.professor.upload(this.course, "lecture_material", "other-name.pdf", pdf, "key-1")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
 		long otherCourse = this.data.course();
-		this.jdbc.sql("""
-				INSERT INTO course_instructors (course_id, user_id, instructor_role)
-				SELECT :course, owner_user_id, 'PROFESSOR' FROM upload_sessions WHERE upload_id = :id
-				""").param("course", otherCourse).param("id", first).update();
+		this.data.instructor(otherCourse, owner);
 		this.professor.upload(otherCourse, "lecture_material", "week9.pdf", pdf, "key-1")
 			.andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM upload_sessions WHERE owner_user_id = :u")
+			.param("u", owner)
+			.query(Long.class)
+			.single()).isEqualTo(1);
 		this.professor.upload(this.course, "lecture_material", "week9.pdf", pdf, "bad key!")
 			.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void anUploadRecordedBeforeFingerprintsIsNeverReplayedForAnUnknownRequest() throws Exception {
+		byte[] pdf = TestPdfs.pdf(1);
+		long first = ApiClient.json(this.professor.upload(this.course, "lecture_material", "week9.pdf", pdf, "legacy-1"))
+			.get("uploadId")
+			.asLong();
+		// V34 이전 업로드에는 지문이 없다. 같은 요청인지 알 수 없으므로 같은 파일이어도 409다.
+		this.jdbc.sql("UPDATE upload_sessions SET request_fingerprint = NULL WHERE upload_id = :id").param("id", first).update();
+		this.professor.upload(this.course, "lecture_material", "week9.pdf", pdf, "legacy-1")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
 	}
 
 	@Test

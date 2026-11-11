@@ -87,8 +87,9 @@ class SubmissionService {
 		return new Draft(submission.draftBody(), submission.draftSavedAt());
 	}
 
-	/** 최종 제출. 응답은 서버 receipt다. */
-	Receipt submit(long userId, long courseId, long assignmentId, String key, NewSubmission submission) {
+	/** 최종 제출. 응답은 서버 receipt다. 새 버전을 만든 제출만 감사 기록을 남긴다. 같은 key의 재응답은 남기지 않는다. */
+	Receipt submit(Actor actor, long courseId, long assignmentId, String key, NewSubmission submission) {
+		long userId = actor.userId();
 		Assignment assignment = this.access.submittable(userId, courseId, assignmentId, this.access.now());
 		if (!assignment.settings().allowText() && submission.body() != null) {
 			throw ApiException.invalid("이 과제는 글 입력 제출을 받지 않습니다.");
@@ -101,7 +102,7 @@ class SubmissionService {
 		this.records.ensure(assignmentId, userId);
 		try {
 			return this.transaction
-				.execute((tx) -> submitLocked(userId, courseId, assignment, key, fingerprint, submission));
+				.execute((tx) -> submitLocked(actor, courseId, assignment, key, fingerprint, submission));
 		}
 		catch (DuplicateKeyException ex) {
 			// 같은 key가 다른 과제의 제출에서 동시에 쓰였다. 먼저 commit한 쪽을 기준으로 답한다.
@@ -109,8 +110,9 @@ class SubmissionService {
 		}
 	}
 
-	private Receipt submitLocked(long userId, long courseId, Assignment assignment, String key, String fingerprint,
+	private Receipt submitLocked(Actor actor, long courseId, Assignment assignment, String key, String fingerprint,
 			NewSubmission submission) {
+		long userId = actor.userId();
 		Submission locked = this.records.lock(assignment.assignmentId(), userId);
 		// 잠금을 얻은 뒤의 첫 일반 읽기라 먼저 끝난 같은 key 요청의 버전이 보인다.
 		Optional<Receipt> replay = replay(userId, key, fingerprint);
@@ -143,6 +145,8 @@ class SubmissionService {
 		this.records.insertVersion(locked.submissionId(), versionNo, submission.body(), group, now, userId, late, key,
 				fingerprint);
 		this.records.advance(locked.submissionId(), versionNo, now, late);
+		this.audit.success(userId, actor.sessionId(), "assignment.submit", "assignment_submission",
+				locked.submissionId(), courseId);
 		return receipt(this.records.version(locked.submissionId(), versionNo).orElseThrow());
 	}
 

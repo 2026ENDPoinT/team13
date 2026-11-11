@@ -51,13 +51,13 @@ public class AuditLog {
 	}
 
 	/**
-	 * 익명 설문 참여처럼 요청 처리 기록과 이어지면 안 되는 성공을 requestId 없이 남긴다(SC-09의 SC-05-A 예외). 행위자와 대상,
-	 * 결과만 남고, 같은 요청의 로그나 응답 저장부와 requestId로 맞출 수 없다. 부르는 쪽은 응답 세트 ID나 답변에서 나온 값을 대상으로
-	 * 넘기지 않는다.
+	 * 익명 설문 참여처럼 요청 처리 기록이나 응답 저장부와 이어지면 안 되는 성공을 남긴다(SC-09의 SC-05-A 예외, ADR-0022). requestId가
+	 * 없고 발생 일시는 DB 시계를 일 단위로 자른 값이다. 행위자와 대상, 결과만 남으므로 같은 요청의 로그와 requestId로, 응답 행과
+	 * 시각으로 맞출 수 없다. 부르는 쪽은 응답 세트 ID나 답변에서 나온 값을 대상으로 넘기지 않는다.
 	 */
 	public void successWithoutRequestId(long actorUserId, long sessionId, String operation, String objectType,
 			long objectId, Long courseId) {
-		record(actorUserId, sessionId, operation, objectType, objectId, courseId, OK, null);
+		record(actorUserId, sessionId, operation, objectType, objectId, courseId, OK, null, true);
 	}
 
 	/**
@@ -68,21 +68,22 @@ public class AuditLog {
 	 */
 	public void record(Long actorUserId, Long sessionId, String operation, String objectType, Long objectId,
 			Long courseId, String resultCode) {
-		record(actorUserId, sessionId, operation, objectType, objectId, courseId, resultCode, RequestIds.current());
+		record(actorUserId, sessionId, operation, objectType, objectId, courseId, resultCode, RequestIds.current(),
+				false);
 	}
 
 	private void record(Long actorUserId, Long sessionId, String operation, String objectType, Long objectId,
-			Long courseId, String resultCode, String requestId) {
+			Long courseId, String resultCode, String requestId, boolean dayPrecision) {
 		if (!OPERATION.matcher(operation).matches() || (objectType != null && !IDENTIFIER.matcher(objectType).matches())
 				|| !IDENTIFIER.matcher(resultCode).matches()) {
 			throw new IllegalArgumentException("감사 기록의 이름과 코드는 소문자 식별자여야 합니다.");
 		}
 		if (TransactionSynchronizationManager.isActualTransactionActive()) {
-			insert(actorUserId, sessionId, operation, objectType, objectId, courseId, resultCode, requestId);
+			insert(actorUserId, sessionId, operation, objectType, objectId, courseId, resultCode, requestId, dayPrecision);
 			return;
 		}
 		try {
-			insert(actorUserId, sessionId, operation, objectType, objectId, courseId, resultCode, requestId);
+			insert(actorUserId, sessionId, operation, objectType, objectId, courseId, resultCode, requestId, dayPrecision);
 		}
 		catch (DataAccessException ex) {
 			log.warn("audit record failed operation={} result={} error={}", operation, resultCode,
@@ -96,11 +97,12 @@ public class AuditLog {
 	}
 
 	private void insert(Long actorUserId, Long sessionId, String operation, String objectType, Long objectId,
-			Long courseId, String resultCode, String requestId) {
+			Long courseId, String resultCode, String requestId, boolean dayPrecision) {
 		this.jdbc.sql("""
 				INSERT INTO audit_events (actor_user_id, session_id, operation, object_type, object_id, course_id,
-				                          result_code, request_id)
-				VALUES (:actor, :session, :operation, :objectType, :objectId, :course, :result, :requestId)
+				                          result_code, request_id, occurred_at)
+				VALUES (:actor, :session, :operation, :objectType, :objectId, :course, :result, :requestId,
+				        CASE WHEN :day THEN CAST(CURRENT_DATE AS DATETIME(3)) ELSE CURRENT_TIMESTAMP(3) END)
 				""")
 			.param("actor", actorUserId)
 			.param("session", sessionId)
@@ -110,6 +112,7 @@ public class AuditLog {
 			.param("course", courseId)
 			.param("result", resultCode)
 			.param("requestId", requestId)
+			.param("day", dayPrecision)
 			.update();
 	}
 

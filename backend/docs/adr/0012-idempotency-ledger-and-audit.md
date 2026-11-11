@@ -17,6 +17,12 @@ SC-09는 일반 명령마다 requestId, actor, operation, object scope, 결과 �
    - transaction 밖이면 바로 commit하고, 실패해도 요청은 실패시키지 않고 경고 로그만 남긴다. 내려받기, HLS key처럼 쓰기가 없는 연산이 감사 저장소 장애로 멈추지 않게 하기 위해서다.
    - 지금 남기는 연산: break-glass 로그인 성공과 실패, 로그아웃, 업로드와 업로드 삭제, 원본 내려받기, 강의 자료 등록, 요약 작업 요청·취소·재시도·게시, 영상 재생 허가, HLS key. 거부한 요청(404)은 남기지 않는다. 존재하지 않는 경로를 두드리는 요청이 쓰기 부하가 되지 않게 하기 위해서다.
    - 로그인 실패는 계정을 특정하지 않고 결과 코드만 남긴다. 계정별 실패 이유는 지금처럼 `login_events`에 있다.
+   - 상태를 바꾸는 명령은 모두 남긴다(보안 검토 L2, 2026-11-12). 다음만 남기지 않는다. 행위가 이미 사용자와 시각을 가진 원장 행으로 남고, 다른 사람의 화면이나 성적·출석 판정을 바꾸지 않거나 원장이 그 판정의 근거이기 때문이다.
+     - 읽음과 확인 표시(공지, 게시글, 자료실 글). `(글, 사용자)` 유일 행이 첫 시각과 함께 남고 몇 번 보내도 결과가 같다. 알림 읽음·삭제는 알림 화면 계약에 따라 남긴다.
+     - 임시저장(과제 본문, 쪽지쓰기). 본인만 보는 미완성 본문이고 2초 간격 자동 저장이다. 제출과 발송은 남긴다. 퀴즈 답 저장은 마감 때 그대로 채점되므로 남긴다(ADR-0021).
+     - 학습 session 시작, 하트비트, 종료. `learning_sessions`와 `learning_heartbeats`가 사용자, 서버 시각, 적립 구간을 하트비트마다 남기고 출석 판정은 그 원장으로만 한다(ADR-0014). 영상 재생 허가와 HLS key는 남긴다.
+     - 문서 미리보기 session의 변환 대기 응답. 쪽 이미지 cookie를 주는 `ready` 응답만 `file.preview`로 남긴다. 대기 응답은 내용을 주지 않고 파생물 변환 작업만 만든다.
+   - 추천과 추천 취소는 추천 수가 실제로 바뀐 요청만 남긴다. 이미 그 상태였던 재전송은 아무것도 바꾸지 않는다.
 3. **멱등 원장**: `shared.idempotency.Idempotency.execute`가 `idempotency_ledger`를 쓴다. 컨트롤러는 권한 판정과 입력 검사를 마친 뒤 `Idempotency-Key` header, 지문을 만들 값, 명령을 넘긴다.
    - 지문은 검사한 본문, 경로의 대상 ID, 전제 조건을 속성 이름 순서로 정렬한 JSON의 SHA-256이다. 원문 byte가 아니라 검사한 값으로 만들어서 공백이나 필드 순서만 다른 재전송은 같은 요청이다.
    - 처음 보는 key는 한 transaction에서 `reserved`로 넣고, 명령을 실행하고, 응답 본문을 receipt로 저장하며 `completed`로 바꾼다. 명령이 실패하면 예약도 rollback된다.
@@ -25,7 +31,9 @@ SC-09는 일반 명령마다 requestId, actor, operation, object scope, 결과 �
    - `reserved`는 commit되지 않으므로 다른 요청에는 보이지 않는다. 예약을 먼저 commit해야 하는 비동기 명령이 생기면 그 명령에서 상태 전이를 더한다.
    - 보존기한은 24시간이다. worker가 15분마다 지난 항목을 `FOR UPDATE SKIP LOCKED`와 READ COMMITTED로 지운다. worker가 둘이어도 같은 행을 두 번 다루지 않는다. 지우기 전에 지난 key가 다시 오면 그 행을 지우고 새 명령으로 실행한다.
    - header는 선택이다. 없으면 원장 없이 한 transaction으로 실행한다. 지금의 frontend가 header를 보내지 않기 때문이다. key를 필수로 할지는 수강신청, 제출 같은 명령을 만들 때 그 명령에서 정한다.
-   - 첫 사용처는 `POST /api/courses/{courseId}/materials`와 `POST /api/courses/{courseId}/files/{fileId}/summary-jobs`다. 업로드는 본문을 transaction 밖에서 S3에 먼저 쓰므로 자체 key를 유지한다. key 형식은 업로드와 같다(`[A-Za-z0-9._-]` 1~100자).
+   - 첫 사용처는 `POST /api/courses/{courseId}/materials`와 `POST /api/courses/{courseId}/files/{fileId}/summary-jobs`다. key 형식은 업로드와 같다(`[A-Za-z0-9._-]` 1~100자).
+   - 강의실 공지 작성(`notice.create`)도 이 원장을 쓴다(보안 검토 L1). 이전에는 `posts.client_request_id`로 처음 만든 공지를 돌려주어, 같은 key에 다른 본문을 보내면 내용을 잃고 처음 공지를 받았다.
+   - 업로드는 본문을 transaction 밖에서 S3에 먼저 쓰므로 이 원장의 한 transaction에 넣을 수 없어 자체 key(`upload_sessions.client_upload_key`)를 유지한다. 대신 같은 규칙의 요청 지문을 `upload_sessions.request_fingerprint`(V34)에 함께 저장하고, 같은 key의 업로드가 있으면 지문이 같을 때만 그 업로드를 돌려주고 다르면 409 `idempotency_conflict`다. 지문은 용도, 과목, 정리한 파일 이름, 크기, 내용 SHA-256, 파일함 폴더다. multipart 업로드와 파일함 올리기는 hash를 계산한 뒤 객체를 저장하기 전에 판정한다. 스트림 업로드는 본문을 저장하지 않고 읽으면서 hash만 계산해 판정한다. 지문이 없는 V34 이전 업로드에 같은 key가 오면 같은 요청인지 알 수 없으므로 409다.
 4. **목록 query 규칙**(page size 상한, cursor, 정렬 key allowlist, SC-09)은 지금 만들지 않는다. 지금 목록은 요약 작업 20개(고정 상한, ID 내림차순)와 과목 안의 자료처럼 짧고 정렬 매개변수가 없다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 만든다.
 
 ## 결과와 트레이드오프

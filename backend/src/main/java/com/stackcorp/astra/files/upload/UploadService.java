@@ -14,10 +14,12 @@ import com.stackcorp.astra.files.scan.ScanMode;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
 import com.stackcorp.astra.files.upload.UploadRecords.Blob;
+import com.stackcorp.astra.files.upload.UploadRecords.Keyed;
 import com.stackcorp.astra.files.upload.UploadRecords.Policy;
 import com.stackcorp.astra.files.upload.UploadRecords.Upload;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
+import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,15 +85,9 @@ class UploadService {
 		if (clientKey != null && !CLIENT_KEY.matcher(clientKey).matches()) {
 			throw ApiException.invalid("Idempotency-Key 형식이 올바르지 않습니다.");
 		}
-		if (clientKey != null) {
-			Optional<Upload> replay = this.records.findByKey(userId, clientKey);
-			if (replay.isPresent()) {
-				return sameTarget(replay.get(), courseId);
-			}
-		}
 		Policy policy = this.records.policy(purpose.code())
 			.orElseThrow(() -> new IllegalStateException("upload policy가 없습니다: " + purpose.code()));
-		return sameTarget(store(userId, courseId, purpose.code(), policy, file, clientKey, Placement.NONE), courseId);
+		return store(userId, courseId, purpose.code(), policy, file, clientKey, null, Placement.NONE);
 	}
 
 	/** 그 과목에서 이 용도로 올릴 수 있는 역할인지. */
@@ -102,12 +98,16 @@ class UploadService {
 	/**
 	 * 이름·확장자·크기·내용 형식을 검사한 뒤 저장하고 기록한다. 권한과 요청 제한은 부르는 쪽이 먼저 판정한다.
 	 * placement는 업로드를 기록하는 transaction 안에서 기록 앞뒤로 부른다. 예외를 던지면 업로드 기록 전체가 되돌아간다.
+	 * <p>
+	 * 멱등 key가 있으면 내용 hash를 계산한 뒤, 저장하기 전에 같은 key의 업로드를 찾는다. 요청 지문(용도, 과목, 이름, 크기, 내용
+	 * hash, 폴더)이 같으면 그 업로드를 돌려주고, 다르면 409 {@code idempotency_conflict}다. 어느 쪽도 객체를 저장하지 않는다.
 	 *
 	 * @param courseId 과목 밖 업로드(파일함)면 null
-	 * @return 기록한 업로드. 같은 멱등 key의 요청이 먼저 끝났으면 그 업로드
+	 * @param folderId 파일함 업로드의 대상 폴더(루트면 null). 과목 업로드면 null
+	 * @return 기록한 업로드. 같은 멱등 key의 같은 요청이 먼저 끝났으면 그 업로드
 	 */
 	Upload store(long userId, Long courseId, String purposeCode, Policy policy, MultipartFile file, String clientKey,
-			Placement placement) {
+			Long folderId, Placement placement) {
 		String name = FileNames.sanitize(file.getOriginalFilename())
 			.orElseThrow(() -> rejected("invalid_name", "파일 이름이 올바르지 않습니다."));
 		String extension = FileNames.extension(name)
@@ -125,6 +125,14 @@ class UploadService {
 		String mime = ContentInspector.detect(extension, inspected.head())
 			.orElseThrow(() -> rejected("content_mismatch", "파일 내용이 확장자와 맞지 않습니다."));
 		String sha = inspected.sha256();
+		String fingerprint = clientKey == null ? null
+				: fingerprint(purposeCode, courseId, name, size, sha, folderId);
+		if (clientKey != null) {
+			Optional<Upload> replay = this.records.findByKey(userId, clientKey).map((k) -> sameRequest(k, fingerprint));
+			if (replay.isPresent()) {
+				return replay.get();
+			}
+		}
 		Optional<Blob> existing = this.records.blob(sha);
 		// GC가 그 사이 blob을 지웠으면 한 번 더 판정한다. 두 번째에는 새 key에 저장해 되살리므로 다시 엇갈리지 않는다.
 		for (int attempt = 1;; attempt++) {
@@ -159,19 +167,19 @@ class UploadService {
 					String state = "clean".equals(blob.state()) ? "clean" : "quarantined";
 					long fileId = this.records.insertFile(blob.id(), name, extension, mime, size, userId, courseId,
 							purposeCode, "clean".equals(state) ? "clean" : "pending");
-					long uploadId = this.records.insertUpload(policy.id(), userId, courseId, fileId, clientKey, state,
-							this.properties.ttl());
+					long uploadId = this.records.insertUpload(policy.id(), userId, courseId, fileId, clientKey,
+							fingerprint, state, this.properties.ttl());
 					placement.after(fileId, uploadId, name);
 					return new Recorded(this.records.find(uploadId, userId).orElseThrow(), blob.storageKey());
 				});
 			}
 			catch (DuplicateKeyException ex) {
 				discardUnused(sha, storageKey, null);
-				// 같은 멱등 key의 요청이 동시에 들어왔다. 먼저 끝난 쪽의 결과를 돌려준다.
+				// 같은 멱등 key의 요청이 동시에 들어왔다. 먼저 끝난 쪽이 같은 요청이면 그 결과를 돌려주고, 다르면 409다.
 				if (clientKey == null) {
 					throw ex;
 				}
-				return this.records.findByKey(userId, clientKey).orElseThrow(() -> ex);
+				return sameRequest(this.records.findByKey(userId, clientKey).orElseThrow(() -> ex), fingerprint);
 			}
 			catch (ApiException ex) {
 				if (storageKey != null && "content_rejected".equals(ex.code())) {
@@ -243,11 +251,24 @@ class UploadService {
 		this.transaction.executeWithoutResult((tx) -> this.records.delete(uploadId, userId));
 	}
 
-	private static Upload sameTarget(Upload upload, long courseId) {
-		if (upload.courseId() != courseId) {
+	/**
+	 * 멱등 업로드의 요청 지문. 검사한 값(용도, 과목, 정리한 이름, 크기, 내용 SHA-256, 파일함 폴더)을 공용 멱등 원장과 같은 규칙(정렬한
+	 * JSON의 SHA-256, ADR-0012)으로 묶는다. 과목이 다르거나 파일함과 과목 업로드처럼 대상이 다르면 지문도 다르다.
+	 */
+	static String fingerprint(String purpose, Long courseId, String name, long sizeBytes, String sha256,
+			Long folderId) {
+		return Idempotency.fingerprint(new UploadRequest(purpose, courseId, name, sizeBytes, sha256, folderId));
+	}
+
+	/**
+	 * 같은 key로 먼저 기록한 업로드가 같은 요청이면 그 업로드다. 지문이 다르거나, 지문을 저장하기 전에 만든 업로드라 같은 요청인지 알 수
+	 * 없으면 409다. 다른 요청의 업로드를 돌려주지 않는다.
+	 */
+	static Upload sameRequest(Keyed keyed, String fingerprint) {
+		if (keyed.fingerprint() == null || !keyed.fingerprint().equals(fingerprint)) {
 			throw new ApiException(HttpStatus.CONFLICT, "idempotency_conflict", "같은 Idempotency-Key를 다른 요청에 썼습니다.");
 		}
-		return upload;
+		return keyed.upload();
 	}
 
 	private static Inspected inspect(MultipartFile file, long declaredSize) {
@@ -282,6 +303,11 @@ class UploadService {
 	}
 
 	private record Recorded(Upload upload, String blobKey) {
+	}
+
+	/** 업로드 요청 지문의 정규형. 속성 이름 순서로 정렬해 SHA-256을 낸다. */
+	record UploadRequest(String purpose, Long courseId, String name, long sizeBytes, String sha256,
+			Long folderId) {
 	}
 
 	/**

@@ -204,7 +204,7 @@ class LearningController {
 		int version = expectedVersion(ifMatch);
 		MaterialChange change = validated(body);
 		this.rateLimiter.check("material-update", actor.userId(), 60, Duration.ofMinutes(10));
-		this.materials.update(actor.userId(), courseId, activityId, version, change);
+		this.materials.update(actor, courseId, activityId, version, change);
 		ActivityRow row = this.jdbc.sql(ACTIVITY + " WHERE a.activity_id = :activity")
 			.param("activity", activityId)
 			.query(LearningController::activityRow)
@@ -227,7 +227,7 @@ class LearningController {
 		if (!this.access.canManage(actor.userId(), courseId)) {
 			throw ApiException.notFound();
 		}
-		this.materials.delete(actor.userId(), courseId, activityId, expectedVersion(ifMatch));
+		this.materials.delete(actor, courseId, activityId, expectedVersion(ifMatch));
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 

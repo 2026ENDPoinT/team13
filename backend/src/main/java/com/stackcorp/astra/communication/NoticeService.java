@@ -3,19 +3,19 @@ package com.stackcorp.astra.communication;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.regex.Pattern;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 import com.stackcorp.astra.communication.NoticeRepository.NoticeInput;
 import com.stackcorp.astra.communication.NoticeRepository.NoticeItemRow;
 import com.stackcorp.astra.communication.NoticeRepository.NoticeRow;
-import com.stackcorp.astra.communication.NoticeRepository.Replay;
+import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
+import com.stackcorp.astra.shared.audit.AuditLog;
+import com.stackcorp.astra.shared.idempotency.Idempotency;
 
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +26,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 담당자는 임시·예약 공지를 포함해 모두 보고 쓰며, 학생은 게시 일시가 지난 공지만 본다. 시각은 DB 시계로 정한다(SC-06).
  * 과목 구성원이 아니거나 볼 수 없는 공지, 학생의 쓰기 요청은 존재를 드러내지 않도록 404로 응답한다.
  * 조회는 아무것도 바꾸지 않는다. 읽음과 확인은 별도 명령이고 (공지, 사용자) unique 행이라 몇 번 보내도 결과가 같다(SC-04, SC-05, CHG-08).
+ * 등록, 수정, 삭제는 감사 기록을 남긴다. 제목과 본문은 남기지 않는다(SC-09).
  */
 @Service
 class NoticeService {
@@ -36,7 +37,7 @@ class NoticeService {
 
 	static final int MAX_PAGE_SIZE = 50;
 
-	private static final Pattern CLIENT_KEY = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+	static final String CREATE = "notice.create";
 
 	private final NoticeRepository notices;
 
@@ -54,8 +55,13 @@ class NoticeService {
 
 	private final NoticeNotifications alerts;
 
+	private final Idempotency idempotency;
+
+	private final AuditLog audit;
+
 	NoticeService(NoticeRepository notices, CourseBoards boards, PostReactions reactions, CourseMemberships memberships,
-			UserNames userNames, RateLimiter rateLimiter, TransactionTemplate transaction, NoticeNotifications alerts) {
+			UserNames userNames, RateLimiter rateLimiter, TransactionTemplate transaction, NoticeNotifications alerts,
+			Idempotency idempotency, AuditLog audit) {
 		this.notices = notices;
 		this.boards = boards;
 		this.reactions = reactions;
@@ -64,6 +70,8 @@ class NoticeService {
 		this.rateLimiter = rateLimiter;
 		this.transaction = transaction;
 		this.alerts = alerts;
+		this.idempotency = idempotency;
+		this.audit = audit;
 	}
 
 	@Transactional(readOnly = true)
@@ -92,47 +100,34 @@ class NoticeService {
 	}
 
 	/**
-	 * @param clientKey Idempotency-Key. 같은 key로 다시 보내면 새로 만들지 않고 처음 만든 공지를 돌려준다(CHG-08)
+	 * 공지를 만든다. Idempotency-Key는 공용 멱등 원장(ADR-0012)이 받는다. 같은 key에 같은 요청이면 처음 응답을 돌려주고 새로 만들지
+	 * 않는다. 같은 key에 다른 본문이나 다른 과목이면 409 {@code idempotency_conflict}이고 아무것도 만들지 않는다(CHG-08).
 	 */
-	Created create(long userId, long courseId, NoticeRequest body, String clientKey) {
+	NoticeView create(Actor actor, long courseId, NoticeRequest body, String idempotencyKey) {
+		long userId = actor.userId();
 		requireManager(userId, courseId);
 		NoticeInput input = validated(body);
 		if (body.version() != null) {
 			throw ApiException.invalid("새 공지에는 version을 줄 수 없습니다.");
 		}
-		if (clientKey != null && !CLIENT_KEY.matcher(clientKey).matches()) {
-			throw ApiException.invalid("Idempotency-Key 형식이 올바르지 않습니다.");
-		}
-		if (clientKey != null) {
-			var replay = this.notices.byClientKey(courseId, clientKey);
-			if (replay.isPresent()) {
-				return replayed(userId, courseId, replay.get());
-			}
-		}
 		this.rateLimiter.check("notice-write", userId, 60, Duration.ofMinutes(10));
-		try {
-			// 게시판은 먼저 따로 commit한다. 같은 transaction에서 만들면, 다른 요청이 먼저 만든 게시판 행이 이 transaction의 snapshot에
-			// 보이지 않아 방금 쓴 공지를 다시 읽지 못한다.
-			long boardId = this.transaction.execute((tx) -> this.boards.boardFor(courseId, BoardKind.NOTICE));
-			return this.transaction.execute((tx) -> {
-				LocalDateTime now = this.notices.now();
-				long noticeId = this.notices.insert(boardId, userId, input, now, clientKey);
-				NoticeRow row = visible(userId, courseId, noticeId, true, now);
-				this.alerts.sync(courseId, noticeId, row.title(), row.publishedAt());
-				return new Created(view(row, now), true);
-			});
-		}
-		catch (DuplicateKeyException ex) {
-			// 같은 key의 요청이 동시에 들어왔다. 먼저 끝난 쪽의 공지를 돌려준다.
-			if (clientKey == null) {
-				throw ex;
-			}
-			return replayed(userId, courseId, this.notices.byClientKey(courseId, clientKey).orElseThrow(() -> ex));
-		}
+		// 게시판은 먼저 따로 commit한다. 같은 transaction에서 만들면, 다른 요청이 먼저 만든 게시판 행이 이 transaction의 snapshot에
+		// 보이지 않아 방금 쓴 공지를 다시 읽지 못한다.
+		long boardId = this.transaction.execute((tx) -> this.boards.boardFor(courseId, BoardKind.NOTICE));
+		return this.idempotency.execute(userId, CREATE, idempotencyKey, List.of(courseId, input), NoticeView.class,
+				() -> {
+					LocalDateTime now = this.notices.now();
+					long noticeId = this.notices.insert(boardId, userId, input, now);
+					NoticeRow row = visible(userId, courseId, noticeId, true, now);
+					this.alerts.sync(courseId, noticeId, row.title(), row.publishedAt());
+					this.audit.success(userId, actor.sessionId(), CREATE, "post", noticeId, courseId);
+					return view(row, now);
+				});
 	}
 
 	@Transactional
-	NoticeView update(long userId, long courseId, long noticeId, NoticeRequest body) {
+	NoticeView update(Actor actor, long courseId, long noticeId, NoticeRequest body) {
+		long userId = actor.userId();
 		requireManager(userId, courseId);
 		NoticeInput input = validated(body);
 		if (body.version() == null || body.version() < 1) {
@@ -149,16 +144,18 @@ class NoticeService {
 		}
 		NoticeRow row = visible(userId, courseId, noticeId, true, now);
 		this.alerts.sync(courseId, noticeId, row.title(), row.publishedAt());
+		this.audit.success(userId, actor.sessionId(), "notice.update", "post", noticeId, courseId);
 		return view(row, now);
 	}
 
 	@Transactional
-	void delete(long userId, long courseId, long noticeId) {
-		requireManager(userId, courseId);
+	void delete(Actor actor, long courseId, long noticeId) {
+		requireManager(actor.userId(), courseId);
 		if (this.notices.delete(courseId, noticeId) == 0) {
 			throw ApiException.notFound();
 		}
 		this.alerts.withdraw(noticeId);
+		this.audit.success(actor.userId(), actor.sessionId(), "notice.delete", "post", noticeId, courseId);
 	}
 
 	@Transactional
@@ -182,14 +179,6 @@ class NoticeService {
 
 	private NoticeRow visible(long userId, long courseId, long noticeId, boolean manager, LocalDateTime now) {
 		return this.notices.find(courseId, noticeId, userId, manager, now).orElseThrow(ApiException::notFound);
-	}
-
-	private Created replayed(long userId, long courseId, Replay replay) {
-		if (replay.authorId() != userId || replay.deleted()) {
-			throw new ApiException(HttpStatus.CONFLICT, "idempotency_conflict", "같은 Idempotency-Key를 다른 요청에 썼습니다.");
-		}
-		LocalDateTime now = this.notices.now();
-		return new Created(view(visible(userId, courseId, replay.noticeId(), true, now), now), false);
 	}
 
 	private NoticeView view(NoticeRow row, LocalDateTime now) {
@@ -226,9 +215,6 @@ class NoticeService {
 	 */
 	record NoticeRequest(String title, String body, Boolean pinned, Boolean published, LocalDateTime publishAt,
 			Integer version) {
-	}
-
-	record Created(NoticeView notice, boolean isNew) {
 	}
 
 	/**

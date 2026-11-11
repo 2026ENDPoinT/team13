@@ -139,6 +139,12 @@ class OpenBoardApiTests extends BoardTestSupport {
 
 		// 작성자는 고치고 지운다. 다른 학생은 읽음·추천·댓글만 한다.
 		put(this.classmate, p + "/like").andExpect(jsonPath("$.likeCount").value(1));
+		// 추천 수가 바뀐 요청만 감사 기록을 남긴다. 같은 상태의 재전송은 남기지 않는다.
+		put(this.classmate, p + "/like").andExpect(jsonPath("$.likeCount").value(1));
+		assertThat(audits("board_post.like", id)).isEqualTo(1);
+		this.classmate.delete(p + "/like").andExpect(jsonPath("$.likeCount").value(0));
+		this.classmate.delete(p + "/like").andExpect(jsonPath("$.likeCount").value(0));
+		assertThat(audits("board_post.unlike", id)).isEqualTo(1);
 		this.classmate.post(p + "/read").andExpect(jsonPath("$.viewCount").value(1));
 		put(this.student, p, edit).andExpect(status().isOk()).andExpect(jsonPath("$.title").value("고친 글"));
 		put(this.student, p, edit).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("version_conflict"));

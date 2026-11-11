@@ -397,23 +397,25 @@ class FileboxService {
 	/**
 	 * 파일함에 올리기(EP-0255의 대체). 업로드 정책 filebox로 검사하고, 업로드 기록과 같은 transaction에서 용량을 잡고 항목을 만든다.
 	 * 같은 폴더에 같은 이름이 있으면 접미사를 붙인다. 검사기가 있으면 검사를 마칠 때까지 내려받지 못한다.
+	 * <p>
+	 * 같은 Idempotency-Key로 같은 파일을 같은 폴더에 다시 보내면 처음 만든 항목을 돌려준다. 파일, 이름, 폴더 중 하나라도 다르면 409
+	 * {@code idempotency_conflict}이고 아무것도 만들지 않는다. 판정은 업로드 기록의 요청 지문으로 한다(FileboxUploads).
 	 *
 	 * @param parentId 루트면 null
 	 */
 	ItemView upload(Actor actor, Long parentId, MultipartFile file, String idempotencyKey) {
 		long owner = actor.userId();
-		if (idempotencyKey != null) {
-			Optional<Long> replay = this.records.itemOfUploadKey(owner, idempotencyKey);
-			if (replay.isPresent()) {
-				return view(this.records.item(owner, replay.get()).orElseThrow());
+		// 이 key로 만든 항목이 이미 있으면 재전송이다. 그 뒤에 바뀐 폴더 상태와 용량으로 같은 요청을 거부하지 않도록 미리 보는 검사를
+		// 건너뛴다. 같은 요청인지는 업로드가 지문으로 판정하고, 다른 요청이면 용량을 잡기 전에 409로 끝난다.
+		boolean retried = idempotencyKey != null && this.records.itemOfUploadKey(owner, idempotencyKey).isPresent();
+		if (!retried) {
+			if (parentId != null) {
+				activeFolder(owner, parentId);
 			}
+			// 저장하기 전에 한 번 본다. 정확한 검사는 기록할 때 잠근 뒤에 한다.
+			requireRoom(this.records.quota(owner), file.getSize(), 1);
 		}
-		if (parentId != null) {
-			activeFolder(owner, parentId);
-		}
-		// 저장하기 전에 한 번 본다. 정확한 검사는 기록할 때 잠근 뒤에 한다.
-		requireRoom(this.records.quota(owner), file.getSize(), 1);
-		long uploadId = this.uploads.receive(owner, file, idempotencyKey, new FileboxUploads.Target() {
+		long uploadId = this.uploads.receive(owner, file, idempotencyKey, parentId, new FileboxUploads.Target() {
 
 			@Override
 			public void reserve(long sizeBytes) {

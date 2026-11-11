@@ -168,4 +168,58 @@ class AssignmentApiTests extends AssessmentTestSupport {
 			.andExpect(status().isBadRequest());
 	}
 
+	/**
+	 * 과제 등록·수정, 수정으로 바꾼 점수 공개, 최종 제출은 감사 기록을 남긴다. 공개가 바뀐 수정만 성적 항목의 공개·거둠 줄이 붙고, 같은
+	 * key의 제출 재전송은 줄을 더 남기지 않는다. 제목과 본문은 남기지 않는다(보안 검토 L2, SC-09).
+	 */
+	@Test
+	void assignmentWritesScoreReleaseFlipsAndFinalSubmissionsLeaveAuditLines() throws Exception {
+		long id = assignment("\"scoresReleased\":true");
+		long gradeItem = this.jdbc.sql("SELECT grade_item_id FROM grade_items WHERE activity_id = :a")
+			.param("a", activityOf(id))
+			.query(Long.class)
+			.single();
+		String edit = "{\"weekNo\":3,\"title\":\"과제 1\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":15,\"revision\":%d%s}";
+		// 공개 → 거둠 → 그대로(거둠) → 공개
+		this.professor.putJson(assignment(this.course, id), edit.formatted(1, ",\"scoresReleased\":false"))
+			.andExpect(status().isOk());
+		this.professor.putJson(assignment(this.course, id), edit.formatted(2, ""))
+			.andExpect(status().isOk());
+		this.professor.putJson(assignment(this.course, id), edit.formatted(3, ",\"scoresReleased\":true"))
+			.andExpect(status().isOk());
+		// 거부한 수정(옛 revision)은 남기지 않는다.
+		this.professor.putJson(assignment(this.course, id), edit.formatted(1, ",\"scoresReleased\":false"))
+			.andExpect(status().isConflict());
+
+		assertThat(this.jdbc.sql("""
+				SELECT CONCAT(operation, ':', object_type) FROM audit_events
+				 WHERE course_id = :course AND ((object_type = 'assignment' AND object_id = :id)
+				       OR (object_type = 'grade_item' AND object_id = :item))
+				 ORDER BY audit_event_id
+				""").param("course", this.course).param("id", id).param("item", gradeItem).query(String.class).list())
+			.containsExactly("assignment.create:assignment", "grade_item.release:grade_item",
+					"assignment.update:assignment", "grade_item.withhold:grade_item", "assignment.update:assignment",
+					"assignment.update:assignment", "grade_item.release:grade_item");
+
+		String body = submitBody(0, "제출 본문");
+		this.student.submit(submission(this.course, id), "audit-1", body).andExpect(status().isCreated());
+		this.student.submit(submission(this.course, id), "audit-1", body).andExpect(status().isCreated());
+		this.student.submit(submission(this.course, id), "audit-2", submitBody(1, "다시 제출")).andExpect(status().isCreated());
+		long submissionId = this.jdbc.sql(
+				"SELECT assignment_submission_id FROM assignment_submissions WHERE assignment_id = :a AND user_id = :u")
+			.param("a", id)
+			.param("u", this.studentId)
+			.query(Long.class)
+			.single();
+		assertThat(this.jdbc.sql("""
+				SELECT object_type, object_id, course_id, request_id FROM audit_events
+				 WHERE actor_user_id = :user AND operation = 'assignment.submit'
+				""").param("user", this.studentId).query().listOfRows()).hasSize(2).allSatisfy((row) -> {
+					assertThat(row.get("object_type")).isEqualTo("assignment_submission");
+					assertThat(((Number) row.get("object_id")).longValue()).isEqualTo(submissionId);
+					assertThat(((Number) row.get("course_id")).longValue()).isEqualTo(this.course);
+					assertThat(row.get("request_id")).isNotNull();
+				});
+	}
+
 }

@@ -84,7 +84,7 @@ class SubmissionController {
 		if (idempotencyKey == null || !KEY.matcher(idempotencyKey).matches()) {
 			throw ApiException.invalid("Idempotency-Key를 1~100자의 영문, 숫자, . _ - 로 보내야 합니다.");
 		}
-		Receipt receipt = this.service.submit(actor.userId(), courseId, assignmentId, idempotencyKey, validated(body));
+		Receipt receipt = this.service.submit(actor, courseId, assignmentId, idempotencyKey, validated(body));
 		return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(receipt);
 	}
 

@@ -219,7 +219,11 @@ public class Idempotency {
 			.record(System.nanoTime() - started, TimeUnit.NANOSECONDS);
 	}
 
-	static String fingerprint(Object request) {
+	/**
+	 * 요청 지문: 값을 속성 이름 순서로 정렬한 JSON의 SHA-256(hex 64자). 이 원장을 쓰지 못하고 자체 key를 두는 명령(업로드처럼 본문을
+	 * transaction 밖에서 먼저 저장하는 명령)도 같은 규칙으로 지문을 만든다.
+	 */
+	public static String fingerprint(Object request) {
 		try {
 			return HexFormat.of()
 				.formatHex(MessageDigest.getInstance("SHA-256").digest(CANONICAL.writeValueAsBytes(request)));

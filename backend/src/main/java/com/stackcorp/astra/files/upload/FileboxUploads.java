@@ -3,7 +3,6 @@ package com.stackcorp.astra.files.upload;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 import com.stackcorp.astra.files.upload.UploadRecords.Policy;
 import com.stackcorp.astra.files.upload.UploadRecords.Upload;
@@ -53,27 +52,23 @@ public class FileboxUploads {
 	}
 
 	/**
-	 * 파일함에 올릴 파일을 검사해 저장하고 기록한다. 같은 사용자의 같은 멱등 key 업로드가 이미 있으면 아무것도 하지 않고 그 업로드 ID를
-	 * 돌려준다. 그 업로드가 파일함 업로드인지는 부르는 쪽이 확인한다.
+	 * 파일함에 올릴 파일을 검사해 저장하고 기록한다. 같은 사용자의 같은 멱등 key로 같은 요청(같은 파일, 이름, 폴더)의 업로드가 이미
+	 * 있으면 아무것도 하지 않고 그 업로드 ID를 돌려주고, 다른 요청이면 409 {@code idempotency_conflict}다. 그 업로드가 파일함
+	 * 업로드인지는 부르는 쪽이 확인한다.
 	 *
+	 * @param folderId 올릴 폴더. 루트면 null. 요청 지문에 들어간다
 	 * @return 업로드 ID
 	 */
-	public long receive(long userId, MultipartFile file, String clientKey, Target target) {
+	public long receive(long userId, MultipartFile file, String clientKey, Long folderId, Target target) {
 		// 거부한 업로드도 센다. 본문은 이미 받은 뒤라 횟수로 막는다.
 		this.rateLimiter.check("upload", userId, this.properties.rateLimit(), this.properties.rateWindow());
 		if (clientKey != null && !UploadService.CLIENT_KEY.matcher(clientKey).matches()) {
 			throw ApiException.invalid("Idempotency-Key 형식이 올바르지 않습니다.");
 		}
-		if (clientKey != null) {
-			Optional<Upload> replay = this.records.findByKey(userId, clientKey);
-			if (replay.isPresent()) {
-				return replay.get().uploadId();
-			}
-		}
 		Policy policy = this.records.policy(PURPOSE)
 			.orElseThrow(() -> new IllegalStateException("upload policy가 없습니다: " + PURPOSE));
 		long size = file.getSize();
-		return this.uploads.store(userId, null, PURPOSE, policy, file, clientKey, new UploadService.Placement() {
+		return this.uploads.store(userId, null, PURPOSE, policy, file, clientKey, folderId, new UploadService.Placement() {
 
 			@Override
 			public void before() {
@@ -161,7 +156,7 @@ public class FileboxUploads {
 				.param("item", source.itemId())
 				.param("file", fileId)
 				.update();
-			long uploadId = this.records.insertUpload(policy.id(), userId, courseId, fileId, null, "clean",
+			long uploadId = this.records.insertUpload(policy.id(), userId, courseId, fileId, null, null, "clean",
 					this.properties.ttl());
 			Upload upload = this.records.find(uploadId, userId).orElseThrow();
 			reused.add(new Reused(upload.uploadId(), source.itemId(), upload.state(), upload.name(), upload.sizeBytes(),

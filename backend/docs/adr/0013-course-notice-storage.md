@@ -11,6 +11,7 @@
 2. 게시판은 첫 공지를 쓸 때 만든다. V11이 `boards`에 생성 열 `course_notice_key`(K001이면 1)와 `UNIQUE (course_id, course_notice_key)`를 더해 과목마다 하나만 남긴다. 만드는 쪽은 `INSERT … ON DUPLICATE KEY UPDATE board_id = LAST_INSERT_ID(board_id)`로 먼저 생긴 행의 ID를 받고, 공지를 쓰는 transaction과 따로 commit한다.
 3. 읽음과 확인은 `post_read_receipts`, `post_confirmations`의 `(post_id, user_id)` 유일 행이다. 조회수(`posts.view_count`)는 읽음 행을 처음 만들 때만 올린다.
 4. 수정은 `posts.version`을 비교하는 조건부 UPDATE다. 맞지 않으면 409다.
+5. 작성의 `Idempotency-Key`는 공용 멱등 원장(`notice.create`, [ADR-0012](0012-idempotency-ledger-and-audit.md))이 받는다. 같은 key에 같은 과목과 같은 검사한 본문이면 처음 응답을, 다르면 409 `idempotency_conflict`를 돌려준다. `posts.client_request_id`는 쓰지 않는다. 작성, 수정, 삭제는 감사 기록(`notice.create`, `notice.update`, `notice.delete`, 대상 `post`)을 남기고 제목과 본문은 남기지 않는다.
 
 ## 결과와 트레이드오프
 - 질의응답, 열린게시판, 1:1 문의가 같은 테이블과 읽음 원장을 쓸 수 있다. 공지 전용 테이블을 따로 만들면 이 기능들과 읽음·첨부 처리가 둘로 갈린다.

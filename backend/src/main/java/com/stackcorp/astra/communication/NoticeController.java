@@ -1,11 +1,11 @@
 package com.stackcorp.astra.communication;
 
-import com.stackcorp.astra.communication.NoticeService.Created;
 import com.stackcorp.astra.communication.NoticeService.NoticePage;
 import com.stackcorp.astra.communication.NoticeService.NoticeRequest;
 import com.stackcorp.astra.communication.NoticeService.NoticeState;
 import com.stackcorp.astra.communication.NoticeService.NoticeView;
 import com.stackcorp.astra.identity.api.Actor;
+import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -49,28 +49,30 @@ class NoticeController {
 		return ok(this.notices.get(actor.userId(), courseId, noticeId));
 	}
 
-	/** 201. 같은 Idempotency-Key로 다시 보내면 처음 만든 공지를 200으로 돌려준다. */
+	/**
+	 * 201. 같은 Idempotency-Key로 같은 요청을 다시 보내면 처음 응답을 그대로 돌려받고 공지를 더 만들지 않는다. 같은 key에 다른
+	 * 요청이면 409 idempotency_conflict다(SC-05, ADR-0012).
+	 */
 	@PostMapping("/api/courses/{courseId}/notices")
 	ResponseEntity<NoticeView> create(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@RequestBody NoticeRequest body,
-			@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey) {
-		Created created = this.notices.create(actor.userId(), courseId, body, idempotencyKey);
-		return ResponseEntity.status(created.isNew() ? HttpStatus.CREATED : HttpStatus.OK)
+			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
+		return ResponseEntity.status(HttpStatus.CREATED)
 			.cacheControl(CacheControl.noStore())
-			.body(created.notice());
+			.body(this.notices.create(actor, courseId, body, idempotencyKey));
 	}
 
 	/** 전체 교체. 본문의 version이 저장된 값과 다르면 409(version_conflict). */
 	@PutMapping("/api/courses/{courseId}/notices/{noticeId}")
 	ResponseEntity<NoticeView> update(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long noticeId, @RequestBody NoticeRequest body) {
-		return ok(this.notices.update(actor.userId(), courseId, noticeId, body));
+		return ok(this.notices.update(actor, courseId, noticeId, body));
 	}
 
 	@DeleteMapping("/api/courses/{courseId}/notices/{noticeId}")
 	ResponseEntity<Void> delete(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long noticeId) {
-		this.notices.delete(actor.userId(), courseId, noticeId);
+		this.notices.delete(actor, courseId, noticeId);
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 

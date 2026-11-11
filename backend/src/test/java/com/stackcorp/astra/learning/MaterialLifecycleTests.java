@@ -288,6 +288,14 @@ class MaterialLifecycleTests extends IntegrationTest {
 			.andExpect(status().isNoContent());
 		assertThat(materialNotifications(material.id())).isZero();
 		this.student.get("/api/me/notifications").andExpect(jsonPath("$.items.length()").value(0));
+		// 수정과 삭제는 명령마다 감사 기록 한 줄이다(보안 검토 L2).
+		assertThat(this.jdbc.sql("""
+				SELECT operation FROM audit_events
+				 WHERE object_type = 'learning_activity' AND object_id = :id AND course_id = :course
+				 ORDER BY audit_event_id
+				""").param("id", material.id()).param("course", this.course).query(String.class).list())
+			.containsExactly("material.create", "material.update", "material.update", "material.update",
+					"material.delete");
 	}
 
 	@Test
