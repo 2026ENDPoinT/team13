@@ -6,7 +6,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 import com.stackcorp.astra.assessment.SurveyAnswers.Submitted;
 import com.stackcorp.astra.assessment.SurveyInput.QuestionInput;
@@ -49,8 +48,6 @@ class SurveyController {
 	static final int MAX_QUESTIONS = 100;
 
 	static final int MAX_OPTIONS = 20;
-
-	static final Pattern KEY = Pattern.compile("[A-Za-z0-9._-]{1,100}");
 
 	private static final int MAX_TITLE = 200;
 
@@ -222,9 +219,7 @@ class SurveyController {
 	/** 강의실 설문과 알림마당 설문의 완료 요청 처리. 권한은 부르는 쪽이 먼저 판정한다. */
 	static ResponseEntity<Completion> completed(SurveyService service, RateLimiter rateLimiter, Actor actor,
 			Survey survey, String idempotencyKey, CompleteRequest body) {
-		if (idempotencyKey == null || !KEY.matcher(idempotencyKey).matches()) {
-			throw ApiException.invalid("Idempotency-Key를 1~100자의 영문, 숫자, . _ - 로 보내야 합니다.");
-		}
+		Idempotency.requireKey(idempotencyKey);
 		var answers = SurveyAnswers.normalized(body.answers());
 		rateLimiter.check("survey-complete", actor.userId(), 30, Duration.ofMinutes(10));
 		Completion completion = service.complete(actor, survey, idempotencyKey, answers);

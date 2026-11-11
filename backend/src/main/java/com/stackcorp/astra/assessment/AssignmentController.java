@@ -99,6 +99,23 @@ class AssignmentController {
 		return ok(instructorView(updated, this.access.now()));
 	}
 
+	/**
+	 * 점수 공개(released=true)와 거두기(false). 과제 전체를 다시 보내지 않는다. 읽은 {@code revision}이 다르면 409 {@code edit_conflict}다.
+	 * 성적부의 공개 명령(PUT /api/courses/{courseId}/grade-items/{itemId}/release)과 같은 본문, 같은 감사 기록이다.
+	 */
+	@PutMapping("/api/courses/{courseId}/assignments/{assignmentId}/release")
+	ResponseEntity<InstructorAssignment> release(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long assignmentId, @RequestBody ReleaseRequest body) {
+		Assignment current = this.access.managed(actor.userId(), courseId, assignmentId);
+		if (body.released() == null || body.revision() == null || body.revision() < 1) {
+			throw ApiException.invalid("released와 revision을 보내야 합니다.");
+		}
+		this.rateLimiter.check("assignment-update", actor.userId(), 120, Duration.ofMinutes(10));
+		this.assignments.release(actor, courseId, current, body.revision(), body.released());
+		Assignment updated = this.access.find(courseId, assignmentId).orElseThrow();
+		return ok(instructorView(updated, this.access.now()));
+	}
+
 	@GetMapping("/api/courses/{courseId}/assignments")
 	ResponseEntity<List<AssignmentItem>> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		CourseRole role = this.access.role(actor.userId(), courseId);
@@ -217,6 +234,13 @@ class AssignmentController {
 	record AssignmentRequest(Integer weekNo, String title, String description, LocalDateTime openAt,
 			LocalDateTime closeAt, Boolean published, String latePolicy, LocalDateTime lateUntil, Boolean allowText,
 			Boolean allowFile, BigDecimal maxScore, Boolean scoresReleased, Long revision) {
+	}
+
+	/**
+	 * @param released 학생에게 점수와 의견을 공개하는지
+	 * @param revision 읽은 과제 설정 수정 번호. 성공하면 1 오른다
+	 */
+	record ReleaseRequest(Boolean released, Long revision) {
 	}
 
 	/** 담당자와 학생에게 같은 과제 정보. */

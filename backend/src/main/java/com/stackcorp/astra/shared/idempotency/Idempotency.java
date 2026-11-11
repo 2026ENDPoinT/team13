@@ -80,6 +80,22 @@ public class Idempotency {
 	}
 
 	/**
+	 * key가 반드시 있어야 하는 명령(좌석을 잡거나, 보내거나, 답을 제출하는 명령)의 header 검사. 그런 명령은 모두 이 메서드로 검사하므로
+	 * 오류 code가 하나다.
+	 * @return 검사를 통과한 key
+	 * @throws ApiException key가 없으면 400 {@code idempotency_key_required}, 형식이 틀리면 400 {@code invalid_request}
+	 */
+	public static String requireKey(String key) {
+		if (key == null || key.isEmpty()) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "idempotency_key_required", "Idempotency-Key header가 필요합니다.");
+		}
+		if (!KEY.matcher(key).matches()) {
+			throw ApiException.invalid("Idempotency-Key 형식이 올바르지 않습니다.");
+		}
+		return key;
+	}
+
+	/**
 	 * @param principalUserId session principal
 	 * @param operation 연산 이름. 예: material.create
 	 * @param key {@value #HEADER} header 값. 없으면 null

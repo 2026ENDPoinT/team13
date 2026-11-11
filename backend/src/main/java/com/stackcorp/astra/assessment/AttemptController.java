@@ -161,9 +161,7 @@ class AttemptController {
 			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
 		Quiz quiz = this.access.forStudent(actor.userId(), courseId, quizId, this.access.now());
 		Attempt attempt = this.access.ownAttempt(quiz, actor.userId(), attemptId);
-		if (idempotencyKey == null) {
-			throw ApiException.invalid("Idempotency-Key를 반드시 보내야 합니다.");
-		}
+		Idempotency.requireKey(idempotencyKey);
 		return ok(this.service.submit(actor, courseId, quiz, attempt, idempotencyKey));
 	}
 

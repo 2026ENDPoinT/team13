@@ -16,7 +16,7 @@ import com.stackcorp.astra.assessment.SubmissionRecords.Submission;
 import com.stackcorp.astra.assessment.SubmissionRecords.Version;
 import com.stackcorp.astra.files.api.AttachmentException;
 import com.stackcorp.astra.files.api.Attachments;
-import com.stackcorp.astra.files.api.Attachments.AttachRequest;
+import com.stackcorp.astra.files.api.Attachments.ChangeRequest;
 import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
@@ -94,7 +94,8 @@ class SubmissionService {
 		if (!assignment.settings().allowText() && submission.body() != null) {
 			throw ApiException.invalid("이 과제는 글 입력 제출을 받지 않습니다.");
 		}
-		if (!assignment.settings().allowFile() && !submission.uploadIds().isEmpty()) {
+		if (!assignment.settings().allowFile()
+				&& !(submission.uploadIds().isEmpty() && submission.keepFileIds().isEmpty())) {
 			throw ApiException.invalid("이 과제는 파일 첨부 제출을 받지 않습니다.");
 		}
 		this.rateLimiter.check("assignment-submit", userId, 30, Duration.ofMinutes(10));
@@ -131,10 +132,18 @@ class SubmissionService {
 			throw deadlinePassed();
 		}
 		Long group = null;
-		if (!submission.uploadIds().isEmpty()) {
+		if (!submission.uploadIds().isEmpty() || !submission.keepFileIds().isEmpty()) {
+			// 이어받을 파일은 학생 본인의 현재 버전(위에서 expectedVersion과 맞춘 버전)의 첨부에서만 고른다. 그 버전의 그룹은 바꾸지
+			// 않으므로 이전 버전은 제출했을 때의 파일을 그대로 보여 준다.
+			Long current = locked.currentVersion() == 0 ? null
+					: this.records.version(locked.submissionId(), locked.currentVersion())
+						.orElseThrow()
+						.attachmentGroupId();
 			try {
-				group = this.attachments.attach(
-						new AttachRequest(userId, courseId, PURPOSE, submission.uploadIds(), "과제 제출"));
+				group = this.attachments
+					.derive(new ChangeRequest(userId, courseId, PURPOSE, current, submission.keepFileIds(),
+							submission.uploadIds(), "과제 제출"))
+					.orElse(null);
 			}
 			catch (AttachmentException ex) {
 				throw new ApiException(HttpStatus.CONFLICT, "attachment_not_ready", "제출할 수 없는 첨부가 있습니다.");
@@ -193,11 +202,16 @@ class SubmissionService {
 		return new ApiException(HttpStatus.CONFLICT, "deadline_passed", "제출 기간이 아닙니다.");
 	}
 
-	/** 요청의 정규형. 과제, 기대 버전, 첨부 순서, 본문이 모두 같아야 같은 요청이다. */
+	/**
+	 * 요청의 정규형. 과제, 기대 버전, 첨부 순서, 이어받는 파일, 본문이 모두 같아야 같은 요청이다. 이어받는 파일이 없으면 그 줄을 넣지
+	 * 않아 keep이 생기기 전에 저장한 지문과 같은 값이 된다.
+	 */
 	private static String fingerprint(long assignmentId, NewSubmission submission) {
 		String canonical = "assignment:" + assignmentId + "\nexpected:" + submission.expectedVersion() + "\nuploads:"
-				+ submission.uploadIds().stream().map(String::valueOf).collect(Collectors.joining(",")) + "\nbody:"
-				+ (submission.body() == null ? "" : submission.body());
+				+ submission.uploadIds().stream().map(String::valueOf).collect(Collectors.joining(","))
+				+ (submission.keepFileIds().isEmpty() ? ""
+						: "\nkeep:" + submission.keepFileIds().stream().map(String::valueOf).collect(Collectors.joining(",")))
+				+ "\nbody:" + (submission.body() == null ? "" : submission.body());
 		try {
 			return HexFormat.of()
 				.formatHex(MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8)));
@@ -210,8 +224,9 @@ class SubmissionService {
 	/**
 	 * @param expectedVersion 학생이 본 현재 버전 번호. 처음 제출이면 0
 	 * @param body 일반 텍스트 본문. 없으면 null
+	 * @param keepFileIds 현재 버전의 첨부 가운데 새 버전에 이어받을 파일
 	 */
-	record NewSubmission(int expectedVersion, String body, List<Long> uploadIds) {
+	record NewSubmission(int expectedVersion, String body, List<Long> uploadIds, List<Long> keepFileIds) {
 	}
 
 	/**

@@ -77,6 +77,18 @@ class AssignmentRecords {
 			.update() > 0;
 	}
 
+	/**
+	 * 설정은 그대로 두고 수정 번호만 올린다. 점수 공개처럼 과제의 다른 상태를 바꾸는 명령이 과제 수정과 같은 번호로 덮어쓰기를 막는다.
+	 *
+	 * @return 올렸는지. 읽은 번호가 지금 값과 다르면 false
+	 */
+	boolean bumpRevision(long assignmentId, long revision) {
+		return this.jdbc.sql("""
+				UPDATE assignments SET revision_no = revision_no + 1
+				 WHERE assignment_id = :id AND revision_no = :revision
+				""").param("id", assignmentId).param("revision", revision).update() > 0;
+	}
+
 	/** @return 성적 항목 ID */
 	long insertGradeItem(long courseId, long activityId, long userId, String title, AssignmentInput input) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();

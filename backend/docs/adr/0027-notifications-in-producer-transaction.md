@@ -35,3 +35,5 @@
 - 질의응답 답변(`QUESTION_ANSWERED`)은 답글을 만드는 transaction에서 질문 작성자에게 보낸다. 자기 질문에 단 답글은 보내지 않는다. 질문마다 알림은 하나이고, 남은 답글이 없어지거나 질문을 지우면 거둔다.
 - 쪽지(`MESSAGE_RECEIVED`)는 보내는 transaction에서 받는사람에게 보낸다. 쪽지는 과목 관계가 끊겨도 받은함에 남으므로 알림에 과목을 묶지 않는다. 회수하면 그 쪽지의 알림을 모두 거둔다. 이미 읽은 수신자의 알림도 함께 지워진다.
 - 알림 push는 없다. WebSocket fan-out(8절)을 붙이면 알림 행을 만든 transaction이 commit된 뒤 보낸다.
+- 대상 ID는 화면이 그 대상을 여는 ID다. 과제 알림은 처음에 학습활동 ID를 적었으나 과제 ID로 바꿨다([ADR-0036](0036-notification-screen-target-and-instructor-roster.md), V36). 과제 점수 공개는 과제의 공개 명령으로도 바뀌고, 같은 규칙으로 알림을 보내고 거둔다.
+- 과목 없는 전체 알림(알림마당 공지, `publishSite`)도 같은 사건 모델이다. 다만 받는 사람이 수천 명이라 만든 쪽 transaction에서 보내지 않고, worker가 사건에 남긴 위치부터 대상 사용자 한 묶음씩 transaction을 나눠 보낸다([ADR-0036](0036-notification-screen-target-and-instructor-roster.md) 5~7번, V36).

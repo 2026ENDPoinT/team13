@@ -222,4 +222,71 @@ class AssignmentApiTests extends AssessmentTestSupport {
 				});
 	}
 
+	/**
+	 * 점수 공개 명령은 과제 전체를 다시 보내지 않고 공개만 바꾼다. 과제의 revision으로 과제 수정과 서로 덮어쓰지 않고, 성적부 공개 명령과
+	 * 같은 감사 기록을 한 줄씩 남긴다. 그 과목의 담당자만 부른다.
+	 */
+	@Test
+	void dedicatedReleaseCommandFlipsScoreVisibilityWithTheAssignmentRevision() throws Exception {
+		long id = assignment("");
+		String release = assignment(this.course, id) + "/release";
+		long submissionId = ApiClient.json(this.student.submit(submission(this.course, id), "rel-1", submitBody(0, "본문"))
+			.andExpect(status().isCreated())).get("submissionId").asLong();
+		this.professor.putJson(submissions(this.course, id) + "/" + submissionId + "/grade",
+				"{\"score\":12.5,\"feedback\":\"좋음\"}").andExpect(status().isOk());
+		this.student.get(assignment(this.course, id)).andExpect(jsonPath("$.submission.grade").doesNotExist());
+
+		// 담당자가 아닌 사람, 다른 과목 경로, 로그인하지 않은 요청, CSRF 없는 요청은 아무것도 바꾸지 않는다.
+		String open = "{\"released\":true,\"revision\":1}";
+		this.student.putJson(release, open).andExpect(status().isNotFound());
+		this.classmate.putJson(release, open).andExpect(status().isNotFound());
+		this.outsider.putJson(release, open).andExpect(status().isNotFound());
+		long otherCourse = this.data.course();
+		long otherProfessor = this.data.user("PROFESSOR");
+		this.data.instructor(otherCourse, otherProfessor);
+		client(otherProfessor).putJson(assignment(otherCourse, id) + "/release", open).andExpect(status().isNotFound());
+		this.anonymous.putJson(release, open).andExpect(status().isUnauthorized());
+		this.professor.putWithoutCsrf(release, open).andExpect(status().isForbidden());
+		for (String bad : new String[] { "{\"released\":true}", "{\"revision\":1}", "{\"released\":true,\"revision\":0}",
+				"{\"released\":true,\"revision\":1,\"scoresReleased\":true}" }) {
+			this.professor.putJson(release, bad).andExpect(status().isBadRequest());
+		}
+		this.student.get(assignment(this.course, id)).andExpect(jsonPath("$.submission.grade").doesNotExist());
+
+		this.professor.putJson(release, open)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.revision").value(2))
+			.andExpect(jsonPath("$.assignment.scoresReleased").value(true))
+			.andExpect(jsonPath("$.assignment.title").value("과제 1"));
+		this.student.get(assignment(this.course, id)).andExpect(jsonPath("$.submission.grade.score").value(12.5));
+		// 읽은 revision이 지났으면 공개도 과제 수정도 덮어쓰지 않는다.
+		this.professor.putJson(release, "{\"released\":false,\"revision\":1}")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("edit_conflict"));
+		this.professor.putJson(assignment(this.course, id),
+				"{\"weekNo\":3,\"title\":\"과제 1\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":15,\"revision\":1}")
+			.andExpect(status().isConflict());
+		this.professor.putJson(release, "{\"released\":false,\"revision\":2}")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.assignment.scoresReleased").value(false));
+		this.student.get(assignment(this.course, id)).andExpect(jsonPath("$.submission.grade").doesNotExist());
+
+		long gradeItem = this.jdbc.sql("SELECT grade_item_id FROM grade_items WHERE activity_id = :a")
+			.param("a", activityOf(id))
+			.query(Long.class)
+			.single();
+		assertThat(this.jdbc.sql("""
+				SELECT operation FROM audit_events WHERE object_type = 'grade_item' AND object_id = :item ORDER BY audit_event_id
+				""").param("item", gradeItem).query(String.class).list())
+			.containsExactly("grade_item.release", "grade_item.withhold");
+		// 성적부의 공개 명령은 과제 항목을 바꾸지 않는다.
+		this.professor.putJson("/api/courses/" + this.course + "/grade-items/" + gradeItem + "/release",
+				"{\"released\":true,\"revision\":1}").andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("managed_by_assignment"));
+
+		// 폐강한 과목에서는 담당자도 404다.
+		this.jdbc.sql("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :c").param("c", this.course).update();
+		this.professor.putJson(release, "{\"released\":true,\"revision\":3}").andExpect(status().isNotFound());
+	}
+
 }

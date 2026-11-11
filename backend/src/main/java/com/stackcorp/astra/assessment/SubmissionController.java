@@ -6,7 +6,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 import com.stackcorp.astra.assessment.AssignmentController.GradeView;
 import com.stackcorp.astra.assessment.SubmissionRecords.Grade;
@@ -20,6 +19,7 @@ import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.shared.ApiException;
+import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -41,8 +41,6 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 class SubmissionController {
-
-	private static final Pattern KEY = Pattern.compile("[A-Za-z0-9._-]{1,100}");
 
 	private static final int MAX_BODY = 50_000;
 
@@ -79,11 +77,9 @@ class SubmissionController {
 	@PostMapping("/api/courses/{courseId}/assignments/{assignmentId}/submission")
 	ResponseEntity<Receipt> submit(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long assignmentId,
-			@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey,
 			@RequestBody SubmitRequest body) {
-		if (idempotencyKey == null || !KEY.matcher(idempotencyKey).matches()) {
-			throw ApiException.invalid("Idempotency-Key를 1~100자의 영문, 숫자, . _ - 로 보내야 합니다.");
-		}
+		Idempotency.requireKey(idempotencyKey);
 		Receipt receipt = this.service.submit(actor, courseId, assignmentId, idempotencyKey, validated(body));
 		return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(receipt);
 	}
@@ -141,15 +137,24 @@ class SubmissionController {
 			throw ApiException.invalid("expectedVersion은 0 이상이어야 합니다.");
 		}
 		String text = PlainText.block(body.body(), MAX_BODY, "body");
-		List<Long> uploadIds = body.uploadIds() == null ? List.of() : body.uploadIds();
-		if (uploadIds.size() > MAX_UPLOADS || uploadIds.stream().anyMatch((id) -> id == null || id < 1)
-				|| new LinkedHashSet<>(uploadIds).size() != uploadIds.size()) {
-			throw ApiException.invalid("uploadIds가 올바르지 않습니다.");
+		List<Long> uploadIds = ids(body.uploadIds(), "uploadIds");
+		List<Long> keepFileIds = ids(body.keepFileIds(), "keepFileIds");
+		if (uploadIds.size() + keepFileIds.size() > MAX_UPLOADS) {
+			throw ApiException.invalid("첨부는 " + MAX_UPLOADS + "개까지입니다.");
 		}
-		if (text == null && uploadIds.isEmpty()) {
+		if (text == null && uploadIds.isEmpty() && keepFileIds.isEmpty()) {
 			throw ApiException.invalid("본문이나 첨부 중 하나는 있어야 합니다.");
 		}
-		return new NewSubmission(body.expectedVersion(), text, uploadIds);
+		return new NewSubmission(body.expectedVersion(), text, uploadIds, keepFileIds);
+	}
+
+	private static List<Long> ids(List<Long> values, String name) {
+		List<Long> ids = values == null ? List.of() : values;
+		if (ids.size() > MAX_UPLOADS || ids.stream().anyMatch((id) -> id == null || id < 1)
+				|| new LinkedHashSet<>(ids).size() != ids.size()) {
+			throw ApiException.invalid(name + "가 올바르지 않습니다.");
+		}
+		return ids;
 	}
 
 	private static <T> ResponseEntity<T> ok(T body) {
@@ -164,9 +169,10 @@ class SubmissionController {
 	 * 최종 제출. 제출자와 과목은 받지 않는다(SC-02).
 	 *
 	 * @param expectedVersion 학생이 본 현재 버전 번호. 처음 제출이면 0
-	 * @param uploadIds 이 버전에 첨부할 본인 업로드(용도 assignment_submission). 이전 버전의 첨부는 이어받지 않는다
+	 * @param uploadIds 이 버전에 새로 첨부할 본인 업로드(용도 assignment_submission)
+	 * @param keepFileIds 현재 버전({@code expectedVersion})의 파일 가운데 이 버전에 이어받을 파일 ID. 이전 버전은 그 파일을 그대로 가진다
 	 */
-	record SubmitRequest(Integer expectedVersion, String body, List<Long> uploadIds) {
+	record SubmitRequest(Integer expectedVersion, String body, List<Long> uploadIds, List<Long> keepFileIds) {
 	}
 
 	record GradeRequest(BigDecimal score, String feedback) {

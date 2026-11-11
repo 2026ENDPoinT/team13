@@ -267,11 +267,12 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 
 ### 알림 설정
 
-예약 공지, 시작 일시가 미래인 자료·과제의 알림은 worker가 그 시각 뒤에 보낸다([ADR-0027](docs/adr/0027-notifications-in-producer-transaction.md)). 같은 주기에 보존 기간(60일)이 지난 알림을 지운다.
+예약 공지, 시작 일시가 미래인 자료·과제의 알림은 worker가 그 시각 뒤에 보낸다([ADR-0027](docs/adr/0027-notifications-in-producer-transaction.md)). 과목 없는 전체 알림(알림마당 공지)은 worker가 대상 사용자를 묶음으로 나눠 보낸다([ADR-0036](docs/adr/0036-notification-screen-target-and-instructor-roster.md)). 같은 주기에 보존 기간(60일)이 지난 알림을 지운다.
 
 | 환경 변수 | 기본값 | 내용 |
 |---|---|---|
 | `ASTRA_NOTIFICATION_SWEEP_INTERVAL` | `30s` | worker가 보낼 시각이 된 알림을 찾는 간격. 예약 알림은 보일 시각부터 이 간격만큼 늦을 수 있다 |
+| `ASTRA_NOTIFICATION_SITE_BATCH` | `500` | 전체 알림을 한 transaction에 보내는 사용자 수 |
 
 ### 영상 변환 설정
 

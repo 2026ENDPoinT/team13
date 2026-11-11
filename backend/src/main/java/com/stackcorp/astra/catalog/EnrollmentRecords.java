@@ -2,6 +2,7 @@ package com.stackcorp.astra.catalog;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashMap;
@@ -26,6 +27,14 @@ class EnrollmentRecords {
 			SELECT enrollment_id, course_id, user_id, enrollment_kind, enrollment_role, enrollment_status, holds_seat,
 			       version, applied_at
 			  FROM course_enrollments
+			""";
+
+	private static final String APPLICATIONS = """
+			  FROM course_enrollments e JOIN courses c ON c.course_id = e.course_id
+			  LEFT JOIN terms t ON t.term_id = c.term_id
+			  LEFT JOIN non_regular_offerings o ON o.course_id = e.course_id
+			  LEFT JOIN audit_request_details d ON d.enrollment_id = e.enrollment_id
+			 WHERE e.user_id = :user AND e.enrollment_kind IN ('NONREGULAR', 'AUDIT') AND c.course_status <> 'CANCELLED'
 			""";
 
 	private final JdbcClient jdbc;
@@ -240,6 +249,39 @@ class EnrollmentRecords {
 	}
 
 	/**
+	 * 사용자 본인의 비정규 수강신청과 청강 신청. 처리를 기다리는 신청, 확정, 반려, 취소를 모두 담는다. 학사 원장 수강은 신청이 아니라 넣지
+	 * 않고, 폐강한 과목의 신청은 카탈로그와 같이 넣지 않는다. 최근 신청이 먼저다.
+	 * @param kind NONREGULAR|AUDIT. 없으면 둘 다
+	 */
+	List<Application> applications(long userId, String kind, int offset, int size) {
+		return this.jdbc.sql("""
+				SELECT e.enrollment_id, e.course_id, e.enrollment_kind, e.enrollment_status, e.version, e.applied_at,
+				       e.decided_at, e.cancelled_at, d.request_reason, c.course_name, c.course_code, c.section_no,
+				       c.course_type, t.term_id, t.term_year, t.term_code, t.term_name, t.is_current, o.round_year,
+				       o.round_no, o.round_label, o.nonregular_category, COALESCE(o.lecture_type, c.lecture_type) AS lecture_type,
+				       o.learning_start_date, o.learning_end_date, o.cancel_allowed, o.cancel_close_at
+				""" + APPLICATIONS + (kind == null ? "" : " AND e.enrollment_kind = :kind") + """
+
+				 ORDER BY e.applied_at DESC, e.enrollment_id DESC
+				 LIMIT :size OFFSET :offset
+				""")
+			.param("user", userId)
+			.param("kind", kind)
+			.param("size", size)
+			.param("offset", offset)
+			.query(EnrollmentRecords::application)
+			.list();
+	}
+
+	long applicationCount(long userId, String kind) {
+		return this.jdbc.sql("SELECT COUNT(*)" + APPLICATIONS + (kind == null ? "" : " AND e.enrollment_kind = :kind"))
+			.param("user", userId)
+			.param("kind", kind)
+			.query(Long.class)
+			.single();
+	}
+
+	/**
 	 * 사용자의 확정된 수강 행. 과목마다 학사 원장, 비정규, 청강 순으로 하나를 고른다.
 	 */
 	Map<Long, Enrollment> enrolledOf(long userId, Collection<Long> courseIds) {
@@ -266,6 +308,23 @@ class EnrollmentRecords {
 				rs.getBoolean("holds_seat"), rs.getInt("version"), rs.getObject("applied_at", LocalDateTime.class));
 	}
 
+	private static Application application(ResultSet rs, int n) throws SQLException {
+		Integer roundYear = rs.getObject("round_year", Integer.class);
+		return new Application(rs.getLong("enrollment_id"), rs.getLong("course_id"), rs.getString("enrollment_kind"),
+				rs.getString("enrollment_status"), rs.getInt("version"), rs.getObject("applied_at", LocalDateTime.class),
+				rs.getObject("decided_at", LocalDateTime.class), rs.getObject("cancelled_at", LocalDateTime.class),
+				rs.getString("request_reason"), rs.getString("course_name"), rs.getString("course_code"),
+				rs.getString("section_no"),
+				CatalogQueries.NON_REGULAR.equals(rs.getString("course_type")) ? "NONREGULAR" : "REGULAR",
+				rs.getObject("term_id", Long.class) == null ? null : CatalogQueries.term(rs, n),
+				roundYear == null ? null
+						: new CourseController.OfferingSummary(roundYear, rs.getInt("round_no"), rs.getString("round_label"),
+								rs.getString("nonregular_category"), rs.getString("lecture_type"),
+								rs.getObject("learning_start_date", LocalDate.class),
+								rs.getObject("learning_end_date", LocalDate.class)),
+				rs.getObject("cancel_allowed", Boolean.class), rs.getObject("cancel_close_at", LocalDateTime.class));
+	}
+
 	/**
 	 * @param kind REGISTRAR|AUDIT|NONREGULAR
 	 */
@@ -286,6 +345,19 @@ class EnrollmentRecords {
 	 */
 	record Request(long enrollmentId, long userId, String kind, String status, int version, LocalDateTime appliedAt,
 			String reason) {
+	}
+
+	/**
+	 * 본인 신청 한 건과 그 과목의 공개 항목.
+	 * @param reason 본인이 쓴 청강 사유. 비정규 신청이면 null
+	 * @param type REGULAR|NONREGULAR
+	 * @param term 정규 과목의 학기. 비정규 과정이면 null
+	 * @param offering 비정규 과정의 차수와 학습기간. 정규 과목이면 null
+	 */
+	record Application(long enrollmentId, long courseId, String kind, String status, int version,
+			LocalDateTime appliedAt, LocalDateTime decidedAt, LocalDateTime cancelledAt, String reason, String courseName,
+			String courseCode, String section, String type, CatalogQueries.TermView term,
+			CourseController.OfferingSummary offering, Boolean cancelAllowed, LocalDateTime cancelCloseAt) {
 	}
 
 }

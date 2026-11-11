@@ -44,10 +44,10 @@ final class LocalEnrollmentSeed {
 				VALUES ('비정규', :name, :code, '01', :key, '이러닝수업')
 				""", Map.of("name", name, "code", code, "key", key));
 		long offering = insert(jdbc, """
-				INSERT INTO non_regular_offerings (course_id, nonregular_category, category_code, approval_mode, round_year,
-				                                   round_no, round_label, application_open_at, application_close_at,
+				INSERT INTO non_regular_offerings (course_id, nonregular_category, category_code, category_name, approval_mode,
+				                                   round_year, round_no, round_label, application_open_at, application_close_at,
 				                                   cancel_close_at, learning_start_date, learning_end_date)
-				VALUES (:course, 'B', '1', :approval, 2026, 1, '[2026년 1차수]', DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 DAY),
+				VALUES (:course, 'B', '1', '미분류', :approval, 2026, 1, '[2026년 1차수]', DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 DAY),
 				        DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL 30 DAY), DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL 30 DAY),
 				        CURRENT_DATE, DATE_ADD(CURRENT_DATE, INTERVAL 60 DAY))
 				""", Map.of("course", course, "approval", approval));

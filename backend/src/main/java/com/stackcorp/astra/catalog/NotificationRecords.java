@@ -6,11 +6,13 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 import com.stackcorp.astra.catalog.api.NotificationKind;
+import com.stackcorp.astra.identity.api.UserAudiences.UserAudience;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -46,7 +48,7 @@ class NotificationRecords {
 
 	private static final String EVENT = """
 			SELECT notification_event_id, notification_type, target_ref_id, course_id, activity_id, audience_role,
-			       message_text, delivered_at IS NOT NULL AS delivered
+			       site_audience, message_text, delivered_at IS NOT NULL AS delivered, delivered_user_id
 			  FROM notification_events
 			""";
 
@@ -84,6 +86,38 @@ class NotificationRecords {
 			.param("message", message)
 			.param("visibleAt", visibleAt)
 			.update();
+		return lockEvent(kind, targetId);
+	}
+
+	/**
+	 * 과목 없는 사건을 만들거나 문장과 보일 시각을 바꾸고 그 행을 잠근 채 돌려준다. 이미 있는 사건의 받는 대상과 보낸 상태는 바꾸지
+	 * 않는다. 대상이 바뀌었는지는 부르는 쪽이 돌려받은 행으로 판정한다.
+	 */
+	Event upsertSiteEvent(NotificationKind kind, long targetId, UserAudience audience, String message,
+			LocalDateTime visibleAt) {
+		this.jdbc.sql("""
+				INSERT INTO notification_events (notification_type, target_ref_id, site_audience, message_text, visible_at)
+				VALUES (:type, :target, :audience, :message, :visibleAt) AS new
+				ON DUPLICATE KEY UPDATE message_text = new.message_text, visible_at = new.visible_at
+				""")
+			.param("type", kind.name())
+			.param("target", targetId)
+			.param("audience", siteAudience(audience))
+			.param("message", message)
+			.param("visibleAt", visibleAt)
+			.update();
+		return lockEvent(kind, targetId);
+	}
+
+	/** 과목 없는 사건의 받는 대상을 바꾼다. 보낸 알림을 지우고 {@link #restart}로 처음부터 다시 보낼 때만 부른다. */
+	void setSiteAudience(long eventId, UserAudience audience) {
+		this.jdbc.sql("UPDATE notification_events SET site_audience = :audience WHERE notification_event_id = :id")
+			.param("audience", siteAudience(audience))
+			.param("id", eventId)
+			.update();
+	}
+
+	private Event lockEvent(NotificationKind kind, long targetId) {
 		return this.jdbc.sql(EVENT + " WHERE notification_type = :type AND target_ref_id = :target FOR UPDATE")
 			.param("type", kind.name())
 			.param("target", targetId)
@@ -115,8 +149,17 @@ class NotificationRecords {
 			.update();
 	}
 
-	void markPending(long eventId) {
-		this.jdbc.sql("UPDATE notification_events SET delivered_at = NULL WHERE notification_event_id = :id")
+	/** 보내지 않은 상태로 되돌린다. 과목 없는 사건은 나눠 보낸 위치도 처음으로 돌린다. */
+	void restart(long eventId) {
+		this.jdbc.sql("""
+				UPDATE notification_events SET delivered_at = NULL, delivered_user_id = NULL WHERE notification_event_id = :id
+				""").param("id", eventId).update();
+	}
+
+	/** 과목 없는 사건을 이 사용자까지 보냈다. 다음 묶음은 그다음 사용자부터다. */
+	void advance(long eventId, long lastUserId) {
+		this.jdbc.sql("UPDATE notification_events SET delivered_user_id = :user WHERE notification_event_id = :id")
+			.param("user", lastUserId)
 			.param("id", eventId)
 			.update();
 	}
@@ -221,16 +264,7 @@ class NotificationRecords {
 	 */
 	List<NotificationRow> page(long userId, LocalDateTime now, Long courseId, NotificationKind kind, boolean unreadOnly,
 			Position after, int limit) {
-		StringBuilder where = new StringBuilder(VISIBLE);
-		if (courseId != null) {
-			where.append(" AND n.course_id = :course");
-		}
-		if (kind != null) {
-			where.append(" AND n.notification_type = :type");
-		}
-		if (unreadOnly) {
-			where.append(" AND n.read_at IS NULL");
-		}
+		StringBuilder where = filter(courseId, kind, unreadOnly);
 		if (after != null) {
 			where.append(" AND (n.created_at < :afterAt OR (n.created_at = :afterAt AND n.notification_id < :afterId))");
 		}
@@ -244,6 +278,31 @@ class NotificationRecords {
 			.param("limit", limit)
 			.query(NotificationRecords::row)
 			.list();
+	}
+
+	/** {@link #page}와 같은 조건(커서 제외)에 맞는 알림 수. */
+	int count(long userId, LocalDateTime now, Long courseId, NotificationKind kind, boolean unreadOnly) {
+		return this.jdbc.sql("SELECT COUNT(*) FROM notifications n WHERE " + filter(courseId, kind, unreadOnly))
+			.param("user", userId)
+			.param("now", now)
+			.param("course", courseId)
+			.param("type", kind == null ? null : kind.name())
+			.query(Integer.class)
+			.single();
+	}
+
+	private static StringBuilder filter(Long courseId, NotificationKind kind, boolean unreadOnly) {
+		StringBuilder where = new StringBuilder(VISIBLE);
+		if (courseId != null) {
+			where.append(" AND n.course_id = :course");
+		}
+		if (kind != null) {
+			where.append(" AND n.notification_type = :type");
+		}
+		if (unreadOnly) {
+			where.append(" AND n.read_at IS NULL");
+		}
+		return where;
 	}
 
 	Optional<NotificationRow> find(long userId, long notificationId, LocalDateTime now) {
@@ -304,10 +363,18 @@ class NotificationRecords {
 	}
 
 	private static Event event(ResultSet rs, int n) throws SQLException {
+		String role = rs.getString("audience_role");
+		String site = rs.getString("site_audience");
 		return new Event(rs.getLong("notification_event_id"), NotificationKind.valueOf(rs.getString("notification_type")),
-				rs.getLong("target_ref_id"), rs.getLong("course_id"), rs.getObject("activity_id", Long.class),
-				CourseRole.valueOf(rs.getString("audience_role")), rs.getString("message_text"),
-				rs.getBoolean("delivered"));
+				rs.getLong("target_ref_id"), rs.getObject("course_id", Long.class), rs.getObject("activity_id", Long.class),
+				role == null ? null : CourseRole.valueOf(role),
+				site == null ? null : UserAudience.valueOf(site.toUpperCase(Locale.ROOT)), rs.getString("message_text"),
+				rs.getBoolean("delivered"), rs.getObject("delivered_user_id", Long.class));
+	}
+
+	/** survey_targets.target_type과 같은 소문자 값으로 저장한다. */
+	private static String siteAudience(UserAudience audience) {
+		return audience.name().toLowerCase(Locale.ROOT);
 	}
 
 	private static NotificationRow row(ResultSet rs, int n) throws SQLException {
@@ -322,8 +389,24 @@ class NotificationRecords {
 	record Position(LocalDateTime createdAt, long notificationId) {
 	}
 
-	record Event(long eventId, NotificationKind kind, long targetId, long courseId, Long activityId,
-			CourseRole audience, String message, boolean delivered) {
+	/**
+	 * @param courseId 과목 사건의 과목. 과목 없는 사건이면 null
+	 * @param audience 과목 사건의 받는 역할. 과목 없는 사건이면 null
+	 * @param siteAudience 과목 없는 사건의 받는 대상. 과목 사건이면 null
+	 * @param deliveredUserId 과목 없는 사건을 나눠 보낸 마지막 사용자 ID. 아직 보내지 않았으면 null
+	 */
+	record Event(long eventId, NotificationKind kind, long targetId, Long courseId, Long activityId,
+			CourseRole audience, UserAudience siteAudience, String message, boolean delivered, Long deliveredUserId) {
+
+		boolean site() {
+			return this.courseId == null;
+		}
+
+		/** 보낸 알림이 하나라도 있을 수 있는지. */
+		boolean started() {
+			return this.delivered || this.deliveredUserId != null;
+		}
+
 	}
 
 	record NotificationRow(long notificationId, String kind, Long courseId, String courseName, String courseCode,

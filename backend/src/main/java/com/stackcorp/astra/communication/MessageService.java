@@ -145,7 +145,7 @@ class MessageService {
 	// ---- 보내기
 
 	SentReceipt send(Actor actor, String key, SendRequest body) {
-		requireKey(key);
+		Idempotency.requireKey(key);
 		Outgoing out = outgoing(body.title(), body.body(), body.uploadIds());
 		requireMember(actor.userId(), body.courseId());
 		List<Long> recipients = recipientIds(body.recipientIds());
@@ -164,7 +164,7 @@ class MessageService {
 
 	/** 받은 쪽지의 발신자에게 답한다(EP-0229). 받는사람과 과목은 원래 쪽지에서 서버가 정한다. */
 	SentReceipt reply(Actor actor, long messageId, String key, ReplyRequest body) {
-		requireKey(key);
+		Idempotency.requireKey(key);
 		Outgoing out = outgoing(body.title(), body.body(), body.uploadIds());
 		MessageRow original = this.messages.received(actor.userId(), messageId)
 			.orElseThrow(ApiException::notFound)
@@ -185,7 +185,7 @@ class MessageService {
 	 * 새로 올린 업로드만 붙인다.
 	 */
 	SentReceipt forward(Actor actor, Box box, long messageId, String key, SendRequest body) {
-		requireKey(key);
+		Idempotency.requireKey(key);
 		Outgoing out = outgoing(body.title(), body.body(), body.uploadIds());
 		boolean visible = box == Box.INBOX ? this.messages.received(actor.userId(), messageId).isPresent()
 				: this.messages.sent(actor.userId(), messageId).isPresent();
@@ -478,12 +478,6 @@ class MessageService {
 
 	private void limitSend(long userId) {
 		this.rateLimiter.check("message-send", userId, 30, Duration.ofMinutes(10));
-	}
-
-	private static void requireKey(String key) {
-		if (key == null) {
-			throw ApiException.invalid("쪽지를 보낼 때는 Idempotency-Key가 필요합니다.");
-		}
 	}
 
 	private static Outgoing outgoing(String title, String body, List<Long> uploadIds) {

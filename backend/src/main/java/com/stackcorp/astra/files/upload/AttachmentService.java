@@ -84,6 +84,38 @@ class AttachmentService implements Attachments {
 
 	@Override
 	@Transactional(propagation = Propagation.MANDATORY)
+	public Optional<Long> derive(ChangeRequest request) {
+		Policy policy = policy(request.purpose());
+		List<Long> keep = new ArrayList<>(new LinkedHashSet<>(request.keepFileIds()));
+		List<Long> add = new ArrayList<>(new LinkedHashSet<>(request.addUploadIds()));
+		if (policy.maxFileCount() != null && keep.size() + add.size() > policy.maxFileCount()) {
+			throw new AttachmentException("첨부 개수가 올바르지 않습니다.");
+		}
+		Long source = request.attachmentGroupId();
+		// 원본 행을 잠가 읽는다. 원본이 참조를 쥐고 있는 동안 이어받을 파일은 지워지지 않는다.
+		List<Attached> current = source == null ? List.of() : attached(source);
+		if (!current.stream().filter(Attached::active).map(Attached::fileId).toList().containsAll(keep)) {
+			throw new AttachmentException("남길 수 없는 첨부가 있습니다.");
+		}
+		if (keep.isEmpty() && add.isEmpty()) {
+			return Optional.empty();
+		}
+		long group = createGroup(request.title(), request.ownerUserId());
+		int order = 1;
+		for (Attached a : current) {
+			if (keep.contains(a.fileId())) {
+				this.jdbc.sql("""
+						INSERT INTO attachments (attachment_group_id, file_id, upload_id, display_name, sort_order)
+						SELECT :group, file_id, upload_id, display_name, :order FROM attachments WHERE attachment_id = :id
+						""").param("group", group).param("order", order++).param("id", a.attachmentId()).update();
+			}
+		}
+		addUploads(group, policy, request.ownerUserId(), request.courseId(), add, order);
+		return Optional.of(group);
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
 	public void release(long attachmentGroupId) {
 		for (Attached a : attached(attachmentGroupId)) {
 			detach(attachmentGroupId, a);

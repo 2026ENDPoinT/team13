@@ -30,7 +30,7 @@ import com.stackcorp.astra.summary.FakeLlm;
 		"astra.metrics.backlog-interval=1h", "astra.filebox.zip.poll-interval=1h", "astra.filebox.zip.max-total-size=12MB",
 		"astra.files.conversion.poll-interval=1h", "astra.files.conversion.recovery-interval=1h",
 		"astra.studychat.poll-interval=1h", "astra.studychat.sweep-interval=1h", "astra.studychat.rate-limit=8",
-		"astra.client-address.trusted-proxies=" + IntegrationTest.TRUSTED_PROXIES })
+		"astra.client-address.trusted-proxies=" + IntegrationTest.TRUSTED_PROXIES, "astra.notification.site-batch=25" })
 @AutoConfigureMockMvc
 @ActiveProfiles("worker")
 @Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class, TestLearningClock.class,
