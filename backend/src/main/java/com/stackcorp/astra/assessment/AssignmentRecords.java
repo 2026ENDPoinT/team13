@@ -77,6 +77,14 @@ class AssignmentRecords {
 			.update() > 0;
 	}
 
+	/** 삭제할 때 수정 번호만 올린다. 조건, 잠금, 결과는 {@link #update}와 같다. */
+	boolean bumpRevision(long assignmentId, long revision) {
+		return this.jdbc.sql("UPDATE assignments SET revision_no = revision_no + 1 WHERE assignment_id = :id AND revision_no = :revision")
+			.param("id", assignmentId)
+			.param("revision", revision)
+			.update() > 0;
+	}
+
 	/** @return 성적 항목 ID */
 	long insertGradeItem(long courseId, long activityId, long userId, String title, AssignmentInput input) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();

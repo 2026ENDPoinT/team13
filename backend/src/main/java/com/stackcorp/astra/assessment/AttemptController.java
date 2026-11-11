@@ -69,8 +69,8 @@ class AttemptController {
 	}
 
 	/**
-	 * 응시 시작. 새 응시면 201, 진행 중 응시를 돌려주면 200이다. 본문은 비우거나 {@code {}}로 보낸다. 재진입 여부는 서버가 정하므로
-	 * {@code force} 같은 필드는 받지 않는다(SEC-13).
+	 * 응시 시작. 새 응시면 201, 진행 중 응시를 돌려주면 200이고 본문의 {@code created}가 같은 구분이다. 본문은 비우거나 {@code {}}로
+	 * 보낸다. 재진입 여부는 서버가 정하므로 {@code force} 같은 필드는 받지 않는다(SEC-13).
 	 */
 	@PostMapping("/api/courses/{courseId}/quizzes/{quizId}/attempts")
 	ResponseEntity<AttemptState> start(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
@@ -78,7 +78,7 @@ class AttemptController {
 		Started started = this.service.start(actor, courseId, quizId);
 		return ResponseEntity.status(started.created() ? HttpStatus.CREATED : HttpStatus.OK)
 			.cacheControl(CacheControl.noStore())
-			.body(AttemptState.of(started.attempt(), this.access.now()));
+			.body(AttemptState.of(started.attempt(), started.created(), this.access.now()));
 	}
 
 	/** 담당자의 응시 목록. 응시 ID 순서이고 {@code nextCursor}로 다음 쪽을 받는다. */
@@ -192,6 +192,10 @@ class AttemptController {
 			.orElseThrow(ApiException::notFound);
 	}
 
+	/**
+	 * 담당자의 채점 화면 한 장. 문항마다 지문, 배점, 출제 순서의 보기와 정답 여부, 학생이 고른 보기를 함께 담는다. 쿼리는 문항 수와 관계없이
+	 * 다섯(답안 2, 이름 1, 문항과 보기 2)이다. 학생 응답에는 이 모양을 쓰지 않는다.
+	 */
 	private InstructorAttempt instructorView(Attempt attempt) {
 		Map<Long, Answer> answers = this.attempts.answers(attempt.attemptId());
 		String name = this.userNames.namesOf(List.of(attempt.userId())).get(attempt.userId());
@@ -200,11 +204,17 @@ class AttemptController {
 				attempt.totalScore(), attempt.gradedAt(),
 				this.quizzes.questions(attempt.quizId()).stream().map((q) -> {
 					Answer a = answers.get(q.questionId());
-					return new InstructorAnswer(q.questionId(), q.questionNo(), q.type(), q.text(), q.points(),
-							a == null ? List.of() : a.optionIds(), a == null ? null : a.text(),
-							a == null ? 0 : a.revision(), a == null ? null : a.savedAt(), a == null ? null : a.correct(),
-							a == null ? null : a.awarded(), a == null ? null : a.gradingStatus(),
-							a == null ? null : a.comment(), a == null ? null : a.gradedAt());
+					List<Long> chosen = a == null ? List.of() : a.optionIds();
+					return new InstructorAnswer(q.questionId(), q.questionNo(), q.type(), q.text(), q.points(), chosen,
+							q.options()
+								.stream()
+								.map((o) -> new GradingOption(o.optionId(), o.optionNo(), o.text(), o.correct(),
+										chosen.contains(o.optionId())))
+								.toList(),
+							a == null ? null : a.text(), a == null ? 0 : a.revision(), a == null ? null : a.savedAt(),
+							a == null ? null : a.correct(), a == null ? null : a.awarded(),
+							a == null ? null : a.gradingStatus(), a == null ? null : a.comment(),
+							a == null ? null : a.gradedAt());
 				}).toList());
 	}
 
@@ -288,14 +298,16 @@ class AttemptController {
 	}
 
 	/**
+	 * @param created 이 요청이 새 응시를 만들었는지(201). false면 진행 중 응시를 돌려줬다(200)
 	 * @param deadlineAt 서버가 시작할 때 고정한 마감 일시. 이 시각부터 저장을 받지 않는다
 	 * @param serverTime 서버 시각. 남은 시간은 이 값과 deadlineAt으로 계산한다
 	 */
-	record AttemptState(long attemptId, int attemptNo, String status, LocalDateTime startedAt, LocalDateTime deadlineAt,
-			LocalDateTime serverTime) {
+	record AttemptState(long attemptId, int attemptNo, boolean created, String status, LocalDateTime startedAt,
+			LocalDateTime deadlineAt, LocalDateTime serverTime) {
 
-		static AttemptState of(Attempt a, LocalDateTime now) {
-			return new AttemptState(a.attemptId(), a.attemptNo(), a.status(), a.startedAt(), a.deadlineAt(), now);
+		static AttemptState of(Attempt a, boolean created, LocalDateTime now) {
+			return new AttemptState(a.attemptId(), a.attemptNo(), created, a.status(), a.startedAt(), a.deadlineAt(),
+					now);
 		}
 
 	}
@@ -345,11 +357,23 @@ class AttemptController {
 	}
 
 	/**
+	 * @param optionIds 학생이 고른 보기
+	 * @param options 출제 순서의 보기 전체와 정답 여부, 학생이 골랐는지. 단답형은 비어 있다
 	 * @param gradingStatus 응시 중이면 null, auto, pending(채점 대기), manual
 	 */
 	record InstructorAnswer(long questionId, int number, String type, String text, BigDecimal points,
-			List<Long> optionIds, String answerText, int revision, LocalDateTime savedAt, Boolean correct,
-			BigDecimal awardedScore, String gradingStatus, String feedback, LocalDateTime gradedAt) {
+			List<Long> optionIds, List<GradingOption> options, String answerText, int revision, LocalDateTime savedAt,
+			Boolean correct, BigDecimal awardedScore, String gradingStatus, String feedback, LocalDateTime gradedAt) {
+	}
+
+	/**
+	 * 담당자 채점 화면의 보기.
+	 *
+	 * @param number 보기 번호(출제 순서, 1부터)
+	 * @param correct 지금 정답 보기인지
+	 * @param selected 학생이 골랐는지
+	 */
+	record GradingOption(long optionId, int number, String text, boolean correct, boolean selected) {
 	}
 
 	/** @param nextCursor 다음 쪽이 있으면 그 cursor, 없으면 null */

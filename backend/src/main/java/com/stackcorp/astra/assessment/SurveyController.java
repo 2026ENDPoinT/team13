@@ -25,9 +25,11 @@ import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -122,6 +124,20 @@ class SurveyController {
 		this.rateLimiter.check("survey-update", actor.userId(), 120, Duration.ofMinutes(10));
 		this.service.update(actor, courseId, current, body.revision(), input);
 		return ok(instructorView(this.access.find(courseId, surveyId).orElseThrow(), this.access.now()));
+	}
+
+	/**
+	 * 설문 삭제(ADR-0011, ADR-0037). {@code If-Match}에 읽은 {@code revision}을 보낸다. 없으면 428, 다르면 409 {@code edit_conflict}다.
+	 * 참여와 응답은 지우지 않고, 그 commit부터 설문, 응답, 결과는 누구에게도 없다. 204.
+	 */
+	@DeleteMapping("/api/courses/{courseId}/surveys/{surveyId}")
+	ResponseEntity<Void> delete(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long surveyId, @RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+		Survey current = this.access.managed(actor.userId(), courseId, surveyId);
+		long revision = IfMatch.revision(ifMatch);
+		this.rateLimiter.check("survey-update", actor.userId(), 120, Duration.ofMinutes(10));
+		this.service.delete(actor, courseId, current, revision);
+		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 
 	@GetMapping("/api/courses/{courseId}/surveys")

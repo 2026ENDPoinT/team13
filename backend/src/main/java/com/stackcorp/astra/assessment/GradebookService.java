@@ -261,6 +261,23 @@ class GradebookService {
 	 */
 	ScoreSheet putScores(Actor actor, long courseId, long itemId, List<ScoreRow> rows) {
 		requireManual(managedItem(actor.userId(), courseId, itemId));
+		return writeScores(actor, courseId, itemId, rows);
+	}
+
+	/**
+	 * 오프라인 시험의 점수를 여러 학생에게 한 번에 쓴다(ADR-0021 13번, ADR-0037). 규칙은 직접 입력 항목의 일괄 저장과 같다(전부 아니면
+	 * 전무, 행마다 수정 번호, 배점 이하, 행마다 감사 기록). 학생에게는 그 퀴즈의 결과 공개 일시부터 보인다({@link Quiz#release}). 온라인
+	 * 시험의 점수는 응시 채점으로만 정해지므로 409 {@code online_quiz}다.
+	 */
+	ScoreSheet putQuizScores(Actor actor, long courseId, long quizId, List<ScoreRow> rows) {
+		Quiz quiz = this.quizzes.managed(actor.userId(), courseId, quizId);
+		if (quiz.online()) {
+			throw new ApiException(HttpStatus.CONFLICT, "online_quiz", "온라인 시험의 점수는 응시 채점으로 정해집니다.");
+		}
+		return writeScores(actor, courseId, quiz.settings().gradeItemId(), rows);
+	}
+
+	private ScoreSheet writeScores(Actor actor, long courseId, long itemId, List<ScoreRow> rows) {
 		Set<Long> roster = new HashSet<>(this.rosters.students(courseId));
 		List<RowError> errors = new ArrayList<>();
 		List<Indexed> checked = new ArrayList<>();

@@ -106,6 +106,23 @@ class SurveyService {
 	}
 
 	/**
+	 * 설문을 지운다(ADR-0011, ADR-0037). 활동에 삭제 표시만 남기고 설정, 문항, 참여 원장, 응답 저장부는 그대로 둔다. 응답 쪽 행은 읽지도
+	 * 바꾸지도 않으므로 익명 설문의 비식별(ADR-0022)은 그대로다. 수정 번호를 먼저 올려 설문 행을 배타 잠금하므로, 진행 중인 완료(공유
+	 * 잠금)는 삭제 전에 commit하거나 삭제 뒤에 설문을 다시 읽어 404가 된다. 설문은 알림을 만들지 않으므로 거둘 알림이 없다.
+	 */
+	void delete(Actor actor, long courseId, Survey current, long revision) {
+		this.readCommitted.executeWithoutResult((tx) -> {
+			if (!this.records.bumpRevision(current.surveyId(), revision)) {
+				throw new ApiException(HttpStatus.CONFLICT, "edit_conflict", "다른 수정이 먼저 저장되었습니다. 다시 불러온 뒤 수정해 주세요.");
+			}
+			if (!this.activities.delete(courseId, current.activity().activityId(), actor.userId())) {
+				throw ApiException.notFound();
+			}
+			this.audit.success(actor.userId(), actor.sessionId(), "survey.delete", "survey", current.surveyId(), courseId);
+		});
+	}
+
+	/**
 	 * 응답 완료. 응답은 최소 결과만 담은 receipt다.
 	 *
 	 * @param seen 권한 판정에 쓴 설문. transaction 안에서 잠근 뒤 다시 읽는다

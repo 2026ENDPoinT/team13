@@ -156,6 +156,27 @@ class QuizRecords {
 			.single();
 	}
 
+	/**
+	 * 문항 하나의 정답 보기와 배점만 바꾼다(재채점). 지문, 보기 문구, 보기 순서는 바꾸지 않는다. 부르는 쪽이 퀴즈 행을 배타 잠금한 뒤 부른다.
+	 *
+	 * @param correctOptionIds 정답 보기. 그 문항의 보기여야 한다. 단답형이면 비어 있다
+	 */
+	void updateAnswerKey(long questionId, BigDecimal points, Collection<Long> correctOptionIds) {
+		this.jdbc.sql("UPDATE quiz_questions SET score = :points WHERE quiz_question_id = :id")
+			.param("points", points)
+			.param("id", questionId)
+			.update();
+		this.jdbc.sql("UPDATE quiz_question_options SET is_correct_yn = 0 WHERE quiz_question_id = :id")
+			.param("id", questionId)
+			.update();
+		if (!correctOptionIds.isEmpty()) {
+			this.jdbc.sql("""
+					UPDATE quiz_question_options SET is_correct_yn = 1
+					 WHERE quiz_question_id = :id AND quiz_question_option_id IN (:options)
+					""").param("id", questionId).param("options", correctOptionIds).update();
+		}
+	}
+
 	/** 출제 순서대로의 문항과 보기. */
 	List<Question> questions(long quizId) {
 		Map<Long, List<Option>> options = new HashMap<>();

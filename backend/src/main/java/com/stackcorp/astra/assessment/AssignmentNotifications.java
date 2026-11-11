@@ -43,4 +43,10 @@ class AssignmentNotifications {
 		}
 	}
 
+	/** 과제를 지울 때 "새 과제"와 "점수 공개" 알림과 예약을 모두 거둔다. 이미 받은 사람의 알림도 지운다. */
+	void withdraw(long activityId) {
+		this.notifications.withdraw(NotificationKind.ASSIGNMENT_OPENED, activityId);
+		this.notifications.withdraw(NotificationKind.ASSIGNMENT_GRADED, activityId);
+	}
+
 }

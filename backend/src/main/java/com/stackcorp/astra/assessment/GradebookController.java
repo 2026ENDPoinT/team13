@@ -134,6 +134,21 @@ class GradebookController {
 		return ok(this.service.putScores(actor, courseId, itemId, body.rows()));
 	}
 
+	/**
+	 * 오프라인 시험의 점수 일괄 저장. 본문과 오류는 직접 입력 항목의 점수 일괄 저장과 같다. 학생 공개는 퀴즈의 결과 공개 일시가 정한다.
+	 * 온라인 시험은 409 {@code online_quiz}다.
+	 */
+	@PutMapping("/api/courses/{courseId}/quizzes/{quizId}/scores")
+	ResponseEntity<ScoreSheet> quizScores(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long quizId, @RequestBody ScoresRequest body) {
+		this.service.requireInstructor(actor.userId(), courseId);
+		if (body.rows() == null || body.rows().isEmpty() || body.rows().size() > GradebookService.MAX_ROWS) {
+			throw ApiException.invalid("rows는 1개 이상 " + GradebookService.MAX_ROWS + "개 이하여야 합니다.");
+		}
+		this.rateLimiter.check("grade-scores", actor.userId(), 60, Duration.ofMinutes(10));
+		return ok(this.service.putQuizScores(actor, courseId, quizId, body.rows()));
+	}
+
 	/** 일괄 저장 거부. 틀린 행의 순번과 이유 코드를 rows에 담는다. */
 	@ExceptionHandler(ScoreRowsRejected.class)
 	ResponseEntity<ProblemDetail> rejected(ScoreRowsRejected ex) {

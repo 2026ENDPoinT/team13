@@ -24,6 +24,15 @@ public interface SurveyActivities {
 	 */
 	boolean update(long courseId, long activityId, SurveyActivityInput input);
 
+	/**
+	 * 부르는 쪽 transaction 안에서 설문 활동에 삭제 표시를 남긴다(ADR-0011). 행은 지우지 않으므로 참여 원장과 응답 저장부는 남는다. 지운
+	 * 활동은 이 API의 어떤 조회에도 없다.
+	 *
+	 * @param deletedBy 지운 사용자. 감사 기록과 같은 actor다
+	 * @return 그 과목의 지우지 않은 설문 활동이 있어 지웠는지
+	 */
+	boolean delete(long courseId, long activityId, long deletedBy);
+
 	/** 그 과목에 속한 설문 활동. 다른 과목이거나 설문이 아니면 비어 있다(SC-03). */
 	Optional<SurveyActivity> find(long courseId, long activityId);
 

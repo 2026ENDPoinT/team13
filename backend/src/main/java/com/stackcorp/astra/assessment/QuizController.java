@@ -5,8 +5,10 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.stackcorp.astra.assessment.AttemptRecords.Attempt;
@@ -23,9 +25,11 @@ import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -67,6 +71,8 @@ class QuizController {
 
 	private final QuizService service;
 
+	private final QuizRegrading regrading;
+
 	private final QuizRecords records;
 
 	private final AttemptRecords attempts;
@@ -75,10 +81,11 @@ class QuizController {
 
 	private final RateLimiter rateLimiter;
 
-	QuizController(QuizAccess access, QuizService service, QuizRecords records, AttemptRecords attempts,
-			Idempotency idempotency, RateLimiter rateLimiter) {
+	QuizController(QuizAccess access, QuizService service, QuizRegrading regrading, QuizRecords records,
+			AttemptRecords attempts, Idempotency idempotency, RateLimiter rateLimiter) {
 		this.access = access;
 		this.service = service;
+		this.regrading = regrading;
 		this.records = records;
 		this.attempts = attempts;
 		this.idempotency = idempotency;
@@ -142,6 +149,47 @@ class QuizController {
 		this.rateLimiter.check("quiz-update", actor.userId(), 120, Duration.ofMinutes(10));
 		this.service.replaceQuestions(actor, courseId, current, body.revision(), questions);
 		return ok(instructorView(this.access.find(courseId, quizId).orElseThrow(), this.access.now()));
+	}
+
+	/**
+	 * 정답과 배점 정정(재채점, ADR-0037). 응시가 있어도 문항 하나의 정답 보기와 배점만 바꾸고, 닫힌 응시를 모두 같은 transaction에서 다시
+	 * 채점해 총점과 성적을 바꾼다. 지문과 보기는 바꾸지 않는다. 읽은 {@code revision}이 다르면 409 {@code edit_conflict}다.
+	 */
+	@PutMapping("/api/courses/{courseId}/quizzes/{quizId}/questions/{questionId}/answer-key")
+	ResponseEntity<RegradeResult> regrade(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long quizId, @PathVariable long questionId, @RequestBody AnswerKeyRequest body) {
+		Quiz current = this.access.managed(actor.userId(), courseId, quizId);
+		if (body.revision() == null) {
+			throw ApiException.invalid("revision은 반드시 보내야 합니다.");
+		}
+		BigDecimal points = PlainText.points(body.points(), MAX_SCORE, "points");
+		if (points.signum() == 0) {
+			throw ApiException.invalid("points는 0보다 커야 합니다.");
+		}
+		List<Long> requested = body.correctOptionIds() == null ? List.of() : body.correctOptionIds();
+		if (requested.stream().anyMatch((id) -> id == null) || new LinkedHashSet<>(requested).size() != requested.size()
+				|| requested.size() > MAX_OPTIONS) {
+			throw ApiException.invalid("correctOptionIds가 올바르지 않습니다.");
+		}
+		this.rateLimiter.check("quiz-update", actor.userId(), 120, Duration.ofMinutes(10));
+		int rescored = this.regrading.regrade(actor, courseId, current, body.revision(), questionId, points,
+				Set.copyOf(requested));
+		return ok(new RegradeResult(instructorView(this.access.find(courseId, quizId).orElseThrow(), this.access.now()),
+				rescored));
+	}
+
+	/**
+	 * 퀴즈 삭제(ADR-0011, ADR-0037). {@code If-Match}에 읽은 {@code revision}을 보낸다. 없으면 428, 다르면 409 {@code edit_conflict}다.
+	 * 응시, 답안, 성적은 지우지 않고 남기며, 그 commit부터 퀴즈와 응시와 성적 항목은 누구에게도 없다. 204.
+	 */
+	@DeleteMapping("/api/courses/{courseId}/quizzes/{quizId}")
+	ResponseEntity<Void> delete(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long quizId, @RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+		Quiz current = this.access.managed(actor.userId(), courseId, quizId);
+		long revision = IfMatch.revision(ifMatch);
+		this.rateLimiter.check("quiz-update", actor.userId(), 120, Duration.ofMinutes(10));
+		this.service.delete(actor, courseId, current, revision);
+		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 
 	@GetMapping("/api/courses/{courseId}/quizzes")
@@ -341,6 +389,23 @@ class QuizController {
 
 	/** @param revision 읽은 퀴즈 수정 번호 */
 	record QuestionsRequest(Long revision, List<QuestionRequest> questions) {
+	}
+
+	/**
+	 * 재채점 요청. 지문과 보기 문구는 받지 않는다.
+	 *
+	 * @param revision 읽은 퀴즈 수정 번호
+	 * @param points 새 문항 배점. 바꾸지 않으면 지금 값을 보낸다
+	 * @param correctOptionIds 선택 문항의 새 정답 보기 전체. 단답형이면 보내지 않는다
+	 */
+	record AnswerKeyRequest(Long revision, BigDecimal points, List<Long> correctOptionIds) {
+	}
+
+	/**
+	 * @param quiz 바뀐 정답과 배점, 새 수정 번호
+	 * @param rescoredAttempts 다시 채점한 닫힌 응시 수
+	 */
+	record RegradeResult(InstructorQuiz quiz, int rescoredAttempts) {
 	}
 
 	/**

@@ -21,14 +21,17 @@ import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -97,6 +100,21 @@ class AssignmentController {
 		this.assignments.update(actor, courseId, current, body.revision(), input);
 		Assignment updated = this.access.find(courseId, assignmentId).orElseThrow();
 		return ok(instructorView(updated, this.access.now()));
+	}
+
+	/**
+	 * 과제 삭제(ADR-0011, ADR-0037). {@code If-Match}에 읽은 {@code revision}을 보낸다. 없으면 428, 다르면 409 {@code edit_conflict}다.
+	 * 제출물과 그 파일, 점수는 보존하고, 그 commit부터 과제, 제출, 제출 파일, 성적 항목은 누구에게도 없다. 보낸 알림은 거둔다. 204.
+	 */
+	@DeleteMapping("/api/courses/{courseId}/assignments/{assignmentId}")
+	ResponseEntity<Void> delete(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long assignmentId,
+			@RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+		Assignment current = this.access.managed(actor.userId(), courseId, assignmentId);
+		long revision = IfMatch.revision(ifMatch);
+		this.rateLimiter.check("assignment-update", actor.userId(), 120, Duration.ofMinutes(10));
+		this.assignments.delete(actor, courseId, current, revision);
+		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 
 	@GetMapping("/api/courses/{courseId}/assignments")
