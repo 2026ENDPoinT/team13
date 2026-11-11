@@ -51,7 +51,7 @@ public class DevLoginConfiguration {
 	}
 
 	@RestController
-	static class DevLoginController {
+	static class DevLoginController implements DevLoginMarker {
 
 		private final JdbcClient jdbc;
 
