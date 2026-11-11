@@ -222,6 +222,7 @@ flowchart TD
 - 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
+- 수강신청과 청강 신청은 `catalog`가 판정한다. 조회(GET)는 신청을 만들지 않고, 신청 명령은 과정 행을 잠근 뒤 기간(DB 시계), 신청대상, 본인 담당 여부, 중복(활성 행 unique), 정원(조건부 갱신)을 한 transaction에서 다시 본다. 승인·반려는 그 과목의 교수와 비정규 담당자만 하고, 신청과 취소는 본인 것만 한다. 학사 원장 수강은 바꾸지 않는다.
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
 - 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
 
@@ -315,7 +316,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/courses` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할 |
+| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간 |
 | `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나 |
 | `GET /api/courses/{courseId}/weeks` | 과목 구성원 | 주차와 활동 목록. 학생에게는 공개한 활동만, 시작 전 활동은 제목과 기간만 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부, 강의 영상 항목 |
@@ -363,6 +364,26 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}/submissions/{submissionId}/grade` | 담당자 | 점수(0~배점, 소수 둘째 자리)와 의견(일반 텍스트 1000자) |
 
 제출 구간은 DB 시계로 `openAt <= now < closeAt`이고, 지각은 정책이 `allow_until`일 때 `closeAt <= now < lateUntil`만 받는다. 본문, 설명, 의견은 일반 텍스트로만 받고 내보낸다.
+
+### 7.8 카탈로그와 수강신청
+
+좌석 회계와 상태 기계는 [ADR-0026](adr/0026-enrollment-seat-accounting.md)에 있다. 조회는 신청을 만들지 않고 공개 항목(과목명, 코드, 학기, 담당자 이름, 수업 시간, 접수 기간, 정원과 확정 인원)만 돌려준다. 수강생 명단, 학습활동, 강의소개 HTML은 없다(CHG-03).
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/catalog/filters?term=` | 로그인한 사용자 | 정규·특별 학기 전체와, 고른 학기(없으면 현재 학기)에 과목이 있는 학과 |
+| `GET /api/catalog/courses?term=&orgSect=&department=&credit=&auditable=&q=&page=&size=` | 로그인한 사용자 | 정규과목 목록. term이 없으면 현재 학기. size 상한 40, 학기·학수번호·분반 순. `q`의 %, _, \는 글자 그대로 찾는다 |
+| `GET /api/catalog/courses/{courseId}` | 로그인한 사용자 | 정규과목 공개 항목과 본인의 역할·청강 신청 상태, 청강 신청 가능 여부와 이유 |
+| `GET /api/catalog/offerings?open=&audience=&division=&category=&lectureType=&q=&page=&size=` | 로그인한 사용자 | 비정규과목 목록. 접수 시작 역순. 접수 상태(UPCOMING\|OPEN\|CLOSED)와 `serverTime`은 같은 DB 시각 |
+| `GET /api/catalog/offerings/{courseId}` | 로그인한 사용자 | 비정규과목 상세와 신청 미리보기(`eligible`, `reasons`, 본인 신청). 표시용이며 신청 때 다시 판정한다 |
+| `POST /api/catalog/offerings/{courseId}/enrollments` | 신청대상이고 담당자가 아닌 사용자 | 수강신청. `Idempotency-Key` 필수. 자동 승인은 좌석을 잡고 ENROLLED, 승인 과정은 PENDING. 201. 409 `not_open_yet`·`application_closed`·`not_target`·`own_course`·`already_applied`·`seat_full` |
+| `POST /api/catalog/courses/{courseId}/audit-requests` | 구성원이 아닌 사용자, 청강 허용 과목 | 청강 신청(사유 일반 텍스트 1000자). REQUESTED. 201. `Idempotency-Key` 지원 |
+| `PUT /api/enrollments/{enrollmentId}/reason` | 청강 신청자 본인 | REQUESTED인 청강 사유 수정. 본문의 `version`이 다르면 409 `version_conflict` |
+| `POST /api/enrollments/{enrollmentId}/cancel` | 신청자 본인 | 비정규·청강 취소. 행을 지우지 않고 CANCELLED, 좌석은 한 번만 돌려준다. 이미 취소했으면 같은 결과. 학사 원장은 409 `not_cancellable`, 취소 마감 뒤는 409 `cancel_closed` |
+| `GET /api/courses/{courseId}/enrollment-requests?page=&size=` | 그 과목의 교수, 비정규 담당자 | 처리를 기다리는 신청(PENDING, REQUESTED)과 신청자 이름·학번, 청강 사유 |
+| `POST /api/courses/{courseId}/enrollments/{enrollmentId}/decision` | 그 과목의 교수, 비정규 담당자 | 승인(APPROVE) 또는 반려(REJECT). 본문의 `version` 비교. 비정규 승인은 이때 좌석을 잡는다. 409 `not_pending`·`version_conflict`·`seat_full`. `Idempotency-Key` 지원 |
+
+수강이 확정(ENROLLED)되는 즉시 그 과목의 강의실 권한(`CourseMemberships`)이 생기고, 취소하면 모든 강의실 경로에서 404가 된다. 학습 기록은 지우지 않는다.
 
 ## 8. Valkey 도입 기준
 
@@ -437,3 +458,4 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
 | 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
 | 2차 인증 만료와 학습 적립(SC-06-A) | 적립 유효기한이 close_at만 반영한다. 2차 인증 grant가 없다 | `identity`의 grant와 `learning_sessions.credit_authorized_until`, `reauth_required` 상태를 함께 만든다(ADR-0014 결과 절) |
+| 수강신청 정책 미정 항목 | 대기자 명단과 자동 승격, 청강 정원·기간, 졸업생·대학원생 신청대상 판정(identity에 구분 없음), 조교의 승인 위임, 카운터와 원장의 대사 job(C-22)이 없다. 비정규 강의소개는 HTML이라 내보내지 않는다([ADR-0026](adr/0026-enrollment-seat-accounting.md)) | 학사 담당과 정책을 정한 뒤 WAITLISTED 순번, `users`의 신분 구분, 위임 권한을 더한다. 강의소개는 서버 HTML 정규화(SC-08)와 함께 연다 |
