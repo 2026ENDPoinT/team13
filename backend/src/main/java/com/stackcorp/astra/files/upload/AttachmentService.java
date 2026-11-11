@@ -85,7 +85,7 @@ class AttachmentService implements Attachments {
 	@Override
 	@Transactional(propagation = Propagation.MANDATORY)
 	public Optional<Long> derive(ChangeRequest request) {
-		Policy policy = policy(request.purpose());
+		Policy policy = policy(purpose(request.purpose(), request.courseId()));
 		List<Long> keep = new ArrayList<>(new LinkedHashSet<>(request.keepFileIds()));
 		List<Long> add = new ArrayList<>(new LinkedHashSet<>(request.addUploadIds()));
 		if (policy.maxFileCount() != null && keep.size() + add.size() > policy.maxFileCount()) {
