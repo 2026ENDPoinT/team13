@@ -26,7 +26,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import tools.jackson.databind.JsonNode;
 
 /**
- * 파일함 파일을 과목 업로드로 다시 쓰기(EP-0126, POST /api/uploads:fromFilebox). 대상 용도·과목의 업로드 권한, 정책, 검사 상태를
+ * 파일함 파일을 과목 업로드로 다시 쓰기(EP-0126, POST /api/uploads/from-filebox). 대상 용도·과목의 업로드 권한, 정책, 검사 상태를
  * 다시 보고, 만든 업로드는 일반 첨부 경로로 첨부한다. 첨부는 파일함과 따로 참조하므로 파일함에서 영구 삭제해도 남는다(FILES-06).
  */
 class FileboxReuseTests extends IntegrationTest {
@@ -183,7 +183,7 @@ class FileboxReuseTests extends IntegrationTest {
 	}
 
 	private ResultActions reuse(ApiClient client, String purpose, Long courseId, long... itemIds) throws Exception {
-		return client.send(MockMvcRequestBuilders.post("/api/uploads:fromFilebox")
+		return client.send(MockMvcRequestBuilders.post("/api/uploads/from-filebox")
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"itemIds\":" + FileboxCalls.ids(itemIds) + ",\"courseId\":"
 					+ (courseId == null ? this.course : courseId) + ",\"purpose\":\"" + purpose + "\"}"));

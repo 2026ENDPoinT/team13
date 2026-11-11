@@ -657,12 +657,12 @@ worker는 마감이 지난 진행 중 응시를 `astra.quiz.close-interval`(기�
 | `POST /api/filebox/folders` | 로그인한 사용자 | 폴더 만들기. 201. 같은 폴더에 같은 이름이면 409. 깊이 10까지. `Idempotency-Key` 지원 |
 | `POST /api/filebox/files` | 로그인한 사용자 | 파일함에 올리기(용도 `filebox`). 용량을 넘으면 409. 이름이 겹치면 접미사. 201. `Idempotency-Key` 지원 |
 | `PATCH /api/filebox/items/{itemId}` | 소유자 | 이름 바꾸기. `If-Match` 필수. 파일 확장자는 못 바꾼다 |
-| `POST /api/filebox/items:move` | 소유자 | `{targetFolderId, items:[{id, version}]}`. 자기 자신이나 그 아래로는 409. 하나라도 안 되면 아무것도 옮기지 않는다 |
-| `POST /api/filebox/items:trash` · `:restore` · `:purge` | 소유자 | `{ids}`. 휴지통에 넣기(하위 포함), 원래 폴더나 루트로 되돌리기(이름이 겹치면 접미사), 영구 삭제(파일 참조를 놓고 GC가 원본 정리). 처리한 수를 돌려준다 |
-| `POST /api/filebox/trash:empty` | 로그인한 사용자 | 휴지통 비우기 |
+| `POST /api/filebox/items/move` | 소유자 | `{targetFolderId, items:[{id, version}]}`. 자기 자신이나 그 아래로는 409. 하나라도 안 되면 아무것도 옮기지 않는다 |
+| `POST /api/filebox/items/trash` · `/items/restore` · `/items/purge` | 소유자 | `{ids}`. 휴지통에 넣기(하위 포함), 원래 폴더나 루트로 되돌리기(이름이 겹치면 접미사), 영구 삭제(파일 참조를 놓고 GC가 원본 정리). 처리한 수를 돌려준다 |
+| `POST /api/filebox/trash/empty` | 로그인한 사용자 | 휴지통 비우기 |
 | `GET /api/filebox/items/{itemId}/content` | 소유자 | 내 파일. 언제나 attachment. 검사 전이면 409 |
 | `GET /api/filebox/items/{itemId}/references` | 소유자 | 이 파일을 다시 써서 첨부한 곳 가운데 지금 볼 수 있는 것 |
-| `POST /api/uploads:fromFilebox` | 대상 용도의 업로드 권한이 있는 사람 | `{itemIds, courseId, purpose}`. 같은 내용을 참조하는 clean 업로드를 만든다. 정책과 검사 상태를 다시 본다. 201. `Idempotency-Key` 지원 |
+| `POST /api/uploads/from-filebox` | 대상 용도의 업로드 권한이 있는 사람 | `{itemIds, courseId, purpose}`. 같은 내용을 참조하는 clean 업로드를 만든다. 정책과 검사 상태를 다시 본다. 201. `Idempotency-Key` 지원 |
 | `POST /api/filebox/zip-jobs` | 소유자 | `{itemIds}`. 202. `Idempotency-Key` 필수. 파일 100개, 합 500 MB, 진행 중 2개까지. 같은 집합의 작업이 있으면 그 작업 |
 | `GET /api/filebox/zip-jobs/{jobId}` · `/download` | 요청한 사람 | 상태, 생성물. 만드는 중이면 409, TTL(2시간)이 지나면 410 |
 

@@ -106,14 +106,14 @@ class FileboxApiTests extends IntegrationTest {
 		// 남의 폴더로 옮기기, 남의 항목을 섞어 옮기기
 		move(this.other, folder, theirs, 1).andExpect(status().isNotFound());
 		this.other
-			.postJson("/api/filebox/items:move",
+			.postJson("/api/filebox/items/move",
 					"{\"targetFolderId\":" + theirFolder + ",\"items\":[{\"id\":" + theirs + ",\"version\":1},{\"id\":"
 							+ inner + ",\"version\":1}]}")
 			.andExpect(status().isNotFound());
 		command(this.other, "trash", theirs, inner).andExpect(status().isNotFound());
 		command(this.other, "restore", trashed).andExpect(status().isNotFound());
 		command(this.other, "purge", trashed).andExpect(status().isNotFound());
-		this.other.postJson("/api/filebox/trash:empty", "").andExpect(status().isOk()).andExpect(jsonPath("$.count").value(0));
+		this.other.postJson("/api/filebox/trash/empty", "").andExpect(status().isOk()).andExpect(jsonPath("$.count").value(0));
 		// ZIP 작업도 남의 항목이 하나라도 섞이면 404다.
 		this.other.send(MockMvcRequestBuilders.post("/api/filebox/zip-jobs")
 			.header("Idempotency-Key", "zip-foreign")
@@ -303,13 +303,13 @@ class FileboxApiTests extends IntegrationTest {
 		move(this.owner, top, top, 1).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("cycle"));
 		// version이 하나라도 틀리면 아무것도 옮기지 않는다.
 		this.owner
-			.postJson("/api/filebox/items:move", "{\"targetFolderId\":" + child + ",\"items\":[{\"id\":" + x
+			.postJson("/api/filebox/items/move", "{\"targetFolderId\":" + child + ",\"items\":[{\"id\":" + x
 					+ ",\"version\":1},{\"id\":" + y + ",\"version\":5}]}")
 			.andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("version_conflict"));
 		assertThat(parent(x)).isNull();
 		this.owner
-			.postJson("/api/filebox/items:move", "{\"targetFolderId\":" + child + ",\"items\":[{\"id\":" + x
+			.postJson("/api/filebox/items/move", "{\"targetFolderId\":" + child + ",\"items\":[{\"id\":" + x
 					+ ",\"version\":1},{\"id\":" + y + ",\"version\":1}]}")
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.count").value(2));
@@ -415,7 +415,7 @@ class FileboxApiTests extends IntegrationTest {
 		this.owner.get("/api/filebox/items/" + b + "/content").andExpect(status().isOk()).andExpect(content().bytes(shared));
 
 		command(this.owner, "trash", b).andExpect(status().isOk());
-		this.owner.postJson("/api/filebox/trash:empty", "").andExpect(status().isOk()).andExpect(jsonPath("$.count").value(1));
+		this.owner.postJson("/api/filebox/trash/empty", "").andExpect(status().isOk()).andExpect(jsonPath("$.count").value(1));
 		assertThat(referenceCount(blob)).isZero();
 		assertThat(used()).isZero();
 	}
@@ -468,7 +468,7 @@ class FileboxApiTests extends IntegrationTest {
 
 	private static org.springframework.test.web.servlet.ResultActions move(ApiClient client, Long target, long id,
 			int version) throws Exception {
-		return client.postJson("/api/filebox/items:move",
+		return client.postJson("/api/filebox/items/move",
 				"{\"targetFolderId\":" + target + ",\"items\":[{\"id\":" + id + ",\"version\":" + version + "}]}");
 	}
 

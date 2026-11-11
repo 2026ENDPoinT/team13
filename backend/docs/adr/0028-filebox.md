@@ -17,7 +17,7 @@ V1에 `filebox_items`(부모 자기참조, active/trashed/purged, 같은 폴더 
 4. 이름은 업로드 이름과 같이 정규화한다(`FileNames`). 입력한 이름에는 경로 구분자와 제어 문자를 받지 않는다. 같은 폴더 안 활성 항목의 이름 유일성은 DB 제약(대소문자 구분 없는 collation)이 지킨다. 사용자가 입력한 이름이 겹치면 409이고, 올리기와 복원은 " (1)" 같은 접미사를 붙인다. 파일 이름을 바꿀 때 확장자는 바꾸지 못한다.
 5. 휴지통: 고른 항목과 그 아래 활성 항목 전체(서버가 계산한 폐포)를 한 묶음으로 넣고 `filebox_items.trash_root_id`에 고른 항목을 기록한다. 고른 항목 안의 항목을 함께 골라도 위 항목의 묶음이 된다. 복원과 영구 삭제는 휴지통 root만 받는다. 복원은 같은 묶음만 되돌리고, 원래 폴더가 활성이고 깊이 상한 안이면 그 폴더로, 아니면 루트로 되돌린다(backend/60 3.2절). 위쪽 root부터 되돌린다. 영구 삭제는 root 아래 휴지통 항목 전체를 `purged`로 바꾸고, 파일마다 `FileReferences.release`로 참조를 한 번 놓는다. 상태를 조건으로 건 UPDATE라 두 번 불러도 한 번만 줄고, 마지막 참조였던 내용 객체는 저장소 GC(ADR-0011)가 지운다. 항목 행은 tombstone으로 남긴다(ZIP 작업, 다시 쓴 파일의 출처가 가리킨다).
 6. 올리기: 용도 `filebox`(`upload_policies`, 과목 없음)로 일반 업로드와 같은 검사를 거친다. 업로드는 기록과 함께 `attached`가 되므로 `Attachments`로는 첨부하지 못한다. 검사기가 있으면 검사를 마칠 때까지 `scanning`이고 내려받기, ZIP, 다시 쓰기를 하지 못한다.
-7. 다시 쓰기(`POST /api/uploads:fromFilebox`, EP-0126): 같은 내용 객체를 참조하는 새 `files` 행(참조 수 +1, `files.source_filebox_item_id`)과 `clean` 업로드를 만든다. 대상 용도의 과목 역할, 확장자, 크기 정책을 다시 보고, 검사를 마치지 않았거나 거부한 내용은 409다. 만든 업로드는 일반 업로드처럼 부모 저장에서 `Attachments.attach`/`change`로 첨부한다. 첨부는 파일함과 따로 참조하므로 파일함에서 영구 삭제해도 제출물과 자료의 파일은 남는다(FILES-06, N-08).
+7. 다시 쓰기(`POST /api/uploads/from-filebox`, EP-0126): 같은 내용 객체를 참조하는 새 `files` 행(참조 수 +1, `files.source_filebox_item_id`)과 `clean` 업로드를 만든다. 대상 용도의 과목 역할, 확장자, 크기 정책을 다시 보고, 검사를 마치지 않았거나 거부한 내용은 409다. 만든 업로드는 일반 업로드처럼 부모 저장에서 `Attachments.attach`/`change`로 첨부한다. 첨부는 파일함과 따로 참조하므로 파일함에서 영구 삭제해도 제출물과 자료의 파일은 남는다(FILES-06, N-08).
    - 파일함의 `files` 행을 첨부가 함께 가리키는 방식은 기각했다. 영구 삭제가 첨부된 파일을 지우거나, `files`에 참조 수를 하나 더 두어야 한다. 업로드 하나는 부모 하나에만 첨부한다는 규칙(backend/60 3.1절)과도 맞지 않는다.
    - 내용을 복사하는 방식은 기각했다. 같은 내용은 객체 하나라는 규칙(ADR-0010 5번)이 있고 저장 비용이 는다.
 8. 연결된 곳(EP-0256): 다시 쓴 파일 가운데 첨부된 것을 `source_filebox_item_id`로 찾고, 요청한 사람이 지금 그 부모를 볼 수 있는지 `FileAccess`(부모 모듈의 판정)로 거른다. 계산하므로 `filebox_items.reference_count` 캐시 column은 지웠다.
@@ -38,3 +38,4 @@ V1에 `filebox_items`(부모 자기참조, active/trashed/purged, 같은 폴더 
 - worker가 multipart upload 도중에 죽으면 끝내지 못한 part가 남는다. content bucket의 lifecycle 규칙(`abort_incomplete_multipart_days`)이 지운다.
 - ZIP에는 폴더를 넣지 못한다. 넣으려면 폴더 구조를 경로로 만드는 규칙(정규화한 이름 조각만 쓰기)을 더한다.
 - 요청 제한 counter는 process 메모리에 있다(architecture.md 8절).
+- 여러 항목을 다루는 명령의 경로는 `items/move`, `trash/empty`, `uploads/from-filebox`처럼 경로 조각으로 둔다. `items:move` 같은 `:` 표기는 쓰지 않는다. 다른 API와 같은 모양이고, 앞단 proxy의 경로 검사(조각마다 허용 문자)를 넓히지 않아도 된다.

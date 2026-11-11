@@ -108,7 +108,7 @@ class FileboxController {
 	}
 
 	/** 이동(EP-0251). 항목마다 마지막으로 읽은 version을 보낸다. targetFolderId가 없으면 루트. */
-	@PostMapping("/api/filebox/items:move")
+	@PostMapping("/api/filebox/items/move")
 	ResponseEntity<Count> move(@AuthenticationPrincipal Actor actor, @RequestBody Move body) {
 		if (body.items() == null || body.items().isEmpty() || body.items().size() > MAX_IDS) {
 			throw ApiException.invalid("items는 1개 이상 " + MAX_IDS + "개 이하여야 합니다.");
@@ -125,25 +125,25 @@ class FileboxController {
 	}
 
 	/** 휴지통에 넣기(EP-0245). 하위 항목은 서버가 계산한다. */
-	@PostMapping("/api/filebox/items:trash")
+	@PostMapping("/api/filebox/items/trash")
 	ResponseEntity<Count> trashItems(@AuthenticationPrincipal Actor actor, @RequestBody Ids body) {
 		return ok(new Count(this.filebox.trash(actor, ids(body))));
 	}
 
 	/** 복원(EP-0259). 휴지통 root만 받는다. */
-	@PostMapping("/api/filebox/items:restore")
+	@PostMapping("/api/filebox/items/restore")
 	ResponseEntity<Count> restore(@AuthenticationPrincipal Actor actor, @RequestBody Ids body) {
 		return ok(new Count(this.filebox.restore(actor, ids(body))));
 	}
 
 	/** 영구 삭제(EP-0246). 휴지통 root만 받는다. */
-	@PostMapping("/api/filebox/items:purge")
+	@PostMapping("/api/filebox/items/purge")
 	ResponseEntity<Count> purge(@AuthenticationPrincipal Actor actor, @RequestBody Ids body) {
 		return ok(new Count(this.filebox.purge(actor, ids(body))));
 	}
 
 	/** 휴지통 비우기. */
-	@PostMapping("/api/filebox/trash:empty")
+	@PostMapping("/api/filebox/trash/empty")
 	ResponseEntity<Count> emptyTrash(@AuthenticationPrincipal Actor actor) {
 		return ok(new Count(this.filebox.emptyTrash(actor)));
 	}
@@ -173,7 +173,7 @@ class FileboxController {
 	 * 파일함 파일로 과목 업로드를 만든다(EP-0126). 201. 만든 업로드는 clean이고, 부모 저장의 첨부(uploadIds, attachments.add)로
 	 * 보낸다. Idempotency-Key 지원.
 	 */
-	@PostMapping("/api/uploads:fromFilebox")
+	@PostMapping("/api/uploads/from-filebox")
 	ResponseEntity<ReuseReceipt> fromFilebox(@AuthenticationPrincipal Actor actor, @RequestBody FromFilebox body,
 			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
 		if (body.courseId() == null || body.courseId() < 1) {

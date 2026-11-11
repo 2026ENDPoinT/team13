@@ -481,7 +481,7 @@ class FileboxService {
 	}
 
 	/**
-	 * 파일함 파일을 과목 업로드로 다시 쓴다(EP-0126, POST /api/uploads:fromFilebox). 항목은 요청한 사람의 활성 파일이어야 하고,
+	 * 파일함 파일을 과목 업로드로 다시 쓴다(EP-0126, POST /api/uploads/from-filebox). 항목은 요청한 사람의 활성 파일이어야 하고,
 	 * 대상 용도·과목의 업로드 권한, 확장자와 크기 정책, 검사 상태를 다시 본다. 만든 업로드는 부모 저장에서 첨부한다.
 	 */
 	ReuseReceipt reuse(Actor actor, long courseId, String purpose, List<Long> itemIds, String idempotencyKey) {
