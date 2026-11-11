@@ -165,6 +165,16 @@ java -Dloader.main=com.stackcorp.converter.ConverterServer -cp stack-eclass-back
 
 브라우저는 먼저 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키를 받고, 상태를 바꾸는 요청마다 그 값을 `X-XSRF-TOKEN` header로 보낸다.
 
+### 멱등 원장 설정
+
+자료 등록과 요약 생성 요청은 `Idempotency-Key` header(`[A-Za-z0-9._-]` 1~100자)를 받는다. 같은 key의 재전송은 처음 응답을 다시 받는다([ADR-0012](docs/adr/0012-idempotency-ledger-and-audit.md)). 모든 응답의 `X-Request-Id`는 서버가 만든 값이고, 같은 값이 로그 줄, 오류 본문의 `requestId`, 감사 기록에 들어간다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_IDEMPOTENCY_RETENTION` | `24h` | 완료한 key의 receipt를 보존하는 시간 |
+| `ASTRA_IDEMPOTENCY_IN_FLIGHT_WAIT` | `3s` | 같은 key를 처리 중일 때 기다리는 시간. 넘으면 409 `idempotency_in_progress` |
+| `ASTRA_IDEMPOTENCY_PURGE_INTERVAL` | `15m` | worker가 보존기한이 지난 항목을 지우는 간격 |
+
 ## CI
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 두 작업을 실행한다.

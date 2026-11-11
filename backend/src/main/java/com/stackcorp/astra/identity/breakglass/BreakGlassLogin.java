@@ -13,13 +13,14 @@ import org.springframework.stereotype.Service;
 import com.stackcorp.astra.identity.session.BreakGlassMarker;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
+import com.stackcorp.astra.shared.audit.AuditLog;
 
 /**
  * break-glass 계정의 로컬 로그인. 비밀번호와 TOTP를 모두 요구한다(ADR-0004 6번).
  * <ul>
  * <li>15분 안에 5번 실패하면 15분 동안 잠근다.</li>
  * <li>TOTP 코드 재사용을 막기 위해 성공한 로그인 뒤 90초 동안은 다시 로그인하지 않는다.</li>
- * <li>실패 이유는 응답으로 구분하지 않는다. login_events에만 남긴다.</li>
+ * <li>실패 이유는 응답으로 구분하지 않는다. login_events에만 남긴다. 감사 기록(SC-09)에는 성공과 응답 코드만 남긴다.</li>
  * </ul>
  */
 @Service
@@ -32,6 +33,8 @@ class BreakGlassLogin implements BreakGlassMarker {
 
 	static final Duration CODE_REUSE_WINDOW = Duration.ofSeconds(Totp.STEP_SECONDS * 3);
 
+	static final String AUDIT_OPERATION = "auth.break_glass_login";
+
 	private final BreakGlassProperties properties;
 
 	private final PasswordEncoder passwords;
@@ -42,16 +45,19 @@ class BreakGlassLogin implements BreakGlassMarker {
 
 	private final JdbcClient jdbc;
 
+	private final AuditLog audit;
+
 	// 없는 계정에도 같은 비교 시간을 쓰도록 실제로 만든 hash
 	private final String dummyHash;
 
 	BreakGlassLogin(BreakGlassProperties properties, PasswordEncoder passwords, SessionStore sessions,
-			LoginEvents events, JdbcClient jdbc) {
+			LoginEvents events, JdbcClient jdbc, AuditLog audit) {
 		this.properties = properties;
 		this.passwords = passwords;
 		this.sessions = sessions;
 		this.events = events;
 		this.jdbc = jdbc;
+		this.audit = audit;
 		this.dummyHash = passwords.encode(UUID.randomUUID().toString());
 	}
 
@@ -87,6 +93,7 @@ class BreakGlassLogin implements BreakGlassMarker {
 		}
 		IssuedSession session = this.sessions.create(user, ip, userAgent);
 		this.events.record(user, session.sessionId(), ip, true, null);
+		this.audit.success(user, session.sessionId(), AUDIT_OPERATION, "user_session", session.sessionId(), null);
 		return session;
 	}
 

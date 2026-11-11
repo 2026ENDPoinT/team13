@@ -19,6 +19,8 @@ import com.stackcorp.astra.learning.LearningAccess.Activity;
 import com.stackcorp.astra.learning.MaterialService.NewMaterial;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
+import com.stackcorp.astra.shared.audit.AuditLog;
+import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -29,6 +31,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -58,13 +61,19 @@ class LearningController {
 
 	private final RateLimiter rateLimiter;
 
+	private final Idempotency idempotency;
+
+	private final AuditLog audit;
+
 	LearningController(JdbcClient jdbc, LearningAccess access, Attachments attachments, MaterialService materials,
-			RateLimiter rateLimiter) {
+			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit) {
 		this.jdbc = jdbc;
 		this.access = access;
 		this.attachments = attachments;
 		this.materials = materials;
 		this.rateLimiter = rateLimiter;
+		this.idempotency = idempotency;
+		this.audit = audit;
 	}
 
 	@GetMapping("/api/courses/{courseId}/weeks")
@@ -143,14 +152,25 @@ class LearningController {
 				row.activity().openAt(), row.closeAt(), row.activity().published(), files, items));
 	}
 
+	/** {@code Idempotency-Key}를 보내면 같은 key의 재전송은 처음 응답을 다시 돌려받고 자료를 더 만들지 않는다(SC-05). */
 	@PostMapping("/api/courses/{courseId}/materials")
 	ResponseEntity<MaterialView> createMaterial(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
-			@RequestBody CreateMaterial body) {
+			@RequestBody CreateMaterial body,
+			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
 		if (!this.access.canManage(actor.userId(), courseId)) {
 			throw ApiException.notFound();
 		}
 		NewMaterial material = validated(body);
 		this.rateLimiter.check("material-create", actor.userId(), 60, Duration.ofMinutes(10));
+		MaterialView created = this.idempotency.execute(actor.userId(), "material.create", idempotencyKey,
+				List.of(courseId, material), MaterialView.class, () -> create(actor, courseId, material));
+		return ResponseEntity.status(HttpStatus.CREATED)
+			.cacheControl(CacheControl.noStore())
+			.body(created);
+	}
+
+	// 활동 저장, 응답 생성, 감사 기록이 멱등 원장과 같은 transaction에 들어간다.
+	private MaterialView create(Actor actor, long courseId, NewMaterial material) {
 		long activityId = this.materials.create(actor.userId(), courseId, material);
 		ActivityRow row = this.jdbc.sql(ACTIVITY + " WHERE a.activity_id = :activity")
 			.param("activity", activityId)
@@ -158,9 +178,9 @@ class LearningController {
 			.single();
 		List<AttachedFile> files = row.attachmentGroupId() == null ? List.of()
 				: files(this.attachments.list(List.of(row.attachmentGroupId())), row);
-		return ResponseEntity.status(HttpStatus.CREATED)
-			.cacheControl(CacheControl.noStore())
-			.body(MaterialView.of(row, files));
+		this.audit.success(actor.userId(), actor.sessionId(), "material.create", "learning_activity", activityId,
+				courseId);
+		return MaterialView.of(row, files);
 	}
 
 	private CourseRole role(Actor actor, long courseId) {

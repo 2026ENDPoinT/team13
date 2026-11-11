@@ -10,6 +10,7 @@ import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
+import com.stackcorp.astra.shared.audit.AuditLog;
 
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
@@ -34,10 +35,13 @@ class FileContentController {
 
 	private final ObjectStore store;
 
-	FileContentController(FileAccess access, FileRecords files, ObjectStore store) {
+	private final AuditLog audit;
+
+	FileContentController(FileAccess access, FileRecords files, ObjectStore store, AuditLog audit) {
 		this.access = access;
 		this.files = files;
 		this.store = store;
+		this.audit = audit;
 	}
 
 	@GetMapping("/api/courses/{courseId}/files/{fileId}/content")
@@ -48,6 +52,7 @@ class FileContentController {
 		}
 		FileRow file = this.files.find(fileId).filter(FileRow::ready).orElseThrow(ApiException::notFound);
 		InputStream content = this.store.open(Bucket.CONTENT, file.storageKey()).orElseThrow(ApiException::notFound);
+		this.audit.success(actor.userId(), actor.sessionId(), "file.download", "file", fileId, courseId);
 		String type = file.detectedMimeType() != null ? file.detectedMimeType() : MediaType.APPLICATION_OCTET_STREAM_VALUE;
 		return ResponseEntity.ok()
 			.contentType(MediaType.parseMediaType(type))

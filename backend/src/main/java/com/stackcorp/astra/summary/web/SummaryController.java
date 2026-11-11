@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.stackcorp.astra.files.api.DeliveryCookies;
@@ -20,6 +21,8 @@ import com.stackcorp.astra.files.api.DeliveryCookies.DeliveryCookie;
 import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.RateLimiter;
+import com.stackcorp.astra.shared.audit.AuditLog;
+import com.stackcorp.astra.shared.idempotency.Idempotency;
 import com.stackcorp.astra.summary.job.PublishedSummary;
 import com.stackcorp.astra.summary.job.SummaryJob;
 import com.stackcorp.astra.summary.job.SummaryJobException;
@@ -46,21 +49,36 @@ class SummaryController {
 
 	private final RateLimiter rateLimiter;
 
+	private final Idempotency idempotency;
+
+	private final AuditLog audit;
+
 	SummaryController(SummaryJobService jobs, SummaryPolicy policy, DocumentRenditions renditions,
-			DeliveryCookies cookies, RateLimiter rateLimiter) {
+			DeliveryCookies cookies, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit) {
 		this.rateLimiter = rateLimiter;
 		this.jobs = jobs;
 		this.policy = policy;
 		this.renditions = renditions;
 		this.cookies = cookies;
+		this.idempotency = idempotency;
+		this.audit = audit;
 	}
 
+	/** {@code Idempotency-Key}를 보내면 같은 key의 재전송은 처음 응답을 다시 돌려받고 작업을 더 만들지 않는다(SC-05). */
 	@PostMapping("/api/courses/{courseId}/files/{fileId}/summary-jobs")
 	ResponseEntity<JobView> request(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
-			@PathVariable long fileId) {
+			@PathVariable long fileId,
+			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
 		requireManage(actor, courseId, fileId);
 		limitGeneration(actor);
-		return noStore(HttpStatus.ACCEPTED).body(JobView.of(this.jobs.request(fileId, actor.userId())));
+		JobView job = this.idempotency.execute(actor.userId(), "summary_job.request", idempotencyKey,
+				List.of(courseId, fileId), JobView.class, () -> {
+					JobView created = JobView.of(this.jobs.request(fileId, actor.userId()));
+					this.audit.success(actor.userId(), actor.sessionId(), "summary_job.request", "summary_job",
+							created.id(), courseId);
+					return created;
+				});
+		return noStore(HttpStatus.ACCEPTED).body(job);
 	}
 
 	@GetMapping("/api/courses/{courseId}/files/{fileId}/summary-jobs")
@@ -80,7 +98,9 @@ class SummaryController {
 	ResponseEntity<JobView> cancel(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long jobId) {
 		managedJob(actor, courseId, jobId);
-		return noStore(HttpStatus.OK).body(JobView.of(this.jobs.cancel(jobId)));
+		JobView job = JobView.of(this.jobs.cancel(jobId));
+		this.audit.success(actor.userId(), actor.sessionId(), "summary_job.cancel", "summary_job", jobId, courseId);
+		return noStore(HttpStatus.OK).body(job);
 	}
 
 	@PostMapping("/api/courses/{courseId}/summary-jobs/{jobId}/retry")
@@ -88,7 +108,9 @@ class SummaryController {
 			@PathVariable long jobId) {
 		managedJob(actor, courseId, jobId);
 		limitGeneration(actor);
-		return noStore(HttpStatus.ACCEPTED).body(JobView.of(this.jobs.retry(jobId, actor.userId())));
+		JobView job = JobView.of(this.jobs.retry(jobId, actor.userId()));
+		this.audit.success(actor.userId(), actor.sessionId(), "summary_job.retry", "summary_job", job.id(), courseId);
+		return noStore(HttpStatus.ACCEPTED).body(job);
 	}
 
 	@GetMapping("/api/courses/{courseId}/summary-jobs/{jobId}/result")
@@ -104,7 +126,9 @@ class SummaryController {
 	ResponseEntity<PublishedView> publish(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long jobId) {
 		managedJob(actor, courseId, jobId);
-		return published(this.jobs.publish(jobId, actor.userId()));
+		PublishedSummary summary = this.jobs.publish(jobId, actor.userId());
+		this.audit.success(actor.userId(), actor.sessionId(), "summary_job.publish", "summary_job", jobId, courseId);
+		return published(summary);
 	}
 
 	@GetMapping("/api/courses/{courseId}/files/{fileId}/summary")

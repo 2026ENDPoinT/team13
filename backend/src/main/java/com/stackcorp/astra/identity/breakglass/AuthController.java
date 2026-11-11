@@ -19,6 +19,7 @@ import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
+import com.stackcorp.astra.shared.audit.AuditLog;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -34,10 +35,13 @@ class AuthController {
 
 	private final SessionProperties properties;
 
-	AuthController(BreakGlassLogin breakGlass, SessionStore sessions, SessionProperties properties) {
+	private final AuditLog audit;
+
+	AuthController(BreakGlassLogin breakGlass, SessionStore sessions, SessionProperties properties, AuditLog audit) {
 		this.breakGlass = breakGlass;
 		this.sessions = sessions;
 		this.properties = properties;
+		this.audit = audit;
 	}
 
 	/** CSRF 쿠키(XSRF-TOKEN)를 받는다. 상태를 바꾸는 요청은 이 값을 X-XSRF-TOKEN header로 보낸다. */
@@ -60,6 +64,7 @@ class AuthController {
 	@PostMapping("/api/auth/logout")
 	ResponseEntity<Void> logout(@AuthenticationPrincipal Actor actor) {
 		this.sessions.revoke(actor.sessionId(), "LOGOUT");
+		this.audit.success(actor.userId(), actor.sessionId(), "auth.logout", "user_session", actor.sessionId(), null);
 		return ResponseEntity.noContent()
 			.header(HttpHeaders.SET_COOKIE, cookie("", Duration.ZERO).toString())
 			.header(HttpHeaders.CACHE_CONTROL, "no-store")
@@ -73,8 +78,11 @@ class AuthController {
 			.body(new Me(actor.userId(), actor.name(), actor.role().name(), actor.breakGlass()));
 	}
 
+	// 실패는 계정을 특정하지 않고 남긴다. 계정별 실패 이유는 login_events에 있다.
 	@ExceptionHandler(BreakGlassException.class)
 	ProblemDetail rejected(BreakGlassException ex) {
+		this.audit.record(null, null, BreakGlassLogin.AUDIT_OPERATION, null, null, null,
+				ex.reason().name().toLowerCase());
 		ProblemDetail problem = switch (ex.reason()) {
 			case DISABLED -> ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "로컬 로그인을 쓸 수 없습니다.");
 			case LOCKED -> ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, "잠시 뒤 다시 시도해 주세요.");

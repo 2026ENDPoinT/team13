@@ -10,6 +10,7 @@ import com.stackcorp.astra.files.api.VideoKeys;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.learning.LearningAccess.Activity;
 import com.stackcorp.astra.shared.ApiException;
+import com.stackcorp.astra.shared.audit.AuditLog;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -41,11 +42,15 @@ class LectureVideoController {
 
 	private final DeliveryCookies cookies;
 
-	LectureVideoController(JdbcClient jdbc, LearningAccess access, VideoKeys keys, DeliveryCookies cookies) {
+	private final AuditLog audit;
+
+	LectureVideoController(JdbcClient jdbc, LearningAccess access, VideoKeys keys, DeliveryCookies cookies,
+			AuditLog audit) {
 		this.jdbc = jdbc;
 		this.access = access;
 		this.keys = keys;
 		this.cookies = cookies;
+		this.audit = audit;
 	}
 
 	/**
@@ -59,6 +64,8 @@ class LectureVideoController {
 		if (issued.isEmpty()) {
 			throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "delivery_unavailable", "영상 전달이 설정되지 않았습니다.");
 		}
+		this.audit.success(actor.userId(), actor.sessionId(), "lecture.playback_grant", "online_lecture_item", itemId,
+				courseId);
 		ResponseEntity.BodyBuilder response = ResponseEntity.ok().cacheControl(CacheControl.noStore());
 		issued.forEach((c) -> response.header(HttpHeaders.SET_COOKIE, c.header()));
 		return response.body(new Playback("/" + video.contentPath(), this.cookies.videoTtl().toSeconds()));
@@ -68,12 +75,13 @@ class LectureVideoController {
 	ResponseEntity<byte[]> key(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long itemId) {
 		Video video = video(actor, courseId, itemId);
-		return this.keys.find(video.assetKey())
-			.map((bytes) -> ResponseEntity.ok()
-				.cacheControl(CacheControl.noStore())
-				.contentType(MediaType.APPLICATION_OCTET_STREAM)
-				.body(bytes))
-			.orElseThrow(ApiException::notFound);
+		byte[] key = this.keys.find(video.assetKey()).orElseThrow(ApiException::notFound);
+		this.audit.success(actor.userId(), actor.sessionId(), "lecture.hls_key", "online_lecture_item", itemId,
+				courseId);
+		return ResponseEntity.ok()
+			.cacheControl(CacheControl.noStore())
+			.contentType(MediaType.APPLICATION_OCTET_STREAM)
+			.body(key);
 	}
 
 	private Video video(Actor actor, long courseId, long itemId) {
