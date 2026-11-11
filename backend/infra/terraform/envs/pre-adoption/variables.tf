@@ -110,9 +110,15 @@ variable "fck_nat_ami_owner" {
 # ---------------------------------------------------------------------------
 
 variable "app_instance_type" {
-  description = "App instance type. The ECR image must match its architecture."
+  description = "App instance type. The ECR image must match its architecture. With scan_uploads it needs at least 8 GiB of memory (clamd)."
   type        = string
-  default     = "t3.medium"
+  default     = "t3.large"
+}
+
+variable "scan_uploads" {
+  description = "Start the ClamAV scan profile and require it (COMPOSE_PROFILES=scan, ASTRA_SCAN_REQUIRED=true; ADR-0018). Keep true for every deployment that takes school material; false makes uploads clean after the format check only."
+  type        = bool
+  default     = true
 }
 
 variable "app_root_volume_size" {
@@ -155,7 +161,7 @@ variable "app_origin_read_timeout" {
 }
 
 variable "app_environment" {
-  description = "Extra non-secret app settings written to /opt/astra/.env on each deploy, e.g. ASTRA_LLM_MODEL, ASTRA_OIDC_ISSUER, ASTRA_OIDC_CLIENT_ID. Terraform-derived keys and secret keys are rejected."
+  description = "Extra non-secret app settings written to /opt/astra/.env on each deploy, e.g. ASTRA_LLM_MODEL, ASTRA_OIDC_ISSUER, ASTRA_OIDC_CLIENT_ID. Terraform-derived keys, secret keys and the scanner switch (use scan_uploads) are rejected."
   type        = map(string)
   default     = {}
 
@@ -171,16 +177,16 @@ variable "app_environment" {
 
   validation {
     condition = length(setintersection(keys(var.app_environment), [
-      "ASTRA_IMAGE", "ASTRA_API_BIND", "ASTRA_API_PORT", "DB_URL", "DB_USERNAME", "DB_PASSWORD",
+      "ASTRA_IMAGE", "ASTRA_CONVERTER_IMAGE", "ASTRA_API_BIND", "ASTRA_API_PORT", "DB_URL", "DB_USERNAME", "DB_PASSWORD",
       "ASTRA_STORAGE_CONTENT_BUCKET", "ASTRA_STORAGE_DELIVERY_BUCKET", "ASTRA_STORAGE_REGION",
       "ASTRA_STORAGE_ENDPOINT", "ASTRA_STORAGE_ACCESS_KEY", "ASTRA_STORAGE_SECRET_KEY",
       "ASTRA_CLOUDFRONT_BASE_URL", "ASTRA_CLOUDFRONT_KEY_PAIR_ID", "ASTRA_CLOUDFRONT_PRIVATE_KEY",
       "ASTRA_SESSION_ALLOWED_ORIGINS", "ASTRA_OIDC_REDIRECT_URI", "ASTRA_OIDC_CLIENT_SECRET",
       "ASTRA_LLM_API_KEY", "ASTRA_BREAK_GLASS_EXTERNAL_REF", "ASTRA_BREAK_GLASS_PASSWORD_HASH",
       "ASTRA_BREAK_GLASS_TOTP_SECRET", "ASTRA_DELIVERY_ORIGIN_ENABLED", "ASTRA_DELIVERY_ORIGIN_SIGNING_KEY",
-      "COMPOSE_PROFILES",
+      "ASTRA_SCAN_CLAMD_HOST", "ASTRA_SCAN_CLAMD_PORT", "ASTRA_SCAN_REQUIRED", "COMPOSE_PROFILES",
     ])) == 0
-    error_message = "app_environment must not set Terraform-derived, secret, local-only or compose control keys."
+    error_message = "app_environment must not set Terraform-derived, secret, local-only, scanner switch or compose control keys."
   }
 }
 

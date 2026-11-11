@@ -428,17 +428,18 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 | `converter` | worker만 닿는 내부 network의 8090 | 없음 | PDF, pptx, docx, xlsx → 쪽 이미지·텍스트·썸네일. office 문서는 container 안의 LibreOffice가 PDF로 바꾼다. 비밀값과 저장소 credential이 없다 |
 | `transcoder` | worker만 닿는 다른 내부 network의 8091 | 없음 | 영상 → HLS segment(ffmpeg). 비밀값, 저장소 credential, 암호화 key가 없다. 작업 파일은 volume `transcoder-work`(`/work`)에 요청마다 만들고 지운다. 영상 하나(원본 2 GiB, 결과 4 GiB까지)를 담을 디스크 여유를 둔다 |
 | `mysql` (프로필 `mysql`) | api, worker만 닿는 내부 network의 3306 | 없음 | DB. root는 container 안에서만 접속한다 |
-| `clamav` (프로필 `scan`) | api, worker만 닿는 내부 network의 3310 | 없음 | 업로드 검사(clamd). `ASTRA_SCAN_CLAMD_HOST=clamav`, `ASTRA_SCAN_CLAMD_PORT=3310`, `ASTRA_SCAN_REQUIRED=true`를 함께 넣는다 |
-| `freshclam` (프로필 `scan`) | 없음 | 있음 | ClamAV 서명 갱신. 업로드 파일을 받지 않는다 |
+| `clamav` (프로필 `scan`) | worker만 닿는 내부 network(`scanning`)의 3310 | 없음 | 업로드 검사(clamd). `ASTRA_SCAN_CLAMD_HOST=clamav`, `ASTRA_SCAN_CLAMD_PORT=3310`, `ASTRA_SCAN_REQUIRED=true`를 함께 넣는다. MySQL과 api에 닿지 않는다. 메모리 상한 3 GiB(서명만 약 1.2 GiB) |
+| `freshclam` (프로필 `scan`) | 없음 | 있음(자기 network `signatures`에 혼자 있다) | ClamAV 서명 갱신. clamav와는 서명 volume만 함께 쓴다. 업로드 파일을 받지 않고 다른 container에 닿지 않는다 |
 
+- `scan` 프로필은 host 메모리를 3 GiB 넘게 더 쓴다. api, worker, converter, transcoder와 함께 띄우려면 host 메모리가 8 GiB 이상이어야 한다. 빈 서명 volume으로 처음 띄우면 freshclam이 서명을 받는 몇 분 동안 clamav와 worker가 뜨지 않는다. 그동안 api가 받은 업로드는 `quarantined`로 남고, worker가 뜬 뒤 검사된다. clean으로 넘어가지 않는다.
 - 상태 확인은 각 container 안의 `127.0.0.1:8081/actuator/health/readiness`(api, worker), `127.0.0.1:8090/health`(converter), `127.0.0.1:8091/health`(transcoder)뿐이다. host와 API port에는 `/actuator`가 없다. 상태는 `docker compose ps`로 본다.
 - 로그는 stdout의 JSON(ECS) 한 줄이다. `docker compose logs api`로 본다.
 - container는 uid 10001로 실행하고 root filesystem은 읽기 전용이다. 쓰기는 `/tmp`(tmpfs)와 transcoder의 `/work` volume에만 한다. 이미지에는 transcoder가 쓰는 ffmpeg가 들어 있고 다른 역할은 실행하지 않는다.
-- 저장소는 S3 API면 된다. AWS S3와 instance role이면 bucket 이름만 넣고, S3 호환 저장소면 `ASTRA_STORAGE_ENDPOINT`, `ASTRA_STORAGE_ACCESS_KEY`, `ASTRA_STORAGE_SECRET_KEY`, `ASTRA_STORAGE_PATH_STYLE=true`를 넣는다. 이 구성은 저장소를 띄우지 않는다. EC2에서 container가 instance role을 쓰려면 instance metadata의 hop limit이 2여야 한다.
+- 저장소는 S3 API면 된다. AWS S3와 instance role이면 bucket 이름만 넣고, S3 호환 저장소면 `ASTRA_STORAGE_ENDPOINT`, `ASTRA_STORAGE_ACCESS_KEY`, `ASTRA_STORAGE_SECRET_KEY`, `ASTRA_STORAGE_PATH_STYLE=true`를 넣는다. 이 구성은 저장소를 띄우지 않는다. EC2에서 container가 instance role을 쓰려면 instance metadata의 hop limit이 2여야 한다. 그러면 bridge network의 모든 container가 instance metadata에 닿으므로, host firewall이 `egress` network(bridge `astra-egress`, api와 worker만 붙는다)에서 온 것만 통과시킨다([ADR-0020](docs/adr/0020-terraform-layout.md) 6번). Terraform으로 만든 EC2에는 이 규칙이 있다. 다른 host에서 instance role을 쓰면 같은 규칙을 직접 넣는다.
 - CloudFront 없이 문서와 영상을 보이려면 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)).
 - `docker compose stop`은 api가 처리 중인 요청을 끝낼 때까지, worker가 실행 중인 요약 작업을 `interrupted`로 닫을 때까지 최대 75초를 기다린다.
 
-[docker/smoke-test.sh](docker/smoke-test.sh)는 띄운 구성의 healthcheck, 공개 port, converter·transcoder의 network 차단과 비밀값 없음, transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, LibreOffice가 converter에만 있고 docx를 쪽으로 바꾸는지, 종료 처리를 확인한다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 한다.
+[docker/smoke-test.sh](docker/smoke-test.sh)는 띄운 구성의 healthcheck, 공개 port, converter·transcoder의 network 차단과 비밀값 없음, 구성 파일의 network 경계(`egress`에는 api·worker만, clamav는 worker와만), transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, LibreOffice가 converter에만 있고 docx를 쪽으로 바꾸는지, 종료 처리를 확인한다. `scan` 프로필이 떠 있으면 clamav와 freshclam의 실제 도달 범위도 본다. EC2 host에서 실행하면 instance metadata token을 api와 worker만 받는지 보고, 다른 host에서는 이 단계를 건너뛴다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 하고 host에 `jq`가 있어야 한다.
 
 ## CI
 
@@ -448,7 +449,9 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 |---|---|
 | Build and test | `./gradlew build`. 빌드 전에 `ffmpeg`를 설치한다. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다. `ModuleStructureTests`가 모듈 사이 의존이 [docs/architecture.md](docs/architecture.md) 4.1절 표를 벗어나지 않는지 확인하고 `build/spring-modulith-docs/`에 C4 component diagram을 쓴다 |
 | Schema check and ERD snapshot | 마이그레이션을 MySQL 8.4에 적용한 뒤 `db/tools/check.sql`로 깨진 FK, COMMENT 누락, 고립 테이블을 찾는다. `db/erdcloud/snapshot.json`(ERD A)이 현재 스키마로 다시 만든 결과와 같은지도 확인한다 |
-| Container image and compose smoke test | `Dockerfile`로 기본 이미지와 converter 이미지(target `converter`)를 만들고, `compose.yaml`이 참조하는 변수가 `.env.example`에 모두 있는지 본 뒤, 비밀값 없는 `.env`로 구성을 띄워 `docker/smoke-test.sh`를 실행한다. registry에는 올리지 않는다 |
+| Container image and compose smoke test | `Dockerfile`로 기본 이미지와 converter 이미지(target `converter`)를 만들고, `compose.yaml`이 참조하는 변수가 `.env.example`에 모두 있는지 본 뒤, 비밀값 없는 `.env`로 구성을 띄워 `docker/smoke-test.sh`를 실행한다. registry에는 올리지 않는다. `scan` 프로필은 띄우지 않는다. 실행마다 빈 volume에 서명 전체(수백 MB)를 받아야 하고, ClamAV mirror는 같은 IP의 잦은 내려받기에 429로 답해 freshclam이 한동안 갱신을 멈추기 때문이다 |
+
+workflow의 action은 commit SHA로, `docker run`하는 이미지는 digest로 고정하고 판을 줄 끝 주석에 적는다. 판을 올릴 때는 SHA와 주석을 함께 바꾼다.
 
 마이그레이션을 추가했다면 같은 PR에서 `python db/tools/erdcloud_snapshot.py`로 스냅샷도 갱신해야 CI가 통과한다. CI는 `reference` 서브모듈을 받지 않는다. 빌드에 필요 없고, 비공개 레포라 기본 토큰으로는 받을 수 없기 때문이다.
 

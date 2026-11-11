@@ -56,6 +56,7 @@ module "app" {
   database_security_group_id  = module.database.security_group_id
   egress_tcp_ports            = var.egress_tcp_ports
   instance_type               = var.app_instance_type
+  scan_uploads                = var.scan_uploads
   root_volume_size            = var.app_root_volume_size
   termination_protection      = var.app_termination_protection
   ecr_repository_arn          = module.deploy.ecr_repository_arn
@@ -96,9 +97,18 @@ module "edge" {
 }
 
 locals {
+  # Malware scan (ADR-0018): start clamav and freshclam and refuse to start without a scanner.
+  # With these set, uploads stay quarantined until the worker gets a clean verdict from clamd.
+  scan_app_environment = {
+    COMPOSE_PROFILES      = "scan"
+    ASTRA_SCAN_CLAMD_HOST = "clamav"
+    ASTRA_SCAN_CLAMD_PORT = "3310"
+    ASTRA_SCAN_REQUIRED   = "true"
+  }
+
   # Settings Terraform knows. The deploy document writes them to /opt/astra/.env with
   # var.app_environment and the Secrets Manager values (README env tables).
-  derived_app_environment = {
+  derived_app_environment = merge({
     ASTRA_API_BIND                = "0.0.0.0"
     ASTRA_API_PORT                = tostring(var.app_port)
     DB_URL                        = "jdbc:mysql://${module.database.address}:${module.database.port}/${module.database.database_name}?sslMode=REQUIRED"
@@ -110,7 +120,7 @@ locals {
     # The VPC origin hop is plain HTTP, so the app cannot derive its public origin from the request.
     ASTRA_SESSION_ALLOWED_ORIGINS = module.edge.base_url
     ASTRA_OIDC_REDIRECT_URI       = "${module.edge.base_url}/api/auth/callback"
-  }
+  }, { for k, v in local.scan_app_environment : k => v if var.scan_uploads })
 }
 
 module "deploy" {
@@ -124,6 +134,7 @@ module "deploy" {
   github_environment          = var.github_environment
   create_github_oidc_provider = var.create_github_oidc_provider
   deploy_target_tag           = module.app.deploy_target_tag
+  egress_bridge               = module.app.egress_bridge
   app_environment             = merge(var.app_environment, local.derived_app_environment)
   secrets                     = module.app.secrets
 }

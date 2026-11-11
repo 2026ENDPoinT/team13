@@ -23,6 +23,11 @@ output "deploy_target_tag" {
   value       = { key = "DeployTarget", value = var.name }
 }
 
+output "egress_bridge" {
+  description = "Bridge of the compose egress network; the host firewall lets only it reach instance metadata."
+  value       = local.egress_bridge
+}
+
 output "secrets" {
   description = "Secret ARN, allowed JSON keys and whether a value is required, by secret id."
   value = { for k, s in aws_secretsmanager_secret.this : k => {

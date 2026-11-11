@@ -81,6 +81,7 @@ flowchart LR
 - converter는 문서 변환만 하는 별도 container다. 앱과 같은 jar를 converter main(`com.stackcorp.converter.ConverterServer`)으로 실행한다. worker와만 공유하는 내부 network에 있어 worker만 호출할 수 있고, 외부 network, 비밀값, AWS credential이 없다(SC-08).
 - compose에서 host에 publish하는 port는 api의 8080 하나다. MySQL, converter, 관리 port는 host에 열지 않는다. 같은 host의 MySQL은 compose 프로필로 띄울 수 있고 위 구성에서는 RDS를 쓴다.
 - transcoder는 영상을 HLS segment로 나누기만 하는 별도 container다. 같은 jar를 transcoder main(`com.stackcorp.transcoder.TranscoderServer`)으로 실행하고 ffmpeg를 쓴다. converter와 같이 worker만 호출하고 외부 network와 AWS credential을 주지 않는다. AWS 계정을 쓰게 되면 MediaConvert로 옮길 수 있게 port를 두었다([ADR-0016](adr/0016-video-upload-and-transcoder.md)).
+- 업로드 악성코드 검사는 같은 EC2의 clamav(clamd)와 freshclam container가 한다([ADR-0018](adr/0018-malware-scan-clamd.md)). Terraform 배포는 기본으로 켜고 검사기 없이는 앱이 뜨지 않는다([ADR-0020](adr/0020-terraform-layout.md) 7번). clamd가 메모리를 쓰므로 앱 EC2는 메모리 8 GiB 이상(`t3.large`)이다.
 - bucket은 `frontend`, `content`, `delivery` 셋이다. 용도와 암호화는 [ADR-0007](adr/0007-confidential-content-placement.md)에 있다.
 - 배포 중 JVM 기동 시간 동안 API가 끊긴다. 배포는 사용량이 적은 시간에 한다. 기동은 JDK AOT cache(JEP 483, 514)로, warm-up은 JEP 515로 줄인다.
 
@@ -101,9 +102,10 @@ flowchart LR
 | 대상 | 들어오는 트래픽 | 나가는 트래픽 |
 |---|---|---|
 | CloudFront | 인터넷 443. AWS WAF managed rule(Core, SQL database, Known bad inputs) | origin만 |
-| EC2(api, worker) | `CloudFront-VPCOrigins-Service-SG`에서 오는 앱 포트만 | RDS 3306, S3(gateway endpoint), 그 밖의 모든 외부·AWS API는 fck-nat 경유 |
+| EC2(api, worker) | `CloudFront-VPCOrigins-Service-SG`에서 오는 앱 포트만 | RDS 3306, S3(gateway endpoint), 그 밖의 모든 외부·AWS API는 fck-nat 경유. instance metadata(IAM role credential)는 api와 worker만 |
 | converter | 같은 host의 worker에서 오는 요청만 | 없음 |
-| clamav | 같은 host의 worker에서 오는 3310만 | signature 갱신(freshclam)용 mirror만, fck-nat 경유 |
+| clamav | 같은 host의 worker에서 오는 3310만 | 없음 |
+| freshclam | 없음 | signature mirror만, fck-nat 경유. 다른 container와 instance metadata에는 닿지 않는다 |
 | transcoder | 같은 host의 worker에서 오는 요청만 | 없음 |
 | RDS | EC2 security group의 3306만 | 없음 |
 | fck-nat | private subnet에서 오는 트래픽만 | 인터넷 |
@@ -113,6 +115,7 @@ flowchart LR
 - SSH 포트를 열지 않는다. 운영 접근은 SSM Session Manager로 한다.
 - `/actuator`는 CloudFront 경로에 넣지 않는다. 앱은 `health`만 켜고, 관리 port(8081)를 API port와 따로 두어 container 안의 127.0.0.1에만 연다. API port에는 `/actuator` 경로가 없다. compose healthcheck가 container 안에서 readiness를 부른다.
 - 외부 호출은 allowlist한 scheme, host, port만 허용하고 redirect, timeout, 응답 크기를 제한한다(SC-08).
+- EC2 instance metadata의 hop limit은 api와 worker container가 instance role을 쓰도록 2다. 그러면 bridge network의 모든 container가 instance metadata에 닿으므로, host firewall이 compose `egress` network(api와 worker만 붙는다)에서 온 트래픽만 통과시킨다. 배포 문서가 배포마다 container별로 이를 확인한다([ADR-0020](adr/0020-terraform-layout.md) 6번).
 - S3 외의 AWS API(SSM, ECR, Secrets Manager, CloudWatch, X-Ray, SQS, MediaConvert)도 fck-nat를 지난다. fck-nat가 멈추면 외부 IdP·AI 호출과 함께 배포, SSM 접속, 로그·지표 전송, 미디어 완료 처리가 멈춘다. interface endpoint는 개당 AZ별로 과금되어 이 단계의 NAT 비용보다 비싸므로 두지 않는다. 대신 fck-nat의 high-availability mode(크기 1 Auto Scaling group과 고정 ENI)로 인스턴스를 자동 교체하고, 교체되는 동안의 장애 범위는 받아들인다.
 
 ## 4. 애플리케이션 구조
@@ -763,7 +766,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 |---|---|---|
 | 학교 IdP 프로토콜(OIDC, SAML, CAS) | OIDC adapter는 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). SAML이나 CAS면 `integration`에 adapter와 callback을 새로 만든다. 학번이 들어 있는 claim, IdP 로그아웃 연계도 미정이다. [db/README.md](../db/README.md) 7절 1번 | 1단계 전에 학교 정보화본부에 프로토콜, ID token claim, redirect URI 등록 절차를 확인한다 |
 | frontend 스택 | 6절 정적 shell의 구현 방식 | Vite SPA와 Next.js static export 모두 수용한다. SSR이 필요해지면 ADR-0005를 다시 연다 |
-| 인프라 코드 미적용 | Terraform을 apply하지 않아 fck-nat HA, VPC origin security group 조회, WAF 오탐, 배포 문서를 실제 계정에서 확인하지 못했다 | 계정을 만든 뒤 [infra/README.md](../infra/README.md) 4절 순서로 apply하고 8절 항목을 확인한다 |
+| 인프라 코드 미적용 | Terraform을 apply하지 않아 fck-nat HA, VPC origin security group 조회, WAF 오탐, 배포 문서를 실제 계정에서 확인하지 못했다. instance metadata 차단 규칙이 AL2023의 docker와 함께 동작하는지, freshclam의 첫 서명 내려받기 시간과 clamd의 실제 메모리 사용량도 확인하지 못했다 | 계정을 만든 뒤 [infra/README.md](../infra/README.md) 4절 순서로 apply하고 8절 항목을 확인한다. 첫 배포의 배포 문서 결과에서 container별 instance metadata 확인이 통과했는지 본다 |
 | 공공 클라우드 보안 인증 | 학교 공식 시스템으로 개인정보를 다루면 CSAP 중 등급이 요구될 수 있다. AWS는 하 등급만 보유하고 있다. 2027년 7월 국정원 단일 검증체계로 바뀔 예정이다 | 도입 협의 때 학교에 확인한다. 앱은 S3 API, 컨테이너, MySQL 표준만 쓰고 AWS 전용 기능은 Terraform에만 둔다 |
 | 영상 전송 비용 | 2절 가정으로 월 수 TB | 학교 실제 시청량으로 다시 계산한다. 기본 화질 720p |
 | 배포 중 API 중단 | 3.1절 | 사용량이 적은 시간에 배포한다. 불만이 생기면 3.2절 전환을 앞당긴다 |
@@ -773,7 +776,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 개인정보 가림의 한계 | 기본 가림은 전자우편, 휴대전화, 학번 형식 숫자만 가린다. 이름과 쪽 이미지 속 글자는 지나간다 | 고지에 교수자 확인을 넣는다. 필요하면 `TextRedactor`의 다른 구현을 둔다 |
 | 학습 대화 보존 | 대화 본문은 소유자 삭제와 파일 삭제로만 지운다. 기간 보존(`ASTRA_STUDYCHAT_RETENTION`)은 기본 꺼짐이다 | 기관 보존 정책을 받아 값을 넣는다 |
 | 학습 대화 한도의 정확도 | 사용자별 질문 한도는 process 메모리라 api가 둘이면 따로 센다. 과목 일일 예산은 질문을 받을 때와 시작할 때만 봐서 답 하나만큼 넘을 수 있다 | api를 늘릴 때 8절 Valkey로 옮긴다 |
-| 악성코드 검사 | 검사기(같은 배포의 ClamAV daemon)를 설정해야 동작한다([ADR-0018](adr/0018-malware-scan-clamd.md)). 설정하지 않으면 형식만 검사하고 시작 때 경고한다. 검사기가 멈추면 새 업로드를 첨부할 수 없다. clamd의 크기 상한보다 큰 파일(수 GB 영상 등)은 검사되지 못하고 quarantined에 남는다 | 학교 자료를 받는 배포는 `ASTRA_SCAN_REQUIRED=true`로 띄운다. clamd 크기 상한을 업로드 상한 이상으로 둔다. quarantined 수와 `scanner unavailable` 로그에 알람을 건다. 영상 업로드의 검사 범위는 영상 업로드를 만들 때 정한다 |
+| 악성코드 검사 | 검사기(같은 배포의 ClamAV daemon)를 설정해야 동작한다([ADR-0018](adr/0018-malware-scan-clamd.md)). Terraform 배포는 `scan_uploads`(기본 `true`)로 scan 프로필과 `ASTRA_SCAN_REQUIRED=true`를 넣는다([ADR-0020](adr/0020-terraform-layout.md) 7번). Terraform 밖 배포에서 설정하지 않으면 형식만 검사하고 시작 때 경고한다. 검사기가 멈추거나 첫 서명을 받는 동안에는 새 업로드를 첨부할 수 없다. clamd의 크기 상한보다 큰 파일(수 GB 영상 등)은 검사되지 못하고 quarantined에 남는다. 검사를 켠 EC2는 `t3.large`(8 GiB)가 필요하고, 컨테이너 메모리 상한의 합이 이보다 커서 변환과 검사가 한꺼번에 몰리면 메모리가 모자랄 수 있다 | `scan_uploads`를 끄는 배포는 학교 자료를 받지 않는다. clamd 크기 상한을 업로드 상한 이상으로 둔다. quarantined 수와 `scanner unavailable` 로그에 알람을 건다. 3단계 부하 시험에서 host 메모리를 재고 모자라면 instance type을 올린다. 영상 업로드의 검사 범위는 영상 업로드를 만들 때 정한다 |
 | 감사 기록 보존과 누락 | `audit_events`의 보존 기간이 정해지지 않아 지우지 않는다(SC-07). transaction 밖의 기록은 저장 실패 때 경고 로그만 남기고 빠진다 | 기관 정책을 받아 보존 기간을 정한다. 빠진 수를 9절 지표에 넣는다 |
 | 멱등 key와 목록 query 규칙 | `Idempotency-Key`는 선택이라 header를 보내지 않는 client는 재전송으로 자료를 두 번 만들 수 있다. SC-09의 page size 상한, cursor, 정렬 key allowlist는 아직 없다 | 수강신청, 제출을 만들 때 key 필수 여부를 정하고 frontend가 header를 보낸다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 query 규칙을 만든다 |
 | 할 일의 완료 판정 | 과제, 퀴즈, 설문은 본인이 끝내면 빠진다(6절). 영상(다 본 영상)과 자료는 완료를 보지 않아 마감까지 남는다. 횟수 제한이 없는 퀴즈와 오프라인 시험도 마감까지 남는다(EP-0144의 "미완료"는 원본에서도 기준 미확인). 마감 전 활동이 500개를 넘으면 마감이 늦은 쪽은 보지 않는다(`truncated`) | `learning`의 진도 완료(출석 인정)를 공개 API로 내어 `home`이 같은 방식으로 뺀다. 횟수 제한이 없는 퀴즈를 언제 끝난 것으로 볼지 학교 기준을 받는다 |
@@ -785,7 +788,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
 | 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
 | 쪽지 보존과 범위 | 읽은 쪽지 30일 삭제(`purge_after_at`)와 임시저장 보존 기한(`expires_at`)을 채우지 않는다. 지난 학기 과목 구성원에게도 보낼 수 있고, 학생끼리는 보낼 수 없다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)) | 기관 정책으로 보존 기한과 학기 종료 뒤 연락 범위를 정하고 worker 정리 작업을 더한다 |
-| 지운 자료의 CDN 쪽 이미지 | CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 cookie가 끝나기 전, GC가 객체를 지우기 전이면 읽힐 수 있다([ADR-0011](adr/0011-material-deletion.md)) | 문서 cookie TTL을 짧게 유지한다. 더 줄여야 하면 삭제 commit 뒤 `doc/{key}/`를 바로 지우는 이벤트를 붙인다 |
+| CloudFront 전달의 권한 회수 | CloudFront가 직접 내보내는 `doc/{key}/`(쪽 이미지)와 `vod/{assetKey}/`(HLS segment)는 앱을 거치지 않는다. 자료를 지우거나, 영상을 거두거나, 수강에서 빠지거나, 과목이 폐강돼도 이미 발급한 cookie는 만료될 때까지 그 경로를 연다. CloudFront는 edge에 캐시한 객체에도 요청마다 서명을 확인하므로 노출은 GC나 edge 캐시가 아니라 cookie의 남은 시간(`astra.delivery.document-cookie-ttl`, `video-cookie-ttl`, 기본 10분)에 묶인다. 새 cookie와 영상 cookie 갱신은 앱이 권한을 다시 본다([ADR-0011](adr/0011-material-deletion.md), [ADR-0016](adr/0016-video-upload-and-transcoder.md)). CDN 없는 전달(ADR-0009)은 요청마다 막는다 | 이 상한을 받아들인다. 삭제·회수 때 prefix 삭제와 CloudFront invalidation을 하는 안은 권한을 잃는 다른 경우(수강 취소, 폐강)를 덮지 못하고, instance role에 `cloudfront:CreateInvalidation`을 더하며, invalidation도 끝나는 데 시간이 걸려 택하지 않았다. 설정으로 상한이 늘지 않도록 두 TTL의 최댓값(10분)을 앱 설정 검사에 넣는다(통합 담당이 `files`에 배정). 더 짧아야 하면 TTL을 줄인다 |
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
 | 성적 평가요소와 오프라인 시험 점수 | 평가요소(`grade_criteria`)와 평가요소 점수는 화면 근거가 없어 만들지 않았다. 오프라인 시험의 퀴즈 항목은 성적부와 학생 화면에 나오지만 점수를 넣는 API가 없다. 성적부는 퀴즈 항목의 점수를 받지 않는다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)) | 퀴즈 쪽에 오프라인 시험 점수 입력(행마다 감사 기록, 항목 행 잠금)을 만든다. 평가요소는 채점 화면 요구가 생길 때 정한다 |
