@@ -30,6 +30,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
+	// 운영 상태 확인(health)만 쓴다. 관리 port와 노출 범위는 application.properties에 있다(ADR-0019).
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation('software.amazon.awssdk:s3') {
 		// 동기 client만 쓴다. Netty는 Spring Boot가 관리하는 판과 섞이지 않게 뺀다.
 		exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
