@@ -6,8 +6,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 
 /**
- * 로컬 실행용 쪽지. 교수 박은주가 학생 박민준에게 보낸 쪽지 둘(하나는 읽음)과 학생이 보낸 답장 하나를 넣는다. 교수가 보낸 쪽지가 이미
- * 있으면 넣지 않는다.
+ * 로컬 실행용 쪽지. 교수 박은주가 학생 박민준에게 보낸 쪽지 둘(하나는 읽음)과 학생이 보낸 답장 하나, 학생 김서연이 박은주에게 보낸 읽은
+ * 쪽지 하나를 넣는다. {@link LocalPeopleSeed} 다음에 부른다. 교수가 보낸 쪽지가 이미 있으면 넣지 않는다.
  */
 final class LocalMessageSeed {
 
@@ -25,6 +25,8 @@ final class LocalMessageSeed {
 				first);
 		message(jdbc, professor, student, null, "면담 일정", "다음 주 화요일 오후 3시에 연구실에서 면담합시다.", "INTERVAL 2 HOUR", false,
 				null);
+		message(jdbc, LocalSql.user(jdbc, LocalPeopleSeed.STUDENTS.get(0).ref()), professor, course, "프로젝트 조 편성 문의",
+				"기말 프로젝트 조를 바꿀 수 있는지 여쭙니다.", "INTERVAL 3 DAY", true, null);
 	}
 
 	/**

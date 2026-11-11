@@ -5,6 +5,8 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
+import com.stackcorp.astra.files.storage.ObjectStore;
+
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -13,8 +15,9 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.test.context.DynamicPropertyRegistrar;
 
 /**
- * 로컬 실행용 표본 데이터와 설정. 프론트엔드 표본 앱의 인물(학생 박민준, 교수 박은주)과 이번 학기 과목 7개를 넣는다.
- * 과목 키(legacy_kjkey)는 프론트엔드가 kj로 쓰는 과목 ID와 같다. 이미 있으면 다시 넣지 않는다.
+ * 로컬 실행용 표본 데이터와 설정. 프론트엔드 표본 앱의 인물(학생 박민준, 교수 박은주)과 이번 학기 과목 7개를 넣고, 화면마다 두 인물이
+ * 볼 표본(수강생, 과제, 퀴즈, 성적부, 출석부, 그룹, 강의계획서, 온라인 강의, 알림, 파일함)을 영역별 Local*Seed가 넣는다.
+ * 과목 키(legacy_kjkey)는 프론트엔드가 kj로 쓰는 과목 ID와 같다. 시각은 모두 표본을 넣는 때의 DB 시계 기준이다. 이미 있으면 다시 넣지 않는다.
  */
 @TestConfiguration(proxyBeanMethods = false)
 public class LocalSeed {
@@ -38,11 +41,11 @@ public class LocalSeed {
 	}
 
 	@Bean
-	ApplicationRunner localSeedRunner(JdbcClient jdbc) {
-		return (args) -> seed(jdbc);
+	ApplicationRunner localSeedRunner(JdbcClient jdbc, ObjectStore store) {
+		return (args) -> seed(jdbc, store);
 	}
 
-	public static void seed(JdbcClient jdbc) {
+	public static void seed(JdbcClient jdbc, ObjectStore store) {
 		long student = user(jdbc, STUDENT_REF, "박민준", "STUDENT");
 		long professor = user(jdbc, PROFESSOR_REF, "박은주", "PROFESSOR");
 		long term = jdbc.sql("SELECT term_id FROM terms WHERE institution_code = 'SEOULTECH' AND term_year = 2026 AND term_code = '3'")
@@ -72,12 +75,22 @@ public class LocalSeed {
 				jdbc.sql("INSERT INTO course_weeks (course_id, week_no) VALUES (:c, :n)").param("c", id).param("n", week).update();
 			}
 		}
+		LocalPeopleSeed.seed(jdbc);
 		LocalNoticeSeed.seed(jdbc, professor);
 		LocalMessageSeed.seed(jdbc, professor, student);
 		LocalEnrollmentSeed.seed(jdbc, term, professor);
 		LocalSurveySeed.seed(jdbc);
-		LocalCatalogSeed.seed(jdbc, student);
+		LocalCatalogSeed.seed(jdbc);
 		LocalBoardSeed.seed(jdbc, student, professor);
+		LocalAssignmentSeed.seed(jdbc, student, professor);
+		LocalQuizSeed.seed(jdbc, student, professor);
+		LocalGradebookSeed.seed(jdbc, student, professor);
+		LocalAttendanceSeed.seed(jdbc, student, professor);
+		LocalCourseGroupSeed.seed(jdbc, student, professor);
+		LocalSyllabusSeed.seed(jdbc, professor);
+		LocalLectureSeed.seed(jdbc, student, professor);
+		LocalNotificationSeed.seed(jdbc, student, professor);
+		LocalFileboxSeed.seed(jdbc, store, student, professor);
 	}
 
 	private static long user(JdbcClient jdbc, String ref, String name, String role) {
