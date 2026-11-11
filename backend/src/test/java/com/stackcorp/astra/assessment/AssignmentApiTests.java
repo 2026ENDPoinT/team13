@@ -37,9 +37,13 @@ class AssignmentApiTests extends AssessmentTestSupport {
 			.andExpect(jsonPath("$.phase").value("open"))
 			.andExpect(jsonPath("$.submittedCount").value(0))).get("assignment").get("assignmentId").asLong();
 
-		// 활동은 learning이 가진다. 주차 목록에 과제(report)로 나온다.
+		// 활동은 learning이 가진다. 주차 목록에 과제(report)로 나오고, 과제 화면의 ID와 과제 구간이 붙는다.
 		this.student.get("/api/courses/" + this.course + "/weeks")
-			.andExpect(jsonPath("$[?(@.weekNo == 3)].activities[0].type").value("report"));
+			.andExpect(jsonPath("$.serverTime").isNotEmpty())
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 3)].activities[0].type").value("report"))
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 3)].activities[0].assignmentId").value((int) id))
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 3)].activities[0].phase").value("open"))
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 3)].activities[0].quizId").doesNotExist());
 
 		String edit = """
 				{"weekNo":4,"title":"정규화 보고서(수정)","closeAt":"2999-02-01T00:00:00","maxScore":20,"revision":%d}

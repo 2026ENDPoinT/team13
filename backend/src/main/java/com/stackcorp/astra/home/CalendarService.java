@@ -15,6 +15,8 @@ import com.stackcorp.astra.catalog.api.AcademicCalendar;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 import com.stackcorp.astra.catalog.api.MemberCourses;
 import com.stackcorp.astra.catalog.api.MemberCourses.MemberCourse;
+import com.stackcorp.astra.learning.api.ActivityTargets;
+import com.stackcorp.astra.learning.api.ActivityTargets.Target;
 import com.stackcorp.astra.learning.api.CalendarActivities;
 import com.stackcorp.astra.learning.api.CalendarActivities.CalendarActivity;
 import com.stackcorp.astra.shared.ApiException;
@@ -26,8 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 메인 캘린더(EP-0178)와 하루 일정(EP-0177, 화면 16). 학사일정(catalog)과 요청한 사람의 과목 활동 마감(learning)을 함께 돌려준다.
  * 활동은 마감일 칸에 놓는다. 담당 과목은 모든 활동, 수강 과목은 학생에게 열린 활동만이다. 수강 과목의 활동에는 본인이 이미 끝냈는지를
- * 붙인다. 완료 판정은 할 일 목록과 같은 {@link ActivityCompletions}다. 기간과 주 경계(일요일 시작)는 서버가 DB 시계로 정한다(CAT-15).
- * 과목 수, 활동 수와 관계없이 쿼리는 여덟 이하(시계, 과목, 학사일정, 활동, 완료 판정 넷 이하)이고 읽기 전용 transaction 하나에서 읽는다.
+ * 붙인다. 완료 판정은 할 일 목록과 같은 {@link ActivityCompletions}다. 평가 활동에는 과제·퀴즈·설문 ID를 붙인다. 기간과 주 경계(일요일
+ * 시작)는 서버가 DB 시계로 정한다(CAT-15). 과목 수, 활동 수와 관계없이 쿼리는 아홉 이하(시계, 과목, 학사일정, 활동, 완료 판정 넷 이하, 평가
+ * ID)이고 읽기 전용 transaction 하나에서 읽는다.
  */
 @Service
 class CalendarService {
@@ -48,13 +51,16 @@ class CalendarService {
 
 	private final ActivityCompletions completions;
 
+	private final ActivityTargets targets;
+
 	CalendarService(JdbcClient jdbc, MemberCourses courses, AcademicCalendar academic, CalendarActivities activities,
-			ActivityCompletions completions) {
+			ActivityCompletions completions, ActivityTargets targets) {
 		this.jdbc = jdbc;
 		this.courses = courses;
 		this.academic = academic;
 		this.activities = activities;
 		this.completions = completions;
+		this.targets = targets;
 	}
 
 	/**
@@ -106,12 +112,15 @@ class CalendarService {
 			.filter((a) -> byId.get(a.courseId()).role() == CourseRole.STUDENT)
 			.map(CalendarActivity::activityId)
 			.toList(), now);
+		Map<Long, Target> targets = this.targets.of(shown.stream().map(CalendarActivity::activityId).toList());
 		List<CalendarItem> items = shown.stream().map((a) -> {
 			MemberCourse course = byId.get(a.courseId());
 			boolean student = course.role() == CourseRole.STUDENT;
+			Target target = targets.get(a.activityId());
 			return new CalendarItem(a.activityId(), a.courseId(), course.name(), course.code(), course.section(),
 					course.role().name(), a.type(), a.title(), a.openAt(), a.closeAt(), a.published(),
-					student ? done.contains(a.activityId()) : null);
+					student ? done.contains(a.activityId()) : null, HomeService.targetId(target, "assignment"),
+					HomeService.targetId(target, "quiz"), HomeService.targetId(target, "survey"));
 		}).toList();
 		return new CalendarView(now, now.toLocalDate(), from, to, events, items, rows.size() > MAX_ACTIVITIES);
 	}
@@ -157,10 +166,16 @@ class CalendarService {
 	 * @param type 활동 유형(learning_activities.activity_type)
 	 * @param published 공개 여부. 담당자에게만 false가 있다
 	 * @param completed 학생 본인이 끝냈는지(과제 최종 제출, 응시 횟수를 다 쓴 퀴즈, 완료한 설문). 담당 과목의 활동에는 없다
+	 * @param assignmentId 과제 활동만. 과제 화면의 ID
+	 * @param quizId 퀴즈 활동만
+	 * @param surveyId 강의실 설문 활동만
 	 */
 	record CalendarItem(long activityId, long courseId, String courseName, String courseCode, String section,
 			String role, String type, String title, LocalDateTime openAt, LocalDateTime closeAt, boolean published,
-			@JsonInclude(JsonInclude.Include.NON_NULL) Boolean completed) {
+			@JsonInclude(JsonInclude.Include.NON_NULL) Boolean completed,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long assignmentId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long quizId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long surveyId) {
 	}
 
 }

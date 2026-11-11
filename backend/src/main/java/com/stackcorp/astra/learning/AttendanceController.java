@@ -269,7 +269,7 @@ class AttendanceController {
 		requireInstructor(actor, courseId);
 		int version = Versions.expected(ifMatch);
 		Status status = status(body.status());
-		String reason = LearningText.required(body.reason(), "reason", MAX_REASON);
+		String reason = LearningText.required(body.reason(), "사유", MAX_REASON);
 		this.rateLimiter.check("attendance-record", actor.userId(), 600, Duration.ofMinutes(10));
 		Cell cell = this.service.set(actor, courseId, sessionId, studentId, version, status, reason);
 		return ResponseEntity.ok()
@@ -284,7 +284,7 @@ class AttendanceController {
 			@PathVariable long sessionId, @RequestBody RecordBody body) {
 		requireInstructor(actor, courseId);
 		Status status = status(body.status());
-		String reason = LearningText.required(body.reason(), "reason", MAX_REASON);
+		String reason = LearningText.required(body.reason(), "사유", MAX_REASON);
 		this.rateLimiter.check("attendance-fill", actor.userId(), 30, Duration.ofMinutes(10));
 		return ok(new FillResult(this.service.fill(actor, courseId, sessionId, status, reason)));
 	}

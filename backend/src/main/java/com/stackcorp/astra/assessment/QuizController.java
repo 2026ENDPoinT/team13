@@ -162,9 +162,9 @@ class QuizController {
 		if (body.revision() == null) {
 			throw ApiException.invalid("revision은 반드시 보내야 합니다.");
 		}
-		BigDecimal points = PlainText.points(body.points(), MAX_SCORE, "points");
+		BigDecimal points = PlainText.points(body.points(), MAX_SCORE, "문항 배점");
 		if (points.signum() == 0) {
-			throw ApiException.invalid("points는 0보다 커야 합니다.");
+			throw ApiException.invalid("문항 배점은 0보다 커야 합니다.");
 		}
 		List<Long> requested = body.correctOptionIds() == null ? List.of() : body.correctOptionIds();
 		if (requested.stream().anyMatch((id) -> id == null) || new LinkedHashSet<>(requested).size() != requested.size()
@@ -252,27 +252,27 @@ class QuizController {
 			Integer attemptLimit, Boolean shuffle, LocalDateTime rawReleaseAt, Boolean answersVisible,
 			BigDecimal rawMaxScore) {
 		if (weekNo == null || weekNo < 1 || weekNo > MAX_WEEK) {
-			throw ApiException.invalid("weekNo는 1 이상 " + MAX_WEEK + " 이하여야 합니다.");
+			throw ApiException.invalid("주차는 1주 이상 " + MAX_WEEK + "주 이하여야 합니다.");
 		}
-		String title = PlainText.line(rawTitle, MAX_TITLE, "title");
-		String description = PlainText.block(rawDescription, MAX_DESCRIPTION, "description");
+		String title = PlainText.line(rawTitle, MAX_TITLE, "제목");
+		String description = PlainText.block(rawDescription, MAX_DESCRIPTION, "설명");
 		if (rawCloseAt == null) {
-			throw ApiException.invalid("closeAt은 반드시 보내야 합니다.");
+			throw ApiException.invalid("마감 일시를 정해야 합니다.");
 		}
 		// 활동의 기간 컬럼은 초 단위다. 반올림되지 않도록 초 아래를 버린다.
 		LocalDateTime closeAt = rawCloseAt.truncatedTo(ChronoUnit.SECONDS);
 		LocalDateTime openAt = rawOpenAt == null ? null : rawOpenAt.truncatedTo(ChronoUnit.SECONDS);
 		if (openAt != null && !openAt.isBefore(closeAt)) {
-			throw ApiException.invalid("openAt은 closeAt보다 앞이어야 합니다.");
+			throw ApiException.invalid("시작 일시는 마감 일시보다 앞이어야 합니다.");
 		}
 		LocalDateTime releaseAt = rawReleaseAt == null ? null : rawReleaseAt.truncatedTo(ChronoUnit.SECONDS);
 		BigDecimal maxScore = null;
 		if (online) {
 			if (timeLimitMinutes != null && (timeLimitMinutes < 1 || timeLimitMinutes > MAX_TIME_LIMIT)) {
-				throw ApiException.invalid("timeLimitMinutes는 1 이상 " + MAX_TIME_LIMIT + " 이하여야 합니다.");
+				throw ApiException.invalid("제한 시간은 1분 이상 " + MAX_TIME_LIMIT + "분 이하여야 합니다.");
 			}
 			if (attemptLimit != null && (attemptLimit < 1 || attemptLimit > MAX_ATTEMPTS)) {
-				throw ApiException.invalid("attemptLimit은 1 이상 " + MAX_ATTEMPTS + " 이하여야 합니다.");
+				throw ApiException.invalid("응시 횟수는 1회 이상 " + MAX_ATTEMPTS + "회 이하여야 합니다.");
 			}
 			if (rawMaxScore != null) {
 				throw ApiException.invalid("온라인 시험의 배점은 문항 배점의 합입니다. maxScore를 보내지 않습니다.");
@@ -283,9 +283,9 @@ class QuizController {
 					|| Boolean.TRUE.equals(answersVisible)) {
 				throw ApiException.invalid("오프라인 시험에는 응시 설정을 보내지 않습니다.");
 			}
-			maxScore = PlainText.points(rawMaxScore, MAX_SCORE, "maxScore");
+			maxScore = PlainText.points(rawMaxScore, MAX_SCORE, "배점");
 			if (maxScore.signum() == 0) {
-				throw ApiException.invalid("maxScore는 0보다 커야 합니다.");
+				throw ApiException.invalid("배점은 0보다 커야 합니다.");
 			}
 		}
 		return new QuizInput(
@@ -316,16 +316,16 @@ class QuizController {
 			if (!Question.SINGLE.equals(type) && !Question.MULTIPLE.equals(type) && !Question.SHORT.equals(type)) {
 				throw ApiException.invalid("문항의 type은 single, multiple, short 가운데 하나여야 합니다.");
 			}
-			String text = PlainText.block(request.text(), MAX_QUESTION_TEXT, "text");
+			String text = PlainText.block(request.text(), MAX_QUESTION_TEXT, "문항 내용");
 			if (text == null) {
-				throw ApiException.invalid("문항의 text는 비울 수 없습니다.");
+				throw ApiException.invalid("문항 내용을 입력해야 합니다.");
 			}
-			BigDecimal points = PlainText.points(request.points(), MAX_SCORE, "points");
+			BigDecimal points = PlainText.points(request.points(), MAX_SCORE, "문항 배점");
 			if (points.signum() == 0) {
-				throw ApiException.invalid("points는 0보다 커야 합니다.");
+				throw ApiException.invalid("문항 배점은 0보다 커야 합니다.");
 			}
 			total = total.add(points);
-			String explanation = PlainText.block(request.explanation(), MAX_QUESTION_TEXT, "explanation");
+			String explanation = PlainText.block(request.explanation(), MAX_QUESTION_TEXT, "해설");
 			questions.add(new QuestionInput(type, text, points, explanation, options(type, request.options())));
 		}
 		if (total.compareTo(MAX_SCORE) > 0) {
@@ -342,14 +342,14 @@ class QuizController {
 			return List.of();
 		}
 		if (requests == null || requests.size() < 2 || requests.size() > MAX_OPTIONS) {
-			throw ApiException.invalid("선택 문항의 options는 2개 이상 " + MAX_OPTIONS + "개 이하여야 합니다.");
+			throw ApiException.invalid("선택 문항의 보기는 2개 이상 " + MAX_OPTIONS + "개 이하여야 합니다.");
 		}
 		List<OptionInput> options = new ArrayList<>();
 		for (OptionRequest request : requests) {
 			if (request == null) {
 				throw ApiException.invalid("options가 올바르지 않습니다.");
 			}
-			options.add(new OptionInput(PlainText.line(request.text(), MAX_OPTION_TEXT, "options.text"),
+			options.add(new OptionInput(PlainText.line(request.text(), MAX_OPTION_TEXT, "보기"),
 					Boolean.TRUE.equals(request.correct())));
 		}
 		long correct = options.stream().filter(OptionInput::correct).count();
@@ -491,7 +491,7 @@ class QuizController {
 	 *
 	 * @param status 학생의 마지막 응시 상태: not_started, in_progress, submitted, graded. 담당자 응답에는 없다
 	 */
-	record QuizItem(long quizId, int weekNo, String title, LocalDateTime openAt, LocalDateTime closeAt,
+	record QuizItem(long quizId, long activityId, int weekNo, String title, LocalDateTime openAt, LocalDateTime closeAt,
 			boolean published, String examType, String phase, @JsonInclude(JsonInclude.Include.NON_NULL) String status,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Integer attemptsUsed,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Integer inProgressCount,
@@ -500,8 +500,9 @@ class QuizController {
 
 		static QuizItem of(Quiz q, LocalDateTime now, String status, Integer attemptsUsed, Counts counts) {
 			QuizActivity activity = q.activity();
-			return new QuizItem(q.quizId(), activity.weekNo(), activity.title(), activity.openAt(), activity.closeAt(),
-					activity.published(), q.settings().examType(), q.phase(now).code(), status, attemptsUsed,
+			return new QuizItem(q.quizId(), activity.activityId(), activity.weekNo(), activity.title(), activity.openAt(),
+					activity.closeAt(), activity.published(), q.settings().examType(), q.phase(now).code(), status,
+					attemptsUsed,
 					counts == null ? null : counts.inProgress(), counts == null ? null : counts.finished(),
 					counts == null ? null : counts.awaitingGrading());
 		}

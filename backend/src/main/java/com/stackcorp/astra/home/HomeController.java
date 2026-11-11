@@ -1,6 +1,7 @@
 package com.stackcorp.astra.home;
 
 import com.stackcorp.astra.home.HomeService.HomeView;
+import com.stackcorp.astra.home.HomeService.TodoCount;
 import com.stackcorp.astra.home.HomeService.TodoList;
 
 import org.springframework.http.CacheControl;
@@ -33,11 +34,24 @@ class HomeController {
 		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(this.home.home(userId, role));
 	}
 
-	/** 할 일 전체. 마감 임박순이고 nextCursor로 다음 쪽을 받는다. 본인이 끝낸 활동은 없다. 쪽 사이에 마감이 지나도 남은 항목이 겹치거나 빠지지 않는다. */
+	/**
+	 * 할 일 전체. 마감 임박순이고 nextCursor로 다음 쪽을 받는다. 본인이 끝낸 활동은 없다. 쪽 사이에 마감이 지나도 남은 항목이 겹치거나 빠지지 않는다.
+	 * courseId를 주면 그 과목의 할 일만이다(강의실). 내 과목이 아니면 404다.
+	 */
 	@GetMapping("/api/me/todo")
 	ResponseEntity<TodoList> todo(@AuthenticationPrincipal(expression = "userId()") Long userId,
-			@RequestParam(required = false) String cursor, @RequestParam(defaultValue = "20") int size) {
-		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(this.home.todo(userId, cursor, size));
+			@RequestParam(required = false) Long courseId, @RequestParam(required = false) String cursor,
+			@RequestParam(defaultValue = "20") int size) {
+		return ResponseEntity.ok()
+			.cacheControl(CacheControl.noStore())
+			.body(this.home.todo(userId, courseId, cursor, size));
+	}
+
+	/** 할 일 수만. 목록과 같은 total과 truncated다. courseId는 목록과 같다. */
+	@GetMapping("/api/me/todo/count")
+	ResponseEntity<TodoCount> todoCount(@AuthenticationPrincipal(expression = "userId()") Long userId,
+			@RequestParam(required = false) Long courseId) {
+		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(this.home.todoCount(userId, courseId));
 	}
 
 }

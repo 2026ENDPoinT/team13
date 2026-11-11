@@ -83,12 +83,21 @@ class SyllabusApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.instructors[0].userId").value(this.prof))
 			.andExpect(jsonPath("$.weeks.length()").value(0));
 		put(this.professor, path(this.course), null, CONTENT).andExpect(status().isPreconditionRequired());
-		ResultActions saved = put(this.professor, path(this.course), "\"0\"", CONTENT).andExpect(status().isNoContent())
-			.andExpect(header().string("ETag", "\"1\""));
+		// 수정은 바뀐 계획서를 GET과 같은 모양으로 돌려주고 ETag가 새 version이다. 다시 읽지 않아도 된다.
+		ResultActions saved = put(this.professor, path(this.course), "\"0\"", CONTENT).andExpect(status().isOk())
+			.andExpect(header().string("ETag", "\"1\""))
+			.andExpect(jsonPath("$.version").value(1))
+			.andExpect(jsonPath("$.overview").value("관계형 모델과 SQL.\n트랜잭션."))
+			.andExpect(jsonPath("$.weeks.length()").value(2))
+			.andExpect(jsonPath("$.instructors[0].userId").value(this.prof));
 		assertThat(AuditRows.single(this.jdbc, saved).operation()).isEqualTo("syllabus.update");
 		put(this.professor, path(this.course), "\"0\"", CONTENT).andExpect(status().isConflict());
-		put(this.professor, path(this.course) + "/instructors/me", "\"0\"", CARD).andExpect(status().isNoContent())
-			.andExpect(header().string("ETag", "\"1\""));
+		put(this.professor, path(this.course) + "/instructors/me", "\"0\"", CARD).andExpect(status().isOk())
+			.andExpect(header().string("ETag", "\"1\""))
+			.andExpect(jsonPath("$.userId").value(this.prof))
+			.andExpect(jsonPath("$.name").value("테스트 PROFESSOR"))
+			.andExpect(jsonPath("$.office").value("미래관 219"))
+			.andExpect(jsonPath("$.version").value(1));
 		put(this.professor, path(this.course) + "/instructors/me", "\"0\"", CARD).andExpect(status().isConflict());
 
 		// 본문은 일반 텍스트 그대로 돌아온다.
@@ -102,7 +111,9 @@ class SyllabusApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.instructors[0].department").value("컴퓨터공학과"));
 		// 주별 계획은 통째로 바뀐다.
 		put(this.professor, path(this.course), "\"1\"", "{\"weeks\":[{\"weekNo\":16,\"content\":\"기말\"}]}")
-			.andExpect(status().isNoContent());
+			.andExpect(status().isOk())
+			.andExpect(header().string("ETag", "\"2\""))
+			.andExpect(jsonPath("$.weeks.length()").value(1));
 		this.professor.get(path(this.course))
 			.andExpect(jsonPath("$.weeks.length()").value(1))
 			.andExpect(jsonPath("$.weeks[0].weekNo").value(16))
@@ -111,8 +122,8 @@ class SyllabusApiTests extends IntegrationTest {
 
 	@Test
 	void visitorsSeeOnlyPublicFieldsOfRegularCourses() throws Exception {
-		put(this.professor, path(this.course), "\"0\"", CONTENT).andExpect(status().isNoContent());
-		put(this.professor, path(this.course) + "/instructors/me", "\"0\"", CARD).andExpect(status().isNoContent());
+		put(this.professor, path(this.course), "\"0\"", CONTENT).andExpect(status().isOk());
+		put(this.professor, path(this.course) + "/instructors/me", "\"0\"", CARD).andExpect(status().isOk());
 		this.visitor.get(path(this.course))
 			.andExpect(status().isOk())
 			.andExpect(header().doesNotExist("ETag"))
@@ -185,6 +196,37 @@ class SyllabusApiTests extends IntegrationTest {
 			.param("c", this.course)
 			.query(Integer.class)
 			.single()).isZero();
+	}
+
+	/**
+	 * 강사소개는 과목의 담당자 명단(course_instructors)만 보인다(화면 41). 조교로 수강만 확정된 사람은 과목의 INSTRUCTOR라 서술 항목은
+	 * 고치지만, 명단에 없으므로 자기 강사 정보를 쓰면 어디에도 보이지 않는다. 그래서 쓰기도 명단과 같게 막는다.
+	 */
+	@Test
+	void onlyListedInstructorsWriteTheCardThatTheSyllabusShows() throws Exception {
+		long ta = this.data.user("STUDENT");
+		this.jdbc.sql("""
+				INSERT INTO course_enrollments (course_id, user_id, enrollment_kind, enrollment_role, enrollment_status)
+				VALUES (:c, :u, 'REGISTRAR', 'TA', 'ENROLLED')
+				""").param("c", this.course).param("u", ta).update();
+		ApiClient assistant = new ApiClient(this.mvc, this.data.session(ta));
+
+		put(assistant, path(this.course), "\"0\"", CONTENT).andExpect(status().isOk());
+		put(assistant, path(this.course) + "/instructors/me", "\"0\"", CARD).andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("not_listed_instructor"));
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM syllabus_instructors WHERE user_id = :u")
+			.param("u", ta)
+			.query(Integer.class)
+			.single()).isZero();
+		this.student.get(path(this.course))
+			.andExpect(jsonPath("$.instructors.length()").value(1))
+			.andExpect(jsonPath("$.instructors[0].userId").value(this.prof));
+
+		// 명단에 오르면 쓰고, 쓴 강사 정보가 계획서에 보인다.
+		this.data.instructor(this.course, ta);
+		put(assistant, path(this.course) + "/instructors/me", "\"0\"", CARD).andExpect(status().isOk());
+		this.student.get(path(this.course))
+			.andExpect(jsonPath("$.instructors[?(@.userId == %d)].office", ta).value("미래관 219"));
 	}
 
 	private ResultActions put(ApiClient client, String path, String ifMatch, String body) throws Exception {

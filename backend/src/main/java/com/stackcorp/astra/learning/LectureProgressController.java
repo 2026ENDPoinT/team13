@@ -21,6 +21,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -29,6 +30,8 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 class LectureProgressController {
+
+	static final int MAX_PAGE_SIZE = 100;
 
 	private static final String COLUMNS = """
 			SELECT w.week_no, a.activity_id, a.title AS activity_title, a.published_yn, a.open_at, a.close_at,
@@ -91,29 +94,53 @@ class LectureProgressController {
 		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
 	}
 
-	/** 담당자용 수강생 진도. 공개 여부와 관계없이 과목의 모든 콘텐츠를 보인다. */
+	/**
+	 * 담당자용 수강생 진도. 공개 여부와 관계없이 과목의 모든 콘텐츠를 보인다. 학생은 수강생 명단의 사용자 ID 순서로 쪽을 나눈다(성적부와 같다).
+	 * activityId를 주면 그 영상 활동의 콘텐츠만 열로 낸다. 그 과목의 지우지 않은 영상 활동이 아니면 404다(SC-03). 쪽과 관계없이 권한 판정
+	 * 뒤 쿼리는 넷(콘텐츠, 명단, 이 쪽 학생의 적립, 이름)이고 활동을 고르면 확인 하나가 더 있다.
+	 *
+	 * @param page 1부터
+	 * @param size 1~{@value #MAX_PAGE_SIZE}, 기본 50
+	 */
 	@GetMapping("/api/courses/{courseId}/lecture-progress/students")
-	ResponseEntity<Roster> roster(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
+	ResponseEntity<Roster> roster(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@RequestParam(required = false) Long activityId, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "50") int size) {
 		if (!this.access.canManage(actor.userId(), courseId)) {
 			throw ApiException.notFound();
 		}
+		if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) {
+			throw ApiException.invalid("쪽 번호는 1 이상, 한 쪽의 학생 수는 1명 이상 " + MAX_PAGE_SIZE + "명 이하여야 합니다.");
+		}
+		if (activityId != null && !lecture(courseId, activityId)) {
+			throw ApiException.notFound();
+		}
 		List<LectureItem> items = this.jdbc.sql(COLUMNS + FROM + """
-				 WHERE a.course_id = :course
+				 WHERE a.course_id = :course AND (:activity IS NULL OR a.activity_id = :activity)
 				 ORDER BY w.week_no, a.sort_order, a.activity_id, i.link_seq
-				""").param("course", courseId).query((rs, n) -> item(rs, courseId)).list();
+				""")
+			.param("course", courseId)
+			.param("activity", activityId)
+			.query((rs, n) -> item(rs, courseId))
+			.list();
+		List<Long> roster = this.rosters.students(courseId);
+		int from = (int) Math.min((long) (page - 1) * size, roster.size());
+		List<Long> students = roster.subList(from, Math.min(from + size, roster.size()));
 		Map<Long, Map<Long, Credited>> credited = new HashMap<>();
-		this.jdbc.sql("""
-				SELECT p.user_id, p.online_lecture_item_id, p.credited_in_sec, p.met_at
-				  FROM online_lecture_item_progress p
-				  JOIN online_lecture_items i ON i.online_lecture_item_id = p.online_lecture_item_id AND i.deleted_at IS NULL
-				  JOIN learning_activities a ON a.activity_id = i.activity_id AND a.deleted_at IS NULL
-				 WHERE a.course_id = :course
-				""").param("course", courseId).query((rs) -> {
-			credited.computeIfAbsent(rs.getLong(1), (u) -> new HashMap<>())
-				.put(rs.getLong(2), new Credited(rs.getInt(3), rs.getObject(4, LocalDateTime.class)));
-		});
-		List<Long> students = this.rosters.students(courseId);
-		Map<Long, UserCard> cards = this.users.find(students);
+		if (!students.isEmpty() && !items.isEmpty()) {
+			this.jdbc.sql("""
+					SELECT p.user_id, p.online_lecture_item_id, p.credited_in_sec, p.met_at
+					  FROM online_lecture_item_progress p
+					 WHERE p.online_lecture_item_id IN (:items) AND p.user_id IN (:users)
+					""")
+				.param("items", items.stream().map(LectureItem::itemId).toList())
+				.param("users", students)
+				.query((rs) -> {
+					credited.computeIfAbsent(rs.getLong(1), (u) -> new HashMap<>())
+						.put(rs.getLong(2), new Credited(rs.getInt(3), rs.getObject(4, LocalDateTime.class)));
+				});
+		}
+		Map<Long, UserCard> cards = students.isEmpty() ? Map.of() : this.users.find(students);
 		List<StudentProgress> rows = new ArrayList<>();
 		for (long userId : students) {
 			Map<Long, Credited> mine = credited.getOrDefault(userId, Map.of());
@@ -132,7 +159,17 @@ class LectureProgressController {
 					ItemProgress.required(i.requiredSec(), i.durationSec()), i.activity().openAt(), i.closeAt(),
 					i.activity().published()))
 			.toList();
-		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new Roster(columns, rows));
+		return ResponseEntity.ok()
+			.cacheControl(CacheControl.noStore())
+			.body(new Roster(columns, rows, roster.size(), page, size));
+	}
+
+	// 그 과목의 지우지 않은 영상 활동인지.
+	private boolean lecture(long courseId, long activityId) {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM learning_activities
+				 WHERE activity_id = :activity AND course_id = :course AND activity_type = 'lecture_weeks' AND deleted_at IS NULL
+				""").param("activity", activityId).param("course", courseId).query(Integer.class).single() > 0;
 	}
 
 	private static LectureItem item(java.sql.ResultSet rs, long courseId) throws java.sql.SQLException {
@@ -166,8 +203,10 @@ class LectureProgressController {
 
 	/**
 	 * @param items 열 순서. 학생 행의 items가 같은 순서다
+	 * @param students 이 쪽의 학생. 사용자 ID 순
+	 * @param totalStudents 수강생 전체 수
 	 */
-	record Roster(List<RosterItem> items, List<StudentProgress> students) {
+	record Roster(List<RosterItem> items, List<StudentProgress> students, int totalStudents, int page, int size) {
 	}
 
 	record RosterItem(int weekNo, long activityId, String activityTitle, long itemId, String title, Integer requiredSec,

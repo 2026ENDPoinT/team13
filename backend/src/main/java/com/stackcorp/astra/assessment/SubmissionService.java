@@ -180,7 +180,7 @@ class SubmissionService {
 		long itemId = assignment.settings().gradeItemId();
 		this.writes.run(() -> {
 			GradeItem item = this.gradebook.lock(itemId);
-			this.gradebook.putScore(itemId, submission.userId(), PlainText.points(score, item.maxScore(), "score"),
+			this.gradebook.putScore(itemId, submission.userId(), PlainText.points(score, item.maxScore(), "점수"),
 					feedback, grader.userId());
 			long scoreId = this.gradebook.scoresOf(itemId, List.of(submission.userId())).get(submission.userId()).scoreId();
 			this.audit.success(grader.userId(), grader.sessionId(), "grade_score.write", "grade_score", scoreId, courseId);

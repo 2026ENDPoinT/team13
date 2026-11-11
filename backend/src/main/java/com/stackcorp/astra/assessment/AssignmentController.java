@@ -196,18 +196,18 @@ class AssignmentController {
 
 	private static AssignmentInput validated(AssignmentRequest body) {
 		if (body.weekNo() == null || body.weekNo() < 1 || body.weekNo() > MAX_WEEK) {
-			throw ApiException.invalid("weekNo는 1 이상 " + MAX_WEEK + " 이하여야 합니다.");
+			throw ApiException.invalid("주차는 1주 이상 " + MAX_WEEK + "주 이하여야 합니다.");
 		}
-		String title = PlainText.line(body.title(), MAX_TITLE, "title");
-		String description = PlainText.block(body.description(), MAX_DESCRIPTION, "description");
+		String title = PlainText.line(body.title(), MAX_TITLE, "제목");
+		String description = PlainText.block(body.description(), MAX_DESCRIPTION, "설명");
 		if (body.closeAt() == null) {
-			throw ApiException.invalid("closeAt은 반드시 보내야 합니다.");
+			throw ApiException.invalid("마감 일시를 정해야 합니다.");
 		}
 		// 활동의 기간 컬럼은 초 단위다. 반올림되지 않도록 초 아래를 버린다.
 		LocalDateTime closeAt = body.closeAt().truncatedTo(ChronoUnit.SECONDS);
 		LocalDateTime openAt = body.openAt() == null ? null : body.openAt().truncatedTo(ChronoUnit.SECONDS);
 		if (openAt != null && !openAt.isBefore(closeAt)) {
-			throw ApiException.invalid("openAt은 closeAt보다 앞이어야 합니다.");
+			throw ApiException.invalid("시작 일시는 마감 일시보다 앞이어야 합니다.");
 		}
 		String latePolicy = body.latePolicy() == null ? Assignment.LATE_NONE : body.latePolicy();
 		LocalDateTime lateUntil = body.lateUntil() == null ? null : body.lateUntil().truncatedTo(ChronoUnit.SECONDS);
@@ -218,7 +218,7 @@ class AssignmentController {
 		}
 		else if (Assignment.LATE_ALLOW_UNTIL.equals(latePolicy)) {
 			if (lateUntil == null || !lateUntil.isAfter(closeAt)) {
-				throw ApiException.invalid("latePolicy가 allow_until이면 lateUntil은 closeAt보다 뒤여야 합니다.");
+				throw ApiException.invalid("지각 제출을 받으면 지각 마감 일시는 마감 일시보다 뒤여야 합니다.");
 			}
 		}
 		else {
@@ -227,11 +227,11 @@ class AssignmentController {
 		boolean allowText = body.allowText() == null || body.allowText();
 		boolean allowFile = body.allowFile() == null || body.allowFile();
 		if (!allowText && !allowFile) {
-			throw ApiException.invalid("allowText와 allowFile 중 하나는 허용해야 합니다.");
+			throw ApiException.invalid("글 제출과 파일 제출 중 하나는 허용해야 합니다.");
 		}
-		BigDecimal maxScore = PlainText.points(body.maxScore(), MAX_SCORE, "maxScore");
+		BigDecimal maxScore = PlainText.points(body.maxScore(), MAX_SCORE, "배점");
 		if (maxScore.signum() == 0) {
-			throw ApiException.invalid("maxScore는 0보다 커야 합니다.");
+			throw ApiException.invalid("배점은 0보다 커야 합니다.");
 		}
 		return new AssignmentInput(
 				new ReportActivityInput(body.weekNo(), title, description, openAt, closeAt,
@@ -317,16 +317,17 @@ class AssignmentController {
 	 * @param status 학생 본인의 제출 상태. 담당자 응답에는 없다
 	 * @param submittedCount 최종 제출한 학생 수. 학생 응답에는 없다
 	 */
-	record AssignmentItem(long assignmentId, int weekNo, String title, LocalDateTime openAt, LocalDateTime closeAt,
-			LocalDateTime lateUntil, boolean published, String phase,
+	record AssignmentItem(long assignmentId, long activityId, int weekNo, String title, LocalDateTime openAt,
+			LocalDateTime closeAt, LocalDateTime lateUntil, boolean published, String phase,
 			@JsonInclude(JsonInclude.Include.NON_NULL) String status,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Integer submittedCount,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Integer lateCount) {
 
 		static AssignmentItem of(Assignment a, LocalDateTime now, String status, Counts counts) {
 			ReportActivity activity = a.activity();
-			return new AssignmentItem(a.assignmentId(), activity.weekNo(), activity.title(), activity.openAt(),
-					activity.closeAt(), a.settings().lateUntil(), activity.published(), a.phase(now).code(), status,
+			return new AssignmentItem(a.assignmentId(), activity.activityId(), activity.weekNo(), activity.title(),
+					activity.openAt(), activity.closeAt(), a.settings().lateUntil(), activity.published(),
+					a.phase(now).code(), status,
 					counts == null ? null : counts.submitted(), counts == null ? null : counts.late());
 		}
 

@@ -145,7 +145,7 @@ class AttemptController {
 			if (!optionIds.isEmpty()) {
 				throw ApiException.invalid("단답형 문항에는 optionIds를 보내지 않습니다.");
 			}
-			text = PlainText.block(body.text(), MAX_ANSWER, "text");
+			text = PlainText.block(body.text(), MAX_ANSWER, "답안");
 		}
 		return ok(this.service.save(actor, courseId, attempt, question.questionId(), body.revision(),
 				optionIds.stream().sorted().toList(), text));
@@ -176,8 +176,8 @@ class AttemptController {
 		if (question.objective()) {
 			throw ApiException.invalid("선택 문항은 서버가 채점합니다.");
 		}
-		BigDecimal score = PlainText.points(body.score(), question.points(), "score");
-		String feedback = PlainText.block(body.feedback(), MAX_FEEDBACK, "feedback");
+		BigDecimal score = PlainText.points(body.score(), question.points(), "점수");
+		String feedback = PlainText.block(body.feedback(), MAX_FEEDBACK, "채점 의견");
 		this.service.grade(actor, courseId, quiz, attempt, question.questionId(), score, feedback);
 		return ok(instructorView(this.access.attemptOf(quiz, attemptId)));
 	}

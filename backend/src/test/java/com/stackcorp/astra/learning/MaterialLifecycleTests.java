@@ -148,7 +148,7 @@ class MaterialLifecycleTests extends IntegrationTest {
 		for (ApiClient who : new ApiClient[] { this.professor, this.student }) {
 			who.get(content(fileB)).andExpect(status().isNotFound());
 			who.get(files(fileB) + "/summary").andExpect(status().isNotFound());
-			who.get(materials()).andExpect(jsonPath("$[0].files[*].fileId", not(hasItem((int) fileB))));
+			who.get(materials()).andExpect(jsonPath("$.items[0].files[*].fileId", not(hasItem((int) fileB))));
 		}
 		this.professor.post(files(fileB) + "/summary-jobs").andExpect(status().isNotFound());
 		assertThat(this.delivery.find("doc/" + key + "/001.jpg")).isEmpty();
@@ -242,10 +242,10 @@ class MaterialLifecycleTests extends IntegrationTest {
 			.andExpect(header().string("Cache-Control", "no-store"));
 
 		for (ApiClient who : new ApiClient[] { this.professor, this.student }) {
-			who.get(materials()).andExpect(status().isOk()).andExpect(jsonPath("$[*].activityId", not(hasItem((int) material.id()))));
+			who.get(materials()).andExpect(status().isOk()).andExpect(jsonPath("$.items[*].activityId", not(hasItem((int) material.id()))));
 			who.get("/api/courses/" + this.course + "/weeks")
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$[*].activities[*].activityId", not(hasItem((int) material.id()))));
+				.andExpect(jsonPath("$.weeks[*].activities[*].activityId", not(hasItem((int) material.id()))));
 			who.get(activity(material.id())).andExpect(status().isNotFound());
 			who.get(content(file)).andExpect(status().isNotFound());
 			who.get(files(file) + "/summary").andExpect(status().isNotFound());

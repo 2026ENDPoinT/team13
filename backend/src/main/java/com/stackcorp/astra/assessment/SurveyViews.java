@@ -166,16 +166,19 @@ class SurveyViews {
 	/**
 	 * 목록 항목. 담당자에게는 완료한 사람 수를, 응답자에게는 본인 상태를 담는다.
 	 *
+	 * @param activityId 강의실 설문만. 주차 목록, 할 일, 캘린더의 activityId와 같다
 	 * @param state 응답자 본인의 상태: not_started, completed. 담당자 응답에는 없다
 	 * @param respondentCount 완료한 사람 수. 응답자 응답에는 없다
 	 */
-	record SurveyItem(long surveyId, @JsonInclude(JsonInclude.Include.NON_NULL) Integer weekNo, String title,
+	record SurveyItem(long surveyId, @JsonInclude(JsonInclude.Include.NON_NULL) Long activityId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Integer weekNo, String title,
 			LocalDateTime openAt, LocalDateTime closeAt, boolean published, boolean anonymous, String phase,
 			int questionCount, @JsonInclude(JsonInclude.Include.NON_NULL) String state,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Integer respondentCount) {
 
 		static SurveyItem of(Survey s, LocalDateTime now, int questionCount, String state, Integer respondentCount) {
-			return new SurveyItem(s.surveyId(), s.community() ? null : s.activity().weekNo(), s.title(), s.openAt(),
+			return new SurveyItem(s.surveyId(), s.community() ? null : s.activity().activityId(),
+					s.community() ? null : s.activity().weekNo(), s.title(), s.openAt(),
 					s.closeAt(), s.published(), s.anonymous(), s.phase(now).code(), questionCount, state,
 					respondentCount);
 		}

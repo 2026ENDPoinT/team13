@@ -76,15 +76,21 @@ class MaterialFlowTests extends IntegrationTest {
 		this.student.get(materials(this.course))
 			.andExpect(status().isOk())
 			.andExpect(header().string("Cache-Control", "no-store"))
-			.andExpect(jsonPath("$.length()").value(1))
+			.andExpect(jsonPath("$.serverTime").isNotEmpty())
+			.andExpect(jsonPath("$.items.length()").value(1))
 			// 설명은 저장한 텍스트 그대로 돌려준다. 화면은 텍스트로만 그린다.
-			.andExpect(jsonPath("$[0].description").value("<b>3NF</b>까지"))
-			.andExpect(jsonPath("$[0].files[0].fileId").value(fileId));
+			.andExpect(jsonPath("$.items[0].description").value("<b>3NF</b>까지"))
+			.andExpect(jsonPath("$.items[0].phase").value("open"))
+			.andExpect(jsonPath("$.items[0].files[0].fileId").value(fileId))
+			.andExpect(jsonPath("$.items[0].files[0].summaryPublished").value(false));
 		this.student.get("/api/courses/" + this.course + "/weeks")
-			.andExpect(jsonPath("$[?(@.weekNo == 9)].activities[0].activityId").value((int) activityId));
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 9)].activities[0].activityId").value((int) activityId))
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 9)].activities[0].phase").value("open"));
 		this.student.get("/api/courses/" + this.course + "/activities/" + activityId)
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.type").value("lecture_material"))
+			.andExpect(jsonPath("$.phase").value("open"))
+			.andExpect(jsonPath("$.serverTime").isNotEmpty())
 			.andExpect(jsonPath("$.files[0].fileId").value(fileId));
 
 		this.student.get(contentPath(this.course, fileId))
@@ -123,19 +129,23 @@ class MaterialFlowTests extends IntegrationTest {
 		Registered hidden = register("{\"weekNo\":4,\"title\":\"비공개 자료\",\"published\":false,\"uploadIds\":[%d]}");
 		Registered future = register("{\"weekNo\":5,\"title\":\"다음 주 자료\",\"openAt\":\"2999-01-01T09:00:00\",\"uploadIds\":[%d]}");
 
-		this.professor.get(materials(this.course)).andExpect(jsonPath("$.length()").value(2));
-		this.student.get(materials(this.course)).andExpect(jsonPath("$.length()").value(0));
+		this.professor.get(materials(this.course)).andExpect(jsonPath("$.items.length()").value(2));
+		this.student.get(materials(this.course)).andExpect(jsonPath("$.items.length()").value(0));
 		// 주차 목록도 다른 학생 목록과 같이 공개했고 시작한 활동만 보인다. 시작 전 활동은 제목도 기간도 없다(SC-06).
 		String weeks = this.student.get("/api/courses/" + this.course + "/weeks")
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$[?(@.weekNo == 4)].activities[*]").isEmpty())
-			.andExpect(jsonPath("$[?(@.weekNo == 5)].activities[*]").isEmpty())
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 4)].activities[*]").isEmpty())
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 5)].activities[*]").isEmpty())
 			.andReturn()
 			.getResponse()
 			.getContentAsString(StandardCharsets.UTF_8);
 		assertThat(weeks).doesNotContain("다음 주 자료", "2999-01-01");
+		// 담당자에게는 보이고, 서버 시계로 정한 구간이 시작 전이다.
 		this.professor.get("/api/courses/" + this.course + "/weeks")
-			.andExpect(jsonPath("$[?(@.weekNo == 5)].activities[0].title").value("다음 주 자료"));
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 5)].activities[0].title").value("다음 주 자료"))
+			.andExpect(jsonPath("$.weeks[?(@.weekNo == 5)].activities[0].phase").value("not_open"));
+		this.professor.get(materials(this.course))
+			.andExpect(jsonPath("$.items[?(@.title == '다음 주 자료')].phase").value("not_open"));
 		for (Registered r : new Registered[] { hidden, future }) {
 			this.student.get("/api/courses/" + this.course + "/activities/" + r.activityId).andExpect(status().isNotFound());
 			this.student.get(contentPath(this.course, r.fileId)).andExpect(status().isNotFound());
@@ -189,7 +199,7 @@ class MaterialFlowTests extends IntegrationTest {
 				.andExpect(jsonPath("$.code").value("attachment_not_ready"));
 		}
 		// 실패한 등록은 활동도 첨부도 남기지 않는다.
-		this.professor.get(materials(this.course)).andExpect(jsonPath("$.length()").value(1));
+		this.professor.get(materials(this.course)).andExpect(jsonPath("$.items.length()").value(1));
 		// 좋은 업로드와 나쁜 업로드를 함께 보내도 좋은 쪽이 소비되지 않는다.
 		long good = this.professor.uploaded(this.course, "good.pdf", pdf);
 		this.professor.postJson(materials(this.course), "{\"weekNo\":2,\"title\":\"섞음\",\"uploadIds\":[%d,%d]}".formatted(good, theirs))
