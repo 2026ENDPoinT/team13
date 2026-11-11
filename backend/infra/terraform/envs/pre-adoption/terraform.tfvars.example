@@ -1,0 +1,28 @@
+# Copy to terraform.tfvars (not committed) and fill in. Variables with defaults are in variables.tf.
+
+aws_account_id  = "123456789012"
+domain_name     = "eclass.example.ac.kr"
+route53_zone_id = "Z0123456789ABCDEFGHIJ"
+
+# Public half of the signed cookie key pair (infra/README.md, bootstrap step 3).
+# The private key never goes into Terraform; it goes to the cloudfront-private-key secret.
+cloudfront_signing_public_keys = {
+  k2026a = <<-PEM
+    -----BEGIN PUBLIC KEY-----
+    ...
+    -----END PUBLIC KEY-----
+  PEM
+}
+cloudfront_signing_active_key = "k2026a"
+
+alarm_emails = ["ops@example.ac.kr"]
+
+# Non-secret app settings beyond what Terraform derives (README env tables).
+app_environment = {
+  ASTRA_LLM_MODEL   = "deepseek-flash"
+  # ASTRA_OIDC_ISSUER    = "https://idp.example.ac.kr"
+  # ASTRA_OIDC_CLIENT_ID = "astra-eclass"
+}
+
+# The account already has the GitHub Actions OIDC provider:
+# create_github_oidc_provider = false
