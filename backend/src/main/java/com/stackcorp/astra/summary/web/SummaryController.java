@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,11 +31,13 @@ import com.stackcorp.astra.summary.job.SummaryJobService;
 import com.stackcorp.astra.summary.job.SummaryResult;
 import com.stackcorp.astra.summary.web.SummaryViews.CandidateView;
 import com.stackcorp.astra.summary.web.SummaryViews.JobView;
+import com.stackcorp.astra.summary.web.SummaryViews.OverviewView;
 import com.stackcorp.astra.summary.web.SummaryViews.PublishedView;
 
 /**
  * 강의 자료 쪽별 요약 API. 과목은 경로로 명시하고(SC-03), 권한이 없거나 다른 과목의 파일·작업이면 존재를 드러내지 않도록
- * 404로 응답한다. 요약 본문은 캐시하지 않는다(ADR-0007 7번).
+ * 404로 응답한다. 요약 본문은 캐시하지 않는다(ADR-0007 7번). 생성과 재시도는 요청한 교수자의 쪽별 요약 동의가 있어야 하고,
+ * 배포에서 외부 LLM을 끄면 503 {@code llm_disabled}다(ADR-0032).
  */
 @RestController
 class SummaryController {
@@ -73,7 +76,7 @@ class SummaryController {
 		limitGeneration(actor);
 		JobView job = this.idempotency.execute(actor.userId(), "summary_job.request", idempotencyKey,
 				List.of(courseId, fileId), JobView.class, () -> {
-					JobView created = JobView.of(this.jobs.request(fileId, actor.userId()));
+					JobView created = JobView.of(this.jobs.request(courseId, fileId, actor.userId()));
 					this.audit.success(actor.userId(), actor.sessionId(), "summary_job.request", "summary_job",
 							created.id(), courseId);
 					return created;
@@ -108,7 +111,7 @@ class SummaryController {
 			@PathVariable long jobId) {
 		managedJob(actor, courseId, jobId);
 		limitGeneration(actor);
-		JobView job = JobView.of(this.jobs.retry(jobId, actor.userId()));
+		JobView job = JobView.of(this.jobs.retry(courseId, jobId, actor.userId()));
 		this.audit.success(actor.userId(), actor.sessionId(), "summary_job.retry", "summary_job", job.id(), courseId);
 		return noStore(HttpStatus.ACCEPTED).body(job);
 	}
@@ -138,6 +141,32 @@ class SummaryController {
 			throw notFound();
 		}
 		return this.jobs.published(fileId).map(this::published).orElseThrow(SummaryController::notFound);
+	}
+
+	/** 게시본을 내린다. 쪽별 요약, 파일 요약, 학습 대화가 학생에게 더는 보이지 않는다. 다시 게시할 수 있다. */
+	@DeleteMapping("/api/courses/{courseId}/files/{fileId}/summary")
+	ResponseEntity<Void> unpublish(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long fileId) {
+		requireManage(actor, courseId, fileId);
+		if (!this.jobs.unpublish(fileId)) {
+			throw notFound();
+		}
+		this.audit.success(actor.userId(), actor.sessionId(), "summary.unpublish", "file", fileId, courseId);
+		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+	}
+
+	/**
+	 * 자료 상세 화면의 파일 요약("ASTRA 서포터즈 요약", 63_학습활동_자료상세). 게시한 쪽별 요약의 질문과 흐름으로 만들고 모델을 다시
+	 * 부르지 않는다. 그 파일을 볼 수 있는 사람만 보고, 게시본이 없으면 404다(ADR-0032).
+	 */
+	@GetMapping("/api/courses/{courseId}/files/{fileId}/summary/overview")
+	ResponseEntity<OverviewView> overview(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long fileId) {
+		if (!this.policy.canRead(actor, courseId, fileId)) {
+			throw notFound();
+		}
+		PublishedSummary summary = this.jobs.published(fileId).orElseThrow(SummaryController::notFound);
+		return noStore(HttpStatus.OK).body(OverviewView.of(summary));
 	}
 
 	@ExceptionHandler(SummaryJobException.class)

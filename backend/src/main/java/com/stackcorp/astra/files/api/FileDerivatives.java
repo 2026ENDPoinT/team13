@@ -15,4 +15,13 @@ public interface FileDerivatives {
 
 	Optional<byte[]> get(long fileId, String name);
 
+	/** 파생물 하나를 지운다. 없으면 아무것도 하지 않는다. */
+	void delete(long fileId, String name);
+
+	/**
+	 * 이름이 prefix로 시작하는 파생물을 모두 지운다. 파일 전체의 파생물은 파일을 지울 때 GC가 지운다.
+	 * @param namePrefix name과 같은 형식이고 {@code /}로 끝난다. 예: studychat/12/
+	 */
+	void deletePrefix(long fileId, String namePrefix);
+
 }

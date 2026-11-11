@@ -6,9 +6,9 @@ import java.util.regex.Pattern;
 
 /**
  * 생성된 Markdown에 raw HTML과 이미지를 허용하지 않는다(ADR-0008 5번, CHG-07). 화면도 따로 정화하지만 서버가 먼저 막는다.
- * 코드와 수식 안의 {@code <}는 검사하지 않는다.
+ * 코드와 수식 안의 {@code <}는 검사하지 않는다. 학습 대화의 답은 링크도 허용하지 않는다(SEC-02, FILES-18).
  */
-final class MarkdownSafety {
+public final class MarkdownSafety {
 
 	private static final Pattern CODE_FENCE = Pattern.compile("```[\\s\\S]*?```");
 
@@ -20,17 +20,18 @@ final class MarkdownSafety {
 
 	private static final Pattern IMAGE = Pattern.compile("!\\[");
 
+	// Markdown inline 링크, URL scheme, scheme 없는 www 주소(GFM 자동 링크). 자동 링크 <...>는 HTML 검사가 막는다.
+	private static final Pattern LINK = Pattern.compile("\\]\\(|(?i)\\b[a-z][a-z0-9+.-]*://|(?i)\\bwww\\.");
+
 	private MarkdownSafety() {
 	}
 
-	static List<String> errors(String where, String text) {
+	public static List<String> errors(String where, String text) {
 		List<String> out = new ArrayList<>();
 		if (text == null || text.isEmpty()) {
 			return out;
 		}
-		String prose = CODE_FENCE.matcher(text).replaceAll("");
-		prose = INLINE_CODE.matcher(prose).replaceAll("");
-		prose = MATH.matcher(prose.replace("\\$", "")).replaceAll("");
+		String prose = prose(text);
 		if (HTML.matcher(prose).find()) {
 			out.add(where + ": HTML 태그를 쓰지 않음(부등호는 $...$ 안에, 코드는 `...` 안에)");
 		}
@@ -38,6 +39,20 @@ final class MarkdownSafety {
 			out.add(where + ": 이미지를 넣지 않음");
 		}
 		return out;
+	}
+
+	/** 링크와 URL. 코드와 수식 밖의 글만 본다. */
+	public static List<String> linkErrors(String where, String text) {
+		if (text == null || text.isEmpty() || !LINK.matcher(prose(text)).find()) {
+			return List.of();
+		}
+		return List.of(where + ": 링크와 URL을 쓰지 않음");
+	}
+
+	private static String prose(String text) {
+		String prose = CODE_FENCE.matcher(text).replaceAll("");
+		prose = INLINE_CODE.matcher(prose).replaceAll("");
+		return MATH.matcher(prose.replace("\\$", "")).replaceAll("");
 	}
 
 }

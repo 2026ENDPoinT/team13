@@ -17,6 +17,7 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.files.api.DocumentRenditions.Rendition;
@@ -28,13 +29,20 @@ import com.stackcorp.astra.summary.pipeline.GenerateResult;
 import com.stackcorp.astra.summary.pipeline.GenerationException;
 import com.stackcorp.astra.summary.pipeline.GenerationProgress;
 import com.stackcorp.astra.summary.pipeline.SummaryPipeline;
+import com.stackcorp.astra.summary.pipeline.TextRedactor;
 import com.stackcorp.astra.summary.pipeline.Usage;
+import com.stackcorp.astra.summary.policy.LlmGate;
+import com.stackcorp.astra.summary.policy.ProcessingScope;
+import com.stackcorp.astra.summary.policy.ReadCommitted;
+import com.stackcorp.astra.summary.policy.UsageLedger;
 
 /**
  * worker 프로필에서 대기 작업을 하나씩 실행한다. 여러 worker가 떠도 원장의 SKIP LOCKED로 한 곳만 잡는다.
  * 로그에는 작업 ID와 코드만 남긴다. 자료 본문과 모델 출력은 남기지 않는다(ADR-0007 9번).
  * process가 종료할 때는 새 작업을 잡지 않고, 실행 중인 작업은 다음 모델 호출 경계에서 멈춰 lease 만료와 같은
  * {@code interrupted}로 바로 닫는다. lease가 끝날 때까지 작업이 running으로 남지 않는다.
+ * 모델을 부르기 전마다 동의 문(LlmGate)을 다시 확인한다. 배포 스위치가 꺼지거나 요청한 교수자가 동의를 철회하면 다음 호출 경계에서
+ * 멈추고 {@code disabled}·{@code consent} 코드로 취소한다(ADR-0032). 끝난 작업의 사용량은 과목 합계에 더한다.
  */
 @Component
 @Profile("worker")
@@ -54,6 +62,14 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 
 	private final SummaryProperties properties;
 
+	private final LlmGate gate;
+
+	private final UsageLedger usage;
+
+	private final TextRedactor redactor;
+
+	private final ReadCommitted transaction;
+
 	private final String owner;
 
 	private final ScheduledExecutorService leaseRenewer = Executors
@@ -62,13 +78,18 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 	private volatile boolean running;
 
 	SummaryJobRunner(SummaryJobRepository jobs, DocumentRenditions renditions, StoredFiles files,
-			SummaryStorage storage, ObjectProvider<LlmClient> llm, SummaryProperties properties) {
+			SummaryStorage storage, ObjectProvider<LlmClient> llm, SummaryProperties properties, LlmGate gate,
+			UsageLedger usage, TextRedactor redactor, PlatformTransactionManager transactionManager) {
 		this.jobs = jobs;
 		this.renditions = renditions;
 		this.files = files;
 		this.storage = storage;
 		this.llm = llm;
 		this.properties = properties;
+		this.gate = gate;
+		this.usage = usage;
+		this.redactor = redactor;
+		this.transaction = new ReadCommitted(transactionManager);
 		this.owner = properties.workerId() != null ? properties.workerId() : defaultOwner();
 	}
 
@@ -100,6 +121,11 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 			return false;
 		}
 		SummaryJob job = claimed.get();
+		Optional<String> closed = gateClosed(job);
+		if (closed.isPresent()) {
+			finish(job, JobState.CANCELLED, new Usage(0, 0, 0), closed.get(), null);
+			return true;
+		}
 		if (client == null) {
 			finish(job, JobState.FAILED, new Usage(0, 0, 0), "not_configured",
 					"모델 제공자가 설정되지 않았습니다.");
@@ -162,13 +188,16 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 			finish(job, JobState.FAILED, new Usage(0, 0, 0), "file", "요청한 뒤 파일이 바뀌었습니다. 다시 요청해 주세요.");
 			return;
 		}
-		String title = this.files.find(job.fileId()).map((f) -> stripExtension(f.name())).orElse(null);
+		String title = this.files.find(job.fileId())
+			.map((f) -> this.redactor.redact(stripExtension(f.name())))
+			.orElse(null);
 		// 취소 요청은 모델 호출 앞뒤마다 원장에서 확인한다. 기본키 조회 한 번이라 모델 호출에 비해 비용이 없다.
-		// 자료 파일이 지워져도 멈춘다. 지운 파일에는 결과를 쓰지 않는다(ADR-0011).
+		// 자료 파일이 지워지거나 동의 문이 닫혀도 멈춘다. 지운 파일에는 결과를 쓰지 않는다(ADR-0011).
 		GenerateInput input = new GenerateInput(String.valueOf(job.fileId()), title,
-				new RenditionSource(this.renditions, rendition),
+				new RenditionSource(this.renditions, rendition, this.redactor),
 				this.storage.checkpoints(job.fileId(), this.jobs.rootOf(job.id())),
-				() -> !this.running || leaseLost.get() || this.jobs.cancelRequested(job.id()) || fileDeleted(job),
+				() -> !this.running || leaseLost.get() || this.jobs.cancelRequested(job.id()) || fileDeleted(job)
+						|| gateClosed(job).isPresent(),
 				(GenerationProgress p) -> this.jobs.progress(job.id(), this.owner, p.stage().name().toLowerCase(),
 						p.pagesDone(), p.pagesTotal(), p.usage()),
 				GenerateInput.Limits.DEFAULT);
@@ -200,7 +229,7 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 					log.info("summary job interrupted by shutdown jobId={}", job.id());
 					return;
 				}
-				finish(job, JobState.CANCELLED, usage, null, null);
+				finish(job, JobState.CANCELLED, usage, gateClosed(job).orElse(null), null);
 				return;
 			}
 			if (fileDeleted(job)) {
@@ -221,6 +250,10 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 		}
 	}
 
+	private Optional<String> gateClosed(SummaryJob job) {
+		return this.gate.closed(job.courseId(), job.requestedByUserId(), ProcessingScope.PAGE_SUMMARY);
+	}
+
 	private boolean fileDeleted(SummaryJob job) {
 		return this.files.find(job.fileId()).isEmpty();
 	}
@@ -234,7 +267,16 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 	private void finish(SummaryJob job, JobState state, Usage usage, String errorCode, String errorMessage) {
 		String message = errorMessage == null || errorMessage.length() <= 500 ? errorMessage
 				: errorMessage.substring(0, 500);
-		if (!this.jobs.finish(job.id(), this.owner, state, usage, errorCode, message)) {
+		// 상태 전이와 과목 사용량을 한 transaction으로 반영한다. lease를 잃었으면 다른 쪽이 닫았으므로 사용량도 더하지 않는다.
+		boolean finished = this.transaction.execute(() -> {
+			if (!this.jobs.finish(job.id(), this.owner, state, usage, errorCode, message)) {
+				return false;
+			}
+			this.usage.add(job.courseId(), ProcessingScope.PAGE_SUMMARY, usage.calls(), usage.inputTokens(),
+					usage.outputTokens());
+			return true;
+		});
+		if (!finished) {
 			log.warn("summary job finish ignored, lease lost jobId={} state={}", job.id(), state);
 		}
 	}

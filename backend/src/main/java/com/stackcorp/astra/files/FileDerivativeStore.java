@@ -41,6 +41,19 @@ class FileDerivativeStore implements FileDerivatives {
 		return this.store.get(Bucket.CONTENT, key(fileId, name));
 	}
 
+	@Override
+	public void delete(long fileId, String name) {
+		this.store.delete(Bucket.CONTENT, key(fileId, name));
+	}
+
+	@Override
+	public void deletePrefix(long fileId, String namePrefix) {
+		if (namePrefix == null || !namePrefix.endsWith("/")) {
+			throw new IllegalArgumentException("파생물 prefix는 /로 끝나야 합니다: " + namePrefix);
+		}
+		this.store.deletePrefix(Bucket.CONTENT, key(fileId, namePrefix.substring(0, namePrefix.length() - 1)) + "/");
+	}
+
 	static String prefix(long fileId) {
 		return "derivatives/" + fileId + "/";
 	}

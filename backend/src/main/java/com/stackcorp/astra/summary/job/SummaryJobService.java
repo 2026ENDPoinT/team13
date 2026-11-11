@@ -3,6 +3,7 @@ package com.stackcorp.astra.summary.job;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,10 +11,13 @@ import org.springframework.transaction.annotation.Transactional;
 import com.stackcorp.astra.files.api.StoredFiles;
 import com.stackcorp.astra.files.api.StoredFiles.StoredFile;
 import com.stackcorp.astra.summary.job.SummaryJobException.Code;
+import com.stackcorp.astra.summary.policy.ConsentRevoked;
+import com.stackcorp.astra.summary.policy.LlmGate;
+import com.stackcorp.astra.summary.policy.ProcessingScope;
 
 /**
  * 요약 작업의 명령과 조회. 권한 판정은 이 서비스를 부르는 web 계층의 SummaryPolicy가 한다(ADR-0006 9번).
- * 생성 시작과 게시는 교수자의 명시적 요청으로만 부른다.
+ * 생성 시작과 게시는 교수자의 명시적 요청으로만 부른다. 생성과 재시도는 요청한 교수자의 쪽별 요약 동의가 있어야 한다(ADR-0032).
  */
 @Service
 public class SummaryJobService {
@@ -24,24 +28,41 @@ public class SummaryJobService {
 
 	private final SummaryStorage storage;
 
-	SummaryJobService(SummaryJobRepository jobs, StoredFiles files, SummaryStorage storage) {
+	private final LlmGate gate;
+
+	SummaryJobService(SummaryJobRepository jobs, StoredFiles files, SummaryStorage storage, LlmGate gate) {
 		this.jobs = jobs;
 		this.files = files;
 		this.storage = storage;
+		this.gate = gate;
 	}
 
-	public SummaryJob request(long fileId, Long actorUserId) {
+	/**
+	 * @param courseId 경로의 과목. 부르는 쪽이 파일이 이 과목에 속하는지 확인했다
+	 * @throws com.stackcorp.astra.shared.ApiException 503 {@code llm_disabled}, 409 {@code llm_consent_required}
+	 */
+	public SummaryJob request(long courseId, long fileId, long actorUserId) {
+		this.gate.require(courseId, actorUserId, ProcessingScope.PAGE_SUMMARY);
 		StoredFile file = summarizable(fileId);
-		return insert(file, actorUserId, null);
+		return insert(file, courseId, actorUserId, null);
 	}
 
 	/** 실패하거나 취소된 작업을 새 작업으로 다시 실행한다. 끝난 쪽의 중간 결과는 이어받는다. */
-	public SummaryJob retry(long jobId, Long actorUserId) {
+	public SummaryJob retry(long courseId, long jobId, long actorUserId) {
 		SummaryJob job = get(jobId);
 		if (job.state() != JobState.FAILED && job.state() != JobState.CANCELLED) {
 			throw new SummaryJobException(Code.INVALID_STATE, "실패하거나 취소된 작업만 다시 실행할 수 있습니다.");
 		}
-		return insert(summarizable(job.fileId()), actorUserId, jobId);
+		this.gate.require(courseId, actorUserId, ProcessingScope.PAGE_SUMMARY);
+		return insert(summarizable(job.fileId()), courseId, actorUserId, jobId);
+	}
+
+	/** 쪽별 요약 동의를 철회하면 그 교수자가 그 과목에 요청한 대기 작업을 취소하고, 실행 중인 작업에는 취소를 요청한다. */
+	@EventListener
+	public void onConsentRevoked(ConsentRevoked event) {
+		if (event.scope() == ProcessingScope.PAGE_SUMMARY) {
+			this.jobs.cancelForRevokedConsent(event.courseId(), event.instructorUserId());
+		}
 	}
 
 	/** 대기 중이면 바로 취소하고, 실행 중이면 취소를 요청한다. worker는 다음 모델 호출 전에 멈춘다. */
@@ -74,7 +95,16 @@ public class SummaryJobService {
 		SummaryJob job = get(jobId);
 		this.jobs.publish(job.fileId(), jobId, actorUserId);
 		var publication = this.jobs.findPublication(job.fileId()).orElseThrow();
-		return new PublishedSummary(job.fileId(), jobId, publication.publishedAt(), result);
+		return new PublishedSummary(job.fileId(), jobId, publication.publishedByUserId(), publication.publishedAt(),
+				result);
+	}
+
+	/**
+	 * 게시본을 내린다. 학생에게 쪽별 요약, 파일 요약, 학습 대화가 더는 보이지 않는다. 작업과 결과 객체는 남아 다시 게시할 수 있다.
+	 * @return 게시본이 있었으면 true
+	 */
+	public boolean unpublish(long fileId) {
+		return this.jobs.deletePublication(fileId);
 	}
 
 	/** 파일의 최근 작업 20개. 최신이 먼저다. */
@@ -82,10 +112,15 @@ public class SummaryJobService {
 		return this.jobs.listByFile(fileId, 20);
 	}
 
+	/** 게시 pointer만 읽는다. 결과 객체를 읽지 않으므로 질문마다 불러도 된다. */
+	public Optional<Publication> publication(long fileId) {
+		return this.jobs.findPublication(fileId);
+	}
+
 	/** 학생에게 보이는 게시본. */
 	public Optional<PublishedSummary> published(long fileId) {
 		return this.jobs.findPublication(fileId)
-			.map((p) -> new PublishedSummary(fileId, p.jobId(), p.publishedAt(), this.storage
+			.map((p) -> new PublishedSummary(fileId, p.jobId(), p.publishedByUserId(), p.publishedAt(), this.storage
 				.readResult(fileId, p.jobId())
 				.orElseThrow(() -> new IllegalStateException("게시한 결과가 저장소에 없습니다: " + p.jobId()))));
 	}
@@ -102,9 +137,9 @@ public class SummaryJobService {
 		return file;
 	}
 
-	private SummaryJob insert(StoredFile file, Long actorUserId, Long retryOf) {
+	private SummaryJob insert(StoredFile file, long courseId, long actorUserId, Long retryOf) {
 		try {
-			return get(this.jobs.insert(file.fileId(), file.versionNo(), actorUserId, retryOf));
+			return get(this.jobs.insert(file.fileId(), file.versionNo(), courseId, actorUserId, retryOf));
 		}
 		catch (DuplicateKeyException ex) {
 			throw new SummaryJobException(Code.CONFLICT, "이 파일에 진행 중인 요약 작업이 있습니다.");

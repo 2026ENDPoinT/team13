@@ -23,6 +23,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -34,6 +35,7 @@ import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
+import com.stackcorp.astra.summary.LlmConsents;
 
 import jakarta.servlet.http.Cookie;
 
@@ -58,6 +60,9 @@ class IdempotencyApiTests extends IntegrationTest {
 	@Autowired
 	IdempotencyPurge purge;
 
+	@Autowired
+	ApplicationContext context;
+
 	long course;
 
 	long professorId;
@@ -69,6 +74,7 @@ class IdempotencyApiTests extends IntegrationTest {
 		this.course = this.data.course();
 		this.professorId = this.data.user("PROFESSOR");
 		this.data.instructor(this.course, this.professorId);
+		LlmConsents.grant(this.context, this.course, this.professorId);
 		this.professor = this.data.session(this.professorId);
 	}
 

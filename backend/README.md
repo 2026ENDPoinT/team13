@@ -125,6 +125,33 @@ ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-eclass-Frontend에�
 | `ASTRA_LLM_TIMEOUT` | `300s` | 요청 하나의 전체 제한 시간 |
 | `ASTRA_LLM_MAX_CONCURRENCY` | `2` | 동시에 보내는 요청 수 상한 |
 | `ASTRA_LLM_EXTRABODY_*` | 없음 | 요청 본문에 더하는 제공자 전용 값. 예: `ASTRA_LLM_EXTRABODY_THINKING_TYPE=disabled`는 본문에 `{"thinking":{"type":"disabled"}}`를 더한다 |
+| `ASTRA_LLM_ENABLED` | `true` | `false`면 요약 생성과 학습 대화를 모두 503 `llm_disabled`로 막고 모델을 부르지 않는다 |
+
+과목 자료는 담당 교수자가 그 과목에 범위별(`page_summary`, `study_chat`)로 동의한 뒤에만 보낸다([ADR-0032](docs/adr/0032-llm-consent-and-study-chat.md)). 교수자는 아래 처리 조건을 `GET /api/llm/policy`로 보고 동의한다. 제공자를 바꾸면 이 값과 `NOTICE_VERSION`을 함께 바꾼다. 값이 바뀌면 이전 동의는 효력을 잃는다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_LLM_POLICY_PROVIDER_NAME` | `DeepSeek API` | 화면에 보일 제공자 이름 |
+| `ASTRA_LLM_POLICY_PROVIDER_OPERATOR` | `Hangzhou DeepSeek Artificial Intelligence Co., Ltd.` | 입력을 받는 계약 주체 |
+| `ASTRA_LLM_POLICY_PROCESSING_REGION` | `CN` | 처리·저장 지역(국가 코드나 클라우드 지역) |
+| `ASTRA_LLM_POLICY_RETENTION_DAYS` | 없음 | 제공자 보관 일수. 0은 보관 안 함, 비우면 제공자가 밝히지 않음 |
+| `ASTRA_LLM_POLICY_TRAINING_USE` | `true` | 제공자가 입력을 학습·개선에 쓸 수 있는지 |
+| `ASTRA_LLM_POLICY_CROSS_BORDER_TRANSFER` | `true` | 국외 이전 여부. 이 값이나 학습 이용이 `true`면 동의할 때 따로 확인받는다 |
+| `ASTRA_LLM_POLICY_NOTICE_VERSION` | `deepseek-2026-11-11` | 교수자에게 보여 주는 고지 문구의 판 |
+
+학습 대화(질문과 답)는 `worker` 프로필이 처리한다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_STUDYCHAT_POLL_INTERVAL` | `1s` | worker가 답을 기다리는 질문을 찾는 간격 |
+| `ASTRA_STUDYCHAT_RATE_LIMIT` · `ASTRA_STUDYCHAT_RATE_WINDOW` | `20` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 질문 수 |
+| `ASTRA_STUDYCHAT_DAILY_TOKEN_BUDGET` | `2000000` | 과목 하나가 하루(DB 날짜)에 학습 대화로 쓸 수 있는 입력·출력 token 합 |
+| `ASTRA_STUDYCHAT_QUESTION_MAX_CHARS` | `2000` | 질문 길이 상한 |
+| `ASTRA_STUDYCHAT_HISTORY_EXCHANGES` · `ASTRA_STUDYCHAT_HISTORY_MAX_CHARS` | `4` · `6000` | 함께 보내는 지난 질문·답 수와 글자 수 상한 |
+| `ASTRA_STUDYCHAT_MAX_TOOL_STEPS` | `4` | 답 하나에서 도구를 쓸 수 있는 모델 호출 수 |
+| `ASTRA_STUDYCHAT_MAX_INPUT_TOKENS_PER_ANSWER` · `ASTRA_STUDYCHAT_MAX_OUTPUT_TOKENS` | `60000` · `2000` | 답 하나의 입력 token 상한, 호출 하나의 출력 token 상한 |
+| `ASTRA_STUDYCHAT_LEASE` | `10m` | 질문 하나의 실행 lease. `ASTRA_LLM_TIMEOUT`보다 길게 둔다 |
+| `ASTRA_STUDYCHAT_RETENTION` | 없음 | 마지막 질문 뒤 대화를 지우기까지의 기간(예: `365d`). 비우면 소유자 삭제와 파일 삭제로만 지운다 |
 
 ### 저장소와 문서 변환 설정
 

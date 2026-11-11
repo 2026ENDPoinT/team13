@@ -26,6 +26,29 @@ public final class TestPdfs {
 		return pdf(pages, null, null);
 	}
 
+	/** 쪽마다 주어진 한 줄을 쓴다. Helvetica라 ASCII만 쓴다. */
+	public static byte[] pdfWithText(String... pageTexts) {
+		try (PDDocument doc = new PDDocument()) {
+			for (String text : pageTexts) {
+				PDPage page = new PDPage(new PDRectangle(720, 405));
+				doc.addPage(page);
+				try (PDPageContentStream content = new PDPageContentStream(doc, page)) {
+					content.beginText();
+					content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 14);
+					content.newLineAtOffset(36, 300);
+					content.showText(text);
+					content.endText();
+				}
+			}
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			doc.save(out);
+			return out.toByteArray();
+		}
+		catch (IOException ex) {
+			throw new UncheckedIOException(ex);
+		}
+	}
+
 	/**
 	 * @param userPassword null이면 암호화하지 않는다. 빈 문자열이면 소유자 암호만 건다
 	 */

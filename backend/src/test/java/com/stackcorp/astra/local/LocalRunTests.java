@@ -30,6 +30,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 import tools.jackson.databind.JsonNode;
 
@@ -37,7 +38,7 @@ import tools.jackson.databind.JsonNode;
  * 로컬 실행 구성(TestStackBackendApplication과 같은 설정): 개발용 로그인, 표본 데이터, CDN 없이 앱이 응답하는 전달 경로(ADR-0009).
  */
 @SpringBootTest(properties = { "astra.summary.poll-interval=1h", "astra.summary.lease-renewal=1h",
-		"astra.summary.lease=2h" })
+		"astra.summary.lease=2h", "astra.studychat.poll-interval=1h", "astra.studychat.sweep-interval=1h" })
 @AutoConfigureMockMvc
 @ActiveProfiles({ "local", "worker" })
 @Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class, DevLoginConfiguration.class, LocalSeed.class })
@@ -136,6 +137,17 @@ class LocalRunTests {
 
 	private Cookie lastDeliveryCookie;
 
+	// 교수자가 화면에서 보는 처리 조건을 읽고 그대로 동의한다(ADR-0032).
+	private void consentToPageSummary(ApiClient professor, long course) throws Exception {
+		JsonNode policy = ApiClient.json(professor.get("/api/llm/policy").andExpect(status().isOk()));
+		professor
+			.send(MockMvcRequestBuilders.put("/api/courses/" + course + "/llm-consents/page_summary")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"noticeVersion\":\"" + policy.get("noticeVersion").asString() + "\",\"profileDigest\":\""
+						+ policy.get("profileDigest").asString() + "\",\"acknowledged\":true}"))
+			.andExpect(status().isOk());
+	}
+
 	/** 자료를 올리고 요약을 게시한 뒤, 학생이 받은 pageImageBase를 돌려준다. */
 	private String publishedSummary(ApiClient professor, Cookie studentSession, long course, int pages) throws Exception {
 		while (SummaryRunnerDriver.runOnce(this.context)) {
@@ -147,6 +159,7 @@ class LocalRunTests {
 					"{\"weekNo\":9,\"title\":\"9주차\",\"uploadIds\":[" + uploadId + "]}")
 			.andExpect(status().isCreated()));
 		long fileId = material.get("files").get(0).get("fileId").asLong();
+		consentToPageSummary(professor, course);
 		long jobId = ApiClient
 			.json(professor.post("/api/courses/" + course + "/files/" + fileId + "/summary-jobs")
 				.andExpect(status().isAccepted()))

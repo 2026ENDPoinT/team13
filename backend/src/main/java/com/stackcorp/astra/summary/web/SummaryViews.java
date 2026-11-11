@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.SortedMap;
 
+import com.stackcorp.astra.summary.job.PublishedSummary;
 import com.stackcorp.astra.summary.job.SummaryJob;
 import com.stackcorp.astra.summary.pack.Beat;
 import com.stackcorp.astra.summary.pack.Slide;
@@ -42,6 +43,34 @@ final class SummaryViews {
 	 */
 	record PublishedView(long fileId, Instant publishedAt, String question, List<Beat> story, List<Slide> slides,
 			String pageImageBase) {
+	}
+
+	/**
+	 * 파일 요약. markdown은 question과 story를 이어 만든 본문이고, 각 부분은 게시 전에 출력 검사를 통과한 값이다.
+	 */
+	record OverviewView(long fileId, Instant publishedAt, String question, List<Beat> story, String markdown) {
+
+		static OverviewView of(PublishedSummary summary) {
+			var pack = summary.result().pack();
+			StringBuilder out = new StringBuilder();
+			if (pack.question() != null && !pack.question().isBlank()) {
+				out.append("**").append(pack.question().strip()).append("**\n");
+			}
+			for (Beat beat : pack.story()) {
+				out.append("\n### ").append(beat.title()).append(" (p.").append(beat.from());
+				if (beat.to() != beat.from()) {
+					out.append("–").append(beat.to());
+				}
+				out.append(")\n\n").append(beat.problem()).append(' ').append(beat.answer());
+				if (beat.tradeoff() != null) {
+					out.append(' ').append(beat.tradeoff());
+				}
+				out.append('\n');
+			}
+			return new OverviewView(summary.fileId(), summary.publishedAt(), pack.question(), pack.story(),
+					out.toString());
+		}
+
 	}
 
 }

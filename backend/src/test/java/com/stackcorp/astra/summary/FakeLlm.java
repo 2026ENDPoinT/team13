@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Bean;
 
 import com.stackcorp.astra.summary.api.LlmClient;
 import com.stackcorp.astra.summary.api.LlmContent;
+import com.stackcorp.astra.summary.api.LlmMessage;
 import com.stackcorp.astra.summary.api.LlmRequest;
 import com.stackcorp.astra.summary.api.LlmResponse;
 
@@ -19,6 +20,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 요청한 쪽마다 해설을, story 요청에는 흐름 하나를 돌려주는 가짜 모델. 실제 모델 호출 없이 job 흐름을 시험한다.
+ * 학습 대화 요청에는 search_source, read_page(1)를 차례로 부르고 1쪽을 밝힌 답을 돌려준다.
  */
 public final class FakeLlm implements LlmClient {
 
@@ -52,6 +54,9 @@ public final class FakeLlm implements LlmClient {
 	}
 
 	public static LlmResponse honest(LlmRequest request) {
+		if (request.purpose() == LlmRequest.Purpose.CHAT) {
+			return honestChat(request);
+		}
 		if (isStory(request)) {
 			int total = Integer.parseInt(text(request).replaceAll("(?s).*1–(\\d+) 범위예요.*", "$1"));
 			return ok(Map.of("question", "이 자료는 무엇을 설명하나요?", "story", List.of(Map.of("from", 1, "to", total,
@@ -67,6 +72,52 @@ public final class FakeLlm implements LlmClient {
 					"- **Concept " + p + "**: 정의예요.", "digest", "p" + p + " 요약"))
 			.toList();
 		return ok(Map.of("slides", slides));
+	}
+
+	/** 도구를 주면 찾고, 읽고, 답한다. 도구가 없으면 바로 답한다. */
+	public static LlmResponse honestChat(LlmRequest request) {
+		long toolTurns = request.messages().stream().filter((m) -> m.role() == LlmMessage.Role.TOOL).count();
+		if (request.tools().isEmpty() || toolTurns >= 2) {
+			return answer("1쪽은 **sigma**를 설명해요 [p.1].");
+		}
+		return toolTurns == 0 ? toolCall("call-1", "search_source", "{\"query\":\"sigma\"}")
+				: toolCall("call-2", "read_page", "{\"page\":1}");
+	}
+
+	public static LlmResponse toolCall(String id, String name, String arguments) {
+		return new LlmResponse("", LlmResponse.StopReason.TOOL_USE, new LlmResponse.Usage(10, 5),
+				List.of(new LlmContent.ToolCall(id, name, arguments)));
+	}
+
+	public static LlmResponse answer(String text) {
+		return new LlmResponse(text, LlmResponse.StopReason.END, new LlmResponse.Usage(10, 5));
+	}
+
+	/** 요청의 모든 message에 든 글. 도구 결과를 포함한다. */
+	public static String transcript(LlmRequest request) {
+		StringBuilder out = new StringBuilder();
+		for (LlmMessage message : request.messages()) {
+			for (LlmContent c : message.content()) {
+				switch (c) {
+					case LlmContent.Text t -> out.append(t.text()).append('\n');
+					case LlmContent.ToolResult r -> out.append(r.text()).append('\n');
+					case LlmContent.ToolCall call -> out.append(call.arguments()).append('\n');
+					case LlmContent.Image image -> {
+					}
+				}
+			}
+		}
+		return out.toString();
+	}
+
+	/** 요청에 든 도구 결과. */
+	public static List<LlmContent.ToolResult> toolResults(LlmRequest request) {
+		return request.messages()
+			.stream()
+			.flatMap((m) -> m.content().stream())
+			.filter(LlmContent.ToolResult.class::isInstance)
+			.map(LlmContent.ToolResult.class::cast)
+			.toList();
 	}
 
 	public static String text(LlmRequest request) {
