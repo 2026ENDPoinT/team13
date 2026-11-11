@@ -77,7 +77,9 @@ class AssignmentRecords {
 			.update() > 0;
 	}
 
-	void insertGradeItem(long courseId, long activityId, long userId, String title, AssignmentInput input) {
+	/** @return 성적 항목 ID */
+	long insertGradeItem(long courseId, long activityId, long userId, String title, AssignmentInput input) {
+		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
 				INSERT INTO grade_items (course_id, activity_id, item_name, item_type, max_score, score_visibility, release_at,
 				                         created_by_user_id)
@@ -91,7 +93,8 @@ class AssignmentRecords {
 			.param("max", input.maxScore())
 			.param("released", input.scoresReleased())
 			.param("user", userId)
-			.update();
+			.update(key, "grade_item_id");
+		return key.getKey().longValue();
 	}
 
 	/** 과제 항목의 이름, 배점, 공개를 바꾸고 수정 번호를 올린다. 부르는 쪽이 항목 행을 먼저 잠근다({@link GradebookRecords#lock}). */

@@ -185,7 +185,8 @@ class SurveyService {
 		}
 		List<Answer> valid = SurveyAnswers.validated(this.records.questions(surveyId), answers);
 		boolean anonymous = survey.anonymous();
-		// 익명 설문은 참여와 응답 어느 쪽에도 정밀 시각을 남기지 않는다(SC-05-A). 응답 세트에는 사용자도 key도 없다.
+		// 익명 설문은 참여, 응답, 감사 기록 어느 쪽에도 정밀 시각을 남기지 않는다(SC-05-A). 응답 세트에는 사용자도 key도 없고, 응답 쪽
+		// 행 ID는 임의 값이라 참여 행이나 감사 기록의 입력 순서와 맞출 수 없다(ADR-0022).
 		LocalDateTime stamp = anonymous ? now.toLocalDate().atStartOfDay() : now;
 		this.records.insertParticipation(surveyId, actor.userId(), anonymous ? completionKey : null, stamp);
 		this.records.insertResponse(surveyId, anonymous ? null : actor.userId(), stamp, valid);

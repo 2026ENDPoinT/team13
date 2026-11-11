@@ -192,17 +192,37 @@ class StreamUploadTests extends IntegrationTest {
 			.single()).isEqualTo(2);
 	}
 
+	/**
+	 * 같은 key의 재전송은 본문을 저장하지 않고 hash만 계산한다. 같은 파일이면 처음 업로드를 돌려주고, 이름·크기가 같아도 내용이 다르면
+	 * 409이며 업로드도 객체도 더 만들지 않는다(보안 검토 L1).
+	 */
 	@Test
-	void replaysAnIdempotentUploadWithoutReadingTheBodyAgain() throws Exception {
+	void replaysAnIdempotentUploadOnlyForTheSameFileAndStoresNothingOnReplay() throws Exception {
 		long professor = professor();
-		MockHttpServletRequestBuilder first = request(professor, this.course, "lecture_video", "week1.mp4", this.clip,
-				len(this.clip), true).header("Idempotency-Key", "video-1");
+		byte[] video = unique(this.clip);
+		MockHttpServletRequestBuilder first = request(professor, this.course, "lecture_video", "week1.mp4", video,
+				len(video), true).header("Idempotency-Key", "video-1");
 		long uploadId = ApiClient.json(this.mvc.perform(first).andExpect(status().isCreated())).get("uploadId").asLong();
+		int objects = streamObjects().size();
+		int uploads = uploadsOf(professor);
 
-		MvcResult replay = this.mvc.perform(request(professor, this.course, "lecture_video", "week1.mp4", this.clip,
-				len(this.clip), true).header("Idempotency-Key", "video-1")).andReturn();
-		assertUntouched(replay, 201);
+		MvcResult replay = this.mvc.perform(request(professor, this.course, "lecture_video", "week1.mp4", video,
+				len(video), true).header("Idempotency-Key", "video-1")).andReturn();
+		assertThat(replay.getResponse().getStatus()).isEqualTo(201);
 		assertThat(ApiClient.json(replay.getResponse()).get("uploadId").asLong()).isEqualTo(uploadId);
+
+		byte[] other = unique(this.clip);
+		assertThat(other).hasSameSizeAs(video).isNotEqualTo(video);
+		this.mvc.perform(request(professor, this.course, "lecture_video", "week1.mp4", other, len(other), true)
+			.header("Idempotency-Key", "video-1"))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		this.mvc.perform(request(professor, this.course, "lecture_video", "week2.mp4", video, len(video), true)
+			.header("Idempotency-Key", "video-1"))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		assertThat(streamObjects()).hasSize(objects);
+		assertThat(uploadsOf(professor)).isEqualTo(uploads);
 	}
 
 	/**

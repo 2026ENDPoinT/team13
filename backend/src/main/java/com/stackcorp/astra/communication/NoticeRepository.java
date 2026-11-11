@@ -56,12 +56,11 @@ class NoticeRepository {
 		return this.jdbc.sql("SELECT CURRENT_TIMESTAMP(3)").query(LocalDateTime.class).single();
 	}
 
-	long insert(long boardId, long authorId, NoticeInput input, LocalDateTime now, String clientKey) {
+	long insert(long boardId, long authorId, NoticeInput input, LocalDateTime now) {
 		LocalDateTime publishedAt = !input.published() ? null : input.publishAt() != null ? input.publishAt() : now;
 		this.jdbc.sql("""
-				INSERT INTO posts (board_id, author_id, post_kind, title, body_text, excerpt, is_pinned, published_at,
-				                   client_request_id)
-				VALUES (:board, :author, 'NOTICE', :title, :body, :excerpt, :pinned, :publishedAt, :clientKey)
+				INSERT INTO posts (board_id, author_id, post_kind, title, body_text, excerpt, is_pinned, published_at)
+				VALUES (:board, :author, 'NOTICE', :title, :body, :excerpt, :pinned, :publishedAt)
 				""")
 			.param("board", boardId)
 			.param("author", authorId)
@@ -70,22 +69,8 @@ class NoticeRepository {
 			.param("excerpt", input.excerpt())
 			.param("pinned", input.pinned())
 			.param("publishedAt", publishedAt)
-			.param("clientKey", clientKey)
 			.update();
 		return this.jdbc.sql("SELECT LAST_INSERT_ID()").query(Long.class).single();
-	}
-
-	/** 같은 게시판에서 이 멱등 key로 만든 공지. 삭제한 공지도 돌려준다. */
-	Optional<Replay> byClientKey(long courseId, String clientKey) {
-		return this.jdbc.sql("""
-				SELECT p.post_id, p.author_id, p.deleted_at IS NOT NULL AS deleted
-				  FROM posts p JOIN boards b ON b.board_id = p.board_id
-				 WHERE b.course_id = :course AND b.board_type = 'K001' AND p.client_request_id = :key
-				""")
-			.param("course", courseId)
-			.param("key", clientKey)
-			.query((rs, n) -> new Replay(rs.getLong("post_id"), rs.getLong("author_id"), rs.getBoolean("deleted")))
-			.optional();
 	}
 
 	/**
@@ -254,9 +239,6 @@ class NoticeRepository {
 	 */
 	record NoticeInput(String title, String body, String excerpt, boolean pinned, boolean published,
 			LocalDateTime publishAt) {
-	}
-
-	record Replay(long noticeId, long authorId, boolean deleted) {
 	}
 
 	record NoticeRow(long noticeId, long authorId, String title, String body, boolean pinned, LocalDateTime publishedAt,

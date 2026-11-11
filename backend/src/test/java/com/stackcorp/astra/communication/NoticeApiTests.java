@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -342,16 +343,64 @@ class NoticeApiTests extends IntegrationTest {
 		long first = ApiClient.json(createWithKey(this.professor, "{\"title\":\"한 번만\"}", key).andExpect(status().isCreated()))
 			.get("noticeId")
 			.asLong();
-		createWithKey(this.professor, "{\"title\":\"한 번만\"}", key).andExpect(status().isOk())
-			.andExpect(jsonPath("$.noticeId").value(first));
+		createWithKey(this.professor, "{\"title\":\"한 번만\"}", key).andExpect(status().isCreated())
+			.andExpect(jsonPath("$.noticeId").value(first))
+			.andExpect(jsonPath("$.title").value("한 번만"));
 		this.student.get(notices(this.course)).andExpect(jsonPath("$.total").value(1));
-		// 같은 과목의 다른 담당자가 같은 key를 쓰면 남의 공지를 돌려주지 않는다.
-		long ta = this.data.user("TA");
-		this.data.instructor(this.course, ta);
-		createWithKey(new ApiClient(this.mvc, this.data.session(ta)), "{\"title\":\"다른 사람\"}", key)
+		// 같은 key에 다른 본문이면 처음 공지를 돌려주지 않고 409다. 아무것도 만들지 않는다(ADR-0012).
+		createWithKey(this.professor, "{\"title\":\"다른 공지\",\"body\":\"본문\"}", key)
 			.andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		createWithKey(this.professor, "{\"title\":\"한 번만\",\"pinned\":true}", key)
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		// 같은 담당자가 다른 과목에 같은 key를 써도 처음 공지를 돌려주지 않는다.
+		long otherCourse = this.data.course();
+		this.data.instructor(otherCourse, this.prof);
+		this.professor.send(MockMvcRequestBuilders.post(notices(otherCourse))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"title\":\"한 번만\"}")
+			.header("Idempotency-Key", key))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		this.student.get(notices(this.course)).andExpect(jsonPath("$.total").value(1));
+		assertThat(this.jdbc.sql("""
+				SELECT COUNT(*) FROM posts p JOIN boards b ON b.board_id = p.board_id
+				 WHERE b.course_id IN (:courses) AND b.board_type = 'K001'
+				""").param("courses", List.of(this.course, otherCourse)).query(Long.class).single()).isEqualTo(1);
+		// key는 사용자마다 따로다. 다른 담당자가 같은 key를 쓰면 남의 공지를 받지 않고 자기 공지를 만든다.
+		long ta = this.data.user("TA");
+		this.data.instructor(this.course, ta);
+		long other = ApiClient.json(createWithKey(new ApiClient(this.mvc, this.data.session(ta)), "{\"title\":\"다른 사람\"}", key)
+			.andExpect(status().isCreated())).get("noticeId").asLong();
+		assertThat(other).isNotEqualTo(first);
 		createWithKey(this.professor, "{\"title\":\"t\"}", "bad key!").andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void noticeWritesLeaveAuditLinesWithoutText() throws Exception {
+		long id = create(this.professor, this.course, "{\"title\":\"감사 대상\",\"body\":\"본문\"}");
+		put(this.professor, notice(this.course, id), "{\"title\":\"고친 제목\",\"version\":1}").andExpect(status().isOk());
+		this.professor.delete(notice(this.course, id)).andExpect(status().isNoContent());
+		List<Map<String, Object>> rows = this.jdbc.sql("""
+				SELECT operation, object_type, object_id, course_id, result_code, request_id FROM audit_events
+				 WHERE actor_user_id = :user AND operation LIKE 'notice.%' ORDER BY audit_event_id
+				""").param("user", this.prof).query().listOfRows();
+		assertThat(rows).extracting((r) -> r.get("operation"))
+			.containsExactly("notice.create", "notice.update", "notice.delete");
+		for (Map<String, Object> row : rows) {
+			assertThat(row.get("object_type")).isEqualTo("post");
+			assertThat(((Number) row.get("object_id")).longValue()).isEqualTo(id);
+			assertThat(((Number) row.get("course_id")).longValue()).isEqualTo(this.course);
+			assertThat(row.get("result_code")).isEqualTo("ok");
+			assertThat(row.get("request_id")).isNotNull();
+		}
+		// 거부한 요청은 남기지 않는다.
+		put(this.student, notice(this.course, id), "{\"title\":\"x\",\"version\":2}").andExpect(status().isNotFound());
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM audit_events WHERE actor_user_id = :user AND operation LIKE 'notice.%'")
+			.param("user", this.stu)
+			.query(Long.class)
+			.single()).isZero();
 	}
 
 	@Test

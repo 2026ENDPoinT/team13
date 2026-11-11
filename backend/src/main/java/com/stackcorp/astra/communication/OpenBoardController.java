@@ -83,13 +83,13 @@ class OpenBoardController {
 	@PutMapping("/api/courses/{courseId}/open-board/posts/{postId}/like")
 	ResponseEntity<LikeState> like(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long postId) {
-		return ok(this.posts.like(actor.userId(), courseId, BoardKind.OPEN, postId, true));
+		return ok(this.posts.like(actor, courseId, BoardKind.OPEN, postId, true));
 	}
 
 	@DeleteMapping("/api/courses/{courseId}/open-board/posts/{postId}/like")
 	ResponseEntity<LikeState> unlike(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long postId) {
-		return ok(this.posts.like(actor.userId(), courseId, BoardKind.OPEN, postId, false));
+		return ok(this.posts.like(actor, courseId, BoardKind.OPEN, postId, false));
 	}
 
 	@PostMapping("/api/courses/{courseId}/open-board/posts/{postId}/read")

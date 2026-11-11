@@ -1,5 +1,6 @@
 package com.stackcorp.astra.assessment;
 
+import java.security.SecureRandom;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
@@ -33,6 +34,8 @@ class SurveyRecords {
 			       result_release_at, result_min_cell_k, revision_no
 			  FROM surveys
 			""";
+
+	private static final SecureRandom RANDOM = new SecureRandom();
 
 	private final JdbcClient jdbc;
 
@@ -301,41 +304,55 @@ class SurveyRecords {
 	// ---- 응답 저장부 ----
 
 	/**
-	 * 응답 세트 하나를 넣는다.
+	 * 응답 세트 하나를 넣는다. 응답 세트, 답변, 고른 보기의 행 ID는 모두 {@link SecureRandom}으로 만든 임의 값이다(M4, ADR-0022).
+	 * AUTO_INCREMENT 순번은 입력 순서라서, 같은 transaction에 넣는 참여 행(사용자가 있다)의 순서와 맞춰 익명 응답의 주인을 찾을 수
+	 * 있기 때문이다. 63bit 값이 겹칠 확률은 무시할 만하고, 겹치면 PK 제약이 이 완료를 rollback한다.
 	 *
 	 * @param respondentUserId 실명 설문의 응답자. 익명 설문이면 null
 	 * @param stamp 제출·생성 일시. 익명 설문이면 일 단위로 자른 값이다
 	 */
 	void insertResponse(long surveyId, Long respondentUserId, LocalDateTime stamp, List<Answer> answers) {
-		GeneratedKeyHolder key = new GeneratedKeyHolder();
+		long responseId = randomId();
 		this.jdbc.sql("""
-				INSERT INTO survey_responses (survey_id, revision_no, respondent_user_id, is_current_yn, submitted_at, created_at)
-				VALUES (:survey, 1, :respondent, 1, :stamp, :stamp)
+				INSERT INTO survey_responses (survey_response_id, survey_id, revision_no, respondent_user_id, is_current_yn,
+				                              submitted_at, created_at)
+				VALUES (:id, :survey, 1, :respondent, 1, :stamp, :stamp)
 				""")
+			.param("id", responseId)
 			.param("survey", surveyId)
 			.param("respondent", respondentUserId)
 			.param("stamp", stamp)
-			.update(key, "survey_response_id");
-		long responseId = key.getKey().longValue();
+			.update();
 		for (Answer answer : answers) {
-			GeneratedKeyHolder answerKey = new GeneratedKeyHolder();
+			long answerId = randomId();
 			this.jdbc.sql("""
-					INSERT INTO survey_answers (survey_response_id, survey_question_id, answer_text, created_at)
-					VALUES (:response, :question, :text, :stamp)
+					INSERT INTO survey_answers (survey_answer_id, survey_response_id, survey_question_id, answer_text,
+					                            created_at)
+					VALUES (:id, :response, :question, :text, :stamp)
 					""")
+				.param("id", answerId)
 				.param("response", responseId)
 				.param("question", answer.questionId())
 				.param("text", answer.text())
 				.param("stamp", stamp)
-				.update(answerKey, "survey_answer_id");
-			long answerId = answerKey.getKey().longValue();
+				.update();
 			for (long optionId : answer.optionIds()) {
 				this.jdbc.sql("""
-						INSERT INTO survey_answer_options (survey_answer_id, survey_question_option_id, created_at)
-						VALUES (:answer, :option, :stamp)
-						""").param("answer", answerId).param("option", optionId).param("stamp", stamp).update();
+						INSERT INTO survey_answer_options (survey_answer_option_id, survey_answer_id,
+						                                   survey_question_option_id, created_at)
+						VALUES (:id, :answer, :option, :stamp)
+						""")
+					.param("id", randomId())
+					.param("answer", answerId)
+					.param("option", optionId)
+					.param("stamp", stamp)
+					.update();
 			}
 		}
+	}
+
+	private static long randomId() {
+		return RANDOM.nextLong(1, Long.MAX_VALUE);
 	}
 
 	/** 현재 응답 세트 수. */

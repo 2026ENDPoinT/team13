@@ -12,7 +12,9 @@ import com.stackcorp.astra.files.api.AttachmentException;
 import com.stackcorp.astra.files.api.Attachments;
 import com.stackcorp.astra.files.api.Attachments.AttachRequest;
 import com.stackcorp.astra.files.api.Attachments.ChangeRequest;
+import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
+import com.stackcorp.astra.shared.audit.AuditLog;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -24,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 강의 자료 등록, 수정, 삭제. 활동, 자료 상세, 첨부를 한 transaction으로 저장한다(SC-05-B). 권한은 부르는 쪽이 먼저 판정한다.
  * 수정과 삭제는 활동 행을 잠근 뒤 client가 본 version과 비교한다(SC-05). 삭제는 삭제 표시만 남긴다(ADR-0011).
+ * 수정과 삭제는 같은 transaction에 감사 기록({@code material.update}, {@code material.delete})을 남긴다(SC-09).
  */
 @Service
 class MaterialService {
@@ -36,10 +39,13 @@ class MaterialService {
 
 	private final Notifications notifications;
 
-	MaterialService(JdbcClient jdbc, Attachments attachments, Notifications notifications) {
+	private final AuditLog audit;
+
+	MaterialService(JdbcClient jdbc, Attachments attachments, Notifications notifications, AuditLog audit) {
 		this.jdbc = jdbc;
 		this.attachments = attachments;
 		this.notifications = notifications;
+		this.audit = audit;
 	}
 
 	/** @return 만든 활동 ID */
@@ -92,7 +98,8 @@ class MaterialService {
 	 * @param expectedVersion client가 마지막으로 본 version(If-Match)
 	 */
 	@Transactional
-	void update(long userId, long courseId, long activityId, int expectedVersion, MaterialChange change) {
+	void update(Actor actor, long courseId, long activityId, int expectedVersion, MaterialChange change) {
+		long userId = actor.userId();
 		Locked current = lock(courseId, activityId, expectedVersion);
 		long week = week(courseId, change.weekNo());
 		Optional<Long> group;
@@ -133,6 +140,7 @@ class MaterialService {
 		else {
 			this.notifications.withdraw(NotificationKind.LECTURE_MATERIAL, activityId);
 		}
+		this.audit.success(userId, actor.sessionId(), "material.update", "learning_activity", activityId, courseId);
 	}
 
 	/**
@@ -141,7 +149,8 @@ class MaterialService {
 	 * @param expectedVersion client가 마지막으로 본 version(If-Match)
 	 */
 	@Transactional
-	void delete(long userId, long courseId, long activityId, int expectedVersion) {
+	void delete(Actor actor, long courseId, long activityId, int expectedVersion) {
+		long userId = actor.userId();
 		Locked current = lock(courseId, activityId, expectedVersion);
 		this.jdbc.sql("""
 				UPDATE learning_activities
@@ -152,6 +161,7 @@ class MaterialService {
 			this.attachments.release(current.attachmentGroupId());
 		}
 		this.notifications.withdraw(NotificationKind.LECTURE_MATERIAL, activityId);
+		this.audit.success(userId, actor.sessionId(), "material.delete", "learning_activity", activityId, courseId);
 	}
 
 	// 과목의 지우지 않은 강의 자료를 잠근다. 같은 자료를 동시에 고치는 요청은 여기서 차례를 기다리고, 늦은 쪽은 version이 달라 거부된다.

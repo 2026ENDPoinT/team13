@@ -151,10 +151,21 @@ class FileboxApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.state").value("ready"))
 			.andExpect(jsonPath("$.parentId").value(folder)));
 		long id = created.get("id").asLong();
-		// 같은 key는 처음 항목을 돌려준다.
-		FileboxCalls.upload(this.owner, folder, "other.txt", text(), "fb-1")
+		// 같은 key의 같은 요청은 처음 항목을 돌려준다. 다른 파일이나 다른 폴더면 409이고 항목을 더 만들지 않는다(보안 검토 L1).
+		FileboxCalls.upload(this.owner, folder, "..\\9주차 <노트>.txt", first, "fb-1")
 			.andExpect(status().isCreated())
 			.andExpect(jsonPath("$.id").value(id));
+		FileboxCalls.upload(this.owner, folder, "other.txt", text(), "fb-1")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		long elsewhere = folder(this.owner, null, "다른 폴더");
+		FileboxCalls.upload(this.owner, elsewhere, "..\\9주차 <노트>.txt", first, "fb-1")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM filebox_items WHERE owner_user_id = :u AND file_id IS NOT NULL")
+			.param("u", this.ownerId)
+			.query(Long.class)
+			.single()).isEqualTo(1);
 		FileboxCalls.upload(this.owner, folder, "9주차 _노트_.txt", text(), null)
 			.andExpect(status().isCreated())
 			.andExpect(jsonPath("$.name").value("9주차 _노트_ (1).txt"));

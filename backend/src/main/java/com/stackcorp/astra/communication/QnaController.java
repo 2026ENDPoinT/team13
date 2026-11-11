@@ -95,14 +95,14 @@ class QnaController {
 	@PutMapping("/api/courses/{courseId}/qna/{questionId}/like")
 	ResponseEntity<LikeState> like(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long questionId) {
-		return ok(this.posts.like(actor.userId(), courseId, BoardKind.QNA, questionId, true));
+		return ok(this.posts.like(actor, courseId, BoardKind.QNA, questionId, true));
 	}
 
 	/** EP-0061. */
 	@DeleteMapping("/api/courses/{courseId}/qna/{questionId}/like")
 	ResponseEntity<LikeState> unlike(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long questionId) {
-		return ok(this.posts.like(actor.userId(), courseId, BoardKind.QNA, questionId, false));
+		return ok(this.posts.like(actor, courseId, BoardKind.QNA, questionId, false));
 	}
 
 	@PostMapping("/api/courses/{courseId}/qna/{questionId}/read")

@@ -161,20 +161,25 @@ class UploadRecords {
 		return key.getKey().longValue();
 	}
 
-	/** @throws DuplicateKeyException 같은 사용자가 같은 멱등 key로 이미 올렸을 때 */
-	long insertUpload(long policyId, long owner, Long courseId, long fileId, String clientKey, String state,
-			Duration ttl) {
+	/**
+	 * @param fingerprint 멱등 key가 있을 때 요청 지문({@link UploadService#fingerprint}). key가 없으면 null
+	 * @throws DuplicateKeyException 같은 사용자가 같은 멱등 key로 이미 올렸을 때
+	 */
+	long insertUpload(long policyId, long owner, Long courseId, long fileId, String clientKey, String fingerprint,
+			String state, Duration ttl) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
 				INSERT INTO upload_sessions (upload_policy_id, owner_user_id, course_id, file_id, client_upload_key,
-				                             upload_state, expires_at)
-				VALUES (:policy, :owner, :course, :file, :key, :state, DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL :ttl SECOND))
+				                             request_fingerprint, upload_state, expires_at)
+				VALUES (:policy, :owner, :course, :file, :key, :fingerprint, :state,
+				        DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL :ttl SECOND))
 				""")
 			.param("policy", policyId)
 			.param("owner", owner)
 			.param("course", courseId)
 			.param("file", fileId)
 			.param("key", clientKey)
+			.param("fingerprint", fingerprint)
 			.param("state", state)
 			.param("ttl", ttl.toSeconds())
 			.update(key, "upload_id");
@@ -189,11 +194,17 @@ class UploadRecords {
 			.optional();
 	}
 
-	Optional<Upload> findByKey(long owner, String clientKey) {
-		return this.jdbc.sql(SELECT + " WHERE u.owner_user_id = :owner AND u.client_upload_key = :key")
+	/** 같은 사용자가 같은 멱등 key로 먼저 기록한 업로드와 그 요청 지문. */
+	Optional<Keyed> findByKey(long owner, String clientKey) {
+		return this.jdbc.sql("""
+				SELECT u.upload_id, u.course_id, u.upload_state, u.expires_at, u.expires_at <= CURRENT_TIMESTAMP(3) AS expired,
+				       f.original_file_name, f.file_size_bytes, u.request_fingerprint
+				  FROM upload_sessions u JOIN files f ON f.file_id = u.file_id
+				 WHERE u.owner_user_id = :owner AND u.client_upload_key = :key
+				""")
 			.param("owner", owner)
 			.param("key", clientKey)
-			.query(UploadRecords::upload)
+			.query((rs, n) -> new Keyed(upload(rs, n), rs.getString("request_fingerprint")))
 			.optional();
 	}
 
@@ -273,6 +284,10 @@ class UploadRecords {
 	}
 
 	record Upload(long uploadId, long courseId, String state, String name, long sizeBytes, Instant expiresAt) {
+	}
+
+	/** @param fingerprint 요청 지문. 지문을 저장하기 전(V34)에 만든 업로드면 null */
+	record Keyed(Upload upload, String fingerprint) {
 	}
 
 }
