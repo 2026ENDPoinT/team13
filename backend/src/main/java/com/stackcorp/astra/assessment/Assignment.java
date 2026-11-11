@@ -39,11 +39,9 @@ record Assignment(ReportActivity activity, Settings settings) {
 		return Phase.CLOSED;
 	}
 
-	/** 학생에게 점수와 의견을 보여도 되는지. 모든 학생용 응답이 이 판정 하나를 쓴다(ASSESS-06, SEC-14). */
+	/** 학생에게 점수와 의견을 보여도 되는지. 판정은 {@link GradeItem#released(String, LocalDateTime, LocalDateTime)} 하나다. */
 	boolean scoresReleased(LocalDateTime now) {
-		String visibility = this.settings.scoreVisibility();
-		return "immediate".equals(visibility) || ("after_release".equals(visibility) && this.settings.releaseAt() != null
-				&& !this.settings.releaseAt().isAfter(now));
+		return GradeItem.released(this.settings.scoreVisibility(), this.settings.releaseAt(), now);
 	}
 
 	enum Phase {
