@@ -23,7 +23,7 @@
 | `reference/` | [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈: 화면 명세, 엔드포인트 계약, DB 설계 근거 |
 | `src/` | Spring Boot 애플리케이션. DB 마이그레이션은 `src/main/resources/db/migration/` |
 | `db/` | ERD 생성·비교 도구, ERDCloud 스냅샷, [DB 가이드](db/README.md) |
-| `docs/` | [백엔드 아키텍처](docs/architecture.md)와 결정 기록 [docs/adr/](docs/adr/) |
+| `docs/` | [백엔드 아키텍처](docs/architecture.md), [C4 모델](docs/c4.md), 결정 기록 [docs/adr/](docs/adr/) |
 | `assets/` | 팀 로고 |
 
 처음 받을 때는 서브모듈까지 함께 받는다.
@@ -46,6 +46,7 @@ git submodule update --init
 | [reference/db/design/](https://github.com/STack-Corp/ASTRA-Reference/tree/main/db/design) | DB 영역별 설계 근거와 미결 사항 |
 | [db/README.md](db/README.md) | DB 영역 구성, 데이터 흐름, 설계 규칙, 스키마 변경·ERD 반영 절차 |
 | [docs/architecture.md](docs/architecture.md) | 배포 토폴로지, 모듈 구조, 인증·인가, 영상 전달, 관측, 단계 계획 |
+| [docs/c4.md](docs/c4.md) | C4 모델: System Context, Container, Component(모듈·port·배경 작업), Code, 의존 규칙과 확인 방법 |
 | [reference/backend/05_service_boundary.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/05_service_boundary.md) | 캠퍼스 온–e-class 서비스 경계, 신원 발급, 서비스 간 API (논의용 초안) |
 
 ## 두 레포의 역할
