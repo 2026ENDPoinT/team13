@@ -109,6 +109,26 @@ class AssignmentService {
 		});
 	}
 
+	/**
+	 * 과제를 지운다(ADR-0011, ADR-0037). 활동에 삭제 표시만 남긴다. 제출물, 제출 버전과 그 첨부 파일, 임시저장, 성적 항목과 점수는 지우지
+	 * 않고 보존한다(SC-07). 첨부는 끊지 않으므로 파일도 남지만, 제출 첨부의 권한({@link SubmissionAttachmentAccess})이 지운 과제를
+	 * 부모로 인정하지 않아 그 commit부터 학생과 담당자 모두 읽지 못한다. 보낸 알림과 예약은 같은 transaction에서 거둔다(ADR-0027).
+	 * 수정 번호를 먼저 올려 과제 행을 배타 잠금하므로 과제 수정과 겹치지 않는다.
+	 */
+	@Transactional
+	void delete(Actor actor, long courseId, Assignment current, long revision) {
+		if (!this.records.bumpRevision(current.assignmentId(), revision)) {
+			throw editConflict();
+		}
+		long activityId = current.activity().activityId();
+		if (!this.activities.delete(courseId, activityId, actor.userId())) {
+			throw ApiException.notFound();
+		}
+		this.alerts.withdraw(current.assignmentId());
+		this.audit.success(actor.userId(), actor.sessionId(), "assignment.delete", "assignment", current.assignmentId(),
+				courseId);
+	}
+
 	private static ApiException editConflict() {
 		return new ApiException(HttpStatus.CONFLICT, "edit_conflict", "다른 수정이 먼저 저장되었습니다. 다시 불러온 뒤 수정해 주세요.");
 	}

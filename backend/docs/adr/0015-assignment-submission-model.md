@@ -34,4 +34,4 @@
 - 점수 공개는 과제 수정과 별도 명령(`PUT …/assignments/{assignmentId}/release`, 2026-11-12)으로도 바꾼다. 과제의 `revision_no`를 비교하고 올리므로 과제 수정과 서로 덮어쓰지 않고, 성적부 공개 명령과 같은 READ COMMITTED 재시도 transaction, 같은 감사 이름(`grade_item.release`, `grade_item.withhold`), 같은 알림 규칙(ADR-0027)을 쓴다.
 - 임시저장은 본문만 남는다. 올려 둔 업로드 목록은 서버에 남기지 않으므로 화면을 새로 열면 다시 골라야 한다.
 - 공용 멱등 원장이 생기면 receipt 조회를 원장으로 옮기고 `idempotency_key`, `request_fingerprint` 컬럼을 정리한다.
-- 제출 삭제(EP-0075), 팀 과제, 상호평가, 표절검사, 양식 제출, 점수 분포는 이 결정 밖이다.
+- 과제 삭제는 활동의 삭제 표시이고 제출물, 버전, 첨부는 남는다([ADR-0037](0037-quiz-regrade-and-assessment-deletion.md) 5번). 학생의 제출 삭제(EP-0075), 팀 과제, 상호평가, 표절검사, 양식 제출, 점수 분포는 이 결정 밖이다.

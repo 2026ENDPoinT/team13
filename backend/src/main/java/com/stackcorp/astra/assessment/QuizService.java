@@ -26,11 +26,14 @@ class QuizService {
 
 	private final QuizRecords records;
 
+	private final GradebookRecords gradebook;
+
 	private final AuditLog audit;
 
-	QuizService(QuizActivities activities, QuizRecords records, AuditLog audit) {
+	QuizService(QuizActivities activities, QuizRecords records, GradebookRecords gradebook, AuditLog audit) {
 		this.activities = activities;
 		this.records = records;
+		this.gradebook = gradebook;
 		this.audit = audit;
 	}
 
@@ -52,23 +55,43 @@ class QuizService {
 
 	/**
 	 * 설정 수정. 읽은 수정 번호가 지금 값과 같을 때만 바꾼다. 응시가 있어도 바꿀 수 있다. 진행 중 응시의 마감 일시는 시작할 때 고정했으므로
-	 * 바뀌지 않고, 제한 시간과 응시 횟수는 다음 시작부터 적용한다.
+	 * 바뀌지 않고, 제한 시간과 응시 횟수는 다음 시작부터 적용한다. 배점 비교 전에 성적 항목 행을 잠근다. 오프라인 시험의 점수 입력도 같은
+	 * 행을 먼저 잠그므로, 배점을 낮추는 수정과 더 높은 점수 쓰기가 겹쳐도 점수가 배점을 넘지 않는다(ADR-0023 6번).
 	 */
 	@Transactional
 	void update(Actor actor, long courseId, Quiz current, long revision, QuizInput input) {
 		if (!this.records.updateSettings(current.quizId(), revision, input)) {
 			throw editConflict();
 		}
-		if (!this.activities.update(courseId, current.activity().activityId(), input.activity())) {
-			throw ApiException.notFound();
-		}
 		BigDecimal maxScore = current.online() ? current.settings().maxScore() : input.maxScore();
+		this.gradebook.lock(current.settings().gradeItemId());
+		// 잠금을 얻은 뒤의 첫 일반 읽기라 먼저 commit한 점수가 보인다.
 		if (this.records.hasScoreAbove(current.settings().gradeItemId(), maxScore)) {
 			throw new ApiException(HttpStatus.CONFLICT, "score_exceeds_max", "이미 준 점수보다 배점을 낮출 수 없습니다.");
+		}
+		if (!this.activities.update(courseId, current.activity().activityId(), input.activity())) {
+			throw ApiException.notFound();
 		}
 		this.records.updateGradeItem(current.settings().gradeItemId(), input.activity().title(), maxScore,
 				input.resultReleaseAt());
 		this.audit.success(actor.userId(), actor.sessionId(), "quiz.update", "quiz", current.quizId(), courseId);
+	}
+
+	/**
+	 * 퀴즈를 지운다(ADR-0011, ADR-0037). 활동에 삭제 표시만 남기고 퀴즈 설정, 문항, 응시, 답안, 성적 항목과 점수는 지우지 않는다. 그
+	 * commit부터 담당자와 학생 모두에게 퀴즈, 응시, 성적 항목이 없고, 성적부와 학생 합계, 할 일, 캘린더에서 빠진다. 수정 번호를 먼저 올려
+	 * 퀴즈 행을 배타 잠금하므로 진행 중인 응시 시작과 겹치지 않는다. 진행 중 응시는 더는 저장과 제출을 받지 않고, worker가 고정된 마감
+	 * 일시에 마지막 저장 답안으로 닫는다. 퀴즈는 알림을 만들지 않으므로 거둘 알림이 없다.
+	 */
+	@Transactional
+	void delete(Actor actor, long courseId, Quiz current, long revision) {
+		if (!this.records.bumpRevision(current.quizId(), revision)) {
+			throw editConflict();
+		}
+		if (!this.activities.delete(courseId, current.activity().activityId(), actor.userId())) {
+			throw ApiException.notFound();
+		}
+		this.audit.success(actor.userId(), actor.sessionId(), "quiz.delete", "quiz", current.quizId(), courseId);
 	}
 
 	/**

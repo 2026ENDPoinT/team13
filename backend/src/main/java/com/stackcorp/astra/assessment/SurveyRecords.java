@@ -143,6 +143,14 @@ class SurveyRecords {
 			.update() > 0;
 	}
 
+	/** 삭제할 때 수정 번호만 올린다. 조건, 잠금, 결과는 {@link #update}와 같다. */
+	boolean bumpRevision(long surveyId, long revision) {
+		return this.jdbc.sql("UPDATE surveys SET revision_no = revision_no + 1 WHERE survey_id = :id AND revision_no = :revision")
+			.param("id", surveyId)
+			.param("revision", revision)
+			.update() > 0;
+	}
+
 	/** 완료 transaction의 첫 문장. 설문 행을 공유 잠금으로 잡아 문항 교체, 응답 방식 변경과 겹치지 않게 한다. */
 	void lockShared(long surveyId) {
 		this.jdbc.sql("SELECT survey_id FROM surveys WHERE survey_id = :id FOR SHARE")

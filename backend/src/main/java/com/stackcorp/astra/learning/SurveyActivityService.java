@@ -83,6 +83,16 @@ class SurveyActivityService implements SurveyActivities {
 	}
 
 	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
+	public boolean delete(long courseId, long activityId, long deletedBy) {
+		return this.jdbc.sql("""
+				UPDATE learning_activities
+				   SET deleted_at = CURRENT_TIMESTAMP(3), deleted_by = :user, row_version = row_version + 1
+				 WHERE activity_id = :activity AND course_id = :course AND activity_type = 'survey' AND deleted_at IS NULL
+				""").param("user", deletedBy).param("activity", activityId).param("course", courseId).update() > 0;
+	}
+
+	@Override
 	public Optional<SurveyActivity> find(long courseId, long activityId) {
 		return this.jdbc.sql(SELECT + " AND a.activity_id = :activity")
 			.param("course", courseId)

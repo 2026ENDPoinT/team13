@@ -54,10 +54,13 @@ abstract class AssessmentTestSupport extends IntegrationTest {
 
 	long classmateId;
 
+	long professorId;
+
 	@BeforeEach
 	void people() {
 		this.course = this.data.course();
 		long prof = this.data.user("PROFESSOR");
+		this.professorId = prof;
 		this.studentId = this.data.user("STUDENT");
 		this.classmateId = this.data.user("STUDENT");
 		this.data.instructor(this.course, prof);
@@ -72,6 +75,26 @@ abstract class AssessmentTestSupport extends IntegrationTest {
 
 	Client client(long userId) {
 		return new Client(this.data.session(userId));
+	}
+
+	/** 담당자가 함께 맡은 다른 과목. 경로의 과목과 객체가 맞지 않는 요청을 볼 때 쓴다. */
+	long otherCourseOfProfessor() {
+		long other = this.data.course();
+		this.data.instructor(other, this.professorId);
+		return other;
+	}
+
+	/** 과목을 폐강한다. 폐강한 과목에는 구성원이 없다(MembershipRule). */
+	void cancelCourse() {
+		this.jdbc.sql("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :id").param("id", this.course).update();
+	}
+
+	long auditLines(String operation, long objectId) {
+		return this.jdbc.sql("SELECT COUNT(*) FROM audit_events WHERE operation = :op AND object_id = :id")
+			.param("op", operation)
+			.param("id", objectId)
+			.query(Long.class)
+			.single();
 	}
 
 	/** 담당자가 과제를 만든다. @return 과제 ID */
@@ -188,6 +211,20 @@ abstract class AssessmentTestSupport extends IntegrationTest {
 		ResultActions putWithoutCsrf(String path, String json) throws Exception {
 			return AssessmentTestSupport.this.mvc.perform(withSession(
 					MockMvcRequestBuilders.put(path).contentType(MediaType.APPLICATION_JSON).content(json)));
+		}
+
+		/** If-Match를 붙여 지운다. ifMatch가 null이면 header 없이 보낸다. */
+		ResultActions delete(String path, String ifMatch) throws Exception {
+			MockHttpServletRequestBuilder request = MockMvcRequestBuilders.delete(path);
+			if (ifMatch != null) {
+				request.header("If-Match", ifMatch);
+			}
+			return send(request);
+		}
+
+		ResultActions deleteWithoutCsrf(String path, String ifMatch) throws Exception {
+			return AssessmentTestSupport.this.mvc
+				.perform(withSession(MockMvcRequestBuilders.delete(path).header("If-Match", ifMatch)));
 		}
 
 		/** 과제 제출 첨부를 올린다. @return uploadId */

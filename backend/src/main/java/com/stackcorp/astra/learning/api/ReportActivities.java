@@ -25,6 +25,15 @@ public interface ReportActivities {
 	 */
 	boolean update(long courseId, long activityId, ReportActivityInput input);
 
+	/**
+	 * 부르는 쪽 transaction 안에서 과제 활동에 삭제 표시를 남긴다(ADR-0011). 행은 지우지 않으므로 제출물, 제출 버전과 그 첨부, 성적 행은
+	 * 남는다. 지운 활동은 이 API의 어떤 조회에도 없다.
+	 *
+	 * @param deletedBy 지운 사용자. 감사 기록과 같은 actor다
+	 * @return 그 과목의 지우지 않은 과제 활동이 있어 지웠는지
+	 */
+	boolean delete(long courseId, long activityId, long deletedBy);
+
 	/** 그 과목에 속한 과제 활동. 다른 과목이거나 과제가 아니면 비어 있다(SC-03). */
 	Optional<ReportActivity> find(long courseId, long activityId);
 

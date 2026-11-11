@@ -5,10 +5,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -333,6 +335,115 @@ class AttemptRecords {
 			.param("limit", limit)
 			.query((rs, n) -> new Expired(rs.getLong(1), rs.getLong(2), rs.getLong(3)))
 			.list();
+	}
+
+	/**
+	 * 퀴즈의 응시를 모두 기본 키 오름차순으로 배타 잠금한다(재채점, ADR-0037). 다른 명령은 한 학생의 응시만 같은 오름차순으로 잠그므로
+	 * 서로 deadlock 되지 않는다. 부르는 쪽이 퀴즈 행을 먼저 배타 잠금하므로 그동안 새 응시가 생기지 않는다. READ COMMITTED
+	 * transaction에서 부른다. 잠근 행은 마지막으로 commit된 상태다.
+	 */
+	List<Attempt> lockQuiz(long quizId) {
+		List<Long> ids = this.jdbc.sql("SELECT quiz_attempt_id FROM quiz_attempts WHERE quiz_id = :quiz ORDER BY quiz_attempt_id")
+			.param("quiz", quizId)
+			.query(Long.class)
+			.list();
+		if (ids.isEmpty()) {
+			return List.of();
+		}
+		return this.jdbc.sql(SELECT + " WHERE quiz_attempt_id IN (:ids) ORDER BY quiz_attempt_id FOR UPDATE")
+			.param("ids", ids)
+			.query(AttemptRecords::attempt)
+			.list();
+	}
+
+	/**
+	 * 그 응시들에서 한 문항의 답안과 고른 보기. 답안 ID로. 닫힌 응시는 모든 문항의 답안 행을 가지므로 답하지 않은 문항은 빈 집합이다.
+	 */
+	Map<Long, Set<Long>> selections(long questionId, Collection<Long> attemptIds) {
+		Map<Long, Set<Long>> selections = new HashMap<>();
+		if (attemptIds.isEmpty()) {
+			return selections;
+		}
+		this.jdbc.sql("""
+				SELECT a.quiz_attempt_answer_id, o.quiz_question_option_id
+				  FROM quiz_attempt_answers a
+				  LEFT JOIN quiz_attempt_answer_options o ON o.quiz_attempt_answer_id = a.quiz_attempt_answer_id
+				 WHERE a.quiz_question_id = :question AND a.quiz_attempt_id IN (:attempts)
+				""").param("question", questionId).param("attempts", attemptIds).query((rs) -> {
+			Set<Long> chosen = selections.computeIfAbsent(rs.getLong(1), (k) -> new HashSet<>());
+			long option = rs.getLong(2);
+			if (!rs.wasNull()) {
+				chosen.add(option);
+			}
+		});
+		return selections;
+	}
+
+	/**
+	 * 선택 문항 하나의 답안을 새 정답으로 다시 채점한다. correctAnswerIds의 답안은 정답으로 배점을, 나머지는 0점을 받는다. 응시 수와
+	 * 관계없이 문장 둘이다.
+	 */
+	void rescoreChoices(long questionId, Collection<Long> attemptIds, Collection<Long> correctAnswerIds,
+			BigDecimal points, LocalDateTime now) {
+		if (attemptIds.isEmpty()) {
+			return;
+		}
+		this.jdbc.sql("""
+				UPDATE quiz_attempt_answers
+				   SET is_correct_yn = 0, awarded_score = 0, grading_status = 'auto', graded_at = :now
+				 WHERE quiz_question_id = :question AND quiz_attempt_id IN (:attempts)
+				""").param("now", now).param("question", questionId).param("attempts", attemptIds).update();
+		if (!correctAnswerIds.isEmpty()) {
+			this.jdbc.sql("""
+					UPDATE quiz_attempt_answers SET is_correct_yn = 1, awarded_score = :points
+					 WHERE quiz_attempt_answer_id IN (:answers)
+					""").param("points", points).param("answers", correctAnswerIds).update();
+		}
+	}
+
+	/** 단답형 문항에서 points보다 높은 점수를 준 답안이 있는지. 있으면 배점을 그만큼 낮추지 못한다. */
+	boolean awardedAbove(long questionId, BigDecimal points) {
+		return this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM quiz_attempt_answers WHERE quiz_question_id = :question AND awarded_score > :points)
+				""").param("question", questionId).param("points", points).query(Boolean.class).single();
+	}
+
+	/** 채점을 마친 응시의 총점을 답안 점수의 합으로 다시 쓴다. 수동 채점을 기다리는 응시는 총점이 없으므로 그대로다. */
+	void retotal(Collection<Long> attemptIds) {
+		if (attemptIds.isEmpty()) {
+			return;
+		}
+		this.jdbc.sql("""
+				UPDATE quiz_attempts t
+				  JOIN (SELECT quiz_attempt_id, COALESCE(SUM(awarded_score), 0) AS total
+				          FROM quiz_attempt_answers WHERE quiz_attempt_id IN (:ids) GROUP BY quiz_attempt_id) s
+				    ON s.quiz_attempt_id = t.quiz_attempt_id
+				   SET t.total_score = s.total
+				 WHERE t.status = 'graded'
+				""").param("ids", attemptIds).update();
+	}
+
+	/** 학생별로 채점을 마친 응시 가운데 가장 높은 총점. 퀴즈 성적 항목 점수의 정의다(ADR-0021 10번). */
+	Map<Long, BigDecimal> bestTotals(long quizId) {
+		Map<Long, BigDecimal> best = new HashMap<>();
+		this.jdbc.sql("""
+				SELECT user_id, MAX(total_score) FROM quiz_attempts
+				 WHERE quiz_id = :quiz AND status = 'graded' AND total_score IS NOT NULL GROUP BY user_id
+				""").param("quiz", quizId).query((rs) -> {
+			best.put(rs.getLong(1), rs.getBigDecimal(2));
+		});
+		return best;
+	}
+
+	/** 그 성적 항목의 학생별 점수. 점수가 없는 행은 뺀다. */
+	Map<Long, BigDecimal> grades(long gradeItemId) {
+		Map<Long, BigDecimal> grades = new HashMap<>();
+		this.jdbc.sql("SELECT user_id, score FROM grade_scores WHERE grade_item_id = :item AND score IS NOT NULL")
+			.param("item", gradeItemId)
+			.query((rs) -> {
+				grades.put(rs.getLong(1), rs.getBigDecimal(2));
+			});
+		return grades;
 	}
 
 	private static final String SELECT = """
