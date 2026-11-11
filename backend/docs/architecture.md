@@ -180,100 +180,43 @@ flowchart LR
 
 ### 4.4 C4 보기
 
-container 수준이다. 학교 도입 구성(3.2절)이고, 상자 하나가 따로 실행하는 process나 저장소다.
+C4 모델(System Context, Container, Component, Code)은 [c4.md](c4.md)에 있다. 그 문서는 `compose.yaml`, `Dockerfile`, `docker/entrypoint.sh`, `infra/terraform`, 각 모듈의 `package-info.java`와 소스에서 읽은 것만 그리고, 그림마다 근거 파일과 확인 script를 적는다. 모듈 안 component, port와 구현, 배경 작업의 잠금, 두 대표 흐름의 sequence, 의존 규칙과 그 확인 방법도 거기 있다. 아래는 그중 container 그림이다. `infra/terraform/envs/pre-adoption`이 정의하는 학교 도입 전 구성이고, 상자 하나가 따로 실행하는 process나 저장소다.
 
 ```mermaid
 flowchart LR
-  U["교수자 · 학생 브라우저"]
-  IDP["학교 IdP<br/>OpenID Connect"]
-  LLM["LLM 제공자"]
-  subgraph ASTRA
-    CF["CloudFront + WAF"]
-    FE[("S3 frontend<br/>정적 shell")]
-    DL[("S3 delivery<br/>HLS · 쪽 이미지")]
-    CT[("S3 content<br/>원본 · 파생물 · 영상 key")]
-    API["api"]
+  U["브라우저<br/>프론트엔드 SPA"]
+  CF["CloudFront + WAF"]
+  FE[("S3 frontend<br/>SSE-S3 · OAC")]
+  DL[("S3 delivery<br/>SSE-KMS · OAC<br/>vod/ · doc/")]
+  CT[("S3 content<br/>SSE-KMS<br/>원본 · 파생물 · 영상 key")]
+  RDS[("RDS MySQL 8.4")]
+  NAT["fck-nat"]
+  EXT["학교 IdP · LLM 제공자<br/>ClamAV mirror"]
+  SM["Secrets Manager · SSM · ECR"]
+  subgraph EC2["EC2 한 대 · docker compose"]
+    API["api :8080"]
     WK["worker"]
-    DB[("MySQL")]
-    CV["converter<br/>network · credential 없음"]
-    TC["transcoder<br/>network · credential 없음"]
-    AV["clamd"]
+    CV["converter :8090"]
+    TC["transcoder :8091"]
+    AV["clamav :3310"]
+    FC["freshclam"]
   end
   U --> CF
-  U -.->|"로그인 redirect"| IDP
-  CF -->|"/* 정적 shell"| FE
+  CF -->|"기본 경로"| FE
   CF -->|"/vod/* · /doc/* signed cookie"| DL
-  CF -->|"/api/* no-store"| API
-  API -->|"code 교환 · 서명 key"| IDP
-  API -->|"상태 · 메타데이터 · session"| DB
-  API -->|"업로드 · 내려받기 · 요약 · 영상 key"| CT
-  WK --> DB
-  WK --> CT
-  WK -->|"HLS · 쪽 이미지 게시"| DL
-  WK -->|"문서 → 쪽 이미지 · 텍스트"| CV
-  WK -->|"영상 → HLS segment"| TC
+  CF -->|"/api/* · /ws · /ws/* VPC origin, 캐시 안 함"| API
+  API & WK -->|"JDBC TLS"| RDS
+  API & WK -->|"instance role, S3 gateway endpoint"| CT & DL
+  WK -->|"문서 · 아바타"| CV
+  WK -->|"영상"| TC
   WK -->|"업로드 검사"| AV
-  WK -->|"교수자가 동의한 자료의 쪽 이미지 · 텍스트, 질문"| LLM
+  FC -->|"서명 volume"| AV
+  API & WK & FC --> NAT --> EXT
+  SM -->|"배포 script가 .env를 쓴다"| API & WK
 ```
 
-- api와 worker는 같은 이미지의 다른 역할이다(4.3절). converter, transcoder, clamd는 worker만 부르고, 셋 다 저장소와 DB에 닿지 않는다([ADR-0006](adr/0006-summary-module.md), [ADR-0016](adr/0016-video-upload-and-transcoder.md), [ADR-0018](adr/0018-malware-scan-clamd.md), [ADR-0019](adr/0019-container-image-and-single-host-compose.md)).
-- 브라우저에서 들어오는 길은 CloudFront 하나다. 밖으로 나가는 길은 api의 학교 IdP 호출([ADR-0017](adr/0017-school-sso-oidc.md))과 worker의 LLM 호출([ADR-0032](adr/0032-llm-consent-and-study-chat.md)) 둘이고, 둘 다 `integration`의 adapter가 설정한 host로만 보낸다.
-- CDN이 없는 환경에서는 api가 `/vod/*`와 `/doc/*`도 응답한다(7.5절, [ADR-0009](adr/0009-origin-delivery-without-cdn.md)). MediaConvert는 transcoder와 같은 port의 다른 구현으로 남겨 두었고 지금 구성에는 없다(ADR-0016).
-
-component 수준이다. `api`와 `worker` 안의 모듈과 의존 방향이다(4.1절). 실선은 공개 API 호출이고 점선은 port 구현이다. `shared`는 모든 모듈이 쓰므로 선을 그리지 않았다.
-
-```mermaid
-flowchart TD
-  HOME["home<br/>메인 화면 · 할 일 · 캘린더"]
-  ASM["assessment<br/>과제 · 퀴즈 · 설문 · 성적"]
-  COM["communication<br/>공지 · 게시판 · 쪽지"]
-  LRN["learning<br/>학습활동 · 학습 session · 출석"]
-  SUM["summary<br/>쪽별 요약 · LLM 동의 · 학습 대화"]
-  FIL["files<br/>업로드 · 첨부 · 파일함 · rendition · 영상"]
-  CAT["catalog<br/>과목 · 수강 · 시간표 · 알림"]
-  IDN["identity<br/>사용자 · session · 재인증"]
-  INT["integration<br/>OIDC · LLM · converter · transcoder · clamd · CloudFront 서명"]
-  HOME --> ASM & COM & LRN & CAT
-  ASM --> LRN & FIL & CAT & IDN
-  COM --> LRN & FIL & CAT & IDN
-  LRN --> FIL & CAT & IDN
-  SUM --> FIL & IDN
-  FIL --> CAT & IDN
-  CAT --> IDN
-  INT -.->|"ExternalIdentityProvider"| IDN
-  INT -.->|"PageConverter · VideoTranscoder · ContentScanner · DeliverySigner"| FIL
-  INT -.->|"LlmClient · CourseStaff"| SUM
-```
-
-한 모듈 안쪽의 예로 요약에 관여하는 component만 그렸다. 점선은 port 구현이다.
-
-```mermaid
-flowchart TD
-  subgraph summary
-    WEB["web"] --> POL["SummaryPolicy"]
-    WEB --> SVC["SummaryService<br/>생성 · 취소 · 재시도 · 게시 · 조회"]
-    RUN["JobRunner (worker)"] --> PIPE["Pipeline<br/>pages → story → validate"]
-    SVC --> LED["JobLedger"]
-    RUN --> LED
-    PIPE --> LLMP{{"port LlmClient"}}
-  end
-  subgraph files
-    FAPI["api<br/>FileAccess · DocumentRenditions · FileDerivatives · DeliveryCookies"]
-    FAPI --> CVP{{"port PageConverter"}}
-    FAPI --> SGP{{"port DeliverySigner"}}
-  end
-  subgraph integration
-    LLMA["OpenAI 호환 adapter"] -.-> LLMP
-    CVA["converter adapter"] -.-> CVP
-    SGA["CloudFront signer"] -.-> SGP
-  end
-  POL --> FAPI
-  SVC --> FAPI
-  PIPE --> FAPI
-```
-
-- 각 모듈의 `package-info.java`가 4.1절 표의 의존을 `allowedDependencies`로 선언한다. 선언하지 않은 의존이 생기면 `ModuleStructureTests`의 `verify()`가 실패한다.
-- 같은 테스트가 코드에서 읽은 모듈 의존을 `build/spring-modulith-docs/`에 C4 component diagram(PlantUML)으로 쓴다. 위 그림과 다르면 코드가 기준이다.
+- converter, transcoder, clamav는 worker만 부르고 외부, DB, 저장소, instance metadata에 닿지 않는다. compose network와 credential 배치는 [c4.md](c4.md) 2.2절, CDN이 없는 구성은 2.3절에 있다.
+- 모듈 사이 의존은 각 `package-info.java`의 `allowedDependencies`가 정하고 `ModuleStructureTests`의 `verify()`가 확인한다. 같은 테스트가 `build/spring-modulith-docs/`에 PlantUML component 그림을 쓴다. 그림과 코드가 다르면 코드가 기준이다.
 
 ## 5. 인증과 인가
 
