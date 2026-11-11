@@ -1,7 +1,9 @@
 package com.stackcorp.astra.learning;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
@@ -388,6 +391,61 @@ class LearningSessionApiTests extends IntegrationTest {
 		this.clock.advance(Duration.ofSeconds(60));
 		beat(this.student, third, 1).andExpect(status().isUnauthorized());
 		assertThat(credited(third)).isZero();
+	}
+
+	/** 학습 session은 재생할 수 있는 콘텐츠에서만 시작하고, 영상을 거두거나 콘텐츠·활동을 지우면 깨끗이 끝난다(ADR-0016). */
+	@Test
+	void startsOnlyOnReadyVideosAndEndsWhenTheVideoIsWithdrawnOrTheLectureIsEditedOrDeleted() throws Exception {
+		long processing = lectureItem(this.activity, 600, 120);
+		this.jdbc.sql("UPDATE online_lecture_items SET content_path = NULL, video_state = 'processing' WHERE online_lecture_item_id = :i")
+			.param("i", processing)
+			.update();
+		this.student.post(start(this.course, processing)).andExpect(status().isNotFound());
+
+		// 원본 삭제로 영상을 거두면(VideoAssetListener.withdrawn) 진행 중 session은 forced로 닫힌다.
+		long withdrawn = started(this.student);
+		this.clock.advance(Duration.ofSeconds(60));
+		beat(this.student, withdrawn, 1).andExpect(jsonPath("$.creditedSec").value(60));
+		this.jdbc.sql("UPDATE online_lecture_items SET content_path = NULL, video_state = 'removed' WHERE online_lecture_item_id = :i")
+			.param("i", this.item)
+			.update();
+		this.clock.advance(Duration.ofSeconds(60));
+		beat(this.student, withdrawn, 2).andExpect(status().isNotFound());
+		this.student.postJson(end(this.course, withdrawn), "{}").andExpect(status().isOk());
+		assertThat(this.jdbc.sql("SELECT CONCAT(state, ' ', end_reason) FROM learning_sessions WHERE learning_session_id = :s")
+			.param("s", withdrawn)
+			.query(String.class)
+			.single()).isEqualTo("ended forced");
+		assertThat(credited(withdrawn)).isEqualTo(60);
+
+		// 수정에서 빠진 콘텐츠의 session도, 활동을 지운 뒤의 session도 닫힌다.
+		long kept = lectureItem(this.activity, 600, 120);
+		long dropped = lectureItem(this.activity, 600, 120);
+		long editing = ApiClient.json(this.student.post(start(this.course, dropped)).andExpect(status().isCreated()))
+			.get("sessionId")
+			.asLong();
+		this.professor
+			.send(put("/api/courses/" + this.course + "/lectures/" + this.activity).header("If-Match", "\"1\"")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"weekNo\":1,\"title\":\"9주차\",\"published\":true,\"items\":{\"keep\":[{\"itemId\":" + kept
+						+ ",\"title\":\"남는 강의\"}]}}"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.items.length()").value(1))
+			.andExpect(jsonPath("$.version").value(2));
+		this.clock.advance(Duration.ofSeconds(60));
+		beat(this.student, editing, 1).andExpect(status().isNotFound());
+		this.student.post(start(this.course, dropped)).andExpect(status().isNotFound());
+
+		long deleting = ApiClient.json(this.student.post(start(this.course, kept)).andExpect(status().isCreated()))
+			.get("sessionId")
+			.asLong();
+		this.professor.send(delete("/api/courses/" + this.course + "/lectures/" + this.activity).header("If-Match", "\"1\""))
+			.andExpect(status().isConflict());
+		this.professor.send(delete("/api/courses/" + this.course + "/lectures/" + this.activity).header("If-Match", "\"2\""))
+			.andExpect(status().isNoContent());
+		this.clock.advance(Duration.ofSeconds(60));
+		beat(this.student, deleting, 1).andExpect(status().isNotFound());
+		assertThat(state(deleting)).isEqualTo("ended");
 	}
 
 	@Test

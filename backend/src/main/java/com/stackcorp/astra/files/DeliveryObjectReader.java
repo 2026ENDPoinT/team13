@@ -21,8 +21,8 @@ class DeliveryObjectReader implements DeliveryObjects {
 
 	private static final Pattern DOCUMENT = Pattern.compile("doc/([0-9a-f]{64})/[0-9]{3}\\.jpg");
 
-	private static final Pattern VIDEO = Pattern
-		.compile("vod/" + VideoKeys.ASSET_KEY_PATTERN + "/[A-Za-z0-9][A-Za-z0-9_-]{0,80}\\.(m3u8|ts|m4s|mp4|aac|vtt)");
+	private static final Pattern VIDEO = Pattern.compile("vod/(" + VideoKeys.ASSET_KEY_PATTERN
+			+ ")/[A-Za-z0-9][A-Za-z0-9_-]{0,80}\\.(m3u8|ts|m4s|mp4|aac|vtt)");
 
 	private static final Map<String, String> TYPES = Map.of("jpg", "image/jpeg", "m3u8", "application/vnd.apple.mpegurl",
 			"ts", "video/mp2t", "m4s", "video/iso.segment", "mp4", "video/mp4", "aac", "audio/aac", "vtt", "text/vtt");
@@ -31,9 +31,12 @@ class DeliveryObjectReader implements DeliveryObjects {
 
 	private final ConversionRecords conversions;
 
-	DeliveryObjectReader(ObjectStore store, ConversionRecords conversions) {
+	private final VideoAssetRecords videos;
+
+	DeliveryObjectReader(ObjectStore store, ConversionRecords conversions, VideoAssetRecords videos) {
 		this.store = store;
 		this.conversions = conversions;
+		this.videos = videos;
 	}
 
 	@Override
@@ -47,7 +50,11 @@ class DeliveryObjectReader implements DeliveryObjects {
 			return this.conversions.live(document.group(1)) ? read(path, "jpg") : Optional.empty();
 		}
 		Matcher video = VIDEO.matcher(path);
-		return video.matches() ? read(path, video.group(1)) : Optional.empty();
+		if (!video.matches()) {
+			return Optional.empty();
+		}
+		// 거두거나 아직 게시하지 않은 영상 asset은 객체가 남아 있어도 내보내지 않는다(ADR-0016 10번).
+		return this.videos.servable(video.group(1)) ? read(path, video.group(2)) : Optional.empty();
 	}
 
 	private Optional<DeliveryObject> read(String path, String extension) {

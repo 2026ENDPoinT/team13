@@ -20,10 +20,10 @@
 | 관리 port를 따로 두고 container 안의 127.0.0.1에만 연다 | 공개 port는 API 하나다. API port에는 `/actuator`가 아예 없다 | host나 ALB에서 직접 부르려면 설정을 바꿔야 한다 |
 
 ## 결정
-1. 이미지는 하나다. entrypoint가 첫 인자로 역할을 고른다. `api`는 `api` 프로필, `worker`는 `worker` 프로필로 Spring 앱을 띄우고, `converter`는 같은 jar의 converter main을 띄운다. 역할은 command 인자로만 정하고 환경 변수의 프로필 설정보다 우선한다. 영상 transcoder 역할은 그 main이 생길 때 같은 entrypoint에 추가한다.
+1. 이미지는 하나다. entrypoint가 첫 인자로 역할을 고른다. `api`는 `api` 프로필, `worker`는 `worker` 프로필로 Spring 앱을 띄우고, `converter`는 같은 jar의 converter main을, `transcoder`는 영상 transcoder main([ADR-0016](0016-video-upload-and-transcoder.md))을 띄운다. 역할은 command 인자로만 정하고 환경 변수의 프로필 설정보다 우선한다. transcoder가 부르는 ffmpeg도 이 이미지에 넣는다. 역할별 이미지로 나누지 않기 위해서이고, 다른 역할은 ffmpeg를 실행하지 않는다.
 2. 이미지는 multi-stage로 만든다. 빌드 stage는 Gradle wrapper와 JDK 25로 bootJar를 만들고, 실행 stage는 JRE 25 위에 Spring Boot의 layer(의존성, loader, snapshot 의존성, 앱)를 차례로 복사한다. base 이미지는 tag와 digest로 고정한다. 실행 user는 uid 10001이고 파일은 root 소유라 읽기만 한다. root filesystem은 읽기 전용으로 두고 `/tmp`에만 tmpfs를 붙인다.
 3. actuator는 `health`만 켠다. 관리 port 8081을 따로 두고 `127.0.0.1`에 묶는다. 응답에는 상태만 있다. readiness는 DB 연결까지, liveness는 process 상태만 본다. compose의 healthcheck는 container 안에서 readiness를 부른다. worker도 API를 container 안의 127.0.0.1에만 연다.
-4. compose는 network로 경계를 나눈다. 외부로 나가는 `egress`에는 api, worker, freshclam만, 외부로 나갈 수 없는 `data`에는 api, worker, mysql, clamav가, `conversion`에는 worker와 converter만 붙는다. 신뢰할 수 없는 파일을 읽는 converter와 clamd는 내부 network에만 있어 외부와 EC2 instance metadata(IAM role credential)에 닿지 않는다. converter는 env file을 받지 않는다. publish하는 port는 api의 8080 하나이고 기본은 host의 127.0.0.1이다.
+4. compose는 network로 경계를 나눈다. 외부로 나가는 `egress`에는 api, worker, freshclam만, 외부로 나갈 수 없는 `data`에는 api, worker, mysql, clamav가, `conversion`에는 worker와 converter만, `transcoding`에는 worker와 transcoder만 붙는다. 신뢰할 수 없는 파일을 읽는 converter, transcoder, clamd는 내부 network에만 있어 외부와 EC2 instance metadata(IAM role credential)에 닿지 않고 서로에게도 닿지 않는다. converter와 transcoder는 env file을 받지 않는다. publish하는 port는 api의 8080 하나이고 기본은 host의 127.0.0.1이다.
 5. 비밀값은 커밋하지 않는 `.env` 하나로 받는다. api와 worker는 같은 host, 같은 instance role의 신뢰 경계에 있으므로 같은 파일을 받는다. 값이 빈 줄은 두지 않는다. 일부 설정은 빈 값도 "설정됨"으로 보기 때문이다.
 6. 같은 host의 MySQL은 compose 프로필 `mysql`로 띄우고, RDS를 쓰면 이 프로필을 끈다. ClamAV는 프로필 `scan`이고, 검사하는 clamd와 서명을 받는 freshclam을 다른 container로 나눠 같은 서명 volume을 쓴다.
 

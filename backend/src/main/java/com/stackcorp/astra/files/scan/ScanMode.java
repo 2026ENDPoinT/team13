@@ -19,6 +19,12 @@ public class ScanMode implements SmartInitializingSingleton {
 
 	private static final Logger log = LoggerFactory.getLogger(ScanMode.class);
 
+	/** 검사를 면제한 용도의 원본 blob 상태(ADR-0016 12번). */
+	public static final String UNSCANNED = "unscanned";
+
+	/** 검사를 면제한 유일한 업로드 용도. */
+	public static final String EXEMPT_PURPOSE = "lecture_video";
+
 	private final ObjectProvider<ContentScanner> scanner;
 
 	private final ScanProperties properties;
@@ -36,6 +42,15 @@ public class ScanMode implements SmartInitializingSingleton {
 	/** @return 새로 만드는 file_blobs 행의 blob_state */
 	public String initialBlobState() {
 		return enabled() ? "quarantined" : "clean";
+	}
+
+	/**
+	 * 검사를 면제한 용도(lecture_video)가 새로 만드는 blob의 blob_state. 검사기가 있으면 unscanned, 없으면 clean이다(ADR-0016 12번).
+	 * unscanned는 "검사하지 않았다"는 뜻이고 clean이 아니다. 다른 용도의 업로드가 같은 내용을 참조하면 그 blob은 quarantined로 바뀌어
+	 * 검사를 받는다(UploadRecords.referenceBlob).
+	 */
+	public String exemptBlobState() {
+		return enabled() ? UNSCANNED : "clean";
 	}
 
 	@Override

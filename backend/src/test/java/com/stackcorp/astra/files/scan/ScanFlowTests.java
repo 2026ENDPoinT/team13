@@ -36,6 +36,8 @@ import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.files.StorageGcDriver;
+import com.stackcorp.astra.TestVideos;
+import com.stackcorp.astra.files.VideoRunnerDriver;
 import com.stackcorp.astra.files.api.ContentScanner;
 import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.files.api.RenditionException;
@@ -393,6 +395,84 @@ class ScanFlowTests extends IntegrationTest {
 		drain();
 		assertThat(clamd.scansOf(notes)).isZero();
 		assertThat(blob(blobId)).containsEntry("blob_state", "quarantined").containsEntry("purged", 1L);
+	}
+
+	/**
+	 * 강의 영상은 검사를 면제한다(ADR-0016 12번). 면제한 내용은 unscanned이고, 같은 바이트를 다른 용도로 올리면 그 내용은 검사를
+	 * 받는다. unscanned인 내용이 다른 용도의 업로드를 clean으로 만들지 않는다.
+	 */
+	@Test
+	void exemptsLectureVideosButUnscannedContentNeverMakesAnotherPurposeClean() throws Exception {
+		long professorId = instructorId();
+		ApiClient professor = new ApiClient(this.mvc, this.data.session(professorId));
+		byte[] content = videoAndText("9주차 노트 " + UUID.randomUUID());
+
+		long video = TestVideos.upload(this.mvc, this.data.session(professorId), this.course, "lecture.mkv", content);
+		assertThat(row(video)).containsEntry("upload_state", "clean")
+			.containsEntry("scan_state", "clean")
+			.containsEntry("blob_state", "unscanned");
+		drain();
+		assertThat(clamd.scansOf(content)).isZero();
+
+		long material = uploadId(professor.upload(this.course, "lecture_material", "notes.txt", content, null)
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.state").value("quarantined")));
+		assertThat(row(material)).containsEntry("blob_state", "quarantined").containsEntry("scan_state", "pending");
+		assertThat(number(row(material), "file_blob_id")).isEqualTo(number(row(video), "file_blob_id"));
+		attach(professor, material).andExpect(status().isConflict());
+
+		drain();
+
+		assertThat(clamd.scansOf(content)).isEqualTo(1);
+		assertThat(row(material)).containsEntry("upload_state", "clean").containsEntry("blob_state", "clean");
+		attach(professor, material).andExpect(status().isCreated());
+		assertThat(row(video)).containsEntry("upload_state", "clean").containsEntry("scan_state", "clean");
+	}
+
+	@Test
+	void anInfectedVerdictOnContentSharedWithAVideoRejectsTheVideoAndWithdrawsItsLecture() throws Exception {
+		VideoRunnerDriver.drain(this.context);
+		long professorId = instructorId();
+		ApiClient professor = new ApiClient(this.mvc, this.data.session(professorId));
+		byte[] content = videoAndText("첨부 " + UUID.randomUUID() + "\n" + FakeClamd.EICAR);
+		long video = TestVideos.upload(this.mvc, this.data.session(professorId), this.course, "lecture.mkv", content);
+		long itemId = ApiClient.json(professor
+			.postJson("/api/courses/" + this.course + "/lectures",
+					"{\"weekNo\":3,\"title\":\"3주차\",\"items\":[{\"title\":\"강의\",\"uploadId\":" + video + "}]}")
+			.andExpect(status().isCreated())).get("items").get(0).get("itemId").asLong();
+
+		professor.upload(this.course, "lecture_material", "notes.txt", content, null).andExpect(status().isCreated());
+		drain();
+
+		assertThat(row(video)).containsEntry("scan_state", "infected").containsEntry("blob_state", "rejected");
+		VideoRunnerDriver.withdrawRemovedFiles(this.context);
+		assertThat(this.jdbc.sql("""
+				SELECT j.job_state FROM video_transcode_jobs j
+				  JOIN online_lecture_items i ON i.video_asset_id = j.video_asset_id WHERE i.online_lecture_item_id = :i
+				""").param("i", itemId).query(String.class).single()).isEqualTo("cancelled");
+		assertThat(this.jdbc.sql("SELECT video_state FROM online_lecture_items WHERE online_lecture_item_id = :i")
+			.param("i", itemId)
+			.query(String.class)
+			.single()).isEqualTo("removed");
+		assertThat(VideoRunnerDriver.runOnce(this.context)).isFalse();
+	}
+
+	private long instructorId() {
+		long id = this.data.user("PROFESSOR");
+		this.data.instructor(this.course, id);
+		return id;
+	}
+
+	// Matroska EBML header(DocType matroska) 뒤에 텍스트를 붙인다. NUL byte가 없어 mkv와 txt의 형식 검사를 모두 통과한다.
+	private static byte[] videoAndText(String text) {
+		byte[] header = { 0x1A, 0x45, (byte) 0xDF, (byte) 0xA3, (byte) 0x9F, 0x42, (byte) 0x86, (byte) 0x81, 0x01, 0x42,
+				(byte) 0xF7, (byte) 0x81, 0x01, 0x42, (byte) 0xF2, (byte) 0x81, 0x04, 0x42, (byte) 0xF3, (byte) 0x81,
+				0x08, 0x42, (byte) 0x82, (byte) 0x88, 'm', 'a', 't', 'r', 'o', 's', 'k', 'a', 0x42, (byte) 0x87,
+				(byte) 0x81, 0x04, 0x42, (byte) 0x85, (byte) 0x81, 0x02, '\n' };
+		byte[] body = text.getBytes(StandardCharsets.UTF_8);
+		byte[] content = java.util.Arrays.copyOf(header, header.length + body.length);
+		System.arraycopy(body, 0, content, header.length, body.length);
+		return content;
 	}
 
 	private void gc() {

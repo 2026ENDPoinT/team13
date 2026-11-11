@@ -38,7 +38,7 @@ class LectureProgressController {
 	private static final String FROM = """
 			  FROM learning_activities a
 			  JOIN course_weeks w ON w.course_week_id = a.course_week_id AND a.deleted_at IS NULL
-			  JOIN online_lecture_items i ON i.activity_id = a.activity_id
+			  JOIN online_lecture_items i ON i.activity_id = a.activity_id AND i.deleted_at IS NULL
 			""";
 
 	private final JdbcClient jdbc;
@@ -105,7 +105,7 @@ class LectureProgressController {
 		this.jdbc.sql("""
 				SELECT p.user_id, p.online_lecture_item_id, p.credited_in_sec, p.met_at
 				  FROM online_lecture_item_progress p
-				  JOIN online_lecture_items i ON i.online_lecture_item_id = p.online_lecture_item_id
+				  JOIN online_lecture_items i ON i.online_lecture_item_id = p.online_lecture_item_id AND i.deleted_at IS NULL
 				  JOIN learning_activities a ON a.activity_id = i.activity_id AND a.deleted_at IS NULL
 				 WHERE a.course_id = :course
 				""").param("course", courseId).query((rs) -> {
