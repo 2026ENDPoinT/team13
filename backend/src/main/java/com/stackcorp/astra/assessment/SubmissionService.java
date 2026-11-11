@@ -18,8 +18,10 @@ import com.stackcorp.astra.files.api.AttachmentException;
 import com.stackcorp.astra.files.api.Attachments;
 import com.stackcorp.astra.files.api.Attachments.AttachRequest;
 import com.stackcorp.astra.files.api.Attachments.AttachedFile;
+import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
+import com.stackcorp.astra.shared.audit.AuditLog;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -49,13 +51,23 @@ class SubmissionService {
 
 	private final TransactionTemplate transaction;
 
+	private final GradebookRecords gradebook;
+
+	private final GradeWrites writes;
+
+	private final AuditLog audit;
+
 	SubmissionService(AssignmentAccess access, SubmissionRecords records, Attachments attachments,
-			RateLimiter rateLimiter, TransactionTemplate transaction) {
+			RateLimiter rateLimiter, TransactionTemplate transaction, GradebookRecords gradebook, GradeWrites writes,
+			AuditLog audit) {
 		this.access = access;
 		this.records = records;
 		this.attachments = attachments;
 		this.rateLimiter = rateLimiter;
 		this.transaction = transaction;
+		this.gradebook = gradebook;
+		this.writes = writes;
+		this.audit = audit;
 	}
 
 	/** 임시저장. 제출 기간 안에서만 받고, 제출로 치지 않는다. */
@@ -143,13 +155,24 @@ class SubmissionService {
 		});
 	}
 
-	/** 담당자가 최종 제출물에 점수와 의견을 준다. 학생에게는 점수를 공개한 뒤에만 보인다(SEC-14). */
-	void grade(long graderId, Assignment assignment, long submissionId, BigDecimal score, String feedback) {
+	/**
+	 * 담당자가 최종 제출물에 점수와 의견을 준다. 학생에게는 점수를 공개한 뒤에만 보인다(SEC-14). 성적 항목 행을 잠근 뒤 그때의 배점으로
+	 * 검사하므로 배점을 낮추는 수정과 겹쳐도 점수가 배점을 넘지 않는다. 점수 쓰기는 감사 기록을 남긴다.
+	 */
+	void grade(Actor grader, long courseId, Assignment assignment, long submissionId, BigDecimal score,
+			String feedback) {
 		Submission submission = this.records.find(submissionId)
 			.filter((s) -> s.assignmentId() == assignment.assignmentId() && s.submitted())
 			.orElseThrow(ApiException::notFound);
-		this.records.putGrade(assignment.settings().gradeItemId(), submission.userId(),
-				PlainText.points(score, assignment.settings().maxScore(), "score"), feedback, graderId);
+		long itemId = assignment.settings().gradeItemId();
+		this.writes.run(() -> {
+			GradeItem item = this.gradebook.lock(itemId);
+			this.gradebook.putScore(itemId, submission.userId(), PlainText.points(score, item.maxScore(), "score"),
+					feedback, grader.userId());
+			long scoreId = this.gradebook.scoresOf(itemId, List.of(submission.userId())).get(submission.userId()).scoreId();
+			this.audit.success(grader.userId(), grader.sessionId(), "grade_score.write", "grade_score", scoreId, courseId);
+			return scoreId;
+		});
 	}
 
 	Receipt receipt(Version version) {

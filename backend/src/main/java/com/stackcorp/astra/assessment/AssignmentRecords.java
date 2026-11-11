@@ -1,6 +1,5 @@
 package com.stackcorp.astra.assessment;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -95,12 +94,14 @@ class AssignmentRecords {
 			.update();
 	}
 
+	/** 과제 항목의 이름, 배점, 공개를 바꾸고 수정 번호를 올린다. 부르는 쪽이 항목 행을 먼저 잠근다({@link GradebookRecords#lock}). */
 	void updateGradeItem(long gradeItemId, String title, AssignmentInput input) {
 		this.jdbc.sql("""
 				UPDATE grade_items
 				   SET item_name = :name, max_score = :max,
 				       score_visibility = CASE WHEN :released THEN 'immediate' ELSE 'hidden' END,
-				       release_at = CASE WHEN :released THEN COALESCE(release_at, CURRENT_TIMESTAMP(3)) END
+				       release_at = CASE WHEN :released THEN COALESCE(release_at, CURRENT_TIMESTAMP(3)) END,
+				       revision_no = revision_no + 1
 				 WHERE grade_item_id = :id
 				""")
 			.param("name", title)
@@ -108,15 +109,6 @@ class AssignmentRecords {
 			.param("released", input.scoresReleased())
 			.param("id", gradeItemId)
 			.update();
-	}
-
-	/** 이미 준 점수 가운데 max를 넘는 것이 있는지. */
-	boolean hasScoreAbove(long gradeItemId, BigDecimal max) {
-		return this.jdbc.sql("SELECT EXISTS (SELECT 1 FROM grade_scores WHERE grade_item_id = :id AND score > :max)")
-			.param("id", gradeItemId)
-			.param("max", max)
-			.query(Boolean.class)
-			.single();
 	}
 
 	private static final String SELECT = """

@@ -157,6 +157,10 @@ abstract class AssessmentTestSupport extends IntegrationTest {
 			return send(MockMvcRequestBuilders.post(path));
 		}
 
+		ResultActions delete(String path) throws Exception {
+			return send(MockMvcRequestBuilders.delete(path));
+		}
+
 		ResultActions postJson(String path, String json) throws Exception {
 			return send(MockMvcRequestBuilders.post(path).contentType(MediaType.APPLICATION_JSON).content(json));
 		}

@@ -17,9 +17,12 @@ class AssignmentService {
 
 	private final AssignmentRecords records;
 
-	AssignmentService(ReportActivities activities, AssignmentRecords records) {
+	private final GradebookRecords gradebook;
+
+	AssignmentService(ReportActivities activities, AssignmentRecords records, GradebookRecords gradebook) {
 		this.activities = activities;
 		this.records = records;
+		this.gradebook = gradebook;
 	}
 
 	/** @return 과제 ID */
@@ -32,7 +35,8 @@ class AssignmentService {
 	}
 
 	/**
-	 * 읽은 수정 번호가 지금 값과 같을 때만 바꾼다. 다르면 다른 수정을 덮어쓰지 않도록 409로 거부한다.
+	 * 읽은 수정 번호가 지금 값과 같을 때만 바꾼다. 다르면 다른 수정을 덮어쓰지 않도록 409로 거부한다. 배점 비교 전에 성적 항목 행을 잠가
+	 * 그 사이에 더 높은 점수가 들어오지 못하게 한다(점수 쓰기도 같은 행을 먼저 잠근다).
 	 */
 	@Transactional
 	void update(long courseId, Assignment current, long revision, AssignmentInput input) {
@@ -42,7 +46,8 @@ class AssignmentService {
 		if (!this.activities.update(courseId, current.activity().activityId(), input.activity())) {
 			throw ApiException.notFound();
 		}
-		if (this.records.hasScoreAbove(current.settings().gradeItemId(), input.maxScore())) {
+		this.gradebook.lock(current.settings().gradeItemId());
+		if (this.gradebook.hasScoreAbove(current.settings().gradeItemId(), input.maxScore())) {
 			throw new ApiException(HttpStatus.CONFLICT, "score_exceeds_max", "이미 준 점수보다 배점을 낮출 수 없습니다.");
 		}
 		this.records.updateGradeItem(current.settings().gradeItemId(), input.activity().title(), input);

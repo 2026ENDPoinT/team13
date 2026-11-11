@@ -31,6 +31,7 @@
 | [ADR-0019](adr/0019-container-image-and-single-host-compose.md) | 이미지 하나를 api, worker, converter 역할로 실행하고, health는 container 안의 관리 port로만 연다 |
 | [ADR-0014](adr/0014-learning-session-credit.md) | 온라인 강의 출석 인정은 서버 시각의 적립 원장으로 하고, 사용자당 활성 학습 session은 하나다. 새 session이 앞 session을 대체한다 |
 | [ADR-0011](adr/0011-material-deletion.md) | 강의 자료는 삭제 표시로 지우고 수정·삭제는 `If-Match` version으로 막는다. 참조가 끊긴 파일은 바로 지우고 worker GC가 저장소를 정리한다 |
+| [ADR-0023](adr/0023-gradebook-ownership-release-totals.md) | 성적부에서 과제 항목은 비율만 바꾼다. 학생 합계는 공개했고 점수를 받은 항목만 더하고, 점수 일괄 저장은 한 행이라도 틀리면 아무것도 저장하지 않는다 |
 
 ## 2. 부하 가정
 
@@ -224,6 +225,7 @@ flowchart TD
 - 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록·수정, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
+- 성적은 `assessment`가 판정한다. 담당자만 성적부를 읽고 쓴다. 학생 성적 API는 session 사용자 본인 것만 돌려주고 대상 학생을 고르는 parameter가 없다. 공개하지 않은 항목의 점수, 의견, 그 점수가 들어간 합계는 속성 자체가 없다(SEC-14). 과제 항목의 이름, 배점, 공개, 점수는 과제 화면에서만 바꾼다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 점수 쓰기는 행마다 감사 기록을 남긴다.
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
 - 로그인 뒤 돌아갈 경로는 같은 origin의 상대 경로만 받는다. scheme, `//`, 역슬래시, 제어 문자, 공백, ASCII 밖의 문자가 있으면 `/`로 보낸다(EP-0195).
 
@@ -370,6 +372,23 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 제출 구간은 DB 시계로 `openAt <= now < closeAt`이고, 지각은 정책이 `allow_until`일 때 `closeAt <= now < lateUntil`만 받는다. 본문, 설명, 의견은 일반 텍스트로만 받고 내보낸다.
 
+### 7.8 성적
+
+판정과 합계 규칙은 [ADR-0023](adr/0023-gradebook-ownership-release-totals.md)에 있다. 수정 요청은 읽은 `revision`(점수는 행마다 `version`)을 보내고, 다르면 409다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/courses/{courseId}/grades/me?type=&q=` | 수강생 본인 | 내 성적(EP-0035, EP-0036). 평가 활동 비공개 과목이면 목록과 합계가 없다. 공개한 항목만 점수·의견·채점 일시가 있고, 합계는 공개했고 점수를 받은 항목만 더한다. `type`은 `all`, `assignment`, `quiz`, `manual` |
+| `GET /api/courses/{courseId}/gradebook?page=&size=` | 담당자 | 설정, 항목(공개 여부, 점수 받은 학생 수), 수강생 쪽(ID 순, size 100 이하)의 점수·의견·`version`과 학생별 합계 |
+| `PUT /api/courses/{courseId}/grade-settings` | 담당자 | 평가 활동 공개(`activitiesVisible`). 처음이면 `revision` 0 |
+| `POST /api/courses/{courseId}/grade-items` | 담당자 | 직접 입력 항목(이름, 배점 0 초과 1000 이하, 비율 0~100). 비공개로 만든다. 201. `Idempotency-Key` 지원(선택) |
+| `PUT /api/courses/{courseId}/grade-items/{itemId}` | 담당자 | 직접 입력 항목은 이름·배점·비율, 과제 항목은 비율만. 이미 준 점수보다 배점을 낮추면 409 `score_exceeds_max` |
+| `PUT /api/courses/{courseId}/grade-items/{itemId}/release` | 담당자 | 직접 입력 항목의 점수 공개(`released:true`)와 거둠. 과제 항목은 409 `managed_by_assignment` |
+| `PUT /api/courses/{courseId}/grade-items/{itemId}/scores` | 담당자 | 직접 입력 항목의 점수 일괄 저장(1~200행, `studentId`, `score`, `feedback`, `version`). 한 행이라도 틀리면 아무것도 저장하지 않고 400 `invalid_rows` 또는 409 `version_conflict`와 `rows`(순번, 코드) |
+| `DELETE /api/courses/{courseId}/grade-items/{itemId}?revision=` | 담당자 | 직접 입력 항목 삭제. 점수나 의견이 남아 있으면 409 `item_has_scores`. 204 |
+
+다른 모듈은 `assessment.api.ReleasedGrades`로 학생에게 새로 공개된 본인 성적 항목(점수 값 없이)을 읽는다. 메인 화면에는 아직 붙이지 않았다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -446,3 +465,5 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 지운 자료의 CDN 쪽 이미지 | CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 cookie가 끝나기 전, GC가 객체를 지우기 전이면 읽힐 수 있다([ADR-0011](adr/0011-material-deletion.md)) | 문서 cookie TTL을 짧게 유지한다. 더 줄여야 하면 삭제 commit 뒤 `doc/{key}/`를 바로 지우는 이벤트를 붙인다 |
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
+| 성적 평가요소와 다른 활동 유형 | 평가요소(`grade_criteria`)와 평가요소 점수는 화면 근거가 없어 만들지 않았다. 퀴즈 등 과제가 아닌 활동의 성적 항목은 성적부와 학생 화면에 나오지 않는다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)) | 퀴즈를 만들 때 learning.api에 그 활동 조회를 더하고 성적부의 항목 판정(`GradebookService.live`)에 넣는다. 평가요소는 채점 화면 요구가 생길 때 정한다 |
+| 새 성적 알림 | `assessment.api.ReleasedGrades`는 과제 항목이 있는 과목마다 과제 조회를 해 메인 화면의 고정 쿼리 수 규칙(6절)에 맞지 않는다. 메인에는 붙이지 않았다 | learning.api에 여러 과목의 과제 활동을 한 번에 읽는 조회를 더한 뒤 `home`에 붙인다 |

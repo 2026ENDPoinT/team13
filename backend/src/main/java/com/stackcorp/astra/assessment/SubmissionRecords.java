@@ -195,21 +195,6 @@ class SubmissionRecords {
 		return grades;
 	}
 
-	void putGrade(long gradeItemId, long userId, BigDecimal score, String feedback, long graderId) {
-		this.jdbc.sql("""
-				INSERT INTO grade_scores (grade_item_id, user_id, score, score_comment, graded_at, graded_by_user_id)
-				VALUES (:item, :user, :score, :feedback, CURRENT_TIMESTAMP(3), :grader) AS new
-				ON DUPLICATE KEY UPDATE score = new.score, score_comment = new.score_comment, graded_at = new.graded_at,
-				                        graded_by_user_id = new.graded_by_user_id
-				""")
-			.param("item", gradeItemId)
-			.param("user", userId)
-			.param("score", score)
-			.param("feedback", feedback)
-			.param("grader", graderId)
-			.update();
-	}
-
 	/** 첨부 그룹을 가진 제출 버전의 제출자와 과제 활동. 제출 버전의 첨부가 아니면 비어 있다. */
 	List<GroupOwner> ownersOfGroup(long attachmentGroupId) {
 		return this.jdbc.sql("""

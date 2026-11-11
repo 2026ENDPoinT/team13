@@ -129,7 +129,7 @@ class SubmissionController {
 			@PathVariable long assignmentId, @PathVariable long submissionId, @RequestBody GradeRequest body) {
 		Assignment assignment = this.access.managed(actor.userId(), courseId, assignmentId);
 		String feedback = PlainText.block(body.feedback(), MAX_FEEDBACK, "feedback");
-		this.service.grade(actor.userId(), assignment, submissionId, body.score(), feedback);
+		this.service.grade(actor, courseId, assignment, submissionId, body.score(), feedback);
 		Submission submission = this.records.find(submissionId).orElseThrow();
 		return ok(this.records.grade(assignment.settings().gradeItemId(), submission.userId())
 			.map(GradeView::of)
