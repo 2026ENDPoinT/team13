@@ -172,6 +172,37 @@ class CommunityNoticeApiTests extends BoardTestSupport {
 			.andExpect(jsonPath("$.noticesForMe[?(@.noticeId == " + pinned + ")]").isEmpty());
 	}
 
+	@Test
+	void noticesAnnounceToTheirAudienceAndWithdrawWhenDeleted() throws Exception {
+		long forStudents = created(this.operator.postJson(NOTICES, notice("학생 알림", "student", false, null, null)),
+				"noticeId");
+		long forStaff = created(this.operator.postJson(NOTICES, notice("교수 알림", "professor", false, null, null)),
+				"noticeId");
+		long forAll = created(this.operator.postJson(NOTICES, notice("전체 알림", "common", false, null, null)), "noticeId");
+
+		// 공지를 쓴 transaction이 알림 사건을 남긴다. 받는 사람은 공지 대상이 가리키는 사람이다.
+		assertThat(announcedTo(forStudents)).isEqualTo("student");
+		assertThat(announcedTo(forStaff)).isEqualTo("staff");
+		assertThat(announcedTo(forAll)).isEqualTo("all");
+
+		// 대상을 바꾸면 알림 대상도 따라가고, 지우면 알림과 예약을 거둔다.
+		put(this.operator, NOTICES + "/" + forStudents,
+				"{\"title\":\"" + this.tag + " 학생 알림\",\"audience\":\"common\",\"pinned\":false,\"version\":1}")
+			.andExpect(status().isOk());
+		assertThat(announcedTo(forStudents)).isEqualTo("all");
+		for (long id : List.of(forStudents, forStaff, forAll)) {
+			this.operator.delete(NOTICES + "/" + id).andExpect(status().isNoContent());
+			assertThat(announcedTo(id)).isNull();
+		}
+	}
+
+	private String announcedTo(long noticeId) {
+		return this.jdbc.sql("""
+				SELECT site_audience FROM notification_events
+				 WHERE notification_type = 'SITE_NOTICE' AND target_ref_id = :id
+				""").param("id", noticeId).query(String.class).optional().orElse(null);
+	}
+
 	private String notice(String title, String audience, boolean pinned, String publishAt, String uploadIds) {
 		return "{\"title\":\"" + this.tag + " " + title + "\",\"body\":\"본문\",\"audience\":\"" + audience + "\",\"pinned\":"
 				+ pinned + (publishAt == null ? "" : ",\"publishAt\":\"" + publishAt + "\"")

@@ -514,7 +514,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `POST /api/community/qna` | 로그인한 사용자(break-glass 제외) | 1:1 문의 작성(EP-0158). 제목 필수, 본문 선택, `uploadIds`. 201 |
 | `POST /api/community/qna/{postId}/replies` | 알림마당 운영자 | 답변. 답변 수와 답변 일시를 바꾸고 작성자에게 `QUESTION_ANSWERED` 알림(과목 없음). 201 |
 
-원본 화면에 1:1 문의 수정·삭제가 없어 두지 않았다. 알림마당 공지 알림(원본 "[전체공지사항]")은 `SiteNoticeNotifications`까지 잇고 아직 보내지 않는다(12절).
+원본 화면에 1:1 문의 수정·삭제가 없어 두지 않았다. 알림마당 공지 알림(원본 "[전체공지사항]")은 `SiteNoticeNotifications`가 공지 transaction 안에서 `catalog.api.Notifications.publishSite`로 보낸다. 받는 사람은 공지 대상이 가리키는 사람이다(COMMON 모두, STUDENT 학생, PROFESSOR 학생이 아닌 교직원). 예약 공지는 게시 시각에 worker가 보낸다([ADR-0036](adr/0036-notification-screen-target-and-instructor-roster.md)).
 
 ### 7.9 메인 화면과 할 일
 
@@ -818,7 +818,6 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 알림 push | 알림은 목록을 다시 불러야 보인다. 헤더 배지는 `unread-count`를 주기적으로 부른다 | WebSocket fan-out(8절)을 붙일 때 알림 행을 만든 뒤 보낸다 |
 | 게시판 남은 범위 | 과목에 열린게시판을 하나만 둔다. 질의응답의 학습활동 연결(EP-0059, EP-0060), 메인 화면의 게시판 안 읽은 수가 없다. 과목 밖 첨부(알림마당, 쪽지)에는 쪽 이미지 미리보기와 요약이 없다. 쪽지 첨부는 모든 사본이 지워져도 파일이 남는다(누구도 읽지 못한다, [ADR-0035](adr/0035-community-operators-and-outside-course-files.md)) | 담당자 게시판 관리를 만들 때 넣는다. 과목 밖 미리보기가 필요하면 과목 없는 미리보기 경로를 같은 방식으로 둔다. 쪽지 첨부 해제는 읽은 쪽지 보존 기간(`purge_after_at`)과 함께 정한다 |
 | 알림마당 운영자 지정 | 운영자(`community_operators`)는 관리 화면이 생기기 전까지 운영 절차(runbook)로만 DB에 넣고 해제한다. 그 변경은 앱 감사 기록(`audit_events`)에 남지 않는다. 운영자의 명령은 모두 감사 기록이 있다([ADR-0035](adr/0035-community-operators-and-outside-course-files.md)) | 관리 화면을 만들 때 지정·해제 API, 재인증, 감사 기록을 함께 둔다. 그 전까지 지정·해제는 결재 근거를 `grant_reference`에 적고 DB 변경 기록을 남긴다 |
-| 알림마당 공지 알림 | 원본은 알림마당 공지를 "[전체공지사항]"으로 알리지만, `catalog.api.Notifications`에 기관 역할 단위 발송과 그 알림 유형이 없어 `SiteNoticeNotifications`가 아직 보내지 않는다. 그동안은 메인 화면의 `noticesForMe`(읽지 않은 고정 공지)로만 알린다. 대상 값은 `posts.audience`의 COMMON(모두), PROFESSOR(`users.user_role` PROFESSOR·TA·STAFF), STUDENT(STUDENT·STAFF)다 | catalog가 기관 단위 발송(예약 게시 포함)과 알림 유형을 더한 branch를 병합할 때 `SiteNoticeNotifications.sync`·`withdraw`를 그 API에 잇는다 |
 | 영상 변환 자원 | 1단계에서는 transcoder가 api·worker와 같은 EC2의 CPU를 쓰고 한 번에 영상 하나만 변환한다. 화질은 720p 하나다([ADR-0016](adr/0016-video-upload-and-transcoder.md)) | compose에서 transcoder container의 CPU·메모리 상한을 정한다. 대기가 길어지면 transcoder를 늘리거나 MediaConvert로 옮긴다(ADR-0016 11번) |
 | 영상과 악성코드 검사 | `lecture_video`는 clamd 검사를 면제한다(통합 때 결정, [ADR-0016](adr/0016-video-upload-and-transcoder.md) 12번). 원본은 누구에게도 그대로 나가지 않고, 학생은 격리한 transcoder가 다시 인코딩한 HLS만 받는다. 다시 인코딩은 원본 안의 악성 데이터가 그대로 전달되는 것을 막지만 transcoder(ffmpeg) 자체의 취약점은 그 container의 격리에 기댄다 | 면제한 내용은 `unscanned`로 두어 다른 용도에 `clean`으로 쓰이지 않게 했다. 검사기가 수 GB를 받게 되면 면제를 다시 검토한다. ffmpeg 보안 갱신은 이미지 재빌드로 받는다 |
 | 학습 인증 수단과 grant 시간(SC-06-A) | 학습 인증 수단은 학교 IdP 재인증(`idp`) 하나다. IdP가 비밀번호만 받으면 같은 요소를 다시 확인하는 데 그친다. grant 2시간, challenge 5분, 실패 한도는 제안값이다. IdP가 `max_age` 요청에 `auth_time`을 주지 않으면 재인증이 언제나 실패한다([ADR-0029](adr/0029-step-up-and-learning-auth.md)) | 학교 정보화본부에 IdP 다요소 인증, `acr`, `auth_time` 지원을 확인한다. 학사 담당과 grant 시간을 정하고 학교 IdP를 붙인 배포에서 `ASTRA_LEARNING_REQUIRE_AUTH_GRANT=true`로 켠다 |

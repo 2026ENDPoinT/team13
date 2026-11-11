@@ -16,7 +16,7 @@
 5. 업로드 용도에 범위를 둔다. 과목 용도는 지금처럼 과목 역할로, 과목 밖 용도(`community_notice`, `community_material`, `inquiry_attachment`, `message_attachment`)는 그 부모를 가진 모듈의 `files.api.UploadPermission`이 판정한다. 공지·자료 첨부는 운영자만, 문의·쪽지 첨부는 로그인한 사용자(break-glass 제외)가 올린다. 과목 밖 업로드는 `courseId` 없이 받고, 과목 용도에 과목이 없거나 과목 밖 용도에 과목이 있으면 400이다. 용도마다 정책 행이 있고 이름·확장자·내용·악성코드 검사(ADR-0018)는 같다. 첨부 확정은 업로드의 과목이 요청과 같을 때(`<=>`, 과목 밖이면 둘 다 NULL)만 받는다.
 6. 과목 밖 파일은 `GET /api/files/{fileId}/content`로만 연다. `FileAccess.allowedOutsideCourse`는 `files.course_id`가 NULL인 파일만 보고 부모의 `AttachmentParentAccess.allowedOutsideCourse`에 묻는다. 이 메서드는 기본이 거부라 과목 부모(학습활동, 과제 제출, 강의실 게시판)는 이 경로로 열리지 않는다. 과목 밖 부모는 과목 판정에서 언제나 거부한다. 두 경로가 서로를 우회하지 못한다.
 7. 쪽지 첨부는 쪽지를 아직 가진 사람만 읽는다. 발신자는 보낸함에서 지우기 전, 수신자는 회수되지 않았고 받은함에서 지우기 전까지다. 쪽지 상세가 보이는 조건과 같은 SQL 조건이다. 전달은 원래 쪽지의 파일을 옮기지 않는다.
-8. 알림마당 공지 알림(원본 "[전체공지사항]")은 `SiteNoticeNotifications`가 공지 transaction 안에서 받는다. 기관 역할 단위 발송이 `catalog.api.Notifications`에 생기면 병합 때 잇는다. 그 전까지는 메인 화면의 진입 공지로만 알린다.
+8. 알림마당 공지 알림(원본 "[전체공지사항]")은 `SiteNoticeNotifications`가 공지 transaction 안에서 `catalog.api.Notifications.publishSite`로 보낸다(ADR-0036). 받는 사람은 공지 대상이 가리키는 사람이고, 학생 대상 공지를 읽을 수 있는 직원은 받지 않는다.
 
 ## 결과와 트레이드오프
 - 교직원 누구나 운영자가 되는 경로가 없다. 대신 운영자 지정과 해제는 DB 작업이고 그 변경은 앱 감사 기록에 남지 않는다(architecture.md 12절). 관리 화면을 만들 때 지정·해제 API와 감사 기록을 함께 둔다.
