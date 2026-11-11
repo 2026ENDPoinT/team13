@@ -2911,6 +2911,101 @@
    ]
   },
   {
+   "_id": "EwLrF6ovPyYpn3zrK",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "community_operators",
+   "name": "알림마당 운영자",
+   "position": {
+    "x": 7530,
+    "y": 50
+   },
+   "keys": {
+    "pks": [],
+    "fks": [
+     {
+      "_id": "fRwwENeA7B2F4NJcN",
+      "name": "운영자 사용자 ID",
+      "pName": "user_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "운영자 사용자 ID",
+      "relEntity": "qGnfMsvCrBxdAyZWm",
+      "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+      "relType": "ZERO_OR_ONE"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "fM688vCsus3p65h5j",
+     "name": "지정 근거",
+     "pName": "grant_reference",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "지정 근거(결재 문서 번호 등, 운영 절차가 적는다)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "JYy47XPvZBs4YE3MZ",
+     "name": "지정 일시",
+     "pName": "granted_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "지정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "93mKy3RbxrJwWz9Wf",
+     "name": "해제 일시",
+     "pName": "revoked_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "해제 일시(해제했으면 권한 없음)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "cfd8fiPyZMgNapz95",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "FW8qbq2AcvShtHSZX",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "KyjL3nzyfcyriqqPh",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "conversion_jobs",
@@ -11625,13 +11720,26 @@
     },
     {
      "_id": "QnqJxH4ufohbechRD",
-     "name": "비공개 저장 경로",
+     "name": "재인코딩한 사진의 비공개 저장 경로(content bucket, 웹 루트 밖). 올릴 때 정하고 ACTIVE부터 객체가 있다",
      "pName": "storage_key",
      "domain": "",
      "type": "VARCHAR(512)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "비공개 저장 경로(웹 루트 밖)",
+     "comment": "재인코딩한 사진의 비공개 저장 경로(content bucket, 웹 루트 밖). 올릴 때 정하고 ACTIVE부터 객체가 있다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Mh5zAHbEWe6nTG6q4",
+     "name": "올린 원본의 비공개 저장 경로. 내보내지 않고 처리 뒤 지운다. 지웠으면 NULL",
+     "pName": "source_key",
+     "domain": "",
+     "type": "VARCHAR(512)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "올린 원본의 비공개 저장 경로. 내보내지 않고 처리 뒤 지운다. 지웠으면 NULL",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11748,7 +11856,72 @@
      "type": "VARCHAR(10)",
      "defaultValue": "'TEMP'",
      "isAllowNull": false,
-     "comment": "상태: TEMP|ACTIVE|DELETED",
+     "comment": "상태: TEMP(검사·재인코딩 대기)|ACTIVE|FAILED|DELETED",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "FFMSm5b5cAKiaHf6B",
+     "name": "처리 시도 수",
+     "pName": "attempt_count",
+     "domain": "",
+     "type": "TINYINT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "처리 시도 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "r4ykS76xEXyfieD6Z",
+     "name": "다시 처리할 수 있는 일시",
+     "pName": "next_attempt_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "다시 처리할 수 있는 일시(검사기·converter 장애 뒤)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "acb7NEh6yHyDwnzZA",
+     "name": "처리 중인 worker",
+     "pName": "lease_owner",
+     "domain": "",
+     "type": "VARCHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "처리 중인 worker",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "JwgxpaJshm9BiXBad",
+     "name": "처리 lease 만료 일시",
+     "pName": "lease_expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "처리 lease 만료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "czyLjojYH9tonQoXw",
+     "name": "실패 코드",
+     "pName": "error_code",
+     "domain": "",
+     "type": "VARCHAR(30)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실패 코드: not_image|too_large|rejected|unavailable|failed",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11775,6 +11948,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "삭제 표시 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "fkRBhGF6uTewvM3Gg",
+     "name": "DELETED·FAILED 행의 객체를 지운 일시",
+     "pName": "purged_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "DELETED·FAILED 행의 객체를 지운 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -18207,101 +18393,6 @@
     },
     {
      "_id": "7fa6gCD9aFe99Hxcr",
-     "name": "수정 일시",
-     "pName": "updated_at",
-     "domain": "",
-     "type": "DATETIME(3)",
-     "defaultValue": "",
-     "isAllowNull": true,
-     "comment": "수정 일시",
-     "relEntity": null,
-     "relFieldId": null,
-     "relType": null
-    }
-   ]
-  },
-  {
-   "_id": "EwLrF6ovPyYpn3zrK",
-   "_diagramId": "B5bWYfGmFisJTYLka",
-   "pName": "community_operators",
-   "name": "알림마당 운영자",
-   "position": {
-    "x": 7530,
-    "y": 50
-   },
-   "keys": {
-    "pks": [],
-    "fks": [
-     {
-      "_id": "fRwwENeA7B2F4NJcN",
-      "name": "운영자 사용자 ID",
-      "pName": "user_id",
-      "domain": "",
-      "type": "BIGINT UNSIGNED",
-      "defaultValue": "",
-      "isAllowNull": false,
-      "comment": "운영자 사용자 ID",
-      "relEntity": "qGnfMsvCrBxdAyZWm",
-      "relFieldId": "ZjQ95Bmd9t3WhFXxr",
-      "relType": "ZERO_OR_ONE"
-     }
-    ]
-   },
-   "fields": [
-    {
-     "_id": "fM688vCsus3p65h5j",
-     "name": "지정 근거",
-     "pName": "grant_reference",
-     "domain": "",
-     "type": "VARCHAR(100)",
-     "defaultValue": "",
-     "isAllowNull": false,
-     "comment": "지정 근거(결재 문서 번호 등, 운영 절차가 적는다)",
-     "relEntity": null,
-     "relFieldId": null,
-     "relType": null
-    },
-    {
-     "_id": "JYy47XPvZBs4YE3MZ",
-     "name": "지정 일시",
-     "pName": "granted_at",
-     "domain": "",
-     "type": "DATETIME(3)",
-     "defaultValue": "CURRENT_TIMESTAMP(3)",
-     "isAllowNull": false,
-     "comment": "지정 일시",
-     "relEntity": null,
-     "relFieldId": null,
-     "relType": null
-    },
-    {
-     "_id": "93mKy3RbxrJwWz9Wf",
-     "name": "해제 일시",
-     "pName": "revoked_at",
-     "domain": "",
-     "type": "DATETIME(3)",
-     "defaultValue": "",
-     "isAllowNull": true,
-     "comment": "해제 일시(해제했으면 권한 없음)",
-     "relEntity": null,
-     "relFieldId": null,
-     "relType": null
-    },
-    {
-     "_id": "cfd8fiPyZMgNapz95",
-     "name": "생성 일시",
-     "pName": "created_at",
-     "domain": "",
-     "type": "DATETIME(3)",
-     "defaultValue": "CURRENT_TIMESTAMP(3)",
-     "isAllowNull": false,
-     "comment": "생성 일시",
-     "relEntity": null,
-     "relFieldId": null,
-     "relType": null
-    },
-    {
-     "_id": "FW8qbq2AcvShtHSZX",
      "name": "수정 일시",
      "pName": "updated_at",
      "domain": "",
