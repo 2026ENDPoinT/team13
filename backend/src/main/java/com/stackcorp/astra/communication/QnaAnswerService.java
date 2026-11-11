@@ -231,17 +231,19 @@ class QnaAnswerService {
 	/**
 	 * @param authorName 볼 수 없는 익명 작성자면 빠진다
 	 * @param instructor 그 과목 담당자가 쓴 답글인지
+	 * @param edited 작성 뒤 고친 적이 있으면 true(version이 1보다 크다)
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	record AnswerView(long answerId, String body, String authorName, boolean mine, boolean anonymous,
-			boolean instructor, List<AttachedFile> attachments, int version, LocalDateTime createdAt,
+			boolean instructor, List<AttachedFile> attachments, int version, boolean edited, LocalDateTime createdAt,
 			LocalDateTime updatedAt, boolean canEdit, boolean canDelete) {
 
 		static AnswerView of(PostRow row, Viewer viewer, String authorName, boolean instructor,
 				List<AttachedFile> files) {
 			boolean mine = row.authorId() == viewer.userId();
 			return new AnswerView(row.postId(), row.body(), authorName, mine, row.anonymous(), instructor, files,
-					row.version(), row.createdAt(), row.updatedAt(), mine, mine || viewer.manager());
+					row.version(), row.version() > 1, row.createdAt(), row.updatedAt(), mine,
+					mine || viewer.manager());
 		}
 
 	}

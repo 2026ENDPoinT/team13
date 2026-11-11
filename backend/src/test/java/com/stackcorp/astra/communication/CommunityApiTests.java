@@ -60,6 +60,7 @@ class CommunityApiTests extends BoardTestSupport {
 		long deleted = material(board, "ALL", "INTERVAL 1 DAY", true);
 
 		get(this.student, materials(), "q", this.tag).andExpect(status().isOk())
+			.andExpect(jsonPath("$.canManage").value(false))
 			.andExpect(jsonPath("$.items.length()").value(2))
 			.andExpect(jsonPath("$.items[0].postId").value(forStudents))
 			.andExpect(jsonPath("$.items[0].audience").value("student"))
@@ -71,7 +72,9 @@ class CommunityApiTests extends BoardTestSupport {
 		get(this.professor, materials(), "q", this.tag).andExpect(jsonPath("$.items.length()").value(2))
 			.andExpect(jsonPath("$.items[0].postId").value(forProfessors))
 			.andExpect(jsonPath("$.counts.student").value(0));
-		get(this.staffClient, materials(), "q", this.tag).andExpect(jsonPath("$.counts.total").value(3));
+		get(this.staffClient, materials(), "q", this.tag).andExpect(jsonPath("$.counts.total").value(3))
+			.andExpect(jsonPath("$.canManage").value(false));
+		get(this.operator, materials(), "q", this.tag).andExpect(jsonPath("$.canManage").value(true));
 		get(this.student, materials(), "q", this.tag, "size", "1")
 			.andExpect(jsonPath("$.items[0].postId").value(forStudents))
 			.andExpect(jsonPath("$.nextCursor").value(forStudents));
@@ -104,6 +107,7 @@ class CommunityApiTests extends BoardTestSupport {
 				""", Map.of("board", board, "parent", mine, "staff", this.staff));
 
 		get(this.student, inquiries(), "q", this.tag).andExpect(status().isOk())
+			.andExpect(jsonPath("$.canManage").value(false))
 			.andExpect(jsonPath("$.items.length()").value(2))
 			.andExpect(jsonPath("$.items[0].postId").value(open))
 			.andExpect(jsonPath("$.items[0].authorName").doesNotExist())
@@ -129,8 +133,12 @@ class CommunityApiTests extends BoardTestSupport {
 			.andExpect(jsonPath("$.items[0].postId").value(theirs));
 		// 운영자는 모든 문의와 작성자 이름을 본다.
 		get(this.operator, inquiries(), "q", this.tag, "all", "true").andExpect(jsonPath("$.items.length()").value(3))
+			.andExpect(jsonPath("$.canManage").value(true))
 			.andExpect(jsonPath("$.counts.total").value(3))
 			.andExpect(jsonPath("$.items[0].authorName").value("테스트 STUDENT"));
+		// 운영자 판정은 all=true 없이도 목록에 나온다. 화면은 이 값으로 관리 메뉴를 연다.
+		get(this.operator, inquiries(), "q", this.tag).andExpect(jsonPath("$.canManage").value(true))
+			.andExpect(jsonPath("$.items.length()").value(0));
 		this.operator.get(inquiries() + "/" + theirs).andExpect(status().isOk())
 			.andExpect(jsonPath("$.mine").value(false))
 			.andExpect(jsonPath("$.canAnswer").value(true));

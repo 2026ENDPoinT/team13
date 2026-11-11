@@ -94,8 +94,7 @@ class UploadService {
 			throw ApiException.invalid(
 					purpose.courseScoped() ? "이 용도에는 courseId가 필요합니다." : "이 용도에는 courseId를 줄 수 없습니다.");
 		}
-		boolean allowed = courseId != null ? mayUpload(userId, courseId, purpose)
-				: this.permissions.stream().anyMatch((p) -> p.allows(actor, purpose.code()));
+		boolean allowed = courseId != null ? mayUpload(userId, courseId, purpose) : mayUploadOutsideCourse(actor, purpose);
 		if (!allowed) {
 			throw ApiException.notFound();
 		}
@@ -110,6 +109,11 @@ class UploadService {
 	/** 그 과목에서 이 용도로 올릴 수 있는 역할인지. 과목 밖 용도는 언제나 false다. */
 	boolean mayUpload(long userId, long courseId, UploadPurpose purpose) {
 		return purpose.courseScoped() && this.memberships.roleOf(userId, courseId).filter(purpose::allows).isPresent();
+	}
+
+	/** 과목 밖 용도를 이 사람이 올릴 수 있는지. 부모를 가진 모듈의 {@link UploadPermission}이 판정한다. 과목 용도는 언제나 false다. */
+	boolean mayUploadOutsideCourse(Actor actor, UploadPurpose purpose) {
+		return !purpose.courseScoped() && this.permissions.stream().anyMatch((p) -> p.allows(actor, purpose.code()));
 	}
 
 	/** 그 과목의 구성원인지. 역할은 묻지 않는다. */

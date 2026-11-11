@@ -131,6 +131,33 @@ class GradebookService {
 	}
 
 	/**
+	 * 담당자가 보는 성적부의 항목 하나. 항목은 성적부와 같은 모양이고, 학생 쪽은 성적부와 같이 수강생 명단의 사용자 ID 순서로 나눈다. 학생마다
+	 * 그 항목의 점수, 의견, 수정 번호만 있다. 지운 활동의 항목과 다른 과목의 항목은 404다. 쿼리 수는 학생 수에 관계없다.
+	 */
+	ItemSheet itemSheet(long userId, long courseId, long itemId, int page, int size) {
+		requireInstructor(userId, courseId);
+		if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) {
+			throw ApiException.invalid("page는 1 이상, size는 1 이상 " + MAX_PAGE_SIZE + " 이하여야 합니다.");
+		}
+		LocalDateTime now = this.quizzes.now();
+		GradeItem item = this.records.find(courseId, itemId).orElseThrow(ApiException::notFound);
+		Live live = item.manual() ? new Live(List.of(item), Map.of(), Map.of()) : live(courseId);
+		if (!live.contains(item)) {
+			throw ApiException.notFound();
+		}
+		List<Long> roster = this.rosters.students(courseId);
+		int from = (int) Math.min((long) (page - 1) * size, roster.size());
+		List<Long> pageIds = roster.subList(from, Math.min(from + size, roster.size()));
+		int graded = this.records.gradedCounts(List.of(itemId), roster).getOrDefault(itemId, 0);
+		Map<Long, Score> scores = this.records.scoresOf(itemId, pageIds);
+		Map<Long, String> names = this.userNames.namesOf(pageIds);
+		List<ItemStudent> students = pageIds.stream()
+			.map((studentId) -> ItemStudent.of(studentId, names.get(studentId), scores.get(studentId)))
+			.toList();
+		return new ItemSheet(courseId, now, ItemView.of(item, live, graded, now), students, roster.size(), page, size);
+	}
+
+	/**
 	 * 학생 본인의 성적(EP-0035, EP-0036). 과목이 평가 활동을 비공개로 두면 목록과 합계가 없다. 과제·퀴즈 항목은 학생이 그 활동을 볼 수 있을
 	 * 때만 넣는다. 공개하지 않은 항목은 이름과 배점만 있고, 그 점수는 읽지도 않는다. 합계는 공개한 항목만 더한다. 거르기(type, q)는 목록에만
 	 * 적용하고 합계는 거르지 않는다.
@@ -561,6 +588,34 @@ class GradebookService {
 
 		static StudentScore of(Score score) {
 			return new StudentScore(score.userId(), score.score(), score.feedback(), score.gradedAt(), score.version());
+		}
+
+	}
+
+	/**
+	 * 성적부의 항목 하나와 그 항목의 학생 쪽.
+	 *
+	 * @param item 성적부 {@code items}의 한 칸과 같은 모양
+	 * @param students 수강생 명단 쪽. 성적 행이 없는 학생도 있다
+	 */
+	record ItemSheet(long courseId, LocalDateTime serverTime, ItemView item, List<ItemStudent> students,
+			long totalStudents, int page, int size) {
+	}
+
+	/**
+	 * 항목 하나에서 학생 한 명의 칸.
+	 *
+	 * @param score 점수. 주지 않았으면 null
+	 * @param feedback 의견. 없으면 null
+	 * @param gradedAt 채점 일시. 성적 행이 없으면 null
+	 * @param version 점수 일괄 저장에 그대로 보낼 수정 번호. 성적 행이 없으면 0
+	 */
+	record ItemStudent(long studentId, String name, BigDecimal score, String feedback, LocalDateTime gradedAt,
+			long version) {
+
+		static ItemStudent of(long studentId, String name, Score score) {
+			return score == null ? new ItemStudent(studentId, name, null, null, null, 0)
+					: new ItemStudent(studentId, name, score.score(), score.feedback(), score.gradedAt(), score.version());
 		}
 
 	}

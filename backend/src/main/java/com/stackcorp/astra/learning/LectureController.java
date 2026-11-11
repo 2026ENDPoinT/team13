@@ -161,7 +161,8 @@ class LectureController {
 		}
 		Long[] after = cursor(cursor);
 		List<LectureRow> rows = this.jdbc.sql("""
-				SELECT a.activity_id, w.week_no, a.sort_order, a.title, a.open_at, a.close_at, a.published_yn, a.row_version
+				SELECT a.activity_id, w.week_no, a.sort_order, a.title, a.description, a.open_at, a.close_at, a.published_yn,
+				       a.row_version
 				  FROM learning_activities a JOIN course_weeks w ON w.course_week_id = a.course_week_id
 				 WHERE a.course_id = :course AND a.activity_type = 'lecture_weeks' AND a.deleted_at IS NULL
 				   AND (:week IS NULL OR (w.week_no, a.sort_order, a.activity_id) > (:week, :order, :activity))
@@ -173,9 +174,9 @@ class LectureController {
 			.param("order", after[1])
 			.param("activity", after[2])
 			.param("limit", size + 1)
-			.query((rs, n) -> new LectureRow(rs.getLong(1), rs.getInt(2), rs.getInt(3), rs.getString(4),
-					rs.getObject(5, LocalDateTime.class), rs.getObject(6, LocalDateTime.class), rs.getBoolean(7),
-					rs.getInt(8)))
+			.query((rs, n) -> new LectureRow(rs.getLong(1), rs.getInt(2), rs.getInt(3), rs.getString(4), rs.getString(5),
+					rs.getObject(6, LocalDateTime.class), rs.getObject(7, LocalDateTime.class), rs.getBoolean(8),
+					rs.getInt(9)))
 			.list();
 		List<LectureRow> page = rows.size() > size ? rows.subList(0, size) : rows;
 		Map<Long, List<LectureItem>> items = items(page.stream().map(LectureRow::activityId).toList());
@@ -187,8 +188,8 @@ class LectureController {
 		return ResponseEntity.ok()
 			.cacheControl(CacheControl.noStore())
 			.body(new LecturePage(page.stream()
-				.map((r) -> new LectureView(r.activityId(), r.weekNo(), r.title(), r.openAt(), r.closeAt(), r.published(),
-						items.getOrDefault(r.activityId(), List.of()), r.version()))
+				.map((r) -> new LectureView(r.activityId(), r.weekNo(), r.title(), r.description(), r.openAt(),
+						r.closeAt(), r.published(), items.getOrDefault(r.activityId(), List.of()), r.version()))
 				.toList(), next));
 	}
 
@@ -224,14 +225,14 @@ class LectureController {
 
 	private LectureView view(long activityId) {
 		return this.jdbc.sql("""
-				SELECT a.activity_id, w.week_no, a.title, a.open_at, a.close_at, a.published_yn, a.row_version
+				SELECT a.activity_id, w.week_no, a.title, a.description, a.open_at, a.close_at, a.published_yn, a.row_version
 				  FROM learning_activities a JOIN course_weeks w ON w.course_week_id = a.course_week_id
 				 WHERE a.activity_id = :activity AND a.deleted_at IS NULL
 				""")
 			.param("activity", activityId)
-			.query((rs, n) -> new LectureView(rs.getLong(1), rs.getInt(2), rs.getString(3),
-					rs.getObject(4, LocalDateTime.class), rs.getObject(5, LocalDateTime.class), rs.getBoolean(6),
-					LearningController.lectureItems(this.jdbc, activityId), rs.getInt(7)))
+			.query((rs, n) -> new LectureView(rs.getLong(1), rs.getInt(2), rs.getString(3), rs.getString(4),
+					rs.getObject(5, LocalDateTime.class), rs.getObject(6, LocalDateTime.class), rs.getBoolean(7),
+					LearningController.lectureItems(this.jdbc, activityId), rs.getInt(8)))
 			.single();
 	}
 
@@ -342,18 +343,19 @@ class LectureController {
 	}
 
 	/**
+	 * @param description 저장한 설명(일반 텍스트). 없으면 null. 수정할 때 그대로 보내지 않으면 지워진다
 	 * @param version 수정·삭제할 때 If-Match로 보내는 값
 	 */
-	record LectureView(long activityId, int weekNo, String title, LocalDateTime openAt, LocalDateTime closeAt,
-			boolean published, List<LectureItem> items, int version) {
+	record LectureView(long activityId, int weekNo, String title, String description, LocalDateTime openAt,
+			LocalDateTime closeAt, boolean published, List<LectureItem> items, int version) {
 	}
 
 	/** @param nextCursor 다음 쪽이 있으면 그 cursor, 없으면 null */
 	record LecturePage(List<LectureView> items, String nextCursor) {
 	}
 
-	private record LectureRow(long activityId, int weekNo, int sortOrder, String title, LocalDateTime openAt,
-			LocalDateTime closeAt, boolean published, int version) {
+	private record LectureRow(long activityId, int weekNo, int sortOrder, String title, String description,
+			LocalDateTime openAt, LocalDateTime closeAt, boolean published, int version) {
 	}
 
 }

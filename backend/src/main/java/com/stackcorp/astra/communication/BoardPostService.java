@@ -390,11 +390,12 @@ class BoardPostService {
 	/**
 	 * 글 상세. 요청한 사람이 할 수 있는 일(canEdit 등)을 함께 준다.
 	 * @param attachments 내려받기는 {@code GET /api/courses/{courseId}/files/{fileId}/content}
+	 * @param edited 작성 뒤 고친 적이 있으면 true(version이 1보다 크다). updatedAt은 조회수·추천 같은 집계가 바뀌어도 움직일 수 있다
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	record PostView(long postId, String title, String body, String authorName, boolean mine, Boolean anonymous,
 			Boolean secret, Boolean solved, Boolean faq, int viewCount, int likeCount, Integer answerCount,
-			Integer commentCount, List<AttachedFile> attachments, int version, LocalDateTime createdAt,
+			Integer commentCount, List<AttachedFile> attachments, int version, boolean edited, LocalDateTime createdAt,
 			LocalDateTime updatedAt, boolean read, boolean liked, boolean canEdit, boolean canDelete,
 			Boolean canSetSolved, Boolean canSetFaq) {
 
@@ -405,7 +406,8 @@ class BoardPostService {
 			return new PostView(row.postId(), row.title(), row.body(), authorName, mine, qna ? row.anonymous() : null,
 					qna ? row.secret() : null, qna ? row.solved() : null, qna ? row.faq() : null, row.viewCount(),
 					row.likeCount(), qna ? row.answerCount() : null, kind.comments ? row.commentCount() : null, files,
-					row.version(), row.createdAt(), row.updatedAt(), row.read(), row.liked(), mine && open,
+					row.version(), row.version() > 1, row.createdAt(), row.updatedAt(), row.read(), row.liked(),
+					mine && open,
 					viewer.manager() || (mine && open), qna ? mine || viewer.manager() : null,
 					qna ? viewer.manager() : null);
 		}

@@ -1,6 +1,7 @@
 package com.stackcorp.astra.learning;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -59,6 +60,10 @@ class LectureListApiTests extends IntegrationTest {
 		this.third = lecture(3, false);
 		this.first = lecture(1, true);
 		this.second = lecture(2, true);
+		this.jdbc.sql("UPDATE learning_activities SET description = :d WHERE activity_id = :a")
+			.param("d", "1주차 안내\n둘째 줄")
+			.param("a", this.first)
+			.update();
 		item(this.first, 1, "vod/ready-" + UUID.randomUUID().toString().substring(0, 8) + "/main.m3u8", "ready");
 		item(this.first, 2, null, "processing");
 		item(this.second, 1, null, "failed");
@@ -80,6 +85,9 @@ class LectureListApiTests extends IntegrationTest {
 			.andExpect(header().string("Cache-Control", "no-store"))
 			.andExpect(jsonPath("$.items.length()").value(2))
 			.andExpect(jsonPath("$.items[0].activityId").value(this.first))
+			// 수정(PUT)이 빠진 설명을 지우므로 목록에도 상세와 같은 설명이 있다. 없으면 null이다.
+			.andExpect(jsonPath("$.items[0].description").value("1주차 안내\n둘째 줄"))
+			.andExpect(jsonPath("$.items[1].description").value(nullValue()))
 			.andExpect(jsonPath("$.items[0].items.length()").value(2))
 			.andExpect(jsonPath("$.items[0].items[0].state").value("ready"))
 			.andExpect(jsonPath("$.items[0].items[1].state").value("processing"))

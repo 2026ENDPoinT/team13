@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -71,7 +72,11 @@ class CourseRosterApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.items[0].kind").value("REGISTRAR")));
 		// 화면이 보이는 항목만 담는다. 학과, 학년, 연락처는 없다.
 		assertThat(page.get("items").get(0).properties().stream().map(Map.Entry::getKey).toList())
-			.containsExactlyInAnyOrder("studentId", "name", "studentNumber", "kind", "role");
+			.containsExactlyInAnyOrder("studentId", "name", "studentNumber", "kind", "role", "lastAccessAt",
+					"progressPercent");
+		// 학습을 시작하지 않았고 영상 콘텐츠가 없는 과목이다.
+		assertThat(page.get("items").get(0).get("lastAccessAt").isNull()).isTrue();
+		assertThat(page.get("items").get(0).get("progressPercent").isNull()).isTrue();
 
 		professor.get(path + "?sort=studentNumber&order=desc")
 			.andExpect(jsonPath("$.items[*].studentId").value(contains((int) kim, (int) park, (int) lee)));
@@ -114,6 +119,50 @@ class CourseRosterApiTests extends IntegrationTest {
 
 		this.jdbc.sql("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :c").param("c", course).update();
 		client(prof).get(path).andExpect(status().isNotFound());
+	}
+
+	@Test
+	void rosterShowsLastLearningAndProgressOverLecturesOpenToStudents() throws Exception {
+		long course = this.data.course();
+		long prof = this.data.user("PROFESSOR");
+		this.data.instructor(course, prof);
+		long active = person("가학습", "2026" + UUID.randomUUID().toString().substring(0, 6));
+		long idle = person("나미학습", "2026" + UUID.randomUUID().toString().substring(0, 6));
+		this.data.enroll(course, active);
+		this.data.enroll(course, idle);
+		long open = this.data.activity(course, "lecture_weeks", true, null, null);
+		long watched = item(open, 1);
+		item(open, 2);
+		long hidden = item(this.data.activity(course, "lecture_weeks", false, null, null), 1);
+		long later = item(this.data.activity(course, "lecture_weeks", true, "2999-01-01 00:00:00", null), 1);
+		// 열린 콘텐츠 둘 가운데 하나를 채웠다. 닫힌 콘텐츠의 충족은 비율에 넣지 않는다.
+		for (long met : new long[] { watched, hidden, later }) {
+			this.jdbc.sql("""
+					INSERT INTO online_lecture_item_progress (user_id, online_lecture_item_id, credited_in_sec, met_at)
+					VALUES (:u, :i, 60, '2026-11-01 09:00:00')
+					""").param("u", active).param("i", met).update();
+		}
+		this.jdbc.sql("""
+				INSERT INTO course_continue_pointers (user_id, course_id, activity_id, menu_code, recorded_at)
+				VALUES (:u, :c, :a, 'lecture_weeks', '2026-11-01 08:59:00.250')
+				""").param("u", active).param("c", course).param("a", open).update();
+
+		JsonNode items = ApiClient.json(client(prof).get("/api/courses/" + course + "/students")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.items[*].studentId").value(contains((int) active, (int) idle)))).get("items");
+		assertThat(LocalDateTime.parse(items.get(0).get("lastAccessAt").asString()))
+			.isEqualTo(LocalDateTime.of(2026, 11, 1, 8, 59, 0, 250_000_000));
+		assertThat(items.get(0).get("progressPercent").asInt()).isEqualTo(50);
+		assertThat(items.get(1).get("lastAccessAt").isNull()).isTrue();
+		assertThat(items.get(1).get("progressPercent").asInt()).isZero();
+	}
+
+	private long item(long activityId, int linkSeq) {
+		return this.data.insert("""
+				INSERT INTO online_lecture_items (activity_id, link_seq, title, content_kind, content_path, duration_sec, required_sec)
+				VALUES (:a, :seq, '강의', 'video', :path, 300, 60)
+				""", Map.of("a", activityId, "seq", linkSeq, "path",
+				"vod/lecture-" + UUID.randomUUID().toString().substring(0, 8) + "/main.m3u8"));
 	}
 
 	private ApiClient client(long userId) {

@@ -119,7 +119,13 @@ class AvatarImageApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.avatar.type").value("color"))
 			.andExpect(jsonPath("$.avatar.photo.state").value("processing"))
 			.andExpect(jsonPath("$.avatar.photo.url").doesNotExist());
-		this.owner.get(avatar(this.me)).andExpect(status().isNotFound());
+		// 첫 사진이 처리 중이면 볼 수 있는 사람의 404에만 Retry-After가 붙는다.
+		this.owner.get(avatar(this.me))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.code").value("not_found"))
+			.andExpect(header().string("Retry-After", "5"));
+		this.classmate.get(avatar(this.me)).andExpect(status().isNotFound()).andExpect(header().string("Retry-After", "5"));
+		this.outsider.get(avatar(this.me)).andExpect(status().isNotFound()).andExpect(header().doesNotExist("Retry-After"));
 
 		drain();
 
@@ -200,7 +206,7 @@ class AvatarImageApiTests extends IntegrationTest {
 		upload(this.owner, png(5000, 8, Color.GREEN)).andExpect(status().isAccepted());
 		drain();
 		this.owner.get("/api/me/profile").andExpect(jsonPath("$.avatar.photo.errorCode").value("too_large"));
-		this.owner.get(avatar(this.me)).andExpect(status().isNotFound());
+		this.owner.get(avatar(this.me)).andExpect(status().isNotFound()).andExpect(header().doesNotExist("Retry-After"));
 	}
 
 	@Test
@@ -242,6 +248,10 @@ class AvatarImageApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.avatar.type").value("image"))
 			.andExpect(jsonPath("$.avatar.photo.state").value("processing"))
 			.andExpect(jsonPath("$.avatar.photo.url").value(avatar(this.me)));
+		this.owner.get(avatar(this.me))
+			.andExpect(status().isOk())
+			.andExpect(header().string("ETag", etag))
+			.andExpect(header().doesNotExist("Retry-After"));
 		drain();
 		assertThat(this.owner.get(avatar(this.me)).andReturn().getResponse().getHeader("ETag")).isNotEqualTo(etag);
 		assertThat(exists(first)).isFalse();

@@ -26,7 +26,8 @@ class AccountProfiles {
 		this.jdbc = jdbc;
 	}
 
-	Profile find(long userId) {
+	/** @param registrarSyncAvailable 학사 동기화 명령을 시도할 수 있는지. 부르는 쪽이 판정한다 */
+	Profile find(long userId, boolean registrarSyncAvailable) {
 		Profile profile = this.jdbc.sql("""
 				SELECT u.user_id, u.user_name, u.user_role, u.department_name, u.grade, u.last_synced_at,
 				       c.phone_number, c.email_address, c.contact_source, c.synced_at,
@@ -45,7 +46,7 @@ class AccountProfiles {
 					rs.getString("short_name"), type == null ? 0 : rs.getInt("profile_version"), null);
 			return new Profile(rs.getLong("user_id"), rs.getString("user_name"), rs.getString("user_role"),
 					rs.getString("department_name"), rs.getObject("grade", Integer.class), contact, avatar,
-					rs.getObject("last_synced_at", LocalDateTime.class));
+					rs.getObject("last_synced_at", LocalDateTime.class), registrarSyncAvailable);
 		}).single();
 		Avatar avatar = profile.avatar();
 		Photo photo = this.jdbc.sql("""
@@ -62,7 +63,7 @@ class AccountProfiles {
 		}).optional().orElse(null);
 		return new Profile(profile.userId(), profile.name(), profile.role(), profile.departmentName(), profile.grade(),
 				profile.contact(), new Avatar(avatar.type(), avatar.color(), avatar.shortName(), avatar.version(), photo),
-				profile.lastSyncedAt());
+				profile.lastSyncedAt(), profile.registrarSyncAvailable());
 	}
 
 	/** 아바타 사진 경로. files가 권한을 판정해 내보낸다(ADR-0038). */
@@ -217,9 +218,11 @@ class AccountProfiles {
 	/**
 	 * @param departmentName 학과·소속(학사 원천)
 	 * @param lastSyncedAt 학사정보를 마지막으로 동기화한 시각
+	 * @param registrarSyncAvailable 학사 동기화({@code POST /api/me/profile/sync})를 시도할 수 있는지. 학사시스템 연동이 없거나
+	 * break-glass 계정이면 false
 	 */
 	record Profile(long userId, String name, String role, String departmentName, Integer grade, Contact contact,
-			Avatar avatar, LocalDateTime lastSyncedAt) {
+			Avatar avatar, LocalDateTime lastSyncedAt, boolean registrarSyncAvailable) {
 	}
 
 	/**

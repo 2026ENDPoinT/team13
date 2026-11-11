@@ -112,16 +112,20 @@ class CatalogQueries {
 	}
 
 	/**
-	 * 폐강하지 않은 비정규 과정이 하나라도 있는 과목분류. 과목분류 표시명은 과정마다 저장한 이름 가운데 하나이고 없으면 null이다.
+	 * 폐강하지 않은 비정규 과정이 하나라도 있는 과목분류. 과목분류 표시명은 과정마다 저장한 이름 가운데 하나이고, 저장한 이름이 없거나 비어
+	 * 있으면 코드를 표시명으로 쓴다. 이름이 있는 분류가 앞이다.
 	 * @param division 비정규 분류 B|C|K. 없으면 모든 분류
 	 */
 	List<Category> categories(String division) {
-		return this.jdbc.sql("SELECT o.category_code, MAX(o.category_name) AS label"
+		return this.jdbc.sql("SELECT o.category_code, MAX(NULLIF(TRIM(o.category_name), '')) AS label"
 				+ " FROM non_regular_offerings o JOIN courses c ON c.course_id = o.course_id" + OFFERING_SCOPE
 				+ " AND o.category_code IS NOT NULL" + (division == null ? "" : " AND o.nonregular_category = :division")
 				+ " GROUP BY o.category_code ORDER BY label IS NULL, label, o.category_code")
 			.param("division", division)
-			.query((rs, n) -> new Category(rs.getString(1), rs.getString(2)))
+			.query((rs, n) -> {
+				String label = rs.getString(2);
+				return new Category(rs.getString(1), label != null ? label : rs.getString(1));
+			})
 			.list();
 	}
 
@@ -332,7 +336,7 @@ class CatalogQueries {
 	}
 
 	/**
-	 * @param name 과목분류 표시명(SCH_CATEGORY 옵션 문구). 저장하지 않았으면 null
+	 * @param name 과목분류 표시명(SCH_CATEGORY 옵션 문구). 저장하지 않았으면 코드와 같다
 	 */
 	record Category(String code, String name) {
 	}

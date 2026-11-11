@@ -170,10 +170,11 @@ class FileboxController {
 	}
 
 	/**
-	 * 파일함 파일로 과목 업로드를 만든다(EP-0126). 201. 만든 업로드는 clean이고, 부모 저장의 첨부(uploadIds, attachments.add)로
-	 * 보낸다. Idempotency-Key 지원. 거부는 다른 사람의 것을 드러내지 않는 범위에서 구분한다.
+	 * 파일함 파일로 업로드를 만든다(EP-0126). 201. 만든 업로드는 clean이고, 부모 저장의 첨부(uploadIds, attachments.add)로
+	 * 보낸다. 과목 밖 용도(community_notice, community_material, inquiry_attachment, message_attachment)는 일반 업로드처럼 courseId
+	 * 없이 보낸다. Idempotency-Key 지원. 거부는 다른 사람의 것을 드러내지 않는 범위에서 구분한다.
 	 * <ul>
-	 * <li>내 항목이 아니거나 없는 항목, 구성원이 아닌 과목: 404</li>
+	 * <li>내 항목이 아니거나 없는 항목, 구성원이 아닌 과목, 올릴 수 없는 과목 밖 용도: 404</li>
 	 * <li>구성원인 과목이지만 내 역할로 그 용도에 올릴 수 없음: 400 {@code purpose_not_allowed}</li>
 	 * <li>내 항목이 휴지통에 있음: 409 {@code not_active}, 폴더임: 409 {@code folder_not_allowed}</li>
 	 * </ul>
@@ -181,7 +182,7 @@ class FileboxController {
 	@PostMapping("/api/uploads/from-filebox")
 	ResponseEntity<ReuseReceipt> fromFilebox(@AuthenticationPrincipal Actor actor, @RequestBody FromFilebox body,
 			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
-		if (body.courseId() == null || body.courseId() < 1) {
+		if (body.courseId() != null && body.courseId() < 1) {
 			throw ApiException.invalid("courseId가 올바르지 않습니다.");
 		}
 		if (body.purpose() == null || body.purpose().isBlank()) {
@@ -247,6 +248,7 @@ class FileboxController {
 	record Ids(List<Long> ids) {
 	}
 
+	/** @param courseId 과목 용도면 그 과목. 과목 밖 용도면 생략(null) */
 	record FromFilebox(List<Long> itemIds, Long courseId, String purpose) {
 	}
 

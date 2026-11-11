@@ -1,9 +1,9 @@
 package com.stackcorp.astra.communication;
 
-import com.stackcorp.astra.communication.BoardPostService.ReadState;
 import com.stackcorp.astra.communication.CommunityNoticeService.NoticePage;
 import com.stackcorp.astra.communication.CommunityNoticeService.NoticeRequest;
 import com.stackcorp.astra.communication.CommunityNoticeService.NoticeView;
+import com.stackcorp.astra.communication.CommunityNoticeService.ReadState;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.idempotency.Idempotency;
 

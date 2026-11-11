@@ -21,7 +21,11 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
 	@ExceptionHandler(ApiException.class)
 	ResponseEntity<ProblemDetail> api(ApiException ex) {
-		return problem(ex.status(), ex.code(), ex.getMessage()).build();
+		Builder problem = problem(ex.status(), ex.code(), ex.getMessage());
+		if (ex.retryAfter() != null) {
+			problem.header(HttpHeaders.RETRY_AFTER, Long.toString(Math.max(1, ex.retryAfter().toSeconds())));
+		}
+		return problem.build();
 	}
 
 	@ExceptionHandler(RateLimitedException.class)

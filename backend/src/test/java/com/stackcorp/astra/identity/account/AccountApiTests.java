@@ -12,10 +12,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -25,7 +27,10 @@ import org.springframework.test.web.servlet.ResultActions;
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
+import com.stackcorp.astra.identity.api.Actor;
+import com.stackcorp.astra.identity.api.RegistrarDirectory;
 import com.stackcorp.astra.identity.api.RegistrarDirectory.RegistrarRecord;
+import com.stackcorp.astra.identity.api.UserRole;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
 
@@ -90,7 +95,8 @@ class AccountApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.contact.source").value("academic"))
 			.andExpect(jsonPath("$.contact.editable").value(false))
 			.andExpect(jsonPath("$.avatar.type").value("color"))
-			.andExpect(jsonPath("$.avatar.version").value(0));
+			.andExpect(jsonPath("$.avatar.version").value(0))
+			.andExpect(jsonPath("$.registrarSyncAvailable").value(false));
 		this.otherClient.get("/api/me/profile")
 			.andExpect(jsonPath("$.userId").value(this.other))
 			.andExpect(jsonPath("$.contact.phone").doesNotExist());
@@ -116,6 +122,21 @@ class AccountApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.avatar.color").value("cobalt"))
 			.andExpect(jsonPath("$.avatar.version").value(1));
 		this.otherClient.get("/api/me/profile").andExpect(jsonPath("$.avatar.version").value(0));
+	}
+
+	/** 내정보의 registrarSyncAvailable은 동기화 명령이 요청 전에 거절하는 조건(port 없음, break-glass)과 같다. */
+	@Test
+	void registrarSyncAvailabilityMirrorsTheSyncCommandGuards() throws Exception {
+		// 이 test context에는 학사시스템 port가 없다.
+		this.client.get("/api/me/profile").andExpect(jsonPath("$.registrarSyncAvailable").value(false));
+		DefaultListableBeanFactory beans = new DefaultListableBeanFactory();
+		beans.registerSingleton("registrar", (RegistrarDirectory) (externalRef) -> Optional.empty());
+		ProfileController configured = new ProfileController(this.profiles, null, null, null,
+				beans.getBeanProvider(RegistrarDirectory.class));
+		assertThat(configured.profile(new Actor(this.me, "나", UserRole.STUDENT, false, 0)).getBody()
+			.registrarSyncAvailable()).isTrue();
+		assertThat(configured.profile(new Actor(this.me, "나", UserRole.STUDENT, true, 0)).getBody()
+			.registrarSyncAvailable()).isFalse();
 	}
 
 	@Test

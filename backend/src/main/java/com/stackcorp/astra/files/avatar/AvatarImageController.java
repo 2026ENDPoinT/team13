@@ -19,7 +19,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.stackcorp.astra.files.avatar.AvatarImages.Photo;
 import com.stackcorp.astra.identity.api.Actor;
-import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
 
@@ -60,12 +59,13 @@ class AvatarImageController {
 
 	/**
 	 * 사진 보기(EP-0277의 이미지 경로). 본인과, 폐강하지 않은 과목을 함께 듣거나 가르치는 사람만 본다. 그 밖과 사진이 없는 사람은 같은
-	 * 404다. 서버가 다시 만든 JPEG만 inline으로 보내고, 브라우저 안에서만 ETag로 다시 확인하며 캐시한다.
+	 * 404다. 볼 수 있는 사람의 첫 사진이 아직 처리 중이면 같은 404에 {@code Retry-After: 5}를 붙인다. 사진을 바꾸는 중이면 앞 사진을
+	 * 그대로 보낸다. 서버가 다시 만든 JPEG만 inline으로 보내고, 브라우저 안에서만 ETag로 다시 확인하며 캐시한다.
 	 */
 	@GetMapping("/api/users/{userId}/avatar")
 	ResponseEntity<byte[]> avatar(@AuthenticationPrincipal Actor actor, @PathVariable long userId,
 			@RequestHeader(name = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-		Photo photo = this.images.visible(actor.userId(), userId).orElseThrow(ApiException::notFound);
+		Photo photo = this.images.visible(actor.userId(), userId);
 		String etag = "\"" + photo.current().sha256() + "\"";
 		if (ifNoneMatch != null && (ifNoneMatch.contains(etag) || ifNoneMatch.contains("W/" + etag))) {
 			return ResponseEntity.status(HttpStatus.NOT_MODIFIED)

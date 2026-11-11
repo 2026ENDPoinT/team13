@@ -204,12 +204,24 @@ class CatalogBrowseTests extends IntegrationTest {
 		this.fixtures.update("UPDATE non_regular_offerings SET nonregular_category = 'C', category_code = '" + gone
 				+ "' WHERE course_id = :c", cancelled);
 		this.fixtures.update("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :c", cancelled);
+		// 학사 동기화가 없어 이름을 저장하지 않은 분류와 빈 이름의 분류는 코드를 표시명으로 쓴다.
+		String unnamed = "T" + UUID.randomUUID().toString().substring(0, 8);
+		long bare = this.fixtures.openOffering("이름 없는 분류 과정", "AUTO", null);
+		this.fixtures.update("UPDATE non_regular_offerings SET nonregular_category = 'C', category_code = '" + unnamed
+				+ "', category_name = NULL WHERE course_id = :c", bare);
+		String blank = "T" + UUID.randomUUID().toString().substring(0, 8);
+		long spaces = this.fixtures.openOffering("빈 이름 분류 과정", "AUTO", null);
+		this.fixtures.update("UPDATE non_regular_offerings SET nonregular_category = 'C', category_code = '" + blank
+				+ "', category_name = '  ' WHERE course_id = :c", spaces);
 		ApiClient student = client(this.data.user("STUDENT"));
 
 		student.get("/api/catalog/filters?division=C")
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.categories[?(@.code == '%s')].name", live).value("건설시스템공학과"))
-			.andExpect(jsonPath("$.categories[?(@.code == '%s')]", gone).isEmpty());
+			.andExpect(jsonPath("$.categories[?(@.code == '%s')]", gone).isEmpty())
+			.andExpect(jsonPath("$.categories[?(@.code == '%s')].name", unnamed).value(unnamed))
+			.andExpect(jsonPath("$.categories[?(@.code == '%s')].name", blank).value(blank))
+			.andExpect(jsonPath("$.categories[?(@.name == null)]").isEmpty());
 		student.get("/api/catalog/filters")
 			.andExpect(jsonPath("$.categories[?(@.code == '%s')]", live).isNotEmpty());
 		student.get("/api/catalog/filters?division=K")
