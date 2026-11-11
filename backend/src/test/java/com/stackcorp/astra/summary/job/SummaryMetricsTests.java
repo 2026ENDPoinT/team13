@@ -22,8 +22,8 @@ import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Timer;
 
 /**
- * 요약 작업 대기열, 작업 결과, 모델 호출의 지표(architecture.md 9절, SC-09, ADR-0034). 모델 호출은 모델 이름별로 수, 시간, token만
- * 센다.
+ * 요약 작업 대기열, 작업 결과, 모델 호출의 지표(architecture.md 9절, SC-09, ADR-0034). 모델 호출은 모델 이름과 쓰임
+ * (kind=page_summary)별로 수, 시간, token만 센다.
  */
 class SummaryMetricsTests extends IntegrationTest {
 
@@ -89,7 +89,7 @@ class SummaryMetricsTests extends IntegrationTest {
 		assertThat(gauge("queued")).isEqualTo(queued);
 		assertThat(this.meters.find("astra.llm.calls").timers()).allSatisfy((t) -> assertThat(t.getId().getTags())
 			.extracting(Tag::getKey)
-			.containsExactlyInAnyOrder("model", "outcome", "role"));
+			.containsExactlyInAnyOrder("model", "kind", "outcome", "role"));
 	}
 
 	@Test
@@ -118,12 +118,20 @@ class SummaryMetricsTests extends IntegrationTest {
 	}
 
 	private double calls(String outcome) {
-		Timer timer = this.meters.find("astra.llm.calls").tag("model", "fake-model").tag("outcome", outcome).timer();
+		Timer timer = this.meters.find("astra.llm.calls")
+			.tag("model", "fake-model")
+			.tag("kind", "page_summary")
+			.tag("outcome", outcome)
+			.timer();
 		return timer == null ? 0 : timer.count();
 	}
 
 	private double tokens(String type) {
-		Counter counter = this.meters.find("astra.llm.tokens").tag("model", "fake-model").tag("type", type).counter();
+		Counter counter = this.meters.find("astra.llm.tokens")
+			.tag("model", "fake-model")
+			.tag("kind", "page_summary")
+			.tag("type", type)
+			.counter();
 		return counter == null ? 0 : counter.count();
 	}
 

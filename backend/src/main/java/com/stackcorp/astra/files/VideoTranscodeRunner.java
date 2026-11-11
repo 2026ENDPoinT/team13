@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -28,6 +29,12 @@ import com.stackcorp.astra.files.api.VideoTranscoder.VideoSource;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
 import com.stackcorp.astra.shared.audit.AuditLog;
+import com.stackcorp.astra.shared.metrics.MetricTags;
+import com.stackcorp.astra.shared.schedule.SchedulerLock;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +61,18 @@ import org.springframework.transaction.support.TransactionTemplate;
  * transaction은 READ COMMITTED다. 교착이나 잠금 대기 초과는 정해진 횟수만큼 다시 하고, 끝내 기록하지 못하면 lease를 놓아 다음
  * 실행이나 다른 worker가 이어받게 한다. 잠금 순서는 video_transcode_jobs → video_assets이고, files는 잠그지 않고 읽는다.
  * 로그에는 ID, 개수, 코드만 남긴다. key와 영상 내용은 남기지 않는다(ADR-0007 9번).
+ * <p>
+ * 지표(architecture.md 9절, ADR-0034). tag 값은 결과와 원장의 오류 code뿐이다.
+ * <ul>
+ * <li>astra.files.video.transcodes{outcome, code}: 이 worker가 잡아 끝낸 실행 하나의 시간과 결과. outcome은 succeeded, retry(대기로
+ * 되돌림), failed, cancelled</li>
+ * <li>astra.files.video.transcodes.interrupted{outcome}: lease가 끝나 recoverExpired가 닫은 실행. outcome은 retry, failed,
+ * cancelled</li>
+ * </ul>
+ * 대기열 길이와 나이는 {@link FilesBacklog}가 낸다.
+ * <p>
+ * 원본이 지워진 asset 거두기는 {@link SchedulerLock}으로 묶는다(ADR-0034). 후보를 잠그지 않고 읽고 asset마다 transaction을 열므로,
+ * 두 worker가 함께 돌면 같은 asset마다 잠금과 0행 UPDATE를 한 번 더 한다. 작업 poll과 lease 만료 처리는 SKIP LOCKED라 묶지 않는다.
  */
 @Component
 @Profile("worker")
@@ -64,6 +83,10 @@ class VideoTranscodeRunner implements AutoCloseable {
 	private static final int BATCH = 50;
 
 	private static final int ATTEMPTS = 3;
+
+	private static final String WITHDRAW_LOCK = "files.video_withdraw";
+
+	private static final Duration WITHDRAW_LOCK_AT_MOST = Duration.ofMinutes(10);
 
 	private final VideoAssetRecords records;
 
@@ -85,12 +108,16 @@ class VideoTranscodeRunner implements AutoCloseable {
 
 	private final String owner;
 
+	private final SchedulerLock lock;
+
+	private final MeterRegistry meters;
+
 	private final ScheduledExecutorService leaseRenewer = Executors
 		.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("transcode-lease").factory());
 
 	VideoTranscodeRunner(VideoAssetRecords records, FileRecords files, ObjectStore store, VideoKeyStore keys,
 			VideoTranscoder transcoder, List<VideoAssetListener> listeners, PlatformTransactionManager transactionManager,
-			AuditLog audit, VideoWorkerProperties properties) {
+			AuditLog audit, VideoWorkerProperties properties, SchedulerLock lock, MeterRegistry meters) {
 		this.records = records;
 		this.files = files;
 		this.store = store;
@@ -102,12 +129,14 @@ class VideoTranscodeRunner implements AutoCloseable {
 		this.audit = audit;
 		this.properties = properties;
 		this.owner = properties.workerId() != null ? properties.workerId() : defaultOwner();
+		this.lock = lock;
+		this.meters = meters;
 	}
 
 	@Scheduled(fixedDelayString = "${astra.transcoder.worker.poll-interval:10s}",
 			initialDelayString = "${astra.transcoder.worker.poll-interval:10s}")
 	void poll() {
-		withdrawRemovedFiles();
+		this.lock.runExclusively(WITHDRAW_LOCK, WITHDRAW_LOCK_AT_MOST, this::withdrawRemovedFiles);
 		while (runOnce()) {
 			// 대기 작업이 없을 때까지 이어서 실행한다.
 		}
@@ -115,24 +144,34 @@ class VideoTranscodeRunner implements AutoCloseable {
 
 	@Scheduled(fixedDelayString = "${astra.transcoder.worker.lease-renewal:1m}")
 	void recoverExpired() {
-		List<Expired> expired = inTransaction((tx) -> {
-			List<Expired> rows = this.records.lockExpired(BATCH);
-			for (Expired row : rows) {
+		List<String> outcomes = inTransaction((tx) -> {
+			List<String> closed = new ArrayList<>();
+			for (Expired row : this.records.lockExpired(BATCH)) {
 				if (row.cancelRequested()) {
 					this.records.closeExpired(row.jobId(), "cancelled", Duration.ZERO);
+					closed.add("cancelled");
 				}
 				else if (row.attempts() < this.properties.maxAttempts()) {
 					this.records.closeExpired(row.jobId(), "queued", this.properties.backoff(row.attempts()));
+					closed.add("retry");
 				}
 				else {
 					this.records.closeExpired(row.jobId(), "failed", Duration.ZERO);
 					assetFailed(row.assetId());
+					closed.add("failed");
 				}
 			}
-			return rows;
+			return closed;
 		});
-		if (!expired.isEmpty()) {
-			log.warn("transcode jobs interrupted by expired lease count={}", expired.size());
+		for (String outcome : outcomes) {
+			Counter.builder("astra.files.video.transcodes.interrupted")
+				.description("lease가 끝나 닫은 영상 변환 실행")
+				.tag("outcome", outcome)
+				.register(this.meters)
+				.increment();
+		}
+		if (!outcomes.isEmpty()) {
+			log.warn("transcode jobs interrupted by expired lease count={}", outcomes.size());
 		}
 	}
 
@@ -200,21 +239,30 @@ class VideoTranscodeRunner implements AutoCloseable {
 			return false;
 		}
 		Claimed job = claimed.get();
+		Timer.Sample sample = Timer.start(this.meters);
+		Outcome outcome = process(job, transcoder);
+		sample.stop(Timer.builder("astra.files.video.transcodes")
+			.description("영상 변환 실행 하나의 시간과 결과")
+			.tag("outcome", outcome.outcome())
+			.tag("code", MetricTags.code(outcome.code()))
+			.register(this.meters));
+		return true;
+	}
+
+	private Outcome process(Claimed job, VideoTranscoder transcoder) {
 		Optional<FileRow> file = this.files.find(job.fileId());
 		if (file.isEmpty() || "infected".equals(file.get().scanState())) {
 			// 원본이 지워졌거나 거부됐다. asset은 withdrawRemovedFiles가 거둔다.
 			closeQuietly(job, "cancelled", null);
-			return true;
+			return Outcome.CANCELLED;
 		}
 		Optional<String> container = VideoAssetService.container(file.get().detectedMimeType());
 		if (container.isEmpty()) {
-			failed(job, "invalid_media", false);
-			return true;
+			return failed(job, "invalid_media", false);
 		}
 		if (!file.get().transcodable()) {
 			// 같은 내용을 다른 용도로 검사하는 중이다(ADR-0016 12번). 판정을 기다린다.
-			failed(job, "not_ready", true);
-			return true;
+			return failed(job, "not_ready", true);
 		}
 		AtomicBoolean leaseLost = new AtomicBoolean();
 		long renewal = this.properties.leaseRenewal().toMillis();
@@ -229,13 +277,12 @@ class VideoTranscodeRunner implements AutoCloseable {
 			}
 		}, renewal, renewal, TimeUnit.MILLISECONDS);
 		try {
-			execute(job, file.get(), container.get(), transcoder,
+			return execute(job, file.get(), container.get(), transcoder,
 					() -> leaseLost.get() || this.records.cancelRequested(job.jobId()));
 		}
 		finally {
 			renewer.cancel(false);
 		}
-		return true;
 	}
 
 	@Override
@@ -243,7 +290,7 @@ class VideoTranscodeRunner implements AutoCloseable {
 		this.leaseRenewer.shutdownNow();
 	}
 
-	private void execute(Claimed job, FileRow file, String container, VideoTranscoder transcoder,
+	private Outcome execute(Claimed job, FileRow file, String container, VideoTranscoder transcoder,
 			BooleanSupplier cancelled) {
 		long started = System.nanoTime();
 		byte[] key = null;
@@ -277,26 +324,26 @@ class VideoTranscodeRunner implements AutoCloseable {
 				discardOutput(job);
 				closeQuietly(job, "cancelled", null);
 				log.info("transcode job cancelled before publish jobId={}", job.jobId());
-				return;
+				return Outcome.CANCELLED;
 			}
 			log.info("transcode job succeeded jobId={} assetId={} segments={} durationSec={} elapsedMs={}", job.jobId(),
 					job.assetId(), transcoded.segmentCount(), published.durationSec(),
 					(System.nanoTime() - started) / 1_000_000);
+			return Outcome.SUCCEEDED;
 		}
 		catch (TranscodeException ex) {
 			discardOutput(job);
 			if (ex.code() == Code.CANCELLED) {
 				closeQuietly(job, "cancelled", null);
 				log.info("transcode job cancelled jobId={}", job.jobId());
+				return Outcome.CANCELLED;
 			}
-			else {
-				failed(job, ex.code().value(), ex.code().retryable());
-			}
+			return failed(job, ex.code().value(), ex.code().retryable());
 		}
 		catch (RuntimeException ex) {
 			discardOutput(job);
 			log.error("transcode job failed jobId={} error={}", job.jobId(), ex.getClass().getName());
-			failed(job, "internal", true);
+			return failed(job, "internal", true);
 		}
 		finally {
 			if (key != null) {
@@ -318,7 +365,7 @@ class VideoTranscodeRunner implements AutoCloseable {
 		}
 	}
 
-	private void failed(Claimed job, String code, boolean retryable) {
+	private Outcome failed(Claimed job, String code, boolean retryable) {
 		if (retryable && job.attempt() < this.properties.maxAttempts()) {
 			Duration delay = this.properties.backoff(job.attempt());
 			try {
@@ -331,7 +378,7 @@ class VideoTranscodeRunner implements AutoCloseable {
 				// 기록하지 못했다. lease가 끝나면 recoverExpired가 이어받는다.
 				log.error("failed to requeue transcode job jobId={}", job.jobId(), ex);
 			}
-			return;
+			return new Outcome("retry", code);
 		}
 		try {
 			inTransaction((tx) -> {
@@ -346,6 +393,7 @@ class VideoTranscodeRunner implements AutoCloseable {
 			log.error("failed to close transcode job jobId={}", job.jobId(), ex);
 			releaseLease(job);
 		}
+		return new Outcome("failed", code);
 	}
 
 	private void closeQuietly(Claimed job, String state, String code) {
@@ -398,6 +446,15 @@ class VideoTranscodeRunner implements AutoCloseable {
 			host = "unknown";
 		}
 		return host + ":" + ProcessHandle.current().pid();
+	}
+
+	// 실행 하나의 결과. code는 원장의 error_code이고, 성공과 취소는 없다.
+	private record Outcome(String outcome, String code) {
+
+		static final Outcome SUCCEEDED = new Outcome("succeeded", null);
+
+		static final Outcome CANCELLED = new Outcome("cancelled", null);
+
 	}
 
 }

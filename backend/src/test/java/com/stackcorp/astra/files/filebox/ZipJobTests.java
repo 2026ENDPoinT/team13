@@ -45,6 +45,8 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import tools.jackson.databind.JsonNode;
@@ -84,6 +86,9 @@ class ZipJobTests extends IntegrationTest {
 
 	@Autowired
 	FileboxProperties properties;
+
+	@Autowired
+	MeterRegistry meters;
 
 	ApiClient owner;
 
@@ -242,7 +247,7 @@ class ZipJobTests extends IntegrationTest {
 			jobs.add(jobId(request(client, "w-" + item, item).andExpect(status().isAccepted())));
 		}
 		ZipJobWorker second = new ZipJobWorker(this.records, this.store, this.transactionManager, this.properties,
-				"test-worker-b");
+				"test-worker-b", this.meters);
 
 		List<Integer> attempted = concurrently(2, (i) -> (i == 0 ? this.worker : second).runOnce());
 

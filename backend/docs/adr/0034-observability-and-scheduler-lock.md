@@ -62,3 +62,16 @@
 - HTTP 요청 지표의 시계열 수는 경로 pattern × method × 상태 × code × 7개 구간이다. 사용자 수와 상관없지만 경로가 늘면 같이 는다. 비용이 문제가 되면 구간을 줄인다.
 - Spring Security도 filter chain과 인가 지표(`spring.security.*`)를 낸다. 사용자 이름은 들어가지 않아 그대로 둔다.
 - trace 표본 비율의 기준과 trace 저장소(X-Ray 또는 collector 뒤의 다른 저장소)는 내보내기를 켤 때 정한다.
+- 학습 대화, 영상, 문서 변환 대기열, 파일함 ZIP은 이 결정 뒤에 합쳐져 지표가 없었다. 같은 규칙으로 다음을 더했다. tag 값은 상태, 결과, 원장의 오류·사유 코드뿐이다.
+
+  | 지표 | 내용 |
+  |---|---|
+  | `astra.llm.calls{model, kind, outcome}`, `astra.llm.tokens{model, kind, type}` | 요약 작업의 계량 client(`summary.policy.MeteredLlmClient`)를 학습 대화도 쓴다. `kind`는 처리 범위(page_summary, study_chat)다 |
+  | `astra.studychat.exchanges{state}`, `astra.studychat.exchanges.oldest.age`, `astra.studychat.exchanges.finished{state, code}` | 학습 대화 질문 대기열과 끝난 질문 |
+  | `astra.files.rendition.jobs{state}`, `astra.files.rendition.jobs.oldest.age`, `astra.files.rendition.interrupted{outcome}` | 문서 변환 대기열과 lease가 끝나 되돌리거나 닫은 변환. 변환 결과는 이미 있던 `astra.files.rendition.conversions`로 본다 |
+  | `astra.files.video.jobs{state}`, `astra.files.video.jobs.oldest.age`, `astra.files.video.transcodes{outcome, code}`, `astra.files.video.transcodes.interrupted{outcome}` | 영상 변환 대기열, 실행 하나의 시간과 결과(succeeded, retry, failed, cancelled), lease가 끝나 닫은 실행 |
+  | `astra.files.zip.jobs{state}`, `astra.files.zip.jobs.oldest.age`, `astra.files.zip.builds{outcome, code}` | 파일함 ZIP 대기열과 만들기 결과(ready, retry, failed) |
+  | `astra.files.upload.stream.aborted` | worker가 취소한 끝나지 않은 multipart upload |
+
+  대기열의 oldest.age는 지금 실행할 수 있는 대기 작업만 센다. 다시 시도를 기다리는 작업이 나이를 부풀려 알람을 울리지 않게 하기 위해서다. 대기 수에는 든다.
+- 같은 기준으로 주기 작업 셋을 더 잠갔다. 학습 대화 정리(`summary.studychat_purge`)는 정리 후보를 잠그지 않고 읽고 대화마다 저장소 prefix를 지운다. 원본이 지워진 영상 거두기(`files.video_withdraw`)는 후보를 잠그지 않고 읽고 asset마다 잠금과 조건부 UPDATE를 한다. 남은 multipart upload 정리(`files.stream_upload_janitor`)는 저장소의 upload 목록을 읽고 하나씩 취소한다. 셋 다 겹치면 같은 대상을 두 번 다룬다. 작업 poll(학습 대화, 문서 변환, 영상 변환, ZIP)과 lease 만료 처리는 `SKIP LOCKED`나 조건부 UPDATE 한 문장이라 묶지 않았다. ZIP 만료 정리도 후보를 `SKIP LOCKED`로 고르므로 그대로 두었다. 다만 고른 transaction을 commit한 뒤 객체를 지우므로, 겹치면 같은 prefix 삭제가 한 번 더 갈 수 있다. 결과는 같다.

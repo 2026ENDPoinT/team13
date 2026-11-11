@@ -33,6 +33,7 @@ import com.stackcorp.astra.summary.pipeline.SummaryPipeline;
 import com.stackcorp.astra.summary.pipeline.TextRedactor;
 import com.stackcorp.astra.summary.pipeline.Usage;
 import com.stackcorp.astra.summary.policy.LlmGate;
+import com.stackcorp.astra.summary.policy.MeteredLlmClient;
 import com.stackcorp.astra.summary.policy.ProcessingScope;
 import com.stackcorp.astra.summary.policy.ReadCommitted;
 import com.stackcorp.astra.summary.policy.UsageLedger;
@@ -128,7 +129,8 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 			return false;
 		}
 		LlmClient configured = this.llm.getIfAvailable();
-		LlmClient client = configured != null ? new MeteredLlmClient(configured, this.meters) : null;
+		LlmClient client = configured != null
+				? new MeteredLlmClient(configured, this.meters, ProcessingScope.PAGE_SUMMARY) : null;
 		Optional<SummaryJob> claimed = this.jobs.claimNext(this.owner, this.properties.lease(),
 				client != null ? client.model() : null, SummaryPipeline.PROMPT_VERSION);
 		if (claimed.isEmpty()) {
