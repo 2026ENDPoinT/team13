@@ -147,6 +147,33 @@ java -Dloader.main=com.stackcorp.converter.ConverterServer -cp stack-eclass-back
   org.springframework.boot.loader.launch.PropertiesLauncher   # CONVERTER_PORT 기본 8090
 ```
 
+### 악성코드 검사 설정
+
+업로드는 같은 배포의 ClamAV daemon(clamd, compose 서비스 `clamav`)에 TCP `INSTREAM`으로 보내 검사한다([ADR-0018](docs/adr/0018-malware-scan-clamd.md)). 검사기를 설정하면 새 내용은 검사를 마칠 때까지 `quarantined`이고, `worker` 프로필의 검사 worker가 `clean` 또는 `rejected`로 바꾼다. 검사기에 닿지 못하면 `quarantined`로 두고 다시 시도한다. host를 비우면 형식 검사만 하고 시작할 때 경고를 남긴다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_SCAN_CLAMD_HOST` | 없음 | clamd host 이름이나 IP. 앱이 연결하는 검사기는 이 host와 port 하나다 |
+| `ASTRA_SCAN_CLAMD_PORT` | `3310` | clamd TCP port |
+| `ASTRA_SCAN_REQUIRED` | `false` | `true`면 검사기 없이 시작하지 않는다. 학교 자료를 받는 배포에서 켠다 |
+| `ASTRA_SCAN_CLAMD_CONNECT_TIMEOUT` · `ASTRA_SCAN_CLAMD_TIMEOUT` | `2s` · `120s` | 연결 제한 시간, 파일 하나의 전체 제한 시간 |
+| `ASTRA_SCAN_CLAMD_MAX_STREAM_BYTES` | `64MB` | 보내는 내용의 상한. clamd의 `StreamMaxLength`와 같게 둔다 |
+| `ASTRA_SCAN_CLAMD_CHUNK_SIZE` | `64KB` | `INSTREAM` chunk 크기 |
+| `ASTRA_SCAN_POLL_INTERVAL` · `ASTRA_SCAN_BATCH_SIZE` | `10s` · `20` | worker가 검사 대기 내용을 찾는 간격과 한 번에 검사하는 수 |
+| `ASTRA_SCAN_RETRY_BACKOFF` · `ASTRA_SCAN_MAX_RETRY_BACKOFF` | `30s` · `1h` | 검사기에 닿지 못했을 때 첫 재시도 간격과 상한. 시도마다 두 배로 늘린다 |
+| `ASTRA_SCAN_LEASE` | `10m` | 검사 하나의 lease. clamd 전체 제한 시간보다 길게 둔다 |
+
+clamd의 `StreamMaxLength`, `MaxFileSize`는 업로드 상한(50 MB)보다 크게, `MaxScanSize`는 그 이상으로 둔다. `StreamMaxLength`가 작으면 큰 파일은 검사되지 못하고 `quarantined`에 남는다.
+
+로컬에서 검사기를 붙여 실행하려면 clamd를 띄우고 host를 넣는다. 이미지가 처음 뜰 때 signature를 받느라 1분 남짓 연결을 받지 않는다. 그동안 올린 파일은 `quarantined`로 남았다가 다음 재시도에 검사된다.
+
+```sh
+docker run -d --name clamav -p 127.0.0.1:3310:3310 clamav/clamav:stable
+ASTRA_SCAN_CLAMD_HOST=127.0.0.1 ./gradlew bootTestRun
+```
+
+EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`가 된다. 테스트는 clamd 대신 테스트 소스의 `FakeClamd`(INSTREAM 형식을 구현한 가짜 서버)를 쓴다.
+
 ### 인증과 CDN 서명 설정
 
 학교 IdP 연결 전까지 로그인은 break-glass 계정 하나만 된다([ADR-0004](docs/adr/0004-sso-bff-session.md) 6번). 비밀번호 hash와 TOTP secret은 DB가 아니라 Secrets Manager에서 환경 변수로 넣는다. 셋 중 하나라도 없으면 로컬 로그인은 꺼진다. 운영자는 `users`에 같은 `external_ref`의 행을 먼저 만든다.
