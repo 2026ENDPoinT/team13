@@ -80,7 +80,7 @@ class LectureVideoController {
 		String contentPath = this.jdbc.sql("""
 				SELECT a.activity_id, a.course_id, a.published_yn, a.open_at, i.content_path
 				  FROM online_lecture_items i JOIN learning_activities a ON a.activity_id = i.activity_id
-				 WHERE i.online_lecture_item_id = :item AND a.course_id = :course
+				 WHERE i.online_lecture_item_id = :item AND a.course_id = :course AND a.deleted_at IS NULL
 				""")
 			.param("item", itemId)
 			.param("course", courseId)

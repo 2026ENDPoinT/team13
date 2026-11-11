@@ -8,6 +8,9 @@ import java.util.Optional;
  */
 public interface FileDerivatives {
 
+	/**
+	 * @throws IllegalStateException 파일이 없거나 삭제됐을 때. 삭제한 파일의 파생물은 다시 만들지 않는다(ADR-0011)
+	 */
 	void put(long fileId, String name, byte[] content, String contentType);
 
 	Optional<byte[]> get(long fileId, String name);

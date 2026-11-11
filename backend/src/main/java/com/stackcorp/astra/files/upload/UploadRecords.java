@@ -43,36 +43,58 @@ class UploadRecords {
 			.optional();
 	}
 
-	/** 같은 내용의 blob이 있으면 참조 수만 올린다. 지웠던 blob이면 다시 쓴다. */
-	Blob referenceBlob(String sha256, long size, String mime, String storageKey) {
-		try {
-			GeneratedKeyHolder key = new GeneratedKeyHolder();
-			this.jdbc.sql("""
-					INSERT INTO file_blobs (content_sha256, size_bytes, detected_mime_type, storage_key, blob_state, reference_count)
-					VALUES (:sha, :size, :mime, :key, 'clean', 1)
-					""")
-				.param("sha", sha256)
-				.param("size", size)
-				.param("mime", mime)
-				.param("key", storageKey)
-				.update(key, "file_blob_id");
-			return new Blob(key.getKey().longValue(), "clean", storageKey, false);
-		}
-		catch (DuplicateKeyException ex) {
-			Blob existing = blob(sha256).orElseThrow(() -> ex);
-			if (existing.purged()) {
+	/**
+	 * 같은 내용의 blob을 참조한다. 없으면 만들고, 있으면 참조 수만 올린다. blob 행을 잠근 뒤 판정하므로 GC가 지우기로 표시하는
+	 * 일(StorageGc)과 엇갈리지 않는다. GC가 지운 blob은 이번 요청이 새 key에 저장한 내용으로만 되살린다. GC가 아직 지우고 있을
+	 * 수 있는 옛 key는 다시 쓰지 않는다.
+	 *
+	 * @param storageKey 이번 요청이 내용을 저장한 key. 살아 있는 blob을 함께 쓰려고 저장하지 않았으면 null
+	 * @return 참조한 blob. 지운 blob인데 쓸 수 있는 새 key가 없으면 비어 있는 값. 이때는 아무것도 바꾸지 않았다
+	 */
+	Optional<Blob> referenceBlob(String sha256, long size, String mime, String storageKey) {
+		if (storageKey != null) {
+			try {
+				GeneratedKeyHolder key = new GeneratedKeyHolder();
 				this.jdbc.sql("""
-						UPDATE file_blobs SET reference_count = 1, purged_at = NULL, storage_key = :key
-						 WHERE file_blob_id = :id AND purged_at IS NOT NULL
-						""").param("key", storageKey).param("id", existing.id()).update();
+						INSERT INTO file_blobs (content_sha256, size_bytes, detected_mime_type, storage_key, blob_state, reference_count)
+						VALUES (:sha, :size, :mime, :key, 'clean', 1)
+						""")
+					.param("sha", sha256)
+					.param("size", size)
+					.param("mime", mime)
+					.param("key", storageKey)
+					.update(key, "file_blob_id");
+				return Optional.of(new Blob(key.getKey().longValue(), "clean", storageKey, false));
 			}
-			else {
-				this.jdbc.sql("UPDATE file_blobs SET reference_count = reference_count + 1 WHERE file_blob_id = :id")
-					.param("id", existing.id())
-					.update();
+			catch (DuplicateKeyException ex) {
+				// 같은 내용의 blob이 이미 있다. 잠가 읽은 뒤 판정한다.
 			}
-			return existing;
 		}
+		Optional<Blob> locked = this.jdbc.sql("""
+				SELECT file_blob_id, blob_state, storage_key, purged_at IS NOT NULL FROM file_blobs
+				 WHERE content_sha256 = :sha FOR UPDATE
+				""")
+			.param("sha", sha256)
+			.query((rs, n) -> new Blob(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getBoolean(4)))
+			.optional();
+		if (locked.isEmpty()) {
+			return Optional.empty();
+		}
+		Blob existing = locked.get();
+		if (!existing.purged()) {
+			this.jdbc.sql("UPDATE file_blobs SET reference_count = reference_count + 1 WHERE file_blob_id = :id")
+				.param("id", existing.id())
+				.update();
+			return Optional.of(existing);
+		}
+		if (storageKey == null || storageKey.equals(existing.storageKey())) {
+			return Optional.empty();
+		}
+		this.jdbc.sql("""
+				UPDATE file_blobs SET reference_count = 1, purged_at = NULL, storage_key = :key
+				 WHERE file_blob_id = :id AND purged_at IS NOT NULL
+				""").param("key", storageKey).param("id", existing.id()).update();
+		return Optional.of(new Blob(existing.id(), existing.state(), storageKey, false));
 	}
 
 	long insertFile(long blobId, String name, String extension, String mime, long size, long uploader, long courseId,

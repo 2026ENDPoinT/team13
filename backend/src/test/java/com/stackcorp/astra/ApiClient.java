@@ -46,6 +46,11 @@ public final class ApiClient {
 			.perform(mutating(MockMvcRequestBuilders.delete(path)));
 	}
 
+	/** 상태를 바꾸는 그 밖의 요청. method와 header는 테스트가 정하고 session과 CSRF token은 여기서 붙인다. */
+	public <B extends AbstractMockHttpServletRequestBuilder<B>> ResultActions send(B request) throws Exception {
+		return this.mvc.perform(mutating(request));
+	}
+
 	public ResultActions upload(long courseId, String purpose, String fileName, byte[] content, String idempotencyKey)
 			throws Exception {
 		var request = MockMvcRequestBuilders.multipart("/api/uploads")

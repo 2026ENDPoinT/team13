@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -17,6 +18,8 @@ import com.stackcorp.astra.files.upload.UploadRecords.Upload;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -26,7 +29,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 업로드 수신(SC-08). 순서: 요청 제한 → 용도와 과목 권한 → 이름·확장자·크기 → 내용 형식 → 저장 → 기록.
- * 원본은 content bucket의 blobs/{sha256 앞 2자}/{sha256}에 둔다. 같은 내용은 객체 하나를 함께 쓴다.
+ * 원본은 content bucket의 blobs/{sha256 앞 2자}/{sha256}에 둔다. 같은 내용은 객체 하나를 함께 쓴다. GC가 지운 내용을 다시 받으면
+ * 뒤에 임의 값을 붙인 새 key에 저장한다.
  * 형식 검사를 통과한 파일은 바로 clean이 된다. 악성코드 검사기를 붙이면 그 결과가 나올 때까지 quarantined로 둔다.
  */
 @Service
@@ -34,6 +38,10 @@ import org.springframework.web.multipart.MultipartFile;
 class UploadService {
 
 	private static final Pattern CLIENT_KEY = Pattern.compile("[A-Za-z0-9._-]{1,100}");
+
+	private static final SecureRandom RANDOM = new SecureRandom();
+
+	private static final Logger log = LoggerFactory.getLogger(UploadService.class);
 
 	private final UploadRecords records;
 
@@ -94,40 +102,93 @@ class UploadService {
 			.orElseThrow(() -> rejected("content_mismatch", "파일 내용이 확장자와 맞지 않습니다."));
 		String sha = inspected.sha256();
 		Optional<Blob> existing = this.records.blob(sha);
-		if (existing.filter((b) -> "rejected".equals(b.state())).isPresent()) {
-			throw rejected("content_rejected", "올릴 수 없는 파일입니다.");
-		}
-		String storageKey = "blobs/" + sha.substring(0, 2) + "/" + sha;
-		if (existing.filter((b) -> !b.purged()).isEmpty()) {
-			try (InputStream in = file.getInputStream()) {
-				this.store.put(Bucket.CONTENT, storageKey, in, size, mime);
+		// GC가 그 사이 blob을 지웠으면 한 번 더 판정한다. 두 번째에는 새 key에 저장해 되살리므로 다시 엇갈리지 않는다.
+		for (int attempt = 1;; attempt++) {
+			if (existing.filter((b) -> "rejected".equals(b.state())).isPresent()) {
+				throw rejected("content_rejected", "올릴 수 없는 파일입니다.");
 			}
-			catch (IOException ex) {
-				throw new IllegalStateException("업로드를 저장하지 못했습니다.", ex);
-			}
-		}
-
-		try {
-			return this.transaction.execute((tx) -> {
-				Blob blob = this.records.referenceBlob(sha, size, mime, storageKey);
-				if ("rejected".equals(blob.state())) {
-					throw rejected("content_rejected", "올릴 수 없는 파일입니다.");
+			String storageKey = storageKey(sha, existing);
+			if (storageKey != null) {
+				try (InputStream in = file.getInputStream()) {
+					this.store.put(Bucket.CONTENT, storageKey, in, size, mime);
 				}
-				// 검사를 마치지 않은 blob을 함께 쓰면 이 업로드도 검사를 기다린다.
-				String state = "clean".equals(blob.state()) ? "clean" : "quarantined";
-				long fileId = this.records.insertFile(blob.id(), name, extension, mime, size, userId, courseId,
-						purpose.code(), "clean".equals(state) ? "clean" : "pending");
-				long uploadId = this.records.insertUpload(policy.id(), userId, courseId, fileId, clientKey, state,
-						this.properties.ttl());
-				return this.records.find(uploadId, userId).orElseThrow();
-			});
-		}
-		catch (DuplicateKeyException ex) {
-			// 같은 멱등 key의 요청이 동시에 들어왔다. 먼저 끝난 쪽의 결과를 돌려준다.
-			if (clientKey == null) {
+				catch (IOException ex) {
+					throw new IllegalStateException("업로드를 저장하지 못했습니다.", ex);
+				}
+			}
+			Recorded recorded;
+			try {
+				recorded = this.transaction.execute((tx) -> {
+					Optional<Blob> referenced = this.records.referenceBlob(sha, size, mime, storageKey);
+					if (referenced.isEmpty()) {
+						return null;
+					}
+					Blob blob = referenced.get();
+					if ("rejected".equals(blob.state())) {
+						throw rejected("content_rejected", "올릴 수 없는 파일입니다.");
+					}
+					// 검사를 마치지 않은 blob을 함께 쓰면 이 업로드도 검사를 기다린다.
+					String state = "clean".equals(blob.state()) ? "clean" : "quarantined";
+					long fileId = this.records.insertFile(blob.id(), name, extension, mime, size, userId, courseId,
+							purpose.code(), "clean".equals(state) ? "clean" : "pending");
+					long uploadId = this.records.insertUpload(policy.id(), userId, courseId, fileId, clientKey, state,
+							this.properties.ttl());
+					return new Recorded(this.records.find(uploadId, userId).orElseThrow(), blob.storageKey());
+				});
+			}
+			catch (DuplicateKeyException ex) {
+				discardUnused(sha, storageKey, null);
+				// 같은 멱등 key의 요청이 동시에 들어왔다. 먼저 끝난 쪽의 결과를 돌려준다.
+				if (clientKey == null) {
+					throw ex;
+				}
+				return sameTarget(this.records.findByKey(userId, clientKey).orElseThrow(() -> ex), courseId);
+			}
+			catch (RuntimeException ex) {
+				discardUnused(sha, storageKey, null);
 				throw ex;
 			}
-			return sameTarget(this.records.findByKey(userId, clientKey).orElseThrow(() -> ex), courseId);
+			if (recorded != null) {
+				discardUnused(sha, storageKey, recorded.blobKey());
+				return recorded.upload();
+			}
+			if (attempt >= 2) {
+				throw new IllegalStateException("지운 blob을 다시 참조하지 못했습니다.");
+			}
+			existing = this.records.blob(sha);
+		}
+	}
+
+	/**
+	 * 내용을 저장할 key. 살아 있는 blob이 있으면 그 객체를 함께 쓰므로 저장하지 않는다(null). 처음 보는 내용은
+	 * blobs/{sha256 앞 2자}/{sha256}에, GC가 지운 blob은 GC가 지우고 있을 수 있는 옛 key와 겹치지 않는 새 key에 저장한다.
+	 */
+	private static String storageKey(String sha, Optional<Blob> existing) {
+		if (existing.isEmpty()) {
+			return baseKey(sha);
+		}
+		if (!existing.get().purged()) {
+			return null;
+		}
+		byte[] suffix = new byte[8];
+		RANDOM.nextBytes(suffix);
+		return baseKey(sha) + "-" + HexFormat.of().formatHex(suffix);
+	}
+
+	private static String baseKey(String sha) {
+		return "blobs/" + sha.substring(0, 2) + "/" + sha;
+	}
+
+	// 새 key에 저장했지만 blob이 그 key를 쓰지 않게 됐으면 지운다. 기본 key는 같은 내용의 다른 요청과 함께 쓰므로 남긴다.
+	private void discardUnused(String sha, String storageKey, String blobKey) {
+		if (storageKey == null || storageKey.equals(baseKey(sha)) || storageKey.equals(blobKey)) {
+			return;
+		}
+		try {
+			this.store.delete(Bucket.CONTENT, storageKey);
+		}
+		catch (RuntimeException ex) {
+			log.warn("failed to discard unused upload object", ex);
 		}
 	}
 
@@ -179,6 +240,9 @@ class UploadService {
 	}
 
 	private record Inspected(byte[] head, String sha256) {
+	}
+
+	private record Recorded(Upload upload, String blobKey) {
 	}
 
 }

@@ -140,15 +140,20 @@ class SummaryJobRunner implements AutoCloseable {
 		}
 		String title = this.files.find(job.fileId()).map((f) -> stripExtension(f.name())).orElse(null);
 		// 취소 요청은 모델 호출 앞뒤마다 원장에서 확인한다. 기본키 조회 한 번이라 모델 호출에 비해 비용이 없다.
+		// 자료 파일이 지워져도 멈춘다. 지운 파일에는 결과를 쓰지 않는다(ADR-0011).
 		GenerateInput input = new GenerateInput(String.valueOf(job.fileId()), title,
 				new RenditionSource(this.renditions, rendition),
 				this.storage.checkpoints(job.fileId(), this.jobs.rootOf(job.id())),
-				() -> leaseLost.get() || this.jobs.cancelRequested(job.id()),
+				() -> leaseLost.get() || this.jobs.cancelRequested(job.id()) || fileDeleted(job),
 				(GenerationProgress p) -> this.jobs.progress(job.id(), this.owner, p.stage().name().toLowerCase(),
 						p.pagesDone(), p.pagesTotal(), p.usage()),
 				GenerateInput.Limits.DEFAULT);
 		try {
 			GenerateResult result = new SummaryPipeline(client).generate(input);
+			if (fileDeleted(job)) {
+				finishFileDeleted(job, result.usage());
+				return;
+			}
 			this.storage.writeResult(job.fileId(), job.id(),
 					new SummaryResult(result.pack(), result.review(), result.warnings()));
 			finish(job, JobState.COMPLETED, result.usage(), null, null);
@@ -162,7 +167,15 @@ class SummaryJobRunner implements AutoCloseable {
 					log.warn("summary job lost lease jobId={}", job.id());
 					return;
 				}
+				if (fileDeleted(job)) {
+					finishFileDeleted(job, usage);
+					return;
+				}
 				finish(job, JobState.CANCELLED, usage, null, null);
+				return;
+			}
+			if (fileDeleted(job)) {
+				finishFileDeleted(job, usage);
 				return;
 			}
 			String stage = ex.stage().name().toLowerCase();
@@ -170,9 +183,23 @@ class SummaryJobRunner implements AutoCloseable {
 			finish(job, JobState.FAILED, usage, ex.code().name().toLowerCase(), failureMessage(ex));
 		}
 		catch (RuntimeException ex) {
+			if (fileDeleted(job)) {
+				finishFileDeleted(job, new Usage(0, 0, 0));
+				return;
+			}
 			log.error("summary job failed jobId={} error={}", job.id(), ex.getClass().getName(), ex);
 			finish(job, JobState.FAILED, new Usage(0, 0, 0), "internal", "요약 작업 중 내부 오류가 났습니다.");
 		}
+	}
+
+	private boolean fileDeleted(SummaryJob job) {
+		return this.files.find(job.fileId()).isEmpty();
+	}
+
+	// 실행 중에 자료가 지워졌다. 결과를 남기지 않고 실패로 닫는다. 지운 파일은 게시할 수도 없다.
+	private void finishFileDeleted(SummaryJob job, Usage usage) {
+		log.info("summary job stopped, file deleted jobId={}", job.id());
+		finish(job, JobState.FAILED, usage, "file", "자료 파일이 삭제됐습니다.");
 	}
 
 	private void finish(SummaryJob job, JobState state, Usage usage, String errorCode, String errorMessage) {

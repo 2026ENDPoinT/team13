@@ -11,7 +11,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * 학습활동 권한. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 시각은 서버 시계로 정한다(SC-06).
- * 활동이 요청한 과목에 속하지 않으면 거부한다(SC-03).
+ * 활동이 요청한 과목에 속하지 않으면 거부한다(SC-03). 판정할 Activity는 지우지 않은 활동(deleted_at IS NULL)에서만 만든다.
+ * 지운 활동은 담당자에게도 없는 활동이다(ADR-0011).
  */
 @Component
 class LearningAccess {
