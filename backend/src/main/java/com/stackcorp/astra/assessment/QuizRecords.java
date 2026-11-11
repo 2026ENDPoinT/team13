@@ -116,12 +116,13 @@ class QuizRecords {
 			.update();
 	}
 
+	/** 성적 항목의 이름, 배점, 결과 공개를 바꾸고 항목 수정 번호를 올린다. 그 전에 읽은 성적부 화면의 비율 수정은 409가 된다(ADR-0023). */
 	void updateGradeItem(long gradeItemId, String title, BigDecimal maxScore, LocalDateTime releaseAt) {
 		this.jdbc.sql("""
 				UPDATE grade_items
 				   SET item_name = :name, max_score = :max,
 				       score_visibility = CASE WHEN :releaseAt IS NULL THEN 'hidden' ELSE 'after_release' END,
-				       release_at = :releaseAt
+				       release_at = :releaseAt, revision_no = revision_no + 1
 				 WHERE grade_item_id = :id
 				""")
 			.param("name", title)
@@ -132,7 +133,7 @@ class QuizRecords {
 	}
 
 	void updateMaxScore(long gradeItemId, BigDecimal maxScore) {
-		this.jdbc.sql("UPDATE grade_items SET max_score = :max WHERE grade_item_id = :id")
+		this.jdbc.sql("UPDATE grade_items SET max_score = :max, revision_no = revision_no + 1 WHERE grade_item_id = :id")
 			.param("max", maxScore)
 			.param("id", gradeItemId)
 			.update();

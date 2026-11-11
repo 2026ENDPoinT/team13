@@ -250,7 +250,7 @@ class GradebookRecords {
 			return List.of();
 		}
 		return this.jdbc.sql("""
-				SELECT g.grade_item_id, g.course_id, g.activity_id, g.item_name, g.score_visibility, g.release_at
+				SELECT g.grade_item_id, g.course_id, g.activity_id, g.item_name, g.item_type, g.score_visibility, g.release_at
 				  FROM grade_items g JOIN grade_scores s ON s.grade_item_id = g.grade_item_id
 				 WHERE g.course_id IN (:courses) AND s.user_id = :user AND s.score IS NOT NULL
 				   AND g.release_at > :since AND g.release_at <= :now
@@ -263,8 +263,8 @@ class GradebookRecords {
 			.param("now", now)
 			.param("limit", limit)
 			.query((rs, n) -> new ReleasedCandidate(rs.getLong("grade_item_id"), rs.getLong("course_id"),
-					rs.getObject("activity_id", Long.class), rs.getString("item_name"), rs.getString("score_visibility"),
-					rs.getObject("release_at", LocalDateTime.class)))
+					rs.getObject("activity_id", Long.class), rs.getString("item_name"), rs.getString("item_type"),
+					rs.getString("score_visibility"), rs.getObject("release_at", LocalDateTime.class)))
 			.list();
 	}
 
@@ -308,8 +308,8 @@ class GradebookRecords {
 			long version) {
 	}
 
-	record ReleasedCandidate(long gradeItemId, long courseId, Long activityId, String name, String scoreVisibility,
-			LocalDateTime releaseAt) {
+	record ReleasedCandidate(long gradeItemId, long courseId, Long activityId, String name, String type,
+			String scoreVisibility, LocalDateTime releaseAt) {
 	}
 
 }

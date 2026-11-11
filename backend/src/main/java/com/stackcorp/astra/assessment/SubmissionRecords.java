@@ -80,6 +80,21 @@ class SubmissionRecords {
 	}
 
 	/**
+	 * 그 활동들 가운데 이 학생이 최종 제출한 과제의 활동 ID. 제출 판정은 {@link Submission#submitted}(현재 버전이 있음)와 같고 임시저장은
+	 * 제출이 아니다. 활동 수와 관계없이 쿼리 한 번이다.
+	 */
+	List<Long> submittedActivities(long userId, Collection<Long> activityIds) {
+		if (activityIds.isEmpty()) {
+			return List.of();
+		}
+		return this.jdbc.sql("""
+				SELECT a.activity_id FROM assignments a
+				  JOIN assignment_submissions s ON s.assignment_id = a.assignment_id
+				 WHERE a.activity_id IN (:ids) AND s.user_id = :user AND s.owner_type = 'user' AND s.current_version_no > 0
+				""").param("ids", activityIds).param("user", userId).query(Long.class).list();
+	}
+
+	/**
 	 * 제출물 행이 없으면 만든다. 동시에 만들면 유일 제약 (assignment_id, user_id)으로 하나만 남는다(SC-05).
 	 * 잠금을 오래 잡지 않도록 제출 transaction 밖에서 따로 commit한다.
 	 */

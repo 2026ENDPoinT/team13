@@ -12,14 +12,11 @@ import java.util.List;
 public interface DueActivities {
 
 	/**
-	 * 마감 임박순({@code close_at}, {@code activity_id}) 목록.
+	 * 마감 임박순({@code close_at}, {@code activity_id}) 목록의 앞 limit개. 할 일은 다른 모듈의 완료 여부로 다시 거르므로 쪽 나누기와 건수는
+	 * 부르는 쪽이 거른 결과로 정한다.
 	 * @param now DB 시계 값({@code SELECT CURRENT_TIMESTAMP(3)})
-	 * @param after 이 위치 다음부터. 처음이면 null
 	 */
-	List<DueActivity> due(Collection<Long> courseIds, LocalDateTime now, Position after, int limit);
-
-	/** {@link #due}와 같은 조건의 전체 건수. */
-	int count(Collection<Long> courseIds, LocalDateTime now);
+	List<DueActivity> due(Collection<Long> courseIds, LocalDateTime now, int limit);
 
 	/**
 	 * @param type learning_activities.activity_type
@@ -35,6 +32,13 @@ public interface DueActivities {
 
 	/** 정렬 순서의 한 위치. keyset paging에 쓴다. */
 	record Position(LocalDateTime closeAt, long activityId) {
+
+		/** 정렬 순서로 이 위치가 other보다 뒤인지. */
+		public boolean after(Position other) {
+			int byClose = this.closeAt.compareTo(other.closeAt);
+			return byClose > 0 || (byClose == 0 && this.activityId > other.activityId);
+		}
+
 	}
 
 }

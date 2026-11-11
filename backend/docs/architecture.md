@@ -238,7 +238,7 @@ flowchart TD
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
 - 쪽지는 `communication`이 판정한다. 받는사람은 서버가 과목 관계로 계산한 범위 안에서만 고르고, 범위 밖 ID가 하나라도 있으면 보내지 않는다. 보관함의 주인이 아니면 존재와 관계없이 404다. 쪽지 조회는 읽음을 남기지 않고 읽음은 POST 명령이다. 발송, 받는사람 검색, 임시저장에 사용자 단위 요청 제한이 있다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)).
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
-- 성적은 `assessment`가 판정한다. 담당자만 성적부를 읽고 쓴다. 학생 성적 API는 session 사용자 본인 것만 돌려주고 대상 학생을 고르는 parameter가 없다. 공개하지 않은 항목의 점수, 의견, 그 점수가 들어간 합계는 속성 자체가 없다(SEC-14). 과제 항목의 이름, 배점, 공개, 점수는 과제 화면에서만 바꾼다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 점수 쓰기는 행마다 감사 기록을 남긴다.
+- 성적은 `assessment`가 판정한다. 담당자만 성적부를 읽고 쓴다. 학생 성적 API는 session 사용자 본인 것만 돌려주고 대상 학생을 고르는 parameter가 없다. 공개하지 않은 항목의 점수, 의견, 그 점수가 들어간 합계는 속성 자체가 없다(SEC-14). 과제 항목의 이름, 배점, 공개, 점수는 과제 화면에서만, 퀴즈 항목은 퀴즈 화면에서만 바꾸고, 퀴즈 항목의 학생 공개는 `Quiz.release` 하나가 정한다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 학생에게는 보이는 과제·퀴즈의 항목만 나오고 지운 활동의 항목은 누구에게도 없다. 점수 쓰기는 행마다 감사 기록을 남긴다.
 - 수강신청과 청강 신청은 `catalog`가 판정한다. 조회(GET)는 신청을 만들지 않고, 신청 명령은 과정 행을 잠근 뒤 기간(DB 시계), 신청대상, 본인 담당 여부, 중복(활성 행 unique), 정원(조건부 갱신)을 한 transaction에서 다시 본다. 승인·반려는 그 과목의 교수와 비정규 담당자만 하고, 신청과 취소는 본인 것만 한다. 학사 원장 수강은 바꾸지 않는다.
 - 설문은 `assessment`가 판정한다. 강의실 설문은 담당자가 언제나 보고, 학생은 공개됐고 시작한 설문만 본다. 알림마당 설문은 `survey_targets`의 대상(전체, 학생, 교직원, 학년)이 session의 역할과 학년에 맞을 때만 보인다. 익명 설문은 참여 원장과 응답 저장부를 잇지 않는다. 응답 행에 사용자와 정밀 시각이 없고, 완료는 공용 멱등 원장 대신 참여 원장의 key로 재전송을 판정하며, 감사 기록에 requestId를 남기지 않는다(SC-05-A, SC-09, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 결과 집계는 익명 설문과 학생에게는 마감 뒤 응답자 5명 이상일 때만 나간다. 설문 등록·수정·완료에도 사용자 단위 요청 제한이 있다.
 - 알림은 받는 사람 본인만 본다. 목록, 안 읽은 수, 읽음, 삭제가 같은 조건(본인, 보존 기간 안, 과목 알림이면 지금도 그 과목의 구성원)을 쓰므로 다른 사람의 알림이나 수강을 취소한 과목의 알림은 ID를 알아도 404다. 조회는 읽음을 바꾸지 않고, 읽음은 POST 명령이다(SC-04, CAT-08). 대상(공지, 자료, 과제)을 숨기면 만든 쪽이 같은 transaction에서 알림을 거둔다.
@@ -288,11 +288,9 @@ flowchart TD
 
 - session이 유효하면 IdP redirect를 거치지 않는다.
 - `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
-- 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 안 읽은 쪽지 수(`unreadMessages`)다. 알림(`notifications`) 수는 알림을 만드는 쪽이 아직 없어 넣지 않았다.
-- 쿼리는 과목 수와 관계없이 7개다(DB 시계, 과목, 할 일 목록과 건수, 안 읽은 공지 수, 최근 공지, 안 읽은 쪽지 수). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
-- 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 안 읽은 알림 수(`unreadNotifications`)다.
-- 쿼리는 과목 수와 관계없이 7개다(DB 시계, 과목, 할 일 목록과 건수, 안 읽은 공지 수, 최근 공지, 안 읽은 알림 수). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
-- 할 일은 학생으로 수강하는 과목의, 공개됐고 `open_at <= now < close_at`인 학습활동이다. 마감 일시가 없는 활동은 넣지 않는다. 제출·완료 여부는 아직 보지 않는다(12절).
+- 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 최근 7일 안에 공개된 본인 성적 항목 5개(`newGrades`: 항목, 과목, 공개 일시. 점수와 의견은 없다), 안 읽은 쪽지 수(`unreadMessages`), 안 읽은 알림 수(`unreadNotifications`)다.
+- 쿼리는 과목 수와 관계없이 16개 이하다(DB 시계, 과목, 마감 전 활동 1과 완료 판정 4, 안 읽은 공지 수, 최근 공지, 안 읽은 쪽지 수, 안 읽은 알림 수, 새 성적 5). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 과제와 퀴즈가 있고 점수를 공개한 상태에서도 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
+- 할 일은 학생으로 수강하는 과목의, 공개됐고 `open_at <= now < close_at`인 학습활동 가운데 본인이 아직 끝내지 않은 것이다. 마감 일시가 없는 활동은 넣지 않는다. 완료는 `assessment.api.ActivityCompletions`가 판정한다: 과제는 최종 제출, 퀴즈는 온라인 시험이고 이어갈 응시가 없고 허용 횟수를 다 쓴 때, 강의실 설문은 참여 원장의 완료다. 끝낸 활동은 표시를 달아 남기지 않고 목록과 전체 수에서 뺀다. 원본 할일 팝업(`03_팝업_할일.md`)이 미완료 활동만 보이고 그 수를 헤더 배지로 쓰며, frontend도 `total`을 "남은 활동" 수로 쓰기 때문이다. 마감 전 활동은 500개까지 읽고 넘으면 `truncated`다. 영상과 자료의 완료는 보지 않는다(12절).
 
 ## 7. 영상과 문서 전달
 
@@ -457,7 +455,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `GET /api/me/home` | 로그인한 사용자 | 6절의 집계 |
-| `GET /api/me/todo?cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, `nextCursor`로 다음 쪽 |
+| `GET /api/me/todo?cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수 |
 
 ### 7.6 과제 등록과 제출
 
@@ -483,16 +481,16 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/courses/{courseId}/grades/me?type=&q=` | 수강생 본인 | 내 성적(EP-0035, EP-0036). 평가 활동 비공개 과목이면 목록과 합계가 없다. 공개한 항목만 점수·의견·채점 일시가 있고, 합계는 공개했고 점수를 받은 항목만 더한다. `type`은 `all`, `assignment`, `quiz`, `manual` |
-| `GET /api/courses/{courseId}/gradebook?page=&size=` | 담당자 | 설정, 항목(공개 여부, 점수 받은 학생 수), 수강생 쪽(ID 순, size 100 이하)의 점수·의견·`version`과 학생별 합계 |
+| `GET /api/courses/{courseId}/grades/me?type=&q=` | 수강생 본인 | 내 성적(EP-0035, EP-0036). 평가 활동 비공개 과목이면 목록과 합계가 없다. 직접 입력 항목과, 학생이 볼 수 있는 과제(`assignmentId`, 제출 여부)·퀴즈(`quizId`)의 항목만 있다. 공개한 항목만 점수·의견·채점 일시가 있고, 합계는 공개했고 점수를 받은 항목만 더한다. 퀴즈 항목은 결과 공개 일시부터 공개다. `type`은 `all`, `assignment`, `quiz`, `manual` |
+| `GET /api/courses/{courseId}/gradebook?page=&size=` | 담당자 | 설정, 항목(유형, `assignmentId`·`quizId`, 공개 여부, 점수 받은 학생 수, `managedByAssignment`·`managedByQuiz`), 수강생 쪽(ID 순, size 100 이하)의 점수·의견·`version`과 학생별 합계. 지운 활동의 항목은 없다 |
 | `PUT /api/courses/{courseId}/grade-settings` | 담당자 | 평가 활동 공개(`activitiesVisible`). 처음이면 `revision` 0 |
 | `POST /api/courses/{courseId}/grade-items` | 담당자 | 직접 입력 항목(이름, 배점 0 초과 1000 이하, 비율 0~100). 비공개로 만든다. 201. `Idempotency-Key` 지원(선택) |
-| `PUT /api/courses/{courseId}/grade-items/{itemId}` | 담당자 | 직접 입력 항목은 이름·배점·비율, 과제 항목은 비율만. 이미 준 점수보다 배점을 낮추면 409 `score_exceeds_max` |
-| `PUT /api/courses/{courseId}/grade-items/{itemId}/release` | 담당자 | 직접 입력 항목의 점수 공개(`released:true`)와 거둠. 과제 항목은 409 `managed_by_assignment` |
-| `PUT /api/courses/{courseId}/grade-items/{itemId}/scores` | 담당자 | 직접 입력 항목의 점수 일괄 저장(1~200행, `studentId`, `score`, `feedback`, `version`). 한 행이라도 틀리면 아무것도 저장하지 않고 400 `invalid_rows` 또는 409 `version_conflict`와 `rows`(순번, 코드) |
+| `PUT /api/courses/{courseId}/grade-items/{itemId}` | 담당자 | 직접 입력 항목은 이름·배점·비율, 과제·퀴즈 항목은 비율만(이름·배점을 보내면 409 `managed_by_assignment`·`managed_by_quiz`). 이미 준 점수보다 배점을 낮추면 409 `score_exceeds_max` |
+| `PUT /api/courses/{courseId}/grade-items/{itemId}/release` | 담당자 | 직접 입력 항목의 점수 공개(`released:true`)와 거둠. 과제 항목은 409 `managed_by_assignment`, 퀴즈 항목은 409 `managed_by_quiz` |
+| `PUT /api/courses/{courseId}/grade-items/{itemId}/scores` | 담당자 | 직접 입력 항목의 점수 일괄 저장(1~200행, `studentId`, `score`, `feedback`, `version`). 한 행이라도 틀리면 아무것도 저장하지 않고 400 `invalid_rows` 또는 409 `version_conflict`와 `rows`(순번, 코드). 과제·퀴즈 항목은 409 |
 | `DELETE /api/courses/{courseId}/grade-items/{itemId}?revision=` | 담당자 | 직접 입력 항목 삭제. 점수나 의견이 남아 있으면 409 `item_has_scores`. 204 |
 
-다른 모듈은 `assessment.api.ReleasedGrades`로 학생에게 새로 공개된 본인 성적 항목(점수 값 없이)을 읽는다. 메인 화면에는 아직 붙이지 않았다.
+메인 화면의 `newGrades`는 `assessment.api.ReleasedGrades`로 읽는다. 과제·퀴즈·직접 입력 항목에 성적 화면과 같은 공개·열람 규칙을 쓰고, 과목 수와 관계없이 쿼리 다섯 이하다. 과제와 퀴즈를 고치면 그 항목의 `revision`도 올라간다.
 
 ### 7.8 쪽지와 쪽지쓰기 임시저장
 
@@ -538,7 +536,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 ### 7.8 설문
 
-익명성과 멱등 처리는 [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)에 있다. 강의실 설문은 `survey` 학습활동이라 할 일에도 나온다.
+익명성과 멱등 처리는 [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)에 있다. 강의실 설문은 `survey` 학습활동이라 할 일에도 나오고, 완료하면 그 학생의 할 일에서 빠진다. 완료는 참여 원장만 읽어 판정한다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -731,7 +729,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 악성코드 검사 | 검사기(같은 배포의 ClamAV daemon)를 설정해야 동작한다([ADR-0018](adr/0018-malware-scan-clamd.md)). 설정하지 않으면 형식만 검사하고 시작 때 경고한다. 검사기가 멈추면 새 업로드를 첨부할 수 없다. clamd의 크기 상한보다 큰 파일(수 GB 영상 등)은 검사되지 못하고 quarantined에 남는다 | 학교 자료를 받는 배포는 `ASTRA_SCAN_REQUIRED=true`로 띄운다. clamd 크기 상한을 업로드 상한 이상으로 둔다. quarantined 수와 `scanner unavailable` 로그에 알람을 건다. 영상 업로드의 검사 범위는 영상 업로드를 만들 때 정한다 |
 | 감사 기록 보존과 누락 | `audit_events`의 보존 기간이 정해지지 않아 지우지 않는다(SC-07). transaction 밖의 기록은 저장 실패 때 경고 로그만 남기고 빠진다 | 기관 정책을 받아 보존 기간을 정한다. 빠진 수를 9절 지표에 넣는다 |
 | 멱등 key와 목록 query 규칙 | `Idempotency-Key`는 선택이라 header를 보내지 않는 client는 재전송으로 자료를 두 번 만들 수 있다. SC-09의 page size 상한, cursor, 정렬 key allowlist는 아직 없다 | 수강신청, 제출을 만들 때 key 필수 여부를 정하고 frontend가 header를 보낸다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 query 규칙을 만든다 |
-| 할 일의 완료 판정 | 할 일은 기간 안의 공개 활동 전부다. 이미 제출한 과제, 다 본 영상도 마감까지 남는다(EP-0144의 "미완료"는 원본에서도 기준 미확인) | `assessment` 제출 원장과 `learning` 진도를 만들 때 각 모듈의 공개 API로 완료 여부를 받아 `home`에서 뺀다 |
+| 할 일의 완료 판정 | 과제, 퀴즈, 설문은 본인이 끝내면 빠진다(6절). 영상(다 본 영상)과 자료는 완료를 보지 않아 마감까지 남는다. 횟수 제한이 없는 퀴즈와 오프라인 시험도 마감까지 남는다(EP-0144의 "미완료"는 원본에서도 기준 미확인). 마감 전 활동이 500개를 넘으면 마감이 늦은 쪽은 보지 않는다(`truncated`) | `learning`의 진도 완료(출석 인정)를 공개 API로 내어 `home`이 같은 방식으로 뺀다. 횟수 제한이 없는 퀴즈를 언제 끝난 것으로 볼지 학교 기준을 받는다 |
 | 과제 제출 첨부 이어받기 | 다시 제출할 때 이전 버전의 파일을 다시 올려야 한다(ADR-0015). SC-05-B의 `keep` 계약이 없다 | `files.api.Attachments`에 기존 첨부 참조를 더할 때 제출 요청에 `keep`을 받는다 |
 | 과제 제출의 멱등 receipt | 공용 원장 없이 제출 버전 행과 `(submitted_by_user_id, idempotency_key)` 유일 제약으로 처리한다(ADR-0015) | `shared`에 원장을 만들면 receipt 조회를 옮기고 두 컬럼을 정리한다 |
 | 익명 설문의 운영자 재식별 | 참여와 응답을 한 transaction으로 쓰므로 binlog와 행 ID 순서, 감사 기록 순서로 DB 운영자는 응답자를 맞출 수 있다. '익명'은 교수자에게 비식별인 범위다(SC-05-A, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 재응답과 분기 문항은 없다 | 강한 익명성이나 재응답이 필요하면 가명 token과 key 권한을 함께 설계해 결정을 받는다 |
@@ -743,8 +741,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 지운 자료의 CDN 쪽 이미지 | CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 cookie가 끝나기 전, GC가 객체를 지우기 전이면 읽힐 수 있다([ADR-0011](adr/0011-material-deletion.md)) | 문서 cookie TTL을 짧게 유지한다. 더 줄여야 하면 삭제 commit 뒤 `doc/{key}/`를 바로 지우는 이벤트를 붙인다 |
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
-| 성적 평가요소와 다른 활동 유형 | 평가요소(`grade_criteria`)와 평가요소 점수는 화면 근거가 없어 만들지 않았다. 퀴즈 등 과제가 아닌 활동의 성적 항목은 성적부와 학생 화면에 나오지 않는다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)) | 퀴즈를 만들 때 learning.api에 그 활동 조회를 더하고 성적부의 항목 판정(`GradebookService.live`)에 넣는다. 평가요소는 채점 화면 요구가 생길 때 정한다 |
-| 새 성적 알림 | `assessment.api.ReleasedGrades`는 과제 항목이 있는 과목마다 과제 조회를 해 메인 화면의 고정 쿼리 수 규칙(6절)에 맞지 않는다. 메인에는 붙이지 않았다 | learning.api에 여러 과목의 과제 활동을 한 번에 읽는 조회를 더한 뒤 `home`에 붙인다 |
+| 성적 평가요소와 오프라인 시험 점수 | 평가요소(`grade_criteria`)와 평가요소 점수는 화면 근거가 없어 만들지 않았다. 오프라인 시험의 퀴즈 항목은 성적부와 학생 화면에 나오지만 점수를 넣는 API가 없다. 성적부는 퀴즈 항목의 점수를 받지 않는다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)) | 퀴즈 쪽에 오프라인 시험 점수 입력(행마다 감사 기록, 항목 행 잠금)을 만든다. 평가요소는 채점 화면 요구가 생길 때 정한다 |
 | 수강신청 정책 미정 항목 | 대기자 명단과 자동 승격, 청강 정원·기간, 졸업생·대학원생 신청대상 판정(identity에 구분 없음), 조교의 승인 위임, 카운터와 원장의 대사 job(C-22)이 없다. 비정규 강의소개는 HTML이라 내보내지 않는다([ADR-0026](adr/0026-enrollment-seat-accounting.md)) | 학사 담당과 정책을 정한 뒤 WAITLISTED 순번, `users`의 신분 구분, 위임 권한을 더한다. 강의소개는 서버 HTML 정규화(SC-08)와 함께 연다 |
 | 알림 거두기 의무 | 대상을 숨기는 변경마다 만든 쪽이 `Notifications.withdraw`를 불러야 한다. 부르지 않으면 지운 활동의 알림이 남는다. 공지, 자료, 과제, 질의응답 답글, 쪽지 회수는 부른다. 알림 유형이 없는 활동(온라인 강의, 퀴즈, 설문)은 알림을 만들지 않는다(ADR-0027) | 알림을 만드는 활동 유형을 더할 때 숨기는 명령(비공개, 삭제, 예약으로 되돌림)에서 같은 transaction으로 부른다 |
 | 알림 push | 알림은 목록을 다시 불러야 보인다. 헤더 배지는 `unread-count`를 주기적으로 부른다 | WebSocket fan-out(8절)을 붙일 때 알림 행을 만든 뒤 보낸다 |
@@ -753,7 +750,6 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 영상과 악성코드 검사 | `lecture_video`는 clamd 검사를 면제한다(통합 때 결정, [ADR-0016](adr/0016-video-upload-and-transcoder.md) 12번). 원본은 누구에게도 그대로 나가지 않고, 학생은 격리한 transcoder가 다시 인코딩한 HLS만 받는다. 다시 인코딩은 원본 안의 악성 데이터가 그대로 전달되는 것을 막지만 transcoder(ffmpeg) 자체의 취약점은 그 container의 격리에 기댄다 | 면제한 내용은 `unscanned`로 두어 다른 용도에 `clean`으로 쓰이지 않게 했다. 검사기가 수 GB를 받게 되면 면제를 다시 검토한다. ffmpeg 보안 갱신은 이미지 재빌드로 받는다 |
 | 학습 인증 수단과 grant 시간(SC-06-A) | 학습 인증 수단은 학교 IdP 재인증(`idp`) 하나다. IdP가 비밀번호만 받으면 같은 요소를 다시 확인하는 데 그친다. grant 2시간, challenge 5분, 실패 한도는 제안값이다. IdP가 `max_age` 요청에 `auth_time`을 주지 않으면 재인증이 언제나 실패한다([ADR-0029](adr/0029-step-up-and-learning-auth.md)) | 학교 정보화본부에 IdP 다요소 인증, `acr`, `auth_time` 지원을 확인한다. 학사 담당과 grant 시간을 정하고 학교 IdP를 붙인 배포에서 `ASTRA_LEARNING_REQUIRE_AUTH_GRANT=true`로 켠다 |
 | 퀴즈 재채점 | 응시가 생기면 문항과 정답을 바꾸지 않는다([ADR-0021](adr/0021-quiz-attempt-model.md)). 정답이 틀린 것을 응시 뒤에 알면 고칠 API가 없다. 복수 선택에 부분 점수가 없다 | 정답 수정과 기존 응시 재계산을 한 명령으로 하는 재채점을 감사 기록과 함께 만든다. 부분 점수는 학교 기준을 받아 정한다 |
-| 퀴즈와 할 일 | 할 일은 learning의 활동 기간만 보므로 제출한 퀴즈도 마감까지 남는다 | 위 "할 일의 완료 판정"과 함께 `assessment` api로 응시 완료를 받아 뺀다 |
 | 앱 지표의 수신 쪽 | 지표와 trace를 내보낼 collector(또는 CloudWatch agent)와 instance role 권한이 없어 앱 지표 알람([operations/alarms.md](operations/alarms.md) 2절)이 아직 동작하지 않는다 | 수신 쪽을 정하고 `ASTRA_OTLP_ENABLED`를 켠 뒤 알람을 Terraform `monitoring` module에 더한다 |
 | 파일함 휴지통 보존과 자동 등재 | 휴지통 보존 기간이 정해지지 않아 자동 영구 삭제가 없고, 휴지통 파일도 용량을 차지한다. 원본처럼 과제 제출 파일을 파일함에 자동으로 넣지 않는다([ADR-0028](adr/0028-filebox.md)) | 학교와 보존 기간을 정해 worker가 `trashed_at`으로 지우게 한다. 자동 등재가 필요하면 제출 확정과 같은 transaction에서 파일함 항목을 만드는 `files.api`를 더한다 |
 | 출석 정책 수치 | 지각 기준 5분, 회차 진행 시간 10분, 지각 환산 없음은 과목 설정의 기본값이다. 결석 확정(마감 뒤 미제출을 결석으로 볼지), 결석 한도, 성적 연계, 온라인 학습 지각 판정은 만들지 않았다. 미제출은 담당자가 일괄 지정으로 채운다([ADR-0030](adr/0030-attendance-and-smart-rounds.md)) | 학교 학사 담당과 기본값, 결석·지각 규칙을 정하고 규칙 버전(`smart-v1`, `manual`)을 올린다 |

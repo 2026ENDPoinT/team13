@@ -2,8 +2,10 @@ package com.stackcorp.astra.assessment;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Locale;
 
+import com.stackcorp.astra.assessment.AttemptRecords.Attempt;
 import com.stackcorp.astra.learning.api.QuizActivities.QuizActivity;
 
 /**
@@ -21,7 +23,19 @@ record Quiz(QuizActivity activity, Settings settings) {
 	}
 
 	boolean online() {
-		return ONLINE.equals(this.settings.examType());
+		return this.settings.online();
+	}
+
+	/**
+	 * 학생이 지금 응시를 시작하거나 진행 중 응시를 이어갈 수 있는지. 학생 상세의 canStart가 이 판정을 쓴다. 마감이 지난 진행 중 응시는 시작
+	 * 요청이 먼저 닫으므로 새 응시를 막지 않지만 회차로는 센다. 응시 기간 안에서 이 값이 거짓이 되는 경우는 오프라인 시험이거나
+	 * {@link Settings#usedUpBy}뿐이다.
+	 *
+	 * @param own 그 학생의 응시 전체
+	 */
+	boolean canStart(List<Attempt> own, LocalDateTime now) {
+		return online() && (Settings.resumable(own, now)
+				|| (phase(now) == Phase.OPEN && this.settings.attemptsLeft(own.size())));
 	}
 
 	/** 응시를 시작할 수 있는 구간. 판정은 DB 시계 하나로 {@code openAt <= now < closeAt}이다(SC-06). */
@@ -78,6 +92,32 @@ record Quiz(QuizActivity activity, Settings settings) {
 	record Settings(long quizId, long activityId, long courseId, String examType, Integer durationMinutes,
 			Integer attemptLimit, boolean shuffle, boolean answersVisible, long revision, long gradeItemId,
 			BigDecimal maxScore, String scoreVisibility, LocalDateTime releaseAt) {
+
+		boolean online() {
+			return ONLINE.equals(this.examType);
+		}
+
+		/** 응시를 used번 한 학생에게 회차가 남았는지. */
+		boolean attemptsLeft(int used) {
+			return this.attemptLimit == null || used < this.attemptLimit;
+		}
+
+		/**
+		 * 학생 본인의 응시로 더는 응시할 수 없게 됐는지(할 일의 완료 판정). 온라인 시험이고, 이어갈 진행 중 응시가 없고, 허용 횟수를 모두 썼을
+		 * 때다. 응시 기간 안에서 {@link Quiz#canStart}가 거짓이 되는 경우 가운데 학생이 만든 것과 같다. 횟수 제한이 없으면 제출한 뒤에도
+		 * 다시 응시할 수 있으므로 완료가 아니다. 오프라인 시험은 온라인 응시가 없어 학생이 끝낼 수 없으므로 완료가 아니다.
+		 *
+		 * @param own 그 학생의 응시 전체
+		 */
+		boolean usedUpBy(List<Attempt> own, LocalDateTime now) {
+			return online() && !resumable(own, now) && !attemptsLeft(own.size());
+		}
+
+		/** 지금 답안을 받는 진행 중 응시가 있는지. */
+		static boolean resumable(List<Attempt> own, LocalDateTime now) {
+			return own.stream().anyMatch((a) -> a.accepting(now));
+		}
+
 	}
 
 }

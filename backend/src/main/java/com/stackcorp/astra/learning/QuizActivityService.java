@@ -1,6 +1,7 @@
 package com.stackcorp.astra.learning;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -14,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 퀴즈 활동(activity_type = test)의 저장과 조회. 퀴즈 설정과 같은 transaction에서 부른다(SC-05).
- * 퀴즈 활동을 읽는 SQL은 {@link #SELECT} 하나다.
+ * 퀴즈 활동을 읽는 SQL은 {@link #SELECT} 하나이고, 지운 활동(deleted_at)은 거기서 뺀다(ADR-0011).
  */
 @Service
 class QuizActivityService implements QuizActivities {
@@ -80,7 +81,7 @@ class QuizActivityService implements QuizActivities {
 
 	@Override
 	public Optional<QuizActivity> find(long courseId, long activityId) {
-		return this.jdbc.sql(SELECT + " AND a.activity_id = :activity")
+		return this.jdbc.sql(SELECT + " AND a.course_id = :course AND a.activity_id = :activity")
 			.param("course", courseId)
 			.param("activity", activityId)
 			.query(QuizActivityService::row)
@@ -89,8 +90,19 @@ class QuizActivityService implements QuizActivities {
 
 	@Override
 	public List<QuizActivity> list(long courseId) {
-		return this.jdbc.sql(SELECT + " ORDER BY w.week_no, a.sort_order, a.activity_id")
+		return this.jdbc.sql(SELECT + " AND a.course_id = :course ORDER BY w.week_no, a.sort_order, a.activity_id")
 			.param("course", courseId)
+			.query(QuizActivityService::row)
+			.list();
+	}
+
+	@Override
+	public List<QuizActivity> findAll(Collection<Long> activityIds) {
+		if (activityIds.isEmpty()) {
+			return List.of();
+		}
+		return this.jdbc.sql(SELECT + " AND a.activity_id IN (:ids)")
+			.param("ids", activityIds)
 			.query(QuizActivityService::row)
 			.list();
 	}
@@ -99,7 +111,7 @@ class QuizActivityService implements QuizActivities {
 			SELECT a.activity_id, a.course_id, w.week_no, a.title, a.description, a.open_at, a.close_at, a.published_yn,
 			       a.offline_yn
 			  FROM learning_activities a JOIN course_weeks w ON w.course_week_id = a.course_week_id
-			 WHERE a.course_id = :course AND a.activity_type = 'test' AND a.deleted_at IS NULL
+			 WHERE a.activity_type = 'test' AND a.deleted_at IS NULL
 			""";
 
 	private static QuizActivity row(java.sql.ResultSet rs, int n) throws java.sql.SQLException {

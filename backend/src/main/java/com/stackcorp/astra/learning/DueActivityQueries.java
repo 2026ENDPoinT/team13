@@ -29,36 +29,19 @@ class DueActivityQueries implements DueActivities {
 	}
 
 	@Override
-	public List<DueActivity> due(Collection<Long> courseIds, LocalDateTime now, Position after, int limit) {
+	public List<DueActivity> due(Collection<Long> courseIds, LocalDateTime now, int limit) {
 		if (courseIds.isEmpty() || limit < 1) {
 			return List.of();
 		}
-		String keyset = after == null ? ""
-				: " AND (a.close_at > :afterClose OR (a.close_at = :afterClose AND a.activity_id > :afterId))";
-		var sql = this.jdbc.sql("SELECT a.activity_id, a.course_id, a.activity_type, a.title, a.open_at, a.close_at" + DUE
-				+ keyset + " ORDER BY a.close_at, a.activity_id LIMIT :limit")
+		return this.jdbc.sql("SELECT a.activity_id, a.course_id, a.activity_type, a.title, a.open_at, a.close_at" + DUE
+				+ " ORDER BY a.close_at, a.activity_id LIMIT :limit")
 			.param("courses", courseIds)
 			.param("now", now)
-			.param("limit", limit);
-		if (after != null) {
-			sql = sql.param("afterClose", after.closeAt()).param("afterId", after.activityId());
-		}
-		return sql.query((rs, n) -> new DueActivity(rs.getLong("activity_id"), rs.getLong("course_id"),
-				rs.getString("activity_type"), rs.getString("title"), rs.getObject("open_at", LocalDateTime.class),
-				rs.getObject("close_at", LocalDateTime.class)))
+			.param("limit", limit)
+			.query((rs, n) -> new DueActivity(rs.getLong("activity_id"), rs.getLong("course_id"),
+					rs.getString("activity_type"), rs.getString("title"), rs.getObject("open_at", LocalDateTime.class),
+					rs.getObject("close_at", LocalDateTime.class)))
 			.list();
-	}
-
-	@Override
-	public int count(Collection<Long> courseIds, LocalDateTime now) {
-		if (courseIds.isEmpty()) {
-			return 0;
-		}
-		return this.jdbc.sql("SELECT COUNT(*)" + DUE)
-			.param("courses", courseIds)
-			.param("now", now)
-			.query(Integer.class)
-			.single();
 	}
 
 }

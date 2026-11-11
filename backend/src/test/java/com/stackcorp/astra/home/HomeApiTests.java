@@ -243,6 +243,57 @@ class HomeApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void newGradesListOnlyTheCallersReleasedItemsWithoutScores() throws Exception {
+		long c = course();
+		long alice = this.data.user("STUDENT");
+		long bob = this.data.user("STUDENT");
+		this.data.enroll(c, alice);
+		this.data.enroll(c, bob);
+		gradedActivities(c, alice);
+		long quizItem = gradeItem(c, "quiz");
+		long assignmentItem = gradeItem(c, "assignment");
+		// 퀴즈 결과 공개 일시가 아직 오지 않았다.
+		this.jdbc.sql("UPDATE grade_items SET release_at = CURRENT_TIMESTAMP(3) + INTERVAL 1 HOUR WHERE grade_item_id = :id")
+			.param("id", quizItem)
+			.update();
+		ApiClient aliceClient = new ApiClient(this.mvc, this.data.session(alice));
+
+		String body = aliceClient.get("/api/me/home")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.newGrades[*].gradeItemId").value(contains((int) assignmentItem)))
+			.andExpect(jsonPath("$.newGrades[0].courseId").value(c))
+			.andExpect(jsonPath("$.newGrades[0].courseName").value("Database"))
+			.andExpect(jsonPath("$.newGrades[0].itemType").value("assignment"))
+			.andExpect(jsonPath("$.newGrades[0].itemName").value("과제"))
+			.andExpect(jsonPath("$.newGrades[0].releasedAt").exists())
+			.andExpect(jsonPath("$.newGrades[0].score").doesNotExist())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		assertThat(body).doesNotContain("\"score\"").doesNotContain("feedback");
+
+		this.jdbc.sql("UPDATE grade_items SET release_at = CURRENT_TIMESTAMP(3) WHERE grade_item_id = :id")
+			.param("id", quizItem)
+			.update();
+		aliceClient.get("/api/me/home")
+			.andExpect(jsonPath("$.newGrades[*].gradeItemId").value(contains((int) quizItem, (int) assignmentItem)))
+			.andExpect(jsonPath("$.newGrades[0].itemType").value("quiz"));
+		// 점수가 없는 학생과 담당자에게는 없다. 공개한 지 오래된 항목은 새 성적이 아니다.
+		new ApiClient(this.mvc, this.data.session(bob)).get("/api/me/home").andExpect(jsonPath("$.newGrades").isEmpty());
+		this.professor.get("/api/me/home").andExpect(jsonPath("$.newGrades").isEmpty());
+		this.jdbc.sql("UPDATE grade_items SET release_at = CURRENT_TIMESTAMP(3) - INTERVAL 8 DAY WHERE grade_item_id = :id")
+			.param("id", assignmentItem)
+			.update();
+		aliceClient.get("/api/me/home").andExpect(jsonPath("$.newGrades[*].gradeItemId").value(contains((int) quizItem)));
+		// 수강을 취소한 과목의 성적은 메인에 없다.
+		this.jdbc.sql("""
+				UPDATE course_enrollments SET enrollment_status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP(3)
+				 WHERE course_id = :c AND user_id = :u
+				""").param("c", c).param("u", alice).update();
+		aliceClient.get("/api/me/home").andExpect(jsonPath("$.newGrades").isEmpty());
+	}
+
+	@Test
 	void statementCountDoesNotGrowWithTheNumberOfCourses() throws Exception {
 		ApiClient few = studentWithCourses(2);
 		ApiClient many = studentWithCourses(10);
@@ -250,16 +301,18 @@ class HomeApiTests extends IntegrationTest {
 		many.get("/api/me/home")
 			.andExpect(jsonPath("$.courses.length()").value(10))
 			.andExpect(jsonPath("$.notices.length()").value(5))
-			.andExpect(jsonPath("$.todo.total").value(10))
-			.andExpect(jsonPath("$.unreadNotifications").value(10));
+			.andExpect(jsonPath("$.todo.total").value(30))
+			.andExpect(jsonPath("$.newGrades.length()").value(HomeService.HOME_GRADES));
 
 		long fewStatements = statements(few);
 		long manyStatements = statements(many);
-		// 과목마다 쿼리를 더 보내지 않는다. 시계, 과목, 할 일 2, 공지 2, 알림 수 1과 session 확인, transaction 문장뿐이다.
+		// 과목마다 쿼리를 더 보내지 않는다. 과목마다 과제와 퀴즈가 있고 그 점수를 공개해도 같다.
+		// 시계, 과목, 할 일 1과 완료 판정 4, 공지 2, 쪽지 1, 알림 수 1, 새 성적 5(애플리케이션 16)와 session 확인, transaction 문장뿐이다.
 		assertThat(manyStatements).isEqualTo(fewStatements);
-		assertThat(manyStatements).isLessThanOrEqualTo(20);
+		assertThat(manyStatements).isLessThanOrEqualTo(25);
 	}
 
+	/** 과목마다 공지, 활동, 과제, 퀴즈를 두고 과제와 퀴즈의 그 학생 점수를 공개한다. */
 	private ApiClient studentWithCourses(int count) throws Exception {
 		long stu = this.data.user("STUDENT");
 		for (int i = 0; i < count; i++) {
@@ -267,8 +320,42 @@ class HomeApiTests extends IntegrationTest {
 			this.data.enroll(c, stu);
 			notice(c, "{\"title\":\"공지 " + i + "\"}");
 			activity(c, true, "NULL", "CURRENT_TIMESTAMP + INTERVAL 1 DAY");
+			gradedActivities(c, stu);
 		}
 		return new ApiClient(this.mvc, this.data.session(stu));
+	}
+
+	/**
+	 * 담당자가 과제와 퀴즈를 API로 만들고, 그 학생의 두 성적 항목에 점수를 넣어 지금 공개한 상태로 둔다. 과제는 즉시 공개, 퀴즈는 결과 공개
+	 * 일시가 지난 상태다.
+	 */
+	private void gradedActivities(long courseId, long studentId) throws Exception {
+		this.professor.postJson("/api/courses/" + courseId + "/assignments",
+				"{\"weekNo\":1,\"title\":\"과제\",\"closeAt\":\"2999-01-01T00:00:00\",\"maxScore\":10}")
+			.andExpect(status().isCreated());
+		this.professor.postJson("/api/courses/" + courseId + "/quizzes", """
+				{"weekNo":1,"title":"퀴즈","closeAt":"2999-01-01T00:00:00","resultReleaseAt":"2999-01-01T00:00:00",
+				 "questions":[{"type":"short","text":"정규화를 설명하시오","points":5}]}
+				""").andExpect(status().isCreated());
+		this.jdbc.sql("""
+				UPDATE grade_items
+				   SET score_visibility = CASE item_type WHEN 'quiz' THEN 'after_release' ELSE 'immediate' END,
+				       release_at = CURRENT_TIMESTAMP(3) - INTERVAL 1 SECOND
+				 WHERE course_id = :c AND item_type IN ('assignment', 'quiz')
+				""").param("c", courseId).update();
+		this.jdbc.sql("""
+				INSERT INTO grade_scores (grade_item_id, user_id, score, graded_at)
+				SELECT grade_item_id, :u, 4, CURRENT_TIMESTAMP(3) FROM grade_items
+				 WHERE course_id = :c AND item_type IN ('assignment', 'quiz')
+				""").param("c", courseId).param("u", studentId).update();
+	}
+
+	private long gradeItem(long courseId, String type) {
+		return this.jdbc.sql("SELECT grade_item_id FROM grade_items WHERE course_id = :c AND item_type = :t")
+			.param("c", courseId)
+			.param("t", type)
+			.query(Long.class)
+			.single();
 	}
 
 	/**

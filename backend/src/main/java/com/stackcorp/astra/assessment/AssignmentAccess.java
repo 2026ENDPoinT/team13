@@ -1,6 +1,7 @@
 package com.stackcorp.astra.assessment;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -76,6 +77,14 @@ class AssignmentAccess {
 			.filter((activity) -> settings.containsKey(activity.activityId()))
 			.map((activity) -> new Assignment(activity, settings.get(activity.activityId())))
 			.toList();
+	}
+
+	/**
+	 * 여러 과목에 걸친 그 활동들 가운데 지우지 않은 과제 활동. 쿼리 한 번이다. 성적 항목이 가리키는 과제가 살아 있고 학생에게 보이는지만 볼 때
+	 * 쓴다. 과목 권한과 볼 수 있는지는 부르는 쪽이 판정한다.
+	 */
+	List<ReportActivity> activitiesOf(Collection<Long> activityIds) {
+		return activityIds.isEmpty() ? List.of() : this.activities.findAll(activityIds);
 	}
 
 	/** 학생이 제출하는 과제. 지금 볼 수 있어야 한다. */

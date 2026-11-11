@@ -32,9 +32,12 @@ import org.springframework.stereotype.Service;
  * 공개하지 않은 항목의 점수, 의견, 그 점수가 들어간 합계는 응답에 속성 자체가 없다(SEC-14). 권한이 없거나 경로의 과목과 항목이 맞지 않으면
  * 404다.
  * <p>
- * 항목 소유: 과제 항목(활동이 있는 항목)의 이름, 배점, 공개, 점수는 과제 화면이 정한다. 성적부에서는 비율만 바꾼다. 직접 입력 항목은
- * 성적부가 모두 정한다. 학습활동은 {@link AssignmentAccess#all}(learning.api.ReportActivities) 한 곳으로만 읽고, 거기에 없는 활동의
- * 항목은 없는 것으로 본다.
+ * 항목 소유: 과제 항목과 퀴즈 항목(활동이 있는 항목)의 이름, 배점, 공개, 점수는 그 활동의 화면이 정한다. 성적부에서는 비율만 바꾸고, 그
+ * 밖의 변경은 409 {@code managed_by_assignment} 또는 {@code managed_by_quiz}다. 직접 입력 항목은 성적부가 모두 정한다. 학습활동은
+ * {@link AssignmentAccess#all}(learning.api.ReportActivities)과 {@link QuizAccess#all}(learning.api.QuizActivities) 두 곳으로만
+ * 읽고, 거기에 없는 활동(지운 활동 포함)의 항목은 없는 것으로 본다. 퀴즈 항목의 학생 공개는 {@link Quiz#release}가 정한다.
+ * <p>
+ * 판정 시각은 요청마다 DB 시계 한 번({@link QuizAccess#now})이다. 쿼리 수는 항목 수와 학생 수에 관계없다.
  */
 @Service
 class GradebookService {
@@ -57,9 +60,11 @@ class GradebookService {
 
 	static final int MAX_QUERY = 100;
 
-	private static final Set<String> TYPES = Set.of("assignment", "quiz", GradeItem.MANUAL);
+	private static final Set<String> TYPES = Set.of(GradeItem.ASSIGNMENT, GradeItem.QUIZ, GradeItem.MANUAL);
 
 	private final AssignmentAccess access;
+
+	private final QuizAccess quizzes;
 
 	private final GradebookRecords records;
 
@@ -73,9 +78,10 @@ class GradebookService {
 
 	private final AuditLog audit;
 
-	GradebookService(AssignmentAccess access, GradebookRecords records, SubmissionRecords submissions,
+	GradebookService(AssignmentAccess access, QuizAccess quizzes, GradebookRecords records, SubmissionRecords submissions,
 			CourseRosters rosters, UserNames userNames, GradeWrites writes, AuditLog audit) {
 		this.access = access;
+		this.quizzes = quizzes;
 		this.records = records;
 		this.submissions = submissions;
 		this.rosters = rosters;
@@ -96,7 +102,7 @@ class GradebookService {
 		if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) {
 			throw ApiException.invalid("page는 1 이상, size는 1 이상 " + MAX_PAGE_SIZE + " 이하여야 합니다.");
 		}
-		LocalDateTime now = this.access.now();
+		LocalDateTime now = this.quizzes.now();
 		Live live = live(courseId);
 		List<Long> itemIds = live.items().stream().map(GradeItem::gradeItemId).toList();
 		List<Long> roster = this.rosters.students(courseId);
@@ -117,7 +123,7 @@ class GradebookService {
 		}).toList();
 		List<ItemView> items = live.items()
 			.stream()
-			.map((item) -> ItemView.of(item, live.assignmentOf(item), graded.getOrDefault(item.gradeItemId(), 0), now))
+			.map((item) -> ItemView.of(item, live, graded.getOrDefault(item.gradeItemId(), 0), now))
 			.toList();
 		Settings settings = this.records.settings(courseId);
 		return new Gradebook(courseId, now, new SettingsView(settings.activitiesVisible(), settings.revision()), items,
@@ -125,8 +131,8 @@ class GradebookService {
 	}
 
 	/**
-	 * 학생 본인의 성적(EP-0035, EP-0036). 과목이 평가 활동을 비공개로 두면 목록과 합계가 없다. 과제 항목은 학생이 그 과제를 볼 수 있을 때만
-	 * 넣는다. 공개하지 않은 항목은 이름과 배점만 있고, 그 점수는 읽지도 않는다. 합계는 공개한 항목만 더한다. 거르기(type, q)는 목록에만
+	 * 학생 본인의 성적(EP-0035, EP-0036). 과목이 평가 활동을 비공개로 두면 목록과 합계가 없다. 과제·퀴즈 항목은 학생이 그 활동을 볼 수 있을
+	 * 때만 넣는다. 공개하지 않은 항목은 이름과 배점만 있고, 그 점수는 읽지도 않는다. 합계는 공개한 항목만 더한다. 거르기(type, q)는 목록에만
 	 * 적용하고 합계는 거르지 않는다.
 	 */
 	MyGrades mine(long userId, long courseId, String type, String query) {
@@ -135,29 +141,26 @@ class GradebookService {
 		}
 		String typeFilter = validatedType(type);
 		String q = validatedQuery(query);
-		LocalDateTime now = this.access.now();
+		LocalDateTime now = this.quizzes.now();
 		if (!this.records.settings(courseId).activitiesVisible()) {
 			return new MyGrades(courseId, now, false, null, null);
 		}
 		Live live = live(courseId);
-		List<GradeItem> visible = live.items()
-			.stream()
-			.filter((item) -> item.manual() || live.assignmentOf(item).activity().openToStudents(now))
-			.toList();
-		List<GradeItem> released = visible.stream().filter((item) -> item.released(now)).toList();
+		List<GradeItem> visible = live.items().stream().filter((item) -> live.openToStudents(item, now)).toList();
+		List<GradeItem> released = visible.stream().filter((item) -> live.released(item, now)).toList();
 		// 공개하지 않은 항목의 점수는 읽지 않는다. 응답에 들어갈 길을 만들지 않는다(SEC-14).
 		Map<Long, Score> mine = this.records.scores(released.stream().map(GradeItem::gradeItemId).toList(), List.of(userId))
 			.getOrDefault(userId, Map.of());
 		Map<Long, Submission> submitted = this.submissions.ofUser(userId,
 				visible.stream()
-					.filter((item) -> !item.manual())
-					.map((item) -> live.assignmentOf(item).assignmentId())
+					.map(live::assignmentOf)
+					.filter((assignment) -> assignment != null)
+					.map(Assignment::assignmentId)
 					.toList());
 		List<MyGradeItem> rows = visible.stream()
 			.filter((item) -> typeFilter == null || typeFilter.equals(item.type()))
 			.filter((item) -> q == null || item.name().toLowerCase(Locale.ROOT).contains(q))
-			.map((item) -> MyGradeItem.of(item, live.assignmentOf(item), item.released(now), mine.get(item.gradeItemId()),
-					submitted))
+			.map((item) -> MyGradeItem.of(item, live, live.released(item, now), mine.get(item.gradeItemId()), submitted))
 			.toList();
 		GradeTotal total = GradeTotal.of(released.stream().map((item) -> part(item, mine)).toList());
 		return new MyGrades(courseId, now, true, rows, total);
@@ -196,13 +199,13 @@ class GradebookService {
 	}
 
 	/**
-	 * 항목을 고친다. 직접 입력 항목은 이름, 배점, 비율을 바꾼다. 과제 항목은 비율만 바꾸고, 이름이나 배점을 보내면 409
-	 * {@code managed_by_assignment}다. 배점을 이미 준 점수보다 낮추면 409 {@code score_exceeds_max}다.
+	 * 항목을 고친다. 직접 입력 항목은 이름, 배점, 비율을 바꾼다. 과제·퀴즈 항목은 비율만 바꾸고, 이름이나 배점을 보내면 409
+	 * {@code managed_by_assignment} 또는 {@code managed_by_quiz}다. 배점을 이미 준 점수보다 낮추면 409 {@code score_exceeds_max}다.
 	 */
 	ItemView update(Actor actor, long courseId, long itemId, ItemUpdate input) {
 		GradeItem current = managedItem(actor.userId(), courseId, itemId);
 		if (!current.manual() && (input.name() != null || input.maxScore() != null)) {
-			throw managedByAssignment();
+			throw managedElsewhere(current);
 		}
 		if (current.manual() && (input.name() == null || input.maxScore() == null)) {
 			throw ApiException.invalid("직접 입력 항목은 name과 maxScore를 함께 보내야 합니다.");
@@ -224,7 +227,7 @@ class GradebookService {
 		return view(courseId, itemId);
 	}
 
-	/** 직접 입력 항목의 점수를 학생에게 공개하거나 거둔다. 과제 항목은 과제 수정(scoresReleased)으로만 바꾼다. */
+	/** 직접 입력 항목의 점수를 학생에게 공개하거나 거둔다. 과제 항목은 과제 수정(scoresReleased), 퀴즈 항목은 퀴즈 수정(resultReleaseAt)으로만 바꾼다. */
 	ItemView release(Actor actor, long courseId, long itemId, boolean released, long revision) {
 		requireManual(managedItem(actor.userId(), courseId, itemId));
 		this.writes.run(() -> {
@@ -344,7 +347,7 @@ class GradebookService {
 	private GradeItem managedItem(long userId, long courseId, long itemId) {
 		requireInstructor(userId, courseId);
 		GradeItem item = this.records.find(courseId, itemId).orElseThrow(ApiException::notFound);
-		if (!item.manual() && live(courseId).assignmentOf(item) == null) {
+		if (!item.manual() && !live(courseId).contains(item)) {
 			throw ApiException.notFound();
 		}
 		return item;
@@ -361,20 +364,19 @@ class GradebookService {
 
 	private ItemView view(long courseId, long itemId) {
 		GradeItem item = this.records.find(courseId, itemId).orElseThrow(ApiException::notFound);
-		Assignment assignment = item.manual() ? null : live(courseId).assignmentOf(item);
+		Live live = item.manual() ? new Live(List.of(item), Map.of(), Map.of()) : live(courseId);
 		int graded = this.records.gradedCounts(List.of(itemId), this.rosters.students(courseId)).getOrDefault(itemId, 0);
-		return ItemView.of(item, assignment, graded, this.access.now());
+		return ItemView.of(item, live, graded, this.quizzes.now());
 	}
 
-	/** 지금 있는 항목. 직접 입력 항목과, learning이 돌려주는 과제 활동에 딸린 항목만이다. */
+	/** 지금 있는 항목. 직접 입력 항목과, learning이 돌려주는 과제·퀴즈 활동(지우지 않은 것)에 딸린 항목만이다. */
 	private Live live(long courseId) {
-		Map<Long, Assignment> byItem = new HashMap<>();
-		this.access.all(courseId).forEach((a) -> byItem.put(a.settings().gradeItemId(), a));
-		List<GradeItem> items = this.records.items(courseId)
-			.stream()
-			.filter((item) -> item.manual() || byItem.containsKey(item.gradeItemId()))
-			.toList();
-		return new Live(items, byItem);
+		Map<Long, Assignment> assignments = new HashMap<>();
+		this.access.all(courseId).forEach((a) -> assignments.put(a.settings().gradeItemId(), a));
+		Map<Long, Quiz> quizzes = new HashMap<>();
+		this.quizzes.all(courseId).forEach((q) -> quizzes.put(q.settings().gradeItemId(), q));
+		Live candidates = new Live(this.records.items(courseId), assignments, quizzes);
+		return new Live(candidates.items().stream().filter(candidates::contains).toList(), assignments, quizzes);
 	}
 
 	private static GradeTotal.Part part(GradeItem item, Map<Long, Score> scores) {
@@ -384,11 +386,15 @@ class GradebookService {
 
 	private static void requireManual(GradeItem item) {
 		if (!item.manual()) {
-			throw managedByAssignment();
+			throw managedElsewhere(item);
 		}
 	}
 
-	private static ApiException managedByAssignment() {
+	/** 활동에 딸린 항목을 성적부에서 바꾸려 할 때. 퀴즈 항목이면 managed_by_quiz, 과제 항목이면 managed_by_assignment다. */
+	private static ApiException managedElsewhere(GradeItem item) {
+		if (item.quiz()) {
+			return new ApiException(HttpStatus.CONFLICT, "managed_by_quiz", "퀴즈 항목의 이름, 배점, 공개, 점수는 퀴즈 화면에서 바꿉니다.");
+		}
 		return new ApiException(HttpStatus.CONFLICT, "managed_by_assignment", "과제 항목의 이름, 배점, 공개, 점수는 과제 화면에서 바꿉니다.");
 	}
 
@@ -417,11 +423,37 @@ class GradebookService {
 		return q.toLowerCase(Locale.ROOT);
 	}
 
-	private record Live(List<GradeItem> items, Map<Long, Assignment> assignments) {
+	private record Live(List<GradeItem> items, Map<Long, Assignment> assignments, Map<Long, Quiz> quizzes) {
 
-		/** 과제 항목의 과제. 직접 입력 항목이면 null */
+		/** 과제 항목의 과제. 과제 항목이 아니면 null */
 		Assignment assignmentOf(GradeItem item) {
-			return item.manual() ? null : this.assignments.get(item.gradeItemId());
+			return item.manual() || item.quiz() ? null : this.assignments.get(item.gradeItemId());
+		}
+
+		/** 퀴즈 항목의 퀴즈. 퀴즈 항목이 아니면 null */
+		Quiz quizOf(GradeItem item) {
+			return item.quiz() ? this.quizzes.get(item.gradeItemId()) : null;
+		}
+
+		/** 직접 입력 항목이거나, 그 항목의 과제나 퀴즈가 learning에 살아 있는지. */
+		boolean contains(GradeItem item) {
+			return item.manual() || assignmentOf(item) != null || quizOf(item) != null;
+		}
+
+		/** 학생에게 그 항목이 보이는지. 과제·퀴즈 항목은 그 활동을 학생이 볼 수 있을 때만이다. */
+		boolean openToStudents(GradeItem item, LocalDateTime now) {
+			Quiz quiz = quizOf(item);
+			if (quiz != null) {
+				return quiz.activity().openToStudents(now);
+			}
+			Assignment assignment = assignmentOf(item);
+			return assignment == null ? item.manual() : assignment.activity().openToStudents(now);
+		}
+
+		/** 학생에게 점수를 공개했는지. 퀴즈 항목은 {@link Quiz#release}, 그 밖은 {@link GradeItem#released}다. */
+		boolean released(GradeItem item, LocalDateTime now) {
+			Quiz quiz = quizOf(item);
+			return quiz != null ? quiz.release(now).scores() : !item.quiz() && item.released(now);
 		}
 
 	}
@@ -462,19 +494,26 @@ class GradebookService {
 	}
 
 	/**
-	 * @param type assignment, manual
-	 * @param assignmentId 과제 항목의 과제. 직접 입력 항목에는 없다
+	 * @param type assignment, quiz, manual
+	 * @param assignmentId 과제 항목의 과제. 그 밖의 항목에는 없다
+	 * @param quizId 퀴즈 항목의 퀴즈. 그 밖의 항목에는 없다
+	 * @param released 학생에게 점수를 공개했는지. 퀴즈 항목은 퀴즈의 결과 공개 판정이다
 	 * @param managedByAssignment 이름, 배점, 공개, 점수를 과제 화면에서 바꾸는 항목인지
+	 * @param managedByQuiz 이름, 배점, 공개, 점수를 퀴즈 화면에서 바꾸는 항목인지
 	 * @param gradedCount 수강생 가운데 점수를 받은 학생 수
 	 */
 	record ItemView(long itemId, String name, String type, @JsonInclude(JsonInclude.Include.NON_NULL) Long assignmentId,
-			BigDecimal maxScore, BigDecimal weight, boolean released, LocalDateTime releaseAt,
-			boolean managedByAssignment, long revision, int gradedCount) {
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long quizId, BigDecimal maxScore, BigDecimal weight,
+			boolean released, LocalDateTime releaseAt, boolean managedByAssignment, boolean managedByQuiz,
+			long revision, int gradedCount) {
 
-		static ItemView of(GradeItem item, Assignment assignment, int gradedCount, LocalDateTime now) {
+		private static ItemView of(GradeItem item, Live live, int gradedCount, LocalDateTime now) {
+			Assignment assignment = live.assignmentOf(item);
+			Quiz quiz = live.quizOf(item);
 			return new ItemView(item.gradeItemId(), item.name(), item.type(),
-					assignment == null ? null : assignment.assignmentId(), item.maxScore(), item.weight(),
-					item.released(now), item.releaseAt(), !item.manual(), item.revision(), gradedCount);
+					assignment == null ? null : assignment.assignmentId(), quiz == null ? null : quiz.quizId(),
+					item.maxScore(), item.weight(), live.released(item, now), item.releaseAt(), assignment != null,
+					quiz != null, item.revision(), gradedCount);
 		}
 
 	}
@@ -519,13 +558,15 @@ class GradebookService {
 	 * 학생 성적 한 줄. 원본의 "획득 / 배점", "미공개 / 배점", "- / 배점"에 해당한다.
 	 *
 	 * @param assignmentId 과제 항목만
-	 * @param closeAt 과제 항목의 마감
+	 * @param quizId 퀴즈 항목만
+	 * @param closeAt 과제 항목의 마감, 퀴즈 항목의 응시 마감
 	 * @param submitted 과제 항목에 최종 제출했는지
 	 * @param released 점수를 공개했는지. false면 score, feedback, gradedAt 속성이 없다
 	 * @param score 공개했고 점수를 받았을 때만 있다
 	 */
 	record MyGradeItem(long itemId, String name, String type,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Long assignmentId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long quizId,
 			@JsonInclude(JsonInclude.Include.NON_NULL) LocalDateTime closeAt,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Boolean submitted, BigDecimal maxScore,
 			@JsonInclude(JsonInclude.Include.NON_NULL) BigDecimal weight, boolean released,
@@ -533,13 +574,17 @@ class GradebookService {
 			@JsonInclude(JsonInclude.Include.NON_NULL) String feedback,
 			@JsonInclude(JsonInclude.Include.NON_NULL) LocalDateTime gradedAt) {
 
-		static MyGradeItem of(GradeItem item, Assignment assignment, boolean released, Score score,
+		private static MyGradeItem of(GradeItem item, Live live, boolean released, Score score,
 				Map<Long, Submission> submissions) {
 			Score shown = released && score != null && score.score() != null ? score : null;
+			Assignment assignment = live.assignmentOf(item);
+			Quiz quiz = live.quizOf(item);
 			Long assignmentId = assignment == null ? null : assignment.assignmentId();
 			Submission submission = assignmentId == null ? null : submissions.get(assignmentId);
+			LocalDateTime closeAt = assignment != null ? assignment.activity().closeAt()
+					: quiz != null ? quiz.activity().closeAt() : null;
 			return new MyGradeItem(item.gradeItemId(), item.name(), item.type(), assignmentId,
-					assignment == null ? null : assignment.activity().closeAt(),
+					quiz == null ? null : quiz.quizId(), closeAt,
 					assignment == null ? null : submission != null && submission.submitted(), item.maxScore(),
 					item.weight(), released, shown == null ? null : shown.score(), shown == null ? null : shown.feedback(),
 					shown == null ? null : shown.gradedAt());
