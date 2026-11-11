@@ -36,7 +36,7 @@ V1 스키마에 필요한 것이 다 있다. `course_enrollments`의 활성 상�
    - 교착이나 잠금 대기 시간 초과로 되돌아간 명령은 남긴 것이 없으므로 컨트롤러가 3번까지 처음부터 다시 실행한다.
 5. **이벤트 순번.** `enrollment_events.event_seq`는 그 이벤트가 만든 수강 행의 `version`이다. version은 행 잠금 아래에서만 오르므로 순번이 겹치지 않고, `MAX(event_seq)`를 읽지 않아 이벤트 인덱스에 범위 잠금을 걸지 않는다. 청강 사유 수정은 이벤트 없이 version만 올리므로 순번이 건너뛸 수 있다.
 6. **멱등.** 신청은 공용 원장(ADR-0012)을 쓴다. 같은 key는 처음 receipt(같은 `enrollmentId`)를, 다른 key는 409 `already_applied`를 받는다. 취소는 상태로 멱등이다. 이미 CANCELLED면 아무것도 쓰지 않고 같은 결과를 돌려준다. 승인·반려는 담당자가 읽은 `version`을 비교하고, key를 보내면 원장도 거친다.
-7. **대상과 권한.** 신청대상 코드는 `users.user_role`에서 정한다: PROFESSOR 1, STAFF 2, STUDENT 3, TA 5. identity가 졸업생(4)과 대학원생(6)을 구분하지 않으므로 그 코드만 가진 과정은 아무도 신청하지 못한다. 신청대상이 없는 과정도 아무도 신청하지 못한다(기본 거부). 그 과목의 담당자는 신청하지 못한다(409 `own_course`). 승인·반려는 `course_instructors`의 PROFESSOR와 MANAGER만 한다. 조교에게 맡기는 위임 모델이 없어 TA는 하지 못한다(§3.3).
+7. **대상과 권한.** 신청대상 코드는 `users.user_role`에서 정한다: PROFESSOR 1, STAFF 2, STUDENT 3, TA 5. identity가 졸업생(4)과 대학원생(6)을 구분하지 않으므로 그 코드만 가진 과정은 아무도 신청하지 못한다. 신청대상이 없는 과정도 아무도 신청하지 못한다(기본 거부). 그 과목의 담당자는 신청하지 못한다(409 `own_course`). 승인·반려는 `course_instructors`의 PROFESSOR와 MANAGER만 한다. 조교에게 맡기는 위임 모델이 없어 TA는 하지 못한다(§3.3). 폐강한 과목에는 처리할 사람이 없어 승인·반려와 신청 목록도 404다. 과목 구성원 판정(`MembershipRule`)과 같다.
 8. **시각.** 판정 시각은 명령 transaction 안에서 읽은 `CURRENT_TIMESTAMP(3)`이다. 접수는 `openAt <= now < closeAt`, 취소 마감은 `now < cancelCloseAt`이다.
 
 검토한 대안:

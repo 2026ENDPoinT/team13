@@ -136,6 +136,11 @@ run "plan" {
     condition     = startswith(output.app_environment["DB_URL"], "jdbc:mysql://") && endswith(output.app_environment["DB_URL"], "/astra?sslMode=REQUIRED")
     error_message = "DB_URL must point at the RDS endpoint with TLS required."
   }
+
+  assert {
+    condition     = output.app_environment["ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES"] == "10.40.2.0/24"
+    error_message = "Only the app subnet, where the CloudFront VPC origin ENIs sit, may supply the viewer address."
+  }
 }
 
 run "reject_reserved_app_environment" {

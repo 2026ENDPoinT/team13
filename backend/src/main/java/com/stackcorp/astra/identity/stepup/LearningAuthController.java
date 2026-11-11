@@ -90,6 +90,13 @@ class LearningAuthController {
 
 	/** @param code 코드가 있는 수단의 입력값 */
 	record VerifyChallenge(String code) {
+
+		// 요청 본문을 로그에 찍는 설정에서도 코드가 나가지 않게 한다(SC-07).
+		@Override
+		public String toString() {
+			return "VerifyChallenge[]";
+		}
+
 	}
 
 }

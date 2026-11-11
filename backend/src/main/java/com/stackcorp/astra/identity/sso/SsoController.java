@@ -20,6 +20,7 @@ import com.stackcorp.astra.identity.api.ExternalIdentityProvider;
 import com.stackcorp.astra.identity.api.ExternalIdentityProvider.ExternalLogin;
 import com.stackcorp.astra.identity.api.ExternalIdentityProvider.LoginRedirect;
 import com.stackcorp.astra.identity.api.ExternalLoginException;
+import com.stackcorp.astra.identity.session.ClientAddresses;
 import com.stackcorp.astra.identity.session.DeviceCookie;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
@@ -69,13 +70,17 @@ class SsoController {
 
 	private final RateLimiter rateLimiter;
 
+	private final ClientAddresses clientAddresses;
+
 	SsoController(ObjectProvider<ExternalIdentityProvider> providers, SsoLogin login,
-			SsoReauthentication reauthentication, SessionProperties properties, RateLimiter rateLimiter) {
+			SsoReauthentication reauthentication, SessionProperties properties, RateLimiter rateLimiter,
+			ClientAddresses clientAddresses) {
 		this.providers = providers;
 		this.login = login;
 		this.reauthentication = reauthentication;
 		this.properties = properties;
 		this.rateLimiter = rateLimiter;
+		this.clientAddresses = clientAddresses;
 	}
 
 	/** 학교 IdP 로그인을 시작한다. {@code returnTo}가 같은 origin의 상대 경로가 아니면 {@code /}로 돌아온다. */
@@ -152,7 +157,7 @@ class SsoController {
 		}
 		try {
 			IssuedSession session = this.login.signIn(external.externalRef(), DeviceCookie.read(request),
-					request.getRemoteAddr(), request.getHeader(HttpHeaders.USER_AGENT));
+					this.clientAddresses.of(request), request.getHeader(HttpHeaders.USER_AGENT));
 			return redirect(ReturnPath.orRoot(external.returnTo()), sessionCookie(session.token()).toString(),
 					DeviceCookie.issue(session.deviceUuid(), this.properties).toString(),
 					loginCookie("", Duration.ZERO).toString());

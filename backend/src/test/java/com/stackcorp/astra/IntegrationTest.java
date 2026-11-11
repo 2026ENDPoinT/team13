@@ -29,7 +29,8 @@ import com.stackcorp.astra.summary.FakeLlm;
 		"astra.files.gc.interval=1h", "astra.transcoder.worker.poll-interval=1h", "astra.quiz.close-interval=1h",
 		"astra.metrics.backlog-interval=1h", "astra.filebox.zip.poll-interval=1h", "astra.filebox.zip.max-total-size=12MB",
 		"astra.files.conversion.poll-interval=1h", "astra.files.conversion.recovery-interval=1h",
-		"astra.studychat.poll-interval=1h", "astra.studychat.sweep-interval=1h", "astra.studychat.rate-limit=8" })
+		"astra.studychat.poll-interval=1h", "astra.studychat.sweep-interval=1h", "astra.studychat.rate-limit=8",
+		"astra.client-address.trusted-proxies=" + IntegrationTest.TRUSTED_PROXIES })
 @AutoConfigureMockMvc
 @ActiveProfiles("worker")
 @Import({ TestcontainersConfiguration.class, FakeLlm.Configuration.class, TestLearningClock.class,
@@ -37,6 +38,9 @@ import com.stackcorp.astra.summary.FakeLlm;
 public abstract class IntegrationTest {
 
 	public static final String BREAK_GLASS_REF = "break-glass-admin";
+
+	/** CloudFront VPC origin이 있는 app subnet을 흉내 낸다. MockMvc의 기본 주소(127.0.0.1)는 이 범위 밖이다. */
+	public static final String TRUSTED_PROXIES = "10.40.2.0/24";
 
 	public static final String BREAK_GLASS_PASSWORD = "correct horse battery staple";
 

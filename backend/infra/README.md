@@ -127,7 +127,7 @@ aws ssm send-command --document-name <deploy_document_name> \
 
 배포 문서(`modules/deploy/templates/deploy.sh`)는 Terraform이 아는 설정, `app_environment`, secret 값으로 `/opt/astra/.env`(root, 0600)를 만들고 `docker compose pull`, `docker compose up -d --wait`를 실행한다. deploy role은 이 문서 말고 다른 명령을 EC2에서 실행할 수 없다([ADR-0020](../docs/adr/0020-terraform-layout.md)).
 
-Terraform이 넣는 설정: `ASTRA_API_BIND=0.0.0.0`, `ASTRA_API_PORT`, `DB_URL`(`sslMode=REQUIRED`), `ASTRA_STORAGE_CONTENT_BUCKET`, `ASTRA_STORAGE_DELIVERY_BUCKET`, `ASTRA_STORAGE_REGION`, `ASTRA_CLOUDFRONT_BASE_URL`, `ASTRA_CLOUDFRONT_KEY_PAIR_ID`, `ASTRA_SESSION_ALLOWED_ORIGINS`, `ASTRA_OIDC_REDIRECT_URI`. CloudFront와 EC2 사이가 HTTP라 앱은 요청에서 자기 공개 origin을 알 수 없다. 그래서 허용 Origin을 서비스 주소로 넣는다.
+Terraform이 넣는 설정: `ASTRA_API_BIND=0.0.0.0`, `ASTRA_API_PORT`, `DB_URL`(`sslMode=REQUIRED`), `ASTRA_STORAGE_CONTENT_BUCKET`, `ASTRA_STORAGE_DELIVERY_BUCKET`, `ASTRA_STORAGE_REGION`, `ASTRA_CLOUDFRONT_BASE_URL`, `ASTRA_CLOUDFRONT_KEY_PAIR_ID`, `ASTRA_SESSION_ALLOWED_ORIGINS`, `ASTRA_OIDC_REDIRECT_URI`, `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES`. CloudFront와 EC2 사이가 HTTP라 앱은 요청에서 자기 공개 origin을 알 수 없다. 그래서 허용 Origin을 서비스 주소로 넣는다. app port는 CloudFront VPC origin에만 열려 있으므로 app subnet에서 온 연결은 CloudFront를 거친 요청이고, 앱은 그 연결에서만 `CloudFront-Viewer-Address`를 브라우저 주소로 쓴다.
 
 앱이 지켜야 하는 것:
 

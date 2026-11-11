@@ -248,6 +248,13 @@ class SmartAttendanceController {
 
 	/** 제출 본문. 사용자, 회차, 시각은 받지 않는다. */
 	record CheckBody(String pin, String qrToken) {
+
+		// 요청 본문을 로그에 찍는 설정에서도 PIN과 token이 나가지 않게 한다(SC-07).
+		@Override
+		public String toString() {
+			return "CheckBody[]";
+		}
+
 	}
 
 	/**
@@ -260,6 +267,13 @@ class SmartAttendanceController {
 			LocalDateTime openedAt, LocalDateTime lateAt, LocalDateTime endsAt, LocalDateTime closedAt,
 			LocalDateTime serverTime, String pin, String qrToken, LocalDateTime qrRefreshAt, Counts counts,
 			int pollAfterSec) {
+
+		// 응답을 로그에 찍는 설정에서도 PIN과 QR token이 나가지 않게 한다(SC-07).
+		@Override
+		public String toString() {
+			return "RoundView[roundId=" + this.roundId + ", state=" + this.state + "]";
+		}
+
 	}
 
 	/**

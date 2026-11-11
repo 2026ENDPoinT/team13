@@ -200,11 +200,16 @@ class EnrollmentRecords {
 		}
 	}
 
-	/** 사용자가 그 과목의 교수 또는 비정규 담당자로 등록돼 있으면 그 역할. 조교는 신청을 처리하지 않는다. */
+	/**
+	 * 사용자가 그 과목의 교수 또는 비정규 담당자로 등록돼 있으면 그 역할. 조교는 신청을 처리하지 않는다. 폐강한 과목에는 처리할 사람이
+	 * 없다({@link MembershipRule}).
+	 */
 	Optional<String> deciderRole(long userId, long courseId) {
 		return this.jdbc.sql("""
 				SELECT instructor_role FROM course_instructors
 				 WHERE course_id = :course AND user_id = :user AND instructor_role IN ('PROFESSOR', 'MANAGER')
+				""" + " AND " + MembershipRule.liveCourse(":course") + """
+
 				 ORDER BY instructor_role = 'PROFESSOR' DESC LIMIT 1
 				""").param("course", courseId).param("user", userId).query(String.class).optional();
 	}

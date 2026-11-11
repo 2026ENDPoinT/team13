@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.nio.charset.StandardCharsets;
+
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
@@ -79,8 +81,7 @@ class MaterialFlowTests extends IntegrationTest {
 			.andExpect(jsonPath("$[0].description").value("<b>3NF</b>까지"))
 			.andExpect(jsonPath("$[0].files[0].fileId").value(fileId));
 		this.student.get("/api/courses/" + this.course + "/weeks")
-			.andExpect(jsonPath("$[?(@.weekNo == 9)].activities[0].activityId").value((int) activityId))
-			.andExpect(jsonPath("$[?(@.weekNo == 9)].activities[0].accessible").value(true));
+			.andExpect(jsonPath("$[?(@.weekNo == 9)].activities[0].activityId").value((int) activityId));
 		this.student.get("/api/courses/" + this.course + "/activities/" + activityId)
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.type").value("lecture_material"))
@@ -124,11 +125,17 @@ class MaterialFlowTests extends IntegrationTest {
 
 		this.professor.get(materials(this.course)).andExpect(jsonPath("$.length()").value(2));
 		this.student.get(materials(this.course)).andExpect(jsonPath("$.length()").value(0));
-		// 주차 목록에는 공개한 활동만 나오고, 시작 전 활동은 제목과 기간만 보인다.
-		this.student.get("/api/courses/" + this.course + "/weeks")
+		// 주차 목록도 다른 학생 목록과 같이 공개했고 시작한 활동만 보인다. 시작 전 활동은 제목도 기간도 없다(SC-06).
+		String weeks = this.student.get("/api/courses/" + this.course + "/weeks")
+			.andExpect(status().isOk())
 			.andExpect(jsonPath("$[?(@.weekNo == 4)].activities[*]").isEmpty())
-			.andExpect(jsonPath("$[?(@.weekNo == 5)].activities[0].title").value("다음 주 자료"))
-			.andExpect(jsonPath("$[?(@.weekNo == 5)].activities[0].accessible").value(false));
+			.andExpect(jsonPath("$[?(@.weekNo == 5)].activities[*]").isEmpty())
+			.andReturn()
+			.getResponse()
+			.getContentAsString(StandardCharsets.UTF_8);
+		assertThat(weeks).doesNotContain("다음 주 자료", "2999-01-01");
+		this.professor.get("/api/courses/" + this.course + "/weeks")
+			.andExpect(jsonPath("$[?(@.weekNo == 5)].activities[0].title").value("다음 주 자료"));
 		for (Registered r : new Registered[] { hidden, future }) {
 			this.student.get("/api/courses/" + this.course + "/activities/" + r.activityId).andExpect(status().isNotFound());
 			this.student.get(contentPath(this.course, r.fileId)).andExpect(status().isNotFound());

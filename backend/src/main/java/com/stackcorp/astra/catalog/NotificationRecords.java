@@ -32,17 +32,10 @@ class NotificationRecords {
 
 	/**
 	 * 받는 사람이 지금 볼 수 있는 알림. 보존 기간 안이고, 과목 알림이면 지금도 그 과목의 구성원이어야 한다. 구성원 판정은
-	 * {@link MemberCourseQueries}와 같다(담당 관계, 수강 확정, 폐강 제외).
+	 * {@link MembershipRule}이다(담당 관계, 수강 확정, 폐강 제외).
 	 */
-	private static final String VISIBLE = """
-			n.user_id = :user AND n.expires_at > :now
-			AND (n.course_id IS NULL OR EXISTS (
-			     SELECT 1 FROM courses mc WHERE mc.course_id = n.course_id AND mc.course_status <> 'CANCELLED'
-			        AND (EXISTS (SELECT 1 FROM course_instructors i WHERE i.course_id = mc.course_id AND i.user_id = n.user_id)
-			          OR EXISTS (SELECT 1 FROM course_enrollments e WHERE e.course_id = mc.course_id AND e.user_id = n.user_id
-			                        AND e.enrollment_status = 'ENROLLED'
-			                        AND e.enrollment_role IN ('STUDENT', 'AUDITOR', 'PROFESSOR', 'TA')))))
-			""";
+	private static final String VISIBLE = "n.user_id = :user AND n.expires_at > :now AND (n.course_id IS NULL OR "
+			+ MembershipRule.memberOf("n.course_id", "n.user_id") + ")\n";
 
 	private static final String SELECT = """
 			SELECT n.notification_id, n.notification_type, n.course_id, c.course_name, c.course_code, c.section_no,
@@ -138,31 +131,32 @@ class NotificationRecords {
 	// ---- 알림 행 만들기 ----
 
 	/**
-	 * 그 과목의 담당자. {@link CourseMembershipQueries#roleOf}가 INSTRUCTOR로 판정하는 사람이다. 오름차순.
+	 * 그 과목의 담당자. {@link MembershipRule}이 INSTRUCTOR로 판정하는 사람이다. 오름차순.
 	 */
 	List<Long> instructors(long courseId) {
 		return this.jdbc.sql("""
-				SELECT user_id FROM course_instructors WHERE course_id = :course
-				UNION
-				SELECT user_id FROM course_enrollments
-				 WHERE course_id = :course AND enrollment_status = 'ENROLLED' AND enrollment_role IN ('PROFESSOR', 'TA')
-				 ORDER BY user_id
-				""").param("course", courseId).query(Long.class).list();
+				SELECT p.user_id FROM (SELECT user_id FROM course_instructors WHERE course_id = :course
+				                       UNION SELECT user_id FROM course_enrollments WHERE course_id = :course) p
+				 WHERE """ + MembershipRule.instructorOf(":course", "p.user_id") + " ORDER BY p.user_id")
+			.param("course", courseId)
+			.query(Long.class)
+			.list();
 	}
 
-	/** 주어진 사용자 가운데 그 과목의 구성원. 오름차순. */
+	/** 주어진 사용자 가운데 {@link MembershipRule}이 그 과목의 구성원으로 판정하는 사람. 오름차순. */
 	List<Long> members(long courseId, Collection<Long> userIds) {
 		if (userIds.isEmpty()) {
 			return List.of();
 		}
 		return this.jdbc.sql("""
-				SELECT user_id FROM course_instructors WHERE course_id = :course AND user_id IN (:users)
-				UNION
-				SELECT user_id FROM course_enrollments
-				 WHERE course_id = :course AND user_id IN (:users) AND enrollment_status = 'ENROLLED'
-				   AND enrollment_role IN ('STUDENT', 'AUDITOR', 'PROFESSOR', 'TA')
-				 ORDER BY user_id
-				""").param("course", courseId).param("users", userIds).query(Long.class).list();
+				SELECT p.user_id FROM (SELECT user_id FROM course_instructors WHERE course_id = :course AND user_id IN (:users)
+				                       UNION SELECT user_id FROM course_enrollments
+				                              WHERE course_id = :course AND user_id IN (:users)) p
+				 WHERE """ + MembershipRule.memberOf(":course", "p.user_id") + " ORDER BY p.user_id")
+			.param("course", courseId)
+			.param("users", userIds)
+			.query(Long.class)
+			.list();
 	}
 
 	/**

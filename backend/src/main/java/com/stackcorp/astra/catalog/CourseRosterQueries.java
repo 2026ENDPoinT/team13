@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 import com.stackcorp.astra.catalog.api.CourseRosters;
 
 /**
- * 수강이 확정된 학생과 청강생. 담당자로도 등록된 사람은 roleOf와 같이 담당자로 보고 빼낸다.
+ * {@link MembershipRule}이 STUDENT로 판정하는 사람. 담당자로도 등록된 사람과 폐강한 과목의 수강생은 없다.
  */
 @Service
 class CourseRosterQueries implements CourseRosters {
@@ -21,15 +21,11 @@ class CourseRosterQueries implements CourseRosters {
 
 	@Override
 	public List<Long> students(long courseId) {
-		return this.jdbc.sql("""
-				SELECT DISTINCT e.user_id FROM course_enrollments e
-				 WHERE e.course_id = :course AND e.enrollment_status = 'ENROLLED' AND e.enrollment_role IN ('STUDENT', 'AUDITOR')
-				   AND NOT EXISTS (SELECT 1 FROM course_instructors i WHERE i.course_id = e.course_id AND i.user_id = e.user_id)
-				   AND NOT EXISTS (SELECT 1 FROM course_enrollments x
-				                    WHERE x.course_id = e.course_id AND x.user_id = e.user_id
-				                      AND x.enrollment_status = 'ENROLLED' AND x.enrollment_role IN ('PROFESSOR', 'TA'))
-				 ORDER BY e.user_id
-				""").param("course", courseId).query(Long.class).list();
+		return this.jdbc.sql("SELECT DISTINCT e.user_id FROM course_enrollments e WHERE e.course_id = :course AND "
+				+ MembershipRule.studentOf("e.course_id", "e.user_id") + " ORDER BY e.user_id")
+			.param("course", courseId)
+			.query(Long.class)
+			.list();
 	}
 
 }

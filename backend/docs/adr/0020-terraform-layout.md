@@ -16,7 +16,7 @@ fck-nat에는 [RaJiska/fck-nat/aws](https://registry.terraform.io/modules/RaJisk
 1. `infra/terraform/envs/<환경>`에 환경마다 root module을 두고, `infra/terraform/modules/`의 local module 7개(network, storage, database, app, edge, deploy, monitoring)로 조립한다. 외부 module은 쓰지 않는다. fck-nat는 registry module 대신 같은 동작(크기 1 Auto Scaling group, 고정 ENI, 고정 EIP)을 network module에 직접 쓴다.
 2. CI role이 실행할 수 있는 SSM 문서는 Terraform이 만든 `<name>-deploy` 하나다. 인자는 image tag 하나이고 형식(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)을 문서가 검사한다. 대상은 `DeployTarget` tag가 붙은 인스턴스뿐이다. `AWS-RunShellScript`는 허용하지 않는다.
 3. 비밀값은 Secrets Manager에 container만 Terraform으로 만들고 값은 운영자가 넣는다. 값은 key가 환경 변수 이름인 JSON object다. 배포 문서가 instance role로 값을 읽어 `/opt/astra/.env`(root, 0600)를 다시 만든다. secret마다 허용한 key만 받고, 그 밖의 key가 있으면 배포를 멈춘다.
-4. Terraform이 아는 설정(bucket 이름, DB 주소, CloudFront 주소와 key ID, 허용 Origin)은 Terraform이 배포 문서에 넣는다. 운영자가 정하는 비밀이 아닌 설정은 `app_environment` 변수로 넣는다. Terraform이 정하는 key와 비밀 key는 이 변수에 넣을 수 없다.
+4. Terraform이 아는 설정(bucket 이름, DB 주소, CloudFront 주소와 key ID, 허용 Origin, `CloudFront-Viewer-Address`를 믿을 연결 주소 범위인 app subnet CIDR)은 Terraform이 배포 문서에 넣는다. 운영자가 정하는 비밀이 아닌 설정은 `app_environment` 변수로 넣는다. Terraform이 정하는 key와 비밀 key는 이 변수에 넣을 수 없다.
 5. us-east-1에 있어야 하는 자원(ACM 인증서, CloudFront용 WAF, CloudFront 알람과 그 SNS topic)은 provider alias 대신 AWS provider 6의 resource별 `region` 인자로 둔다.
 
 ## 결과와 트레이드오프
