@@ -19,6 +19,10 @@ import com.stackcorp.astra.files.filebox.ZipJobRecords.Claimed;
 import com.stackcorp.astra.files.filebox.ZipJobRecords.Entry;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
+import com.stackcorp.astra.shared.metrics.MetricTags;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,6 +47,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 기다림으로 되돌리며, 시도 수를 다 쓰면 failed로 닫는다. 상태 전이는 READ COMMITTED transaction에서 lease 소유자를 조건으로 한
  * compare-and-set이고 잠금 충돌로 되돌려지면 몇 번 다시 한다. 다시 해도 기록하지 못한 전이는 예외로 올린다. 로그에는 작업 ID, 시도 수,
  * 사유 코드만 남긴다.
+ * <p>
+ * 만들기를 시도한 결과를 astra.files.zip.builds{outcome, code}로 센다. outcome은 ready, retry(기다림으로 되돌림), failed이고 code는
+ * 사유 코드(item_unavailable, build_failed)다. lease가 끝난 채 시도 수를 다 쓴 작업은 원장에는 build_failed지만 지표에서는
+ * {@code interrupted}로 센다. 대기열 길이와 나이는 files.FilesBacklog가 낸다.
  */
 @Component
 @Profile("worker")
@@ -66,21 +74,24 @@ class ZipJobWorker {
 
 	private final String owner;
 
+	private final MeterRegistry meters;
+
 	@Autowired
 	ZipJobWorker(ZipJobRecords records, ObjectStore store, PlatformTransactionManager transactionManager,
-			FileboxProperties properties) {
+			FileboxProperties properties, MeterRegistry meters) {
 		this(records, store, transactionManager, properties,
-				properties.zip().workerId() != null ? properties.zip().workerId() : defaultOwner());
+				properties.zip().workerId() != null ? properties.zip().workerId() : defaultOwner(), meters);
 	}
 
 	ZipJobWorker(ZipJobRecords records, ObjectStore store, PlatformTransactionManager transactionManager,
-			FileboxProperties properties, String owner) {
+			FileboxProperties properties, String owner, MeterRegistry meters) {
 		this.records = records;
 		this.store = store;
 		this.transaction = new TransactionTemplate(transactionManager);
 		this.transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 		this.properties = properties.zip();
 		this.owner = owner;
+		this.meters = meters;
 	}
 
 	@Scheduled(fixedDelayString = "${astra.filebox.zip.poll-interval:10s}",
@@ -106,13 +117,14 @@ class ZipJobWorker {
 
 	/** 시도 수를 다 쓴 작업을 닫고, 만들 작업 하나를 잡는다. */
 	Optional<Claimed> claim() {
-		return inTransaction((tx) -> {
-			int exhausted = this.records.failExhausted(this.properties.maxAttempts(), this.properties.ttl());
-			if (exhausted > 0) {
-				log.warn("zip jobs failed after max attempts count={}", exhausted);
-			}
-			return this.records.claim(this.owner, this.properties.lease(), this.properties.maxAttempts());
-		});
+		int exhausted = inTransaction(
+				(tx) -> this.records.failExhausted(this.properties.maxAttempts(), this.properties.ttl()));
+		if (exhausted > 0) {
+			log.warn("zip jobs failed after max attempts count={}", exhausted);
+			built("failed", "interrupted", exhausted);
+		}
+		return inTransaction(
+				(tx) -> this.records.claim(this.owner, this.properties.lease(), this.properties.maxAttempts()));
 	}
 
 	void build(Claimed job) {
@@ -168,6 +180,7 @@ class ZipJobWorker {
 			return;
 		}
 		log.info("zip job ready jobId={} attempt={} entries={}", job.id(), job.attempt(), entries.size());
+		built("ready", null, 1);
 	}
 
 	private void retryOrFail(Claimed job) {
@@ -177,15 +190,28 @@ class ZipJobWorker {
 		else if (!transition(() -> this.records.retry(job.id(), this.owner))) {
 			log.info("zip job retry skipped, lease lost jobId={}", job.id());
 		}
+		else {
+			built("retry", "build_failed", 1);
+		}
 	}
 
 	private void close(Claimed job, String reason) {
 		if (transition(() -> this.records.fail(job.id(), this.owner, reason, this.properties.ttl()))) {
 			log.warn("zip job failed jobId={} attempt={} reason={}", job.id(), job.attempt(), reason);
+			built("failed", reason, 1);
 		}
 		else {
 			log.info("zip job failure skipped, lease lost jobId={}", job.id());
 		}
+	}
+
+	private void built(String outcome, String code, int count) {
+		Counter.builder("astra.files.zip.builds")
+			.description("파일함 ZIP을 만들기를 시도한 결과")
+			.tag("outcome", outcome)
+			.tag("code", MetricTags.code(code))
+			.register(this.meters)
+			.increment(count);
 	}
 
 	/**

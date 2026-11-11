@@ -34,6 +34,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
@@ -65,6 +67,9 @@ class StreamUploadTests extends IntegrationTest {
 
 	@Autowired
 	ApplicationContext context;
+
+	@Autowired
+	MeterRegistry meters;
 
 	long course;
 
@@ -286,11 +291,18 @@ class StreamUploadTests extends IntegrationTest {
 		String key = PREFIX + "abandoned-" + System.nanoTime();
 		this.s3.createMultipartUpload((b) -> b.bucket(this.buckets.content()).key(key));
 		assertThat(openMultipartUploads()).contains(key);
+		double aborted = this.meters.get("astra.files.upload.stream.aborted").counter().count();
 
 		assertThat(this.janitor.abortOlderThan(Duration.ofDays(1))).isZero();
-		assertThat(this.janitor.abortOlderThan(Duration.ZERO)).isPositive();
+		assertThat(this.meters.get("astra.files.upload.stream.aborted").counter().count()).isEqualTo(aborted);
+		int count = this.janitor.abortOlderThan(Duration.ZERO);
+		assertThat(count).isPositive();
 
 		assertThat(openMultipartUploads()).isEmpty();
+		assertThat(this.meters.get("astra.files.upload.stream.aborted").counter().count()).isEqualTo(aborted + count);
+		assertThat(this.meters.get("astra.files.upload.stream.aborted").counter().getId().getTags())
+			.extracting((t) -> t.getKey())
+			.containsExactly("role");
 	}
 
 	private long professor() {

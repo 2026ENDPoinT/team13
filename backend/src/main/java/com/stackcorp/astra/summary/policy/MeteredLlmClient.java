@@ -1,4 +1,4 @@
-package com.stackcorp.astra.summary.job;
+package com.stackcorp.astra.summary.policy;
 
 import com.stackcorp.astra.shared.metrics.MetricTags;
 import com.stackcorp.astra.summary.api.LlmClient;
@@ -11,15 +11,16 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
 /**
- * 모델 호출의 수, 시간, token을 모델 이름별로 잰다(architecture.md 9절, SC-09). 비용은 token 수에 제공자 단가를 곱해 지표 저장소에서
- * 계산한다. 요청과 응답 본문은 어디에도 남기지 않는다(ADR-0007 9번).
+ * 모델 호출의 수, 시간, token을 모델 이름과 쓰임별로 잰다(architecture.md 9절, SC-09). 요약 작업과 학습 대화가 같은 지표를 쓰고
+ * {@code kind} tag로 나뉜다. 비용은 token 수에 제공자 단가를 곱해 지표 저장소에서 계산한다. 요청과 응답 본문은 어디에도 남기지 않는다
+ * (ADR-0007 9번).
  * <ul>
- * <li>astra.llm.calls{model, outcome}: outcome은 ok, 실패 code(network, rate_limit, auth 등) 또는 error(그 밖의 예외)</li>
- * <li>astra.llm.tokens{model, type=input|output}: 제공자가 응답에 적은 token 수</li>
+ * <li>astra.llm.calls{model, kind, outcome}: outcome은 ok, 실패 code(network, rate_limit, auth 등) 또는 error(그 밖의 예외)</li>
+ * <li>astra.llm.tokens{model, kind, type=input|output}: 제공자가 응답에 적은 token 수</li>
  * </ul>
- * 모델 이름은 설정값 하나라 tag 값의 종류가 늘지 않는다.
+ * 모델 이름은 설정값 하나이고 kind는 {@link ProcessingScope}의 값(page_summary, study_chat)이라 tag 값의 종류가 늘지 않는다.
  */
-final class MeteredLlmClient implements LlmClient {
+public final class MeteredLlmClient implements LlmClient {
 
 	private final LlmClient delegate;
 
@@ -27,10 +28,13 @@ final class MeteredLlmClient implements LlmClient {
 
 	private final String model;
 
-	MeteredLlmClient(LlmClient delegate, MeterRegistry meters) {
+	private final String kind;
+
+	public MeteredLlmClient(LlmClient delegate, MeterRegistry meters, ProcessingScope kind) {
 		this.delegate = delegate;
 		this.meters = meters;
 		this.model = MetricTags.code(delegate.model());
+		this.kind = kind.value();
 	}
 
 	@Override
@@ -62,6 +66,7 @@ final class MeteredLlmClient implements LlmClient {
 			sample.stop(Timer.builder("astra.llm.calls")
 				.description("모델 호출 시간과 결과")
 				.tag("model", this.model)
+				.tag("kind", this.kind)
 				.tag("outcome", outcome)
 				.register(this.meters));
 		}
@@ -72,6 +77,7 @@ final class MeteredLlmClient implements LlmClient {
 			.description("모델 호출의 token 수")
 			.baseUnit("tokens")
 			.tag("model", this.model)
+			.tag("kind", this.kind)
 			.tag("type", type)
 			.register(this.meters)
 			.increment(count);

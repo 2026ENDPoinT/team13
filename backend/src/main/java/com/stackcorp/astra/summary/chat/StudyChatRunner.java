@@ -2,6 +2,7 @@ package com.stackcorp.astra.summary.chat;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -21,15 +22,21 @@ import com.stackcorp.astra.files.api.FileAccess;
 import com.stackcorp.astra.files.api.FileAction;
 import com.stackcorp.astra.files.api.RenditionException;
 import com.stackcorp.astra.files.api.StoredFiles;
+import com.stackcorp.astra.shared.metrics.MetricTags;
+import com.stackcorp.astra.shared.schedule.SchedulerLock;
 import com.stackcorp.astra.summary.api.LlmClient;
 import com.stackcorp.astra.summary.chat.StudyAgent.Tally;
 import com.stackcorp.astra.summary.job.PublishedSummary;
 import com.stackcorp.astra.summary.job.SummaryJobService;
 import com.stackcorp.astra.summary.pipeline.TextRedactor;
 import com.stackcorp.astra.summary.policy.LlmGate;
+import com.stackcorp.astra.summary.policy.MeteredLlmClient;
 import com.stackcorp.astra.summary.policy.ProcessingScope;
 import com.stackcorp.astra.summary.policy.ReadCommitted;
 import com.stackcorp.astra.summary.policy.UsageLedger;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * worker 프로필에서 답을 기다리는 질문을 하나씩 처리한다. 여러 worker가 떠도 SKIP LOCKED로 한 곳만 잡는다(ADR-0032).
@@ -41,6 +48,12 @@ import com.stackcorp.astra.summary.policy.UsageLedger;
  * <li>게시한 교수자의 학습 대화 동의가 유효하고 배포 스위치가 켜져 있다({@code consent}, {@code disabled}).</li>
  * </ul>
  * 답은 검사를 통과한 것만 저장한다. 끝난 질문의 사용량은 같은 transaction에서 과목 합계에 더한다. 로그에는 ID와 코드만 남긴다.
+ * <p>
+ * 끝낸 질문을 상태와 code별로 세고(astra.studychat.exchanges.finished), 모델 호출은 요약 작업과 같은 {@link MeteredLlmClient}로
+ * {@code kind=study_chat}을 붙여 잰다. 대기열 길이와 나이는 {@link StudyChatBacklog}가 낸다.
+ * <p>
+ * 대화 정리는 {@link SchedulerLock}으로 묶는다(ADR-0034). 정리 후보를 잠그지 않고 읽고 대화마다 저장소 prefix를 지우므로, 두 worker가
+ * 함께 돌면 같은 대화의 객체 목록 조회와 삭제를 두 번 한다. lease 만료 처리는 조건부 UPDATE 한 문장이라 묶지 않는다.
  */
 @Component
 @Profile("worker")
@@ -49,6 +62,10 @@ class StudyChatRunner implements SmartLifecycle {
 	private static final Logger log = LoggerFactory.getLogger(StudyChatRunner.class);
 
 	private static final int PURGE_BATCH = 100;
+
+	private static final String PURGE_LOCK = "summary.studychat_purge";
+
+	private static final Duration PURGE_LOCK_AT_MOST = Duration.ofMinutes(10);
 
 	private final StudyChatRepository chats;
 
@@ -80,10 +97,15 @@ class StudyChatRunner implements SmartLifecycle {
 
 	private volatile boolean running;
 
+	private final SchedulerLock lock;
+
+	private final MeterRegistry meters;
+
 	StudyChatRunner(StudyChatRepository chats, StudyChatStorage storage, StudyChatService service,
 			SummaryJobService summaries, DocumentRenditions renditions, StoredFiles files, FileAccess access,
 			LlmGate gate, UsageLedger usage, TextRedactor redactor, ObjectProvider<LlmClient> llm,
-			StudyChatProperties properties, PlatformTransactionManager transactionManager) {
+			StudyChatProperties properties, PlatformTransactionManager transactionManager, SchedulerLock lock,
+			MeterRegistry meters) {
 		this.chats = chats;
 		this.storage = storage;
 		this.service = service;
@@ -98,6 +120,8 @@ class StudyChatRunner implements SmartLifecycle {
 		this.properties = properties;
 		this.transaction = new ReadCommitted(transactionManager);
 		this.owner = properties.workerId() != null ? properties.workerId() : defaultOwner();
+		this.lock = lock;
+		this.meters = meters;
 	}
 
 	@Scheduled(fixedDelayString = "${astra.studychat.poll-interval:1s}",
@@ -115,10 +139,12 @@ class StudyChatRunner implements SmartLifecycle {
 		if (interrupted > 0) {
 			log.warn("study chat exchanges interrupted by expired lease count={}", interrupted);
 		}
-		int purged = purge();
-		if (purged > 0) {
-			log.info("study chats purged count={}", purged);
-		}
+		this.lock.runExclusively(PURGE_LOCK, PURGE_LOCK_AT_MOST, () -> {
+			int purged = purge();
+			if (purged > 0) {
+				log.info("study chats purged count={}", purged);
+			}
+		});
 	}
 
 	/** @return 질문 하나를 처리했으면 true */
@@ -145,7 +171,9 @@ class StudyChatRunner implements SmartLifecycle {
 
 	/** lease가 끝난 실행 중 질문을 닫는다. */
 	int failExpired() {
-		return this.transaction.execute(this.chats::failExpired);
+		int closed = this.transaction.execute(this.chats::failExpired);
+		finished(ExchangeState.FAILED, "interrupted", closed);
+		return closed;
 	}
 
 	/** 지운 대화와 보존기한이 지난 대화를 정리한다. @return 다 지운 대화 수 */
@@ -208,7 +236,7 @@ class StudyChatRunner implements SmartLifecycle {
 		SourcePages source = SourcePages.of(title, rendition, published.get().result().pack(), this.redactor);
 		String question = this.storage.question(chat.fileId(), chat.id(), exchange.id())
 			.orElseThrow(() -> new IllegalStateException("질문 본문이 저장소에 없습니다: " + exchange.id()));
-		StudyAgent agent = new StudyAgent(client, source,
+		StudyAgent agent = new StudyAgent(new MeteredLlmClient(client, this.meters, ProcessingScope.STUDY_CHAT), source,
 				new StudyAgent.Limits(this.properties.maxToolSteps(), this.properties.maxInputTokensPerAnswer(),
 						this.properties.maxOutputTokens(), this.properties.pageMaxChars(),
 						this.properties.historyMaxChars()),
@@ -294,7 +322,21 @@ class StudyChatRunner implements SmartLifecycle {
 		if (!finished) {
 			log.warn("study chat finish ignored exchangeId={} state={}", exchange.id(), state.value());
 		}
+		else {
+			finished(state, errorCode, 1);
+		}
 		return finished;
+	}
+
+	private void finished(ExchangeState state, String errorCode, int count) {
+		if (count > 0) {
+			Counter.builder("astra.studychat.exchanges.finished")
+				.description("끝난 학습 대화 질문 수")
+				.tag("state", state.value())
+				.tag("code", MetricTags.code(errorCode))
+				.register(this.meters)
+				.increment(count);
+		}
 	}
 
 	private static ExchangeState stateFor(String code) {

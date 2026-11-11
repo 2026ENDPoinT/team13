@@ -38,6 +38,7 @@ import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
 
 import com.stackcorp.astra.shared.metrics.MetricTags;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
@@ -57,7 +58,9 @@ import tools.jackson.databind.json.JsonMapper;
  * READ COMMITTED transaction에서 하고, 잠금 충돌로 되돌려지면 정해진 횟수만큼 다시 한다. 잠금 순서는 conversion_jobs →
  * file_thumbnails다(GC와 같다).
  * 변환 한 번의 시간과 결과를 잰다(astra.files.rendition.conversions). 결과는 ok 또는 failed이고, 실패 code는 converter의 실패
- * 종류나 storage다. 이미 만든 rendition을 읽는 경우와 대기열을 기다린 시간은 재지 않는다.
+ * 종류나 storage다. 이미 만든 rendition을 읽는 경우와 대기열을 기다린 시간은 재지 않는다. lease가 끝나 {@link #recoverExpired}가
+ * 대기로 되돌리거나 닫은 변환은 astra.files.rendition.interrupted{outcome=retry|failed}로 센다. 대기열 길이와 나이는
+ * {@link FilesBacklog}가 낸다.
  */
 @Service
 @EnableConfigurationProperties(ConversionProperties.class)
@@ -210,8 +213,20 @@ class DocumentRenditionService implements DocumentRenditions {
 	 */
 	int recoverExpired() {
 		Released released = transition(() -> this.conversions.releaseExpired(this.properties.maxAttempts(), 100));
+		interrupted("retry", released.requeued());
+		interrupted("failed", released.closedKeys().size());
 		released.closedKeys().forEach(this::discardObjects);
 		return released.requeued() + released.closedKeys().size();
+	}
+
+	private void interrupted(String outcome, int count) {
+		if (count > 0) {
+			Counter.builder("astra.files.rendition.interrupted")
+				.description("lease가 끝나 대기로 되돌리거나 닫은 문서 변환")
+				.tag("outcome", outcome)
+				.register(this.meters)
+				.increment(count);
+		}
 	}
 
 	static String deliveryPrefix(String key) {

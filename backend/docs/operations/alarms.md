@@ -34,7 +34,16 @@
 | 문서 변환 실패 | `astra.files.rendition.conversions`(outcome=failed) | 1시간 동안 5건 이상, code가 `unavailable`·`failed`·`storage`면 1건 이상 | 자료 쪽 이미지와 요약이 만들어지지 않는다. `invalid_pdf`, `encrypted` 같은 입력 거부는 많을 때만 본다 | converter container 상태와 worker 로그를 본다 |
 | 요약 대기열 | `astra.summary.jobs.oldest.age` | 15분 동안 900초 초과 | 요약 요청이 시작되지 않는다 | worker가 떠 있는지, `astra.summary.jobs`(state=running)가 멈춰 있는지 본다 |
 | 요약 실패 | `astra.summary.jobs.finished`(state=failed) | 1시간 동안 5건 이상 | 모델 제공자나 변환 문제 | `code` tag(provider, file, interrupted)와 `astra.llm.calls`의 outcome을 본다 |
-| AI token 사용 | `astra.llm.tokens` | 하루 합이 예산(token 수 × 단가)을 넘을 때 | 비용 초과(SC-09) | 요청한 과목과 작업 수를 summary_jobs에서 확인한다. 필요하면 `ASTRA_LLM_API_KEY`를 빼 요약 생성을 멈춘다 |
+| AI token 사용 | `astra.llm.tokens` | 하루 합이 예산(token 수 × 단가)을 넘을 때 | 비용 초과(SC-09) | `kind` tag(page_summary, study_chat)로 어느 쪽인지 본다. 요청한 과목과 작업 수를 summary_jobs, study_chat_exchanges에서 확인한다. 필요하면 `ASTRA_LLM_API_KEY`를 빼 요약 생성을 멈춘다 |
+| 학습 대화 대기열 | `astra.studychat.exchanges.oldest.age` | 5분 동안 120초 초과 | 학생 질문에 답이 시작되지 않는다(ADR-0032). 질문은 몇 초 안에 답하는 흐름이다 | worker가 떠 있는지, `astra.studychat.exchanges`(state=running)가 멈춰 있는지, `astra.llm.calls`(kind=study_chat)의 시간을 본다 |
+| 학습 대화 실패 | `astra.studychat.exchanges.finished`(state=failed) | 1시간 동안 code가 `provider`·`internal`·`interrupted`인 것이 10건 이상 | 모델 제공자 장애나 worker 중단으로 답을 못 했다. `budget`, `forbidden`, `consent`, `disabled`, `invalid_output`은 정책 거부나 출력 검사라 많을 때만 본다 | `astra.llm.calls`(kind=study_chat)의 outcome과 worker 로그(exchangeId)를 본다 |
+| 문서 변환 대기열 | `astra.files.rendition.jobs.oldest.age` | 15분 동안 600초 초과 | 미리보기와 요약 입력이 만들어지지 않는다(ADR-0033) | converter container 상태, `astra.files.rendition.jobs`(state=converting), 위 문서 변환 실패 알람을 본다 |
+| 문서 변환 중단 | `astra.files.rendition.interrupted` | 1시간 동안 3건 이상 | 변환하던 worker가 멈추거나 lease 안에 끝내지 못했다. outcome=failed면 시도 수를 다 써 닫혔다 | worker 재시작 기록과 메모리, converter 응답 시간을 본다 |
+| 영상 변환 대기열 | `astra.files.video.jobs.oldest.age` | 30분 동안 1800초 초과 | 올린 강의 영상이 재생 가능해지지 않는다(ADR-0016) | worker가 떠 있는지, `astra.files.video.jobs`(state=running)가 멈춰 있는지, transcoder container 상태를 본다 |
+| 영상 변환 실패 | `astra.files.video.transcodes`(outcome=failed), `astra.files.video.transcodes.interrupted`(outcome=failed) | 1시간 동안 code가 `unavailable`·`failed`·`timeout`·`internal`이거나 중단으로 닫힌 것이 1건 이상. `invalid_media`, `too_large`, `too_long`은 많을 때만 | 교수자가 올린 영상이 게시되지 않는다 | transcoder container 상태와 worker 로그(jobId)를 보고, outcome=retry가 함께 늘었는지 본다 |
+| 파일함 ZIP 대기열 | `astra.files.zip.jobs.oldest.age` | 15분 동안 600초 초과 | 일괄 다운로드가 시작되지 않는다(ADR-0028) | worker가 떠 있는지, `astra.files.zip.jobs`(state=building)가 멈춰 있는지 본다 |
+| 파일함 ZIP 실패 | `astra.files.zip.builds`(outcome=failed, code=build_failed 또는 interrupted) | 1시간 동안 3건 이상 | 저장소 오류나 worker 중단으로 ZIP을 만들지 못했다. `item_unavailable`은 사용자가 항목을 지운 정상 거부다 | S3 상태와 worker 로그(jobId)를 본다 |
+| 남은 multipart upload | `astra.files.upload.stream.aborted` | 하루 합이 10건 이상 | api process가 영상 업로드 도중 자주 멈춘다. 남은 part는 저장 비용이 든다 | api 재시작 기록과 메모리, 업로드 중 배포가 있었는지 본다 |
 | 멱등 대기 초과 | `astra.idempotency.requests`(outcome=in_progress) | 10분 동안 20건 이상 | 같은 명령이 오래 걸려 재전송이 409를 받는다 | 해당 `operation`의 처리 시간과 DB 잠금 대기를 본다 |
 | 감사 기록 누락 | `astra.audit.write.failures` | 1건 이상 | transaction 밖 감사 기록이 빠졌다(ADR-0012) | DB 상태를 보고, 빠진 시각의 요청 로그(requestId)를 보존한다 |
 | 요청 제한 급증 | `astra.ratelimit.rejections` | 10분 동안 `operation`별 합이 평소의 5배 초과 | 자동화된 요청이나 화면의 반복 호출 | 연산별로 보고, 화면 버그인지 남용인지 로그로 가린다 |
@@ -45,6 +54,5 @@
 
 | 대상 | 이유 |
 |---|---|
-| MediaConvert 실패 | 영상 처리 흐름이 아직 없다. 영상 변환을 만들 때 지표와 함께 더한다 |
 | 미완료 이벤트 backlog | event publication registry를 두지 않았다(ADR-0034 6번) |
 | 외부 uptime check | 9절. 수신할 곳(Slack 등)과 함께 정한다 |
