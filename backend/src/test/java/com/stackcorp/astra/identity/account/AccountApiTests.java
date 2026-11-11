@@ -1,7 +1,9 @@
 package com.stackcorp.astra.identity.account;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -23,8 +25,11 @@ import org.springframework.test.web.servlet.ResultActions;
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
+import com.stackcorp.astra.identity.api.RegistrarDirectory.RegistrarRecord;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
+
+import jakarta.servlet.http.Cookie;
 
 import tools.jackson.databind.JsonNode;
 
@@ -45,6 +50,9 @@ class AccountApiTests extends IntegrationTest {
 
 	@Autowired
 	SessionStore sessions;
+
+	@Autowired
+	AccountProfiles profiles;
 
 	long me;
 
@@ -108,6 +116,44 @@ class AccountApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.avatar.color").value("cobalt"))
 			.andExpect(jsonPath("$.avatar.version").value(1));
 		this.otherClient.get("/api/me/profile").andExpect(jsonPath("$.avatar.version").value(0));
+	}
+
+	@Test
+	void registrarSyncNeedsTheRegistrarPortAndOverwritesOnlyFromTheRegistrar() throws Exception {
+		this.client.post("/api/me/profile/sync")
+			.andExpect(status().isServiceUnavailable())
+			.andExpect(jsonPath("$.code").value("not_configured"));
+		new ApiClient(this.mvc, null).post("/api/me/profile/sync").andExpect(status().isUnauthorized());
+		this.mvc.perform(post("/api/me/profile/sync").cookie(new Cookie("ASTRA_SESSION", this.data.session(this.me))))
+			.andExpect(status().isForbidden());
+		this.jdbc.sql("""
+				INSERT INTO user_contacts (user_id, phone_number, email_address, contact_source)
+				VALUES (:id, '010-1234-5678', 'mine@local.example', 'LOCAL')
+				""").param("id", this.me).update();
+
+		// 학사시스템 값이 있으면 이름, 소속, 학년, 연락처를 학사 원천으로 덮는다.
+		RegistrarRecord record = new RegistrarRecord("김학사", "전자공학과", 4, "010-9999-0000", "school@school.example");
+		assertThat(ProfileController.valid(record)).isTrue();
+		this.profiles.applyRegistrar(this.me, record);
+		this.client.get("/api/me/profile")
+			.andExpect(jsonPath("$.name").value("김학사"))
+			.andExpect(jsonPath("$.departmentName").value("전자공학과"))
+			.andExpect(jsonPath("$.grade").value(4))
+			.andExpect(jsonPath("$.lastSyncedAt").exists())
+			.andExpect(jsonPath("$.contact.phone").value("010-9999-0000"))
+			.andExpect(jsonPath("$.contact.source").value("academic"))
+			.andExpect(jsonPath("$.contact.editable").value(false));
+		// 학사시스템에 연락처가 없으면 연락처는 그대로다.
+		this.profiles.applyRegistrar(this.other, new RegistrarRecord("이학사", null, null, null, null));
+		this.otherClient.get("/api/me/profile")
+			.andExpect(jsonPath("$.name").value("이학사"))
+			.andExpect(jsonPath("$.contact.phone").doesNotExist());
+		// 형식에 맞지 않는 adapter 값은 저장하지 않는다.
+		assertThat(ProfileController.valid(new RegistrarRecord(" ", null, null, null, null))).isFalse();
+		assertThat(ProfileController.valid(new RegistrarRecord("a\u0000b", null, null, null, null))).isFalse();
+		assertThat(ProfileController.valid(new RegistrarRecord("김", null, 9, null, null))).isFalse();
+		assertThat(ProfileController.valid(new RegistrarRecord("김", null, null, "x", null))).isFalse();
+		assertThat(ProfileController.valid(new RegistrarRecord("김", null, null, null, "<a>@x"))).isFalse();
 	}
 
 	@Test
@@ -189,7 +235,8 @@ class AccountApiTests extends IntegrationTest {
 		assertThat(sessionIds(list)).containsExactlyInAnyOrder(current, second.sessionId()).doesNotContain(otherSession);
 
 		this.client.post("/api/me/sessions/" + otherSession + "/revoke").andExpect(status().isNotFound());
-		this.otherClient.get("/api/me").andExpect(status().isOk());
+		// IdP도 개발용 로그인도 없는 실행에서 break-glass가 아닌 session은 재인증 수단이 없다.
+		this.otherClient.get("/api/me").andExpect(status().isOk()).andExpect(jsonPath("$.stepUpMethod").value(nullValue()));
 		this.client.post("/api/me/sessions/" + current + "/revoke")
 			.andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("current_session"));

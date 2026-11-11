@@ -302,6 +302,40 @@ class PreviewApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void aDocumentOverThePageLimitFailsWithTooManyPages() throws Exception {
+		long fileId = attached(pdf(DocumentRenditionService.MAX_PAGES + 1), "application/pdf", "long.pdf", true);
+		this.student.post(preview(this.course, fileId)).andExpect(status().isAccepted());
+		drainQueue();
+
+		this.student.post(preview(this.course, fileId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.state").value("failed"))
+			.andExpect(jsonPath("$.code").value("too_many_pages"));
+	}
+
+	@Test
+	void everyStoredFailureMapsToOneDocumentedCode() throws Exception {
+		Map<String, String> expected = Map.ofEntries(Map.entry("encrypted", "encrypted"),
+				Map.entry("invalid_pdf", "invalid_document"), Map.entry("empty", "empty"),
+				Map.entry("too_many_pages", "too_many_pages"), Map.entry("too_large", "too_large"),
+				Map.entry("timeout", "timeout"), Map.entry("unavailable", "unavailable"),
+				Map.entry("interrupted", "unavailable"), Map.entry("storage", "unavailable"),
+				Map.entry("failed", "failed"), Map.entry("something_new", "failed"));
+		for (Map.Entry<String, String> entry : expected.entrySet()) {
+			long fileId = attached(pdf(1), "application/pdf", "f.pdf", true);
+			this.jdbc.sql("""
+					INSERT INTO conversion_jobs (file_id, file_version_no, conv_type, converted_doc_key, conversion_state, error_code)
+					VALUES (:file, 1, 'img', :key, 'failed', :code)
+					""").param("file", fileId).param("key", newKey()).param("code", entry.getKey()).update();
+
+			this.student.post(preview(this.course, fileId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.state").value("failed"))
+				.andExpect(jsonPath("$.code").value(entry.getValue()));
+		}
+	}
+
+	@Test
 	void retriesWhenTheConverterIsUnreachableAndFailsAfterTheLastAttempt() throws Exception {
 		long fileId = attached(pdf(1), "application/pdf", "down.pdf", true);
 		DocumentRenditionService down = new DocumentRenditionService(this.fileRecords, this.conversions, this.store,

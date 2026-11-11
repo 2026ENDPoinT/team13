@@ -193,10 +193,12 @@ class SmartAttendanceController {
 		String state = this.service.stateOf(round, userId, student, now);
 		RecordView attendance = "confirmed".equals(state)
 				? this.service.record(round.sessionId(), userId).map(RecordView::of).orElse(null) : null;
+		// 자기 시도만 센다. 다른 학생의 시도나 PIN에 관한 것은 없다(ADR-0030 3번).
+		long failures = "not_target".equals(state) ? 0 : this.service.failures(round.roundId(), userId);
 		return new StudentRoundView(round.roundId(), round.sessionId(), round.method(), round.pinLength(), state,
 				round.openedAt(), round.lateAt(), round.endsAt(), now,
-				"pending".equals(state) ? this.service.failuresLeft(round.roundId(), userId) : null, attendance,
-				pollAfter());
+				"pending".equals(state) ? this.service.failuresLeft(round.roundId(), userId) : null, (int) failures,
+				this.service.lockedOut(failures), attendance, pollAfter());
 	}
 
 	private int pollAfter() {
@@ -259,9 +261,11 @@ class SmartAttendanceController {
 
 	/**
 	 * @param state open|expired|closed|cancelled
-	 * @param pin 진행 중인 PIN 회차의 PIN. 그 밖에는 null
+	 * @param pin 진행 중인 PIN 회차의 PIN. 그 밖에는 null. PIN은 회차를 여는 순간 정해지고 회차가 끝날 때(endsAt이나 마감)까지 바뀌지
+	 * 않는다. 그래서 PIN 회차의 qrRefreshAt은 null이다
 	 * @param qrToken 진행 중인 QR 회차의 지금 token. 화면이 QR 코드로 그린다
-	 * @param qrRefreshAt 다음 token으로 바뀌는 시각. 이 시각 뒤에 다시 조회한다
+	 * @param qrRefreshAt 다음 token으로 바뀌는 시각. 이 시각 뒤에 다시 조회한다. QR 회차에만 있다
+	 * @param pollAfterSec 실시간 수(counts)를 다시 조회할 간격. PIN 교체 주기가 아니다
 	 */
 	record RoundView(long roundId, long sessionId, Long groupId, String method, Integer pinLength, String state,
 			LocalDateTime openedAt, LocalDateTime lateAt, LocalDateTime endsAt, LocalDateTime closedAt,
@@ -279,11 +283,14 @@ class SmartAttendanceController {
 	/**
 	 * @param state confirmed|pending|locked|expired|closed|cancelled|not_target
 	 * @param failuresLeft 남은 제출 기회. pending일 때만 있다
+	 * @param failedAttempts 이 회차에 내가 낸 틀린 PIN·QR 수. 회차가 끝난 뒤에도 남는다. not_target이면 0
+	 * @param lockedOut 틀린 횟수가 한도에 닿아 더 제출할 수 없었는지. expired·closed에서 true면 잠긴 뒤 끝난 것이고, false이고
+	 * failedAttempts가 0이면 끝나기 전에 제출하지 않은 것이다
 	 * @param attendance 서버가 확정한 이 차시의 기록. confirmed일 때만 있다
 	 */
 	record StudentRoundView(long roundId, long sessionId, String method, Integer pinLength, String state,
 			LocalDateTime openedAt, LocalDateTime lateAt, LocalDateTime endsAt, LocalDateTime serverTime,
-			Integer failuresLeft, RecordView attendance, int pollAfterSec) {
+			Integer failuresLeft, int failedAttempts, boolean lockedOut, RecordView attendance, int pollAfterSec) {
 	}
 
 	record ActiveView(String role, LocalDateTime serverTime, int pollAfterSec, List<RoundView> rounds,

@@ -23,6 +23,7 @@ import com.stackcorp.astra.shared.audit.AuditLog;
 import com.stackcorp.astra.shared.idempotency.Idempotency;
 import com.stackcorp.astra.summary.chat.Citation;
 import com.stackcorp.astra.summary.chat.ExchangeDetail;
+import com.stackcorp.astra.summary.chat.Slice;
 import com.stackcorp.astra.summary.chat.StudyChat;
 import com.stackcorp.astra.summary.chat.StudyChatProperties;
 import com.stackcorp.astra.summary.chat.StudyChatService;
@@ -80,13 +81,17 @@ class StudyChatController {
 		return noStore(HttpStatus.CREATED).body(chat);
 	}
 
-	/** EP-0301. 그 파일에서 내가 연 대화. 최신이 먼저이고 {@code before}보다 작은 ID부터 20개다. */
+	/**
+	 * EP-0301. 그 파일에서 내가 연 대화. 최신이 먼저이고 {@code before}보다 작은 ID부터 20개다. 다음 쪽이 있으면 {@code nextBefore}가
+	 * 그 값이고, 마지막 쪽이면 null이다.
+	 */
 	@GetMapping("/api/courses/{courseId}/files/{fileId}/study-chats")
-	ResponseEntity<List<ChatView>> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+	ResponseEntity<ChatPage> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long fileId, @RequestParam(required = false) Long before) {
 		requireRead(actor, courseId, fileId);
-		return noStore(HttpStatus.OK)
-			.body(this.chats.list(actor.userId(), fileId, before).stream().map(ChatView::of).toList());
+		Slice<StudyChat> page = this.chats.list(actor.userId(), fileId, before);
+		List<ChatView> items = page.items().stream().map(ChatView::of).toList();
+		return noStore(HttpStatus.OK).body(new ChatPage(items, page.more() ? items.getLast().id() : null));
 	}
 
 	@GetMapping("/api/courses/{courseId}/study-chats/{chatId}")
@@ -135,14 +140,14 @@ class StudyChatController {
 		return noStore(HttpStatus.ACCEPTED).body(exchange);
 	}
 
-	/** EP-0304. 질문과 답. 최신이 먼저이고 {@code before}보다 작은 ID부터 10개다. */
+	/** EP-0304. 질문과 답. 최신이 먼저이고 {@code before}보다 작은 ID부터 10개다. 다음 쪽은 대화 목록과 같은 {@code nextBefore}다. */
 	@GetMapping("/api/courses/{courseId}/study-chats/{chatId}/exchanges")
 	ResponseEntity<ExchangePage> exchanges(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable long chatId, @RequestParam(required = false) Long before) {
 		StudyChat chat = readable(actor, courseId, chatId);
-		List<ExchangeView> items = this.chats.exchanges(chat, before).stream().map(ExchangeView::of).toList();
-		Long next = items.size() == StudyChatService.EXCHANGE_PAGE ? items.getLast().id() : null;
-		return noStore(HttpStatus.OK).body(new ExchangePage(items, next));
+		Slice<ExchangeDetail> page = this.chats.exchanges(chat, before);
+		List<ExchangeView> items = page.items().stream().map(ExchangeView::of).toList();
+		return noStore(HttpStatus.OK).body(new ExchangePage(items, page.more() ? items.getLast().id() : null));
 	}
 
 	/** 질문 하나의 상태. 답을 기다리는 동안 client가 이 경로를 다시 읽는다. */
@@ -229,6 +234,10 @@ class StudyChatController {
 					detail.answer() != null ? detail.answer().citations() : List.of(), e.createdAt(), e.finishedAt());
 		}
 
+	}
+
+	/** @param nextBefore 다음 쪽을 읽을 때 before로 보낼 값. 마지막 쪽이면 null */
+	record ChatPage(List<ChatView> items, Long nextBefore) {
 	}
 
 	/** @param nextBefore 다음 쪽을 읽을 때 before로 보낼 값. 마지막 쪽이면 null */

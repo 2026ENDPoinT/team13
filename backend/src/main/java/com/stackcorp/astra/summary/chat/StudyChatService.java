@@ -100,9 +100,9 @@ public class StudyChatService {
 		return this.chats.findChat(chatId).filter((c) -> !c.deleted());
 	}
 
-	/** 소유자의 그 파일 대화. 최신이 먼저이고 한 쪽은 {@value #CHAT_PAGE}개다. */
-	public List<StudyChat> list(long ownerUserId, long fileId, Long before) {
-		return this.chats.listChats(ownerUserId, fileId, before, CHAT_PAGE);
+	/** 소유자의 그 파일 대화. 최신이 먼저이고 한 쪽은 {@value #CHAT_PAGE}개다. 한 개를 더 읽어 다음 쪽이 있는지 안다. */
+	public Slice<StudyChat> list(long ownerUserId, long fileId, Long before) {
+		return Slice.of(this.chats.listChats(ownerUserId, fileId, before, CHAT_PAGE + 1), CHAT_PAGE);
 	}
 
 	/**
@@ -125,9 +125,10 @@ public class StudyChatService {
 		return new ExchangeDetail(this.chats.findExchange(id).orElseThrow(), question, null);
 	}
 
-	/** 대화의 질문과 답. 최신이 먼저이고 한 쪽은 {@value #EXCHANGE_PAGE}개다. */
-	public List<ExchangeDetail> exchanges(StudyChat chat, Long before) {
-		return this.chats.listExchanges(chat.id(), before, EXCHANGE_PAGE).stream().map((e) -> detail(chat, e)).toList();
+	/** 대화의 질문과 답. 최신이 먼저이고 한 쪽은 {@value #EXCHANGE_PAGE}개다. 한 개를 더 읽어 다음 쪽이 있는지 안다. */
+	public Slice<ExchangeDetail> exchanges(StudyChat chat, Long before) {
+		Slice<Exchange> page = Slice.of(this.chats.listExchanges(chat.id(), before, EXCHANGE_PAGE + 1), EXCHANGE_PAGE);
+		return new Slice<>(page.items().stream().map((e) -> detail(chat, e)).toList(), page.more());
 	}
 
 	public Optional<ExchangeDetail> exchange(StudyChat chat, long exchangeId) {

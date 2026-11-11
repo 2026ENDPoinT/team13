@@ -188,20 +188,44 @@ class StudyChatApiTests extends IntegrationTest {
 			ask(other, chat, "k-" + other.hashCode(), "남의 대화").andExpect(status().isNotFound());
 			other.delete(chatPath(chat)).andExpect(status().isNotFound());
 		}
-		this.classmate.get(files(this.course, this.fileId) + "/study-chats").andExpect(jsonPath("$.length()").value(0));
-		this.professor.get(files(this.course, this.fileId) + "/study-chats").andExpect(jsonPath("$.length()").value(0));
+		this.classmate.get(files(this.course, this.fileId) + "/study-chats").andExpect(jsonPath("$.items.length()").value(0));
+		this.professor.get(files(this.course, this.fileId) + "/study-chats").andExpect(jsonPath("$.items.length()").value(0));
 		this.outsider.get(files(this.course, this.fileId) + "/study-chats").andExpect(status().isNotFound());
 		// 같은 학생이라도 다른 과목 경로로는 그 대화를 열 수 없다(SC-03).
 		this.student.get("/api/courses/" + this.otherCourse + "/study-chats/" + chat).andExpect(status().isNotFound());
 		this.student.post(files(this.otherCourse, this.fileId) + "/study-chats").andExpect(status().isNotFound());
 		this.student.get(chatPath(chat)).andExpect(status().isOk()).andExpect(jsonPath("$.exchangeCount").value(1));
-		this.student.get(files(this.course, this.fileId) + "/study-chats").andExpect(jsonPath("$.length()").value(1));
+		this.student.get(files(this.course, this.fileId) + "/study-chats").andExpect(jsonPath("$.items.length()").value(1));
 		new ApiClient(this.mvc, null).get(chatPath(chat)).andExpect(status().isUnauthorized());
 		this.mvc.perform(MockMvcRequestBuilders.post(chatPath(chat) + "/exchanges")
 			.cookie(new Cookie("ASTRA_SESSION", this.data.session(this.studentId)))
 			.header("Idempotency-Key", "no-csrf")
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"question\":\"x\"}")).andExpect(status().isForbidden());
+	}
+
+	@Test
+	void chatListSaysWhetherAnotherPageFollows() throws Exception {
+		String list = files(this.course, this.fileId) + "/study-chats";
+		List<Long> opened = new ArrayList<>();
+		for (int i = 0; i < StudyChatService.CHAT_PAGE; i++) {
+			opened.add(open(this.student));
+		}
+		// 꼭 한 쪽이면 다음 쪽이 없다.
+		this.student.get(list)
+			.andExpect(jsonPath("$.items.length()").value(StudyChatService.CHAT_PAGE))
+			.andExpect(jsonPath("$.nextBefore").doesNotExist());
+		long oldest = opened.getFirst();
+		opened.add(open(this.student));
+
+		this.student.get(list)
+			.andExpect(jsonPath("$.items.length()").value(StudyChatService.CHAT_PAGE))
+			.andExpect(jsonPath("$.items[0].id").value(opened.getLast()))
+			.andExpect(jsonPath("$.nextBefore").value(opened.get(1)));
+		this.student.get(list + "?before=" + opened.get(1))
+			.andExpect(jsonPath("$.items.length()").value(1))
+			.andExpect(jsonPath("$.items[0].id").value(oldest))
+			.andExpect(jsonPath("$.nextBefore").doesNotExist());
 	}
 
 	@Test

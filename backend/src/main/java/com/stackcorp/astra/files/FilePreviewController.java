@@ -87,7 +87,7 @@ class FilePreviewController {
 				.body(new PreviewView("converting", null, null, null, null));
 			case FAILED -> ResponseEntity.ok()
 				.cacheControl(CacheControl.noStore())
-				.body(new PreviewView("failed", null, null, null, preview.code()));
+				.body(new PreviewView("failed", null, null, null, preview.failure().code()));
 			case UNSUPPORTED -> ResponseEntity.ok()
 				.cacheControl(CacheControl.noStore())
 				.body(new PreviewView("unsupported", null, null, null, null));
@@ -164,7 +164,8 @@ class FilePreviewController {
 	 * @param state ready, converting, failed, unsupported
 	 * @param pageImageBase 쪽 이미지 경로. 쪽은 {@code {pageImageBase}NNN.jpg}(001부터)다. 전달 서명이 없는 환경에서는 null
 	 * @param cookieExpiresAt 발급한 쪽 이미지 cookie의 만료 시각. 그 전에 같은 요청으로 다시 받는다
-	 * @param code failed일 때 실패 코드
+	 * @param code failed일 때 실패 코드. encrypted, invalid_document, empty, too_many_pages, too_large, timeout,
+	 * unavailable, failed 중 하나다({@link PreviewService.Failure})
 	 */
 	record PreviewView(String state, Integer pageCount, String pageImageBase, Instant cookieExpiresAt, String code) {
 	}

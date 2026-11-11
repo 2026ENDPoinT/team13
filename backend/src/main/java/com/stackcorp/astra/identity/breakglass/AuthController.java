@@ -2,6 +2,7 @@ package com.stackcorp.astra.identity.breakglass;
 
 import java.time.Duration;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -16,8 +17,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.stackcorp.astra.identity.api.Actor;
+import com.stackcorp.astra.identity.api.ExternalIdentityProvider;
 import com.stackcorp.astra.identity.session.ClientAddresses;
 import com.stackcorp.astra.identity.session.DeviceCookie;
+import com.stackcorp.astra.identity.session.DevLoginMarker;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
@@ -52,14 +55,24 @@ class AuthController {
 
 	private final RateLimiter rateLimiter;
 
+	private final BreakGlassProperties breakGlassProperties;
+
+	private final ObjectProvider<ExternalIdentityProvider> providers;
+
+	private final ObjectProvider<DevLoginMarker> devLogin;
+
 	AuthController(BreakGlassLogin breakGlass, SessionStore sessions, SessionProperties properties, AuditLog audit,
-			ClientAddresses clientAddresses, RateLimiter rateLimiter) {
+			ClientAddresses clientAddresses, RateLimiter rateLimiter, BreakGlassProperties breakGlassProperties,
+			ObjectProvider<ExternalIdentityProvider> providers, ObjectProvider<DevLoginMarker> devLogin) {
 		this.breakGlass = breakGlass;
 		this.sessions = sessions;
 		this.properties = properties;
 		this.audit = audit;
 		this.clientAddresses = clientAddresses;
 		this.rateLimiter = rateLimiter;
+		this.breakGlassProperties = breakGlassProperties;
+		this.providers = providers;
+		this.devLogin = devLogin;
 	}
 
 	/** CSRF 쿠키(XSRF-TOKEN)를 받는다. 상태를 바꾸는 요청은 이 값을 X-XSRF-TOKEN header로 보낸다. */
@@ -93,11 +106,29 @@ class AuthController {
 			.build();
 	}
 
+	/**
+	 * 현재 사용자와 이 session이 쓸 수 있는 재인증 수단(ADR-0029). 수단은 session을 만든 계정의 종류와 이 배포에 있는 로그인 수단으로
+	 * 정하고, {@code GET /api/auth/methods}가 이미 알리는 것 밖의 설정은 드러내지 않는다.
+	 */
 	@GetMapping("/api/me")
 	ResponseEntity<Me> me(@AuthenticationPrincipal Actor actor) {
 		return ResponseEntity.ok()
 			.header(HttpHeaders.CACHE_CONTROL, "no-store")
-			.body(new Me(actor.userId(), actor.name(), actor.role().name(), actor.breakGlass()));
+			.body(new Me(actor.userId(), actor.name(), actor.role().name(), actor.breakGlass(), stepUpMethod(actor)));
+	}
+
+	/**
+	 * break-glass 계정은 TOTP뿐이다(IdP 재인증은 받지 않는다). 그 밖의 계정은 학교 IdP 재인증이고, IdP가 없는 로컬 실행에서는 개발용
+	 * 재인증이 IdP를 대신한다(ADR-0029 7번). 쓸 수 있는 수단이 없으면 null이다.
+	 */
+	private String stepUpMethod(Actor actor) {
+		if (actor.breakGlass()) {
+			return this.breakGlassProperties.enabled() ? "totp" : null;
+		}
+		if (this.providers.getIfAvailable() != null) {
+			return "idp";
+		}
+		return this.devLogin.getIfAvailable() != null ? "dev" : null;
 	}
 
 	// 실패는 계정을 특정하지 않고 남긴다. 계정별 실패 이유는 login_events에 있다.
@@ -134,7 +165,11 @@ class AuthController {
 
 	}
 
-	record Me(long userId, String name, String role, boolean breakGlass) {
+	/**
+	 * @param stepUpMethod 이 session의 재인증 수단. {@code idp}(GET /api/auth/reauth?returnTo=), {@code totp}(POST
+	 * /api/me/step-up/totp), {@code dev}(로컬 실행의 POST /api/me/step-up/dev) 중 하나이고, 없으면 null
+	 */
+	record Me(long userId, String name, String role, boolean breakGlass, String stepUpMethod) {
 	}
 
 }

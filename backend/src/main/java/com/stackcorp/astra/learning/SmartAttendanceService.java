@@ -431,11 +431,17 @@ class SmartAttendanceService {
 				""").param("round", roundId).param("user", userId).query(Boolean.class).single();
 	}
 
-	private long failures(long roundId, long userId) {
+	/** 이 학생이 이 회차에서 틀린 PIN·QR 제출 수. 회차가 끝난 뒤에도 그대로다. */
+	long failures(long roundId, long userId) {
 		return this.jdbc.sql("""
 				SELECT COUNT(*) FROM smart_attendance_attempts
 				 WHERE smart_attendance_round_id = :round AND user_id = :user AND result IN ('bad_pin', 'bad_qr')
 				""").param("round", roundId).param("user", userId).query(Long.class).single();
+	}
+
+	/** 틀린 횟수가 한도에 닿아 이 회차에서는 맞는 값도 받지 않는다. */
+	boolean lockedOut(long failures) {
+		return failures >= this.properties.maxFailures();
 	}
 
 	private Round lock(long courseId, long roundId) {

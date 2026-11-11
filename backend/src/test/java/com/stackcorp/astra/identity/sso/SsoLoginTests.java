@@ -86,7 +86,8 @@ class SsoLoginTests extends OidcIntegrationTest {
 		this.mvc.perform(get("/api/me").cookie(response.getCookie("ASTRA_SESSION")))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.userId").value(userId))
-			.andExpect(jsonPath("$.breakGlass").value(false));
+			.andExpect(jsonPath("$.breakGlass").value(false))
+			.andExpect(jsonPath("$.stepUpMethod").value("idp"));
 		assertThat(this.jdbc.sql("""
 				SELECT COUNT(*) FROM login_events
 				 WHERE user_id = :id AND login_result = 'SUCCESS' AND session_id IS NOT NULL
@@ -238,7 +239,8 @@ class SsoLoginTests extends OidcIntegrationTest {
 			.andReturn();
 		this.mvc.perform(get("/api/me").cookie(login.getResponse().getCookie("ASTRA_SESSION")))
 			.andExpect(jsonPath("$.userId").value(adminId))
-			.andExpect(jsonPath("$.breakGlass").value(true));
+			.andExpect(jsonPath("$.breakGlass").value(true))
+			.andExpect(jsonPath("$.stepUpMethod").value("totp"));
 	}
 
 	@Test

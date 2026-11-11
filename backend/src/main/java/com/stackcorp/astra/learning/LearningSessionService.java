@@ -521,19 +521,33 @@ class LearningSessionService {
 			.orElseThrow(ApiException::notFound);
 	}
 
-	/** 닫힌 session이면 그 사유의 오류. lease가 지났으면 지금 닫고 같은 오류를 낸다. */
+	/**
+	 * 닫힌 session이면 그 사유의 오류. lease가 지났으면 지금 닫고 같은 오류를 낸다. 코드는 저장한 종료 사유마다 하나다.
+	 * <ul>
+	 * <li>{@code session_superseded}: 같은 사용자가 다른 곳에서 학습을 시작했다. 어느 창이나 기기인지는 알리지 않는다.</li>
+	 * <li>{@code session_expired}: lease 안에 하트비트가 오지 않아 닫혔다.</li>
+	 * <li>{@code session_ended}: 이 session에 종료 요청(button, unload)이 이미 왔다.</li>
+	 * <li>{@code session_withdrawn}: 콘텐츠를 볼 수 없게 되어 서버가 닫았다(forced).</li>
+	 * </ul>
+	 */
 	private Optional<ApiException> closeIfInvalid(Session session, LocalDateTime now) {
 		if (session.open() && !expired(session, now)) {
 			return Optional.empty();
 		}
+		String reason = session.endReason();
 		if (session.open()) {
 			expire(session);
+			reason = "lease_expired";
 		}
-		if ("superseded".equals(session.state())) {
-			return Optional.of(new ApiException(HttpStatus.CONFLICT, "session_superseded",
-					"다른 창이나 기기에서 학습을 시작해 이 학습이 끝났습니다."));
-		}
-		return Optional.of(new ApiException(HttpStatus.CONFLICT, "session_closed", "학습이 끝났습니다. 다시 시작해 주세요."));
+		return Optional.of(switch (reason == null ? "" : reason) {
+			case "superseded" -> new ApiException(HttpStatus.CONFLICT, "session_superseded",
+					"다른 창이나 기기에서 학습을 시작해 이 학습이 끝났습니다.");
+			case "lease_expired" -> new ApiException(HttpStatus.CONFLICT, "session_expired",
+					"학습 신호가 끊겨 학습이 끝났습니다. 다시 시작해 주세요.");
+			case "forced" -> new ApiException(HttpStatus.CONFLICT, "session_withdrawn",
+					"볼 수 없게 된 콘텐츠라 학습이 끝났습니다.");
+			default -> new ApiException(HttpStatus.CONFLICT, "session_ended", "이미 끝낸 학습입니다. 다시 시작해 주세요.");
+		});
 	}
 
 	private static boolean expired(Session session, LocalDateTime now) {
@@ -743,6 +757,8 @@ class LearningSessionService {
 
 	/**
 	 * @param state ended | superseded | lease_expired
+	 * @param endReason 저장한 종료 사유. button | unload(사용자 종료), forced(볼 수 없게 되어 서버가 닫음), superseded(다른 곳에서
+	 * 시작), lease_expired(하트비트 끊김) 중 하나다. 이미 닫힌 session에 다시 종료를 보내면 처음 사유를 돌려준다
 	 * @param creditedSec 이번 종료 요청이 적립한 초
 	 */
 	record Ended(long sessionId, String state, String endReason, int creditedSec, ItemProgress progress) {

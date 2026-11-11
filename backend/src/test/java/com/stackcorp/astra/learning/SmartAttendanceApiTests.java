@@ -245,6 +245,40 @@ class SmartAttendanceApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void endedRoundTellsALockedStudentFromOneWhoNeverSubmitted() throws Exception {
+		JsonNode round = ApiClient.json(open(this.session, "{\"method\":\"pin\",\"minutes\":2,\"lateAfterMinutes\":1}"));
+		long id = round.get("roundId").asLong();
+		String pin = round.get("pin").asString();
+		// PIN은 회차 동안 바뀌지 않는다. 교체 시각은 QR 회차에만 있다.
+		this.clock.advance(Duration.ofSeconds(90));
+		this.professor.get(roundPath(id))
+			.andExpect(jsonPath("$.pin").value(pin))
+			.andExpect(jsonPath("$.qrRefreshAt").doesNotExist());
+		for (int i = 0; i < 5; i++) {
+			check(this.student, id, "{\"pin\":\"" + wrong(pin, i) + "\"}").andExpect(status().isUnprocessableContent());
+		}
+		check(this.classmate, id, "{\"pin\":\"" + wrong(pin) + "\"}").andExpect(status().isUnprocessableContent());
+		this.student.get(me(id))
+			.andExpect(jsonPath("$.state").value("locked"))
+			.andExpect(jsonPath("$.lockedOut").value(true))
+			.andExpect(jsonPath("$.failedAttempts").value(5));
+
+		this.clock.set(this.t0.plusMinutes(2));
+		this.student.get(me(id))
+			.andExpect(jsonPath("$.state").value("expired"))
+			.andExpect(jsonPath("$.lockedOut").value(true))
+			.andExpect(jsonPath("$.failedAttempts").value(5));
+		this.classmate.get(me(id))
+			.andExpect(jsonPath("$.state").value("expired"))
+			.andExpect(jsonPath("$.lockedOut").value(false))
+			.andExpect(jsonPath("$.failedAttempts").value(1));
+		this.thirdStudent.get(me(id))
+			.andExpect(jsonPath("$.state").value("expired"))
+			.andExpect(jsonPath("$.lockedOut").value(false))
+			.andExpect(jsonPath("$.failedAttempts").value(0));
+	}
+
+	@Test
 	void qrTokensRotateAndOldTokensExpireAfterGrace() throws Exception {
 		JsonNode round = ApiClient.json(open(this.session, "{\"method\":\"qr\"}")
 			.andExpect(jsonPath("$.pin").doesNotExist()));

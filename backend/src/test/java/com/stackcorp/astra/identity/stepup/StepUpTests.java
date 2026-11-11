@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -145,6 +146,21 @@ class StepUpTests extends OidcIntegrationTest {
 	}
 
 	@Test
+	void failedReauthenticationReturnsToTheValidatedStartingPageWithAFailureMarker() throws Exception {
+		String other = "2026" + ThreadLocalRandom.current().nextInt(10_000_000, 99_999_999);
+		this.data.userWithRef(other, "STUDENT");
+
+		assertThat(attempt(this.token, other, "/me/info?tab=contact#phone").getHeader("Location"))
+			.isEqualTo("/me/info?tab=contact&reauth=failed#phone");
+		assertThat(attempt(this.token, other, "/courses/7").getHeader("Location")).isEqualTo("/courses/7?reauth=failed");
+		// 같은 origin의 상대 경로가 아니면 로그인과 같이 /로 보낸다.
+		for (String unsafe : List.of("//evil.example/x", "https://evil.example/", "/\\evil.example")) {
+			assertThat(attempt(this.token, other, unsafe).getHeader("Location")).isEqualTo("/?reauth=failed");
+		}
+		assertThat(stepUps("RECENT_AUTH", "SSO")).isZero();
+	}
+
+	@Test
 	void revokesAllOtherSessionsOnlyAfterReauthenticationAndKeepsTheCurrentOne() throws Exception {
 		String second = this.data.session(this.userId);
 		String third = this.data.session(this.userId);
@@ -173,9 +189,21 @@ class StepUpTests extends OidcIntegrationTest {
 
 	private MockHttpServletResponse attempt(String sessionToken, String studentNumber, boolean withSession)
 			throws Exception {
-		MvcResult start = this.mvc.perform(get("/api/auth/reauth").cookie(session(sessionToken)))
-			.andExpect(status().isFound())
-			.andReturn();
+		return attempt(sessionToken, studentNumber, withSession, null);
+	}
+
+	private MockHttpServletResponse attempt(String sessionToken, String studentNumber, String returnTo)
+			throws Exception {
+		return attempt(sessionToken, studentNumber, true, returnTo);
+	}
+
+	private MockHttpServletResponse attempt(String sessionToken, String studentNumber, boolean withSession,
+			String returnTo) throws Exception {
+		var request = get("/api/auth/reauth").cookie(session(sessionToken));
+		if (returnTo != null) {
+			request.param("returnTo", returnTo);
+		}
+		MvcResult start = this.mvc.perform(request).andExpect(status().isFound()).andReturn();
 		URI callback = IDP.authorize(URI.create(start.getResponse().getHeader("Location")), studentNumber);
 		Cookie login = start.getResponse().getCookie("ASTRA_LOGIN");
 		return withSession ? callback(callback, login, session(sessionToken)) : callback(callback, login);
