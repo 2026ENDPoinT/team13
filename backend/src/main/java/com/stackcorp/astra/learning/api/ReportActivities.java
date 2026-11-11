@@ -1,6 +1,7 @@
 package com.stackcorp.astra.learning.api;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,6 +30,12 @@ public interface ReportActivities {
 
 	/** 그 과목의 과제 활동 전체. 주차, 주차 안 순서대로. 공개 여부로 거르지 않는다. */
 	List<ReportActivity> list(long courseId);
+
+	/**
+	 * 주어진 활동 가운데 지우지 않은 과제 활동. 여러 과목에 걸쳐 쿼리 한 번으로 읽는다. 순서는 정하지 않는다. 과목 권한과 공개 여부는 판정하지
+	 * 않는다. 부르는 쪽이 자기 모듈의 행에서 얻은 활동 ID만 넘기고, 돌려받은 {@code courseId}를 자기 행의 과목과 맞춰 본다.
+	 */
+	List<ReportActivity> findAll(Collection<Long> activityIds);
 
 	/**
 	 * @param openAt null이면 바로 열린다

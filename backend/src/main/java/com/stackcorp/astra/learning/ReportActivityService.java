@@ -1,6 +1,7 @@
 package com.stackcorp.astra.learning;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -77,7 +78,7 @@ class ReportActivityService implements ReportActivities {
 
 	@Override
 	public Optional<ReportActivity> find(long courseId, long activityId) {
-		return this.jdbc.sql(SELECT + " AND a.activity_id = :activity")
+		return this.jdbc.sql(SELECT + " AND a.course_id = :course AND a.activity_id = :activity")
 			.param("course", courseId)
 			.param("activity", activityId)
 			.query(ReportActivityService::row)
@@ -86,8 +87,19 @@ class ReportActivityService implements ReportActivities {
 
 	@Override
 	public List<ReportActivity> list(long courseId) {
-		return this.jdbc.sql(SELECT + " ORDER BY w.week_no, a.sort_order, a.activity_id")
+		return this.jdbc.sql(SELECT + " AND a.course_id = :course ORDER BY w.week_no, a.sort_order, a.activity_id")
 			.param("course", courseId)
+			.query(ReportActivityService::row)
+			.list();
+	}
+
+	@Override
+	public List<ReportActivity> findAll(Collection<Long> activityIds) {
+		if (activityIds.isEmpty()) {
+			return List.of();
+		}
+		return this.jdbc.sql(SELECT + " AND a.activity_id IN (:ids)")
+			.param("ids", activityIds)
 			.query(ReportActivityService::row)
 			.list();
 	}
@@ -95,7 +107,7 @@ class ReportActivityService implements ReportActivities {
 	private static final String SELECT = """
 			SELECT a.activity_id, a.course_id, w.week_no, a.title, a.description, a.open_at, a.close_at, a.published_yn
 			  FROM learning_activities a JOIN course_weeks w ON w.course_week_id = a.course_week_id
-			 WHERE a.course_id = :course AND a.activity_type = 'report' AND a.deleted_at IS NULL
+			 WHERE a.activity_type = 'report' AND a.deleted_at IS NULL
 			""";
 
 	private static ReportActivity row(java.sql.ResultSet rs, int n) throws java.sql.SQLException {

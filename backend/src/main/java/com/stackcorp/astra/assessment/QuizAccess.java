@@ -1,6 +1,7 @@
 package com.stackcorp.astra.assessment;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -69,7 +70,18 @@ class QuizAccess {
 
 	/** 그 과목의 퀴즈 전체. 주차 순서대로. 볼 수 있는지는 부르는 쪽이 거른다. */
 	List<Quiz> all(long courseId) {
-		List<QuizActivity> list = this.activities.list(courseId);
+		return join(this.activities.list(courseId));
+	}
+
+	/**
+	 * 여러 과목에 걸친 그 활동들의 퀴즈. 지운 활동이나 퀴즈가 아닌 활동은 없다. 쿼리는 활동 수와 관계없이 둘이다. 과목 권한과 볼 수 있는지는
+	 * 부르는 쪽이 판정한다.
+	 */
+	List<Quiz> ofActivities(Collection<Long> activityIds) {
+		return activityIds.isEmpty() ? List.of() : join(this.activities.findAll(activityIds));
+	}
+
+	private List<Quiz> join(List<QuizActivity> list) {
 		Map<Long, Settings> settings = this.records
 			.ofActivities(list.stream().map(QuizActivity::activityId).toList())
 			.stream()

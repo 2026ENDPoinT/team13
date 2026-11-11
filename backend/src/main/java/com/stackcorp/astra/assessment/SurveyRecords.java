@@ -265,6 +265,21 @@ class SurveyRecords {
 	}
 
 	/**
+	 * 그 활동들 가운데 이 사용자가 완료한 강의실 설문의 활동 ID. 참여 원장과 설문 정의만 읽고 응답 저장부는 읽지 않으므로 익명 설문의 응답과
+	 * 사용자를 잇지 않는다(ADR-0022). 활동 수와 관계없이 쿼리 한 번이다.
+	 */
+	List<Long> completedActivities(long userId, Collection<Long> activityIds) {
+		if (activityIds.isEmpty()) {
+			return List.of();
+		}
+		return this.jdbc.sql("""
+				SELECT s.activity_id FROM surveys s
+				  JOIN survey_participations p ON p.survey_id = s.survey_id
+				 WHERE s.activity_id IN (:ids) AND p.user_id = :user AND p.state = 'completed'
+				""").param("ids", activityIds).param("user", userId).query(Long.class).list();
+	}
+
+	/**
 	 * 완료한 참여를 넣는다. 응답 세트를 가리키지 않는다(current_response_id는 NULL).
 	 *
 	 * @param completionKey 익명 설문의 Idempotency-Key(SC-05-A). 실명 설문이면 null(공용 원장이 가진다)

@@ -190,11 +190,7 @@ class QuizController {
 	private StudentQuiz studentView(Quiz quiz, long userId, LocalDateTime now) {
 		Release release = quiz.release(now);
 		List<Attempt> own = this.attempts.ofUser(quiz.quizId(), userId);
-		boolean resumable = own.stream().anyMatch((a) -> a.accepting(now));
-		Integer limit = quiz.settings().attemptLimit();
-		// 마감이 지난 진행 중 응시는 시작 요청이 먼저 닫으므로 새 응시를 막지 않는다.
-		boolean canStart = quiz.online() && (resumable
-				|| (quiz.phase(now) == Quiz.Phase.OPEN && (limit == null || own.size() < limit)));
+		boolean canStart = quiz.canStart(own, now);
 		// 공개 전에는 점수를 읽지도 않는다. 응답에 들어갈 길을 만들지 않는다(SEC-14).
 		BigDecimal score = release.scores() ? this.attempts.grade(quiz.settings().gradeItemId(), userId).orElse(null)
 				: null;
