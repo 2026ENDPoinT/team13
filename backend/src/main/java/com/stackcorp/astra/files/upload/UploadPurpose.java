@@ -16,7 +16,10 @@ enum UploadPurpose {
 	ASSIGNMENT_SUBMISSION("assignment_submission", CourseRole.STUDENT),
 
 	/** 게시글(질의응답, 열린게시판) 첨부. 그 과목의 담당자와 수강생이 올린다. */
-	POST_ATTACHMENT("post_attachment", null);
+	POST_ATTACHMENT("post_attachment", null),
+
+	/** 강의 영상. 본문을 흘려 보내는 업로드(POST /api/uploads/stream)로만 받는다(ADR-0016). */
+	LECTURE_VIDEO("lecture_video", CourseRole.INSTRUCTOR);
 
 	private final String code;
 
@@ -35,6 +38,11 @@ enum UploadPurpose {
 	/** 그 과목에서 이 역할이면 이 용도로 올릴 수 있는지. */
 	boolean allows(CourseRole role) {
 		return this.requiredRole == null || this.requiredRole == role;
+	}
+
+	/** multipart가 아니라 본문 스트림으로 받는 용도인지. */
+	boolean streamed() {
+		return this == LECTURE_VIDEO;
 	}
 
 	static Optional<UploadPurpose> of(String code) {

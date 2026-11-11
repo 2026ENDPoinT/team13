@@ -23,6 +23,10 @@ final class ContentInspector {
 
 	private static final byte[] JPEG = { (byte) 0xFF, (byte) 0xD8, (byte) 0xFF };
 
+	private static final byte[] EBML = { 0x1A, 0x45, (byte) 0xDF, (byte) 0xA3 };
+
+	private static final String QUICKTIME_BRAND = "qt  ";
+
 	private ContentInspector() {
 	}
 
@@ -44,6 +48,10 @@ final class ContentInspector {
 			case "hwpx" -> when(startsWith(head, ZIP), "application/hwp+zip");
 			case "hwp" -> when(startsWith(head, OLE), "application/x-hwp");
 			case "txt" -> when(plainText(head), "text/plain");
+			case "mp4" -> when(isoBrand(head).filter((brand) -> !QUICKTIME_BRAND.equals(brand)).isPresent(), "video/mp4");
+			case "mov" -> when(isoBrand(head).filter(QUICKTIME_BRAND::equals).isPresent(), "video/quicktime");
+			case "webm" -> when(ebmlDocType(head).filter("webm"::equals).isPresent(), "video/webm");
+			case "mkv" -> when(ebmlDocType(head).filter("matroska"::equals).isPresent(), "video/x-matroska");
 			default -> Optional.empty();
 		};
 	}
@@ -85,6 +93,36 @@ final class ContentInspector {
 			}
 		}
 		return true;
+	}
+
+	// ISO base media(mp4, mov): 첫 box가 ftyp이고 크기가 정상이면 major brand를 돌려준다.
+	private static Optional<String> isoBrand(byte[] head) {
+		if (head.length < 16 || head[4] != 'f' || head[5] != 't' || head[6] != 'y' || head[7] != 'p') {
+			return Optional.empty();
+		}
+		long size = ((head[0] & 0xFFL) << 24) | ((head[1] & 0xFFL) << 16) | ((head[2] & 0xFFL) << 8) | (head[3] & 0xFFL);
+		if (size < 16 || size > 4096) {
+			return Optional.empty();
+		}
+		return Optional.of(new String(head, 8, 4, StandardCharsets.ISO_8859_1));
+	}
+
+	// Matroska(mkv, webm): EBML header 안의 DocType(0x4282) 값을 돌려준다. 크기는 1 byte vint만 받는다.
+	private static Optional<String> ebmlDocType(byte[] head) {
+		if (!startsWith(head, EBML)) {
+			return Optional.empty();
+		}
+		int end = Math.min(head.length, 64);
+		for (int at = EBML.length; at + 3 <= end; at++) {
+			if (head[at] == 0x42 && head[at + 1] == (byte) 0x82 && (head[at + 2] & 0x80) != 0) {
+				int length = head[at + 2] & 0x7F;
+				if (length < 1 || at + 3 + length > end) {
+					return Optional.empty();
+				}
+				return Optional.of(new String(head, at + 3, length, StandardCharsets.US_ASCII));
+			}
+		}
+		return Optional.empty();
 	}
 
 }

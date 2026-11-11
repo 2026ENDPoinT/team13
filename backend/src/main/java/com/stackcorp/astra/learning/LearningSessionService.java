@@ -165,7 +165,7 @@ class LearningSessionService {
 		if (closed.isPresent()) {
 			return Step.failed(closed.get());
 		}
-		Item item = item(session.itemId(), courseId).orElse(null);
+		Item item = playable(item(session.itemId(), courseId));
 		Access access = item == null ? Access.NONE : access(userId, item, now);
 		if (!access.visible()) {
 			close(session, now, "forced");
@@ -222,7 +222,7 @@ class LearningSessionService {
 			expire(session);
 			return Step.done(ended(session, "lease_expired", "lease_expired", 0, item));
 		}
-		Access access = item == null ? Access.NONE : access(userId, item, now);
+		Access access = playable(Optional.ofNullable(item)) == null ? Access.NONE : access(userId, item, now);
 		if (!access.visible()) {
 			close(session, now, "forced");
 			return Step.failed(ApiException.notFound());
@@ -321,7 +321,7 @@ class LearningSessionService {
 				  SELECT 1 FROM online_lecture_items i
 				    LEFT JOIN online_lecture_item_progress p
 				           ON p.online_lecture_item_id = i.online_lecture_item_id AND p.user_id = :user
-				   WHERE i.activity_id = :activity AND p.met_at IS NULL)
+				   WHERE i.activity_id = :activity AND i.deleted_at IS NULL AND p.met_at IS NULL)
 				""").param("user", userId).param("activity", item.activityId()).query(Boolean.class).single();
 		if (!complete) {
 			return;
@@ -484,6 +484,7 @@ class LearningSessionService {
 				       a.attendance_session_id, i.content_path, i.duration_sec, i.required_sec
 				  FROM online_lecture_items i JOIN learning_activities a ON a.activity_id = i.activity_id
 				 WHERE i.online_lecture_item_id = :item AND a.course_id = :course AND a.deleted_at IS NULL
+				   AND i.deleted_at IS NULL
 				""")
 			.param("item", itemId)
 			.param("course", courseId)
@@ -492,6 +493,14 @@ class LearningSessionService {
 					rs.getObject(7, Long.class), rs.getString(8), rs.getObject(9, Integer.class),
 					rs.getObject(10, Integer.class)))
 			.optional();
+	}
+
+	/**
+	 * 재생할 수 있는 콘텐츠만 돌려준다. 영상을 거두었으면(content_path 비움, ADR-0016 10번) 볼 수 없게 된 것과 같다. 하트비트와 종료는
+	 * session을 forced로 닫고 404로 알린다.
+	 */
+	private static Item playable(Optional<Item> item) {
+		return item.filter((i) -> LectureVideoController.assetKey(i.contentPath()).isPresent()).orElse(null);
 	}
 
 	private record Item(long itemId, long activityId, long courseId, boolean published, LocalDateTime openAt,

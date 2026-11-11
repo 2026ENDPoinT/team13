@@ -150,13 +150,7 @@ class LearningController {
 			.orElseThrow(ApiException::notFound);
 		List<AttachedFile> files = row.attachmentGroupId() == null ? List.of()
 				: files(this.attachments.list(List.of(row.attachmentGroupId())), row);
-		List<LectureItem> items = this.jdbc.sql("""
-				SELECT online_lecture_item_id, title, duration_sec FROM online_lecture_items
-				 WHERE activity_id = :activity ORDER BY link_seq
-				""")
-			.param("activity", activityId)
-			.query((rs, n) -> new LectureItem(rs.getLong(1), rs.getString(2), rs.getObject(3, Integer.class)))
-			.list();
+		List<LectureItem> items = lectureItems(this.jdbc, activityId);
 		return ResponseEntity.ok()
 			.cacheControl(CacheControl.noStore())
 			.eTag(etag(row.version()))
@@ -237,11 +231,11 @@ class LearningController {
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 
-	// If-Match: "3". 약한 비교(W/)와 *는 받지 않는다. 마지막으로 읽은 version을 정확히 보내야 한다.
-	private static int expectedVersion(String ifMatch) {
+	// If-Match: "3". 약한 비교(W/)와 *는 받지 않는다. 마지막으로 읽은 version을 정확히 보내야 한다. 영상 활동(LectureController)도 쓴다.
+	static int expectedVersion(String ifMatch) {
 		if (ifMatch == null || ifMatch.isBlank()) {
 			throw new ApiException(HttpStatus.PRECONDITION_REQUIRED, "precondition_required",
-					"If-Match에 자료의 version을 보내야 합니다.");
+					"If-Match에 활동의 version을 보내야 합니다.");
 		}
 		Matcher m = VERSION.matcher(ifMatch.strip());
 		if (!m.matches()) {
@@ -250,7 +244,7 @@ class LearningController {
 		return Integer.parseInt(m.group(1));
 	}
 
-	private static String etag(int version) {
+	static String etag(int version) {
 		return "\"" + version + "\"";
 	}
 
@@ -378,7 +372,32 @@ class LearningController {
 
 	}
 
-	record LectureItem(long itemId, String title, Integer durationSec) {
+	/** 활동의 영상 콘텐츠. 지운 콘텐츠(deleted_at)는 빼고, 영상 처리 상태만 내보내며 실패 사유는 내보내지 않는다. */
+	static List<LectureItem> lectureItems(JdbcClient jdbc, long activityId) {
+		return jdbc.sql("""
+				SELECT online_lecture_item_id, title, duration_sec, required_sec, content_path, video_state
+				  FROM online_lecture_items WHERE activity_id = :activity AND deleted_at IS NULL ORDER BY link_seq
+				""")
+			.param("activity", activityId)
+			.query((rs, n) -> new LectureItem(rs.getLong(1), rs.getString(2), rs.getObject(3, Integer.class),
+					rs.getObject(4, Integer.class), LectureItem.state(rs.getString(5), rs.getString(6))))
+			.list();
+	}
+
+	/**
+	 * @param requiredSec 출석인정 필요 시간(초)
+	 * @param state processing(변환 중) | ready(재생 가능) | failed(재생할 수 없음)
+	 */
+	record LectureItem(long itemId, String title, Integer durationSec, Integer requiredSec, String state) {
+
+		// 재생 가능 여부는 content_path가 정한다. 재생 허가와 key API가 같은 값을 본다.
+		static String state(String contentPath, String videoState) {
+			if (contentPath != null) {
+				return "ready";
+			}
+			return "processing".equals(videoState) ? "processing" : "failed";
+		}
+
 	}
 
 	record ActivityView(long activityId, String type, int weekNo, String title, String description,

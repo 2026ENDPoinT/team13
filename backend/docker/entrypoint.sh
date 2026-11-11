@@ -3,6 +3,7 @@
 #   api        HTTP API. 8080에서 듣는다
 #   worker     배경 작업(worker 프로필). HTTP API는 container 안의 127.0.0.1에만 연다
 #   converter  격리한 문서 변환 process(com.stackcorp.converter.ConverterServer). 8090에서 듣는다
+#   transcoder 격리한 영상 변환 process(com.stackcorp.transcoder.TranscoderServer, ffmpeg). 8091에서 듣는다
 # 역할 이름은 command 인자로만 정한다. 환경 변수의 SPRING_PROFILES_ACTIVE보다 command 인자가 우선한다.
 # JAVA_OPTS는 아래 기본 option 뒤에 붙으므로 같은 option을 넣으면 JAVA_OPTS의 값이 이긴다.
 set -euo pipefail
@@ -29,10 +30,14 @@ case "${1:-}" in
 		exec java "${jvm[@]}" -Dpdfbox.fontcache=/tmp "${extra[@]}" \
 			-cp /app/app.jar com.stackcorp.converter.ConverterServer
 		;;
-	# transcoder 역할 자리: 영상 transcoder main을 더하는 변경이 여기에 역할을 추가한다. converter처럼 외부 network,
-	# 비밀값, 저장소 credential 없이 worker만 부르는 container로 실행한다(compose.yaml의 conversion network 참고).
+	transcoder)
+		# 영상 변환 process(com.stackcorp.transcoder.TranscoderServer, ADR-0016). ffmpeg가 JVM 밖에서 메모리를 쓰므로 heap을 작게 둔다.
+		# 원본과 결과는 TRANSCODER_WORK_DIR(compose에서 /work volume)에 요청마다 만들고 지운다.
+		exec java "${jvm[@]}" -XX:MaxRAMPercentage=20 "${extra[@]}" \
+			-cp /app/app.jar com.stackcorp.transcoder.TranscoderServer
+		;;
 	*)
-		echo "usage: astra api|worker|converter" >&2
+		echo "usage: astra api|worker|converter|transcoder" >&2
 		exit 64
 		;;
 esac

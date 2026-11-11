@@ -19,20 +19,20 @@ docker compose up --detach --wait --wait-timeout 420 || {
 	docker compose ps
 	fail "services did not become healthy"
 }
-pass "api, worker, converter, mysql are healthy"
+pass "api, worker, converter, transcoder, mysql are healthy"
 
 api_port="$(docker compose port api 8080)"
 [[ "${api_port}" == 127.0.0.1:* ]] || fail "api port is published on ${api_port}, expected 127.0.0.1"
 pass "api port published only on loopback (${api_port})"
 
-# 2. 공개 port는 api 하나다. MySQL, converter, 관리 port는 host에 열리지 않는다.
-for target in "mysql 3306" "converter 8090" "api 8081" "worker 8081" "worker 8080"; do
+# 2. 공개 port는 api 하나다. MySQL, converter, transcoder, 관리 port는 host에 열리지 않는다.
+for target in "mysql 3306" "converter 8090" "transcoder 8091" "api 8081" "worker 8081" "worker 8080"; do
 	# shellcheck disable=SC2086
 	if published="$(docker compose port ${target} 2>/dev/null)" && [[ -n "${published}" && "${published}" != ":0" ]]; then
 		fail "${target} is published on ${published}"
 	fi
 done
-pass "mysql, converter and management ports are not published"
+pass "mysql, converter, transcoder and management ports are not published"
 
 # 3. api container를 거쳐 CSRF token을 받는다.
 headers="$(curl --silent --show-error --fail --max-time 10 --dump-header - --output /dev/null "http://${api_port}/api/auth/csrf")" \
@@ -45,29 +45,43 @@ status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_cod
 [[ "${status}" != 200 ]] || fail "/actuator/health answered 200 on the public port"
 pass "/actuator/health is not served on the public port (${status})"
 
-# 5. converter는 외부로 나가지 못하고, worker만 converter에 닿는다. api의 외부 연결은 대조군이다.
+# 5. converter와 transcoder는 외부로 나가지 못하고, worker만 각각에 닿는다. api의 외부 연결은 대조군이다.
 probe() {
 	docker compose exec -T "$1" timeout 5 bash -c "exec 3<>/dev/tcp/$2/$3" >/dev/null 2>&1
 }
 probe api 1.1.1.1 443 || fail "control: api cannot reach the internet, network check is inconclusive"
-if probe converter 1.1.1.1 443; then
-	fail "converter reached the internet"
-fi
-pass "converter has no outbound network"
+for isolated in converter transcoder; do
+	if probe "${isolated}" 1.1.1.1 443; then
+		fail "${isolated} reached the internet"
+	fi
+done
+pass "converter and transcoder have no outbound network"
 probe worker converter 8090 || fail "worker cannot reach converter"
+probe worker transcoder 8091 || fail "worker cannot reach transcoder"
 if probe api converter 8090; then
 	fail "api reached converter"
 fi
-pass "only worker reaches converter"
-
-# 6. converter에는 DB, 저장소, 모델 설정이 없다.
-if docker compose exec -T converter env | grep -E '^(DB_|ASTRA_|AWS_|SPRING_)'; then
-	fail "converter received application settings or secrets"
+if probe api transcoder 8091; then
+	fail "api reached transcoder"
 fi
-pass "converter has no secrets"
+if probe converter transcoder 8091; then
+	fail "converter reached transcoder"
+fi
+pass "only worker reaches converter and transcoder"
+
+# 6. converter와 transcoder에는 DB, 저장소, 모델 설정이 없다. transcoder에는 ffmpeg가 있다.
+for isolated in converter transcoder; do
+	if docker compose exec -T "${isolated}" env | grep -E '^(DB_|ASTRA_|AWS_|SPRING_)'; then
+		fail "${isolated} received application settings or secrets"
+	fi
+done
+docker compose exec -T transcoder ffmpeg -hide_banner -version >/dev/null || fail "transcoder has no ffmpeg"
+docker compose exec -T transcoder bash -c 'echo x > /work/probe && rm /work/probe' \
+	|| fail "transcoder cannot write to its work volume"
+pass "converter and transcoder have no secrets; transcoder has ffmpeg and a writable /work"
 
 # 7. 실행 user와 파일 시스템. /var/tmp는 보통 누구나 쓸 수 있으므로 root filesystem이 읽기 전용인지 여기서 본다.
-for service in api worker converter; do
+for service in api worker converter transcoder; do
 	uid="$(docker compose exec -T "${service}" id -u)"
 	[[ "${uid}" != 0 ]] || fail "${service} runs as root"
 	if docker compose exec -T "${service}" bash -c 'echo x > /var/tmp/probe' >/dev/null 2>&1; then

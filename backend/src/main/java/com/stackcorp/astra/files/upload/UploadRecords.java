@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 
 import com.stackcorp.astra.files.FileReferences;
+import com.stackcorp.astra.files.scan.ScanMode;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -55,6 +56,9 @@ class UploadRecords {
 	 * <li>거부한 내용(rejected)은 지웠든 아니든 바꾸지 않고 그대로 돌려준다. 부르는 쪽이 거부한다. 되살리지 않는다.</li>
 	 * <li>GC가 지운 blob은 이번 요청이 새 key에 저장한 내용으로만 되살린다. GC가 아직 지우고 있을 수 있는 옛 key는 다시 쓰지 않는다.
 	 * 되살린 blob은 새로 받은 내용이므로 initialState에서 다시 시작한다. 검사기가 있으면 지우기 전에 clean이었어도 다시 검사한다.</li>
+	 * <li>검사를 면제한 용도(lecture_video, ADR-0016 12번)가 만든 내용은 unscanned다. 면제하지 않은 용도가 같은 내용을 참조하면 그
+	 * blob을 quarantined로 바꿔 검사를 받게 한다. 검사하지 않은 내용이 다른 용도의 업로드를 clean으로 만들지 않는다. 판정은 그 뒤
+	 * ADR-0018대로 같은 내용의 모든 파일에 옮겨진다.</li>
 	 * </ul>
 	 *
 	 * @param storageKey 이번 요청이 내용을 저장한 key. 살아 있는 blob을 함께 쓰려고 저장하지 않았으면 null
@@ -62,6 +66,14 @@ class UploadRecords {
 	 * @return 참조한 blob. 지운 blob인데 쓸 수 있는 새 key가 없으면 비어 있는 값. 이때는 아무것도 바꾸지 않았다
 	 */
 	Optional<Blob> referenceBlob(String sha256, long size, String mime, String storageKey, String initialState) {
+		return referenceBlob(sha256, size, mime, storageKey, initialState, false);
+	}
+
+	/**
+	 * @param scanExempt 검사를 면제한 용도의 업로드인지. 면제한 업로드는 unscanned인 blob을 그대로 함께 쓴다
+	 */
+	Optional<Blob> referenceBlob(String sha256, long size, String mime, String storageKey, String initialState,
+			boolean scanExempt) {
 		if (storageKey != null) {
 			try {
 				GeneratedKeyHolder key = new GeneratedKeyHolder();
@@ -93,6 +105,15 @@ class UploadRecords {
 			this.jdbc.sql("UPDATE file_blobs SET reference_count = reference_count + 1 WHERE file_blob_id = :id")
 				.param("id", existing.id())
 				.update();
+			if (!scanExempt && ScanMode.UNSCANNED.equals(existing.state())) {
+				this.jdbc.sql("""
+						UPDATE file_blobs
+						   SET blob_state = 'quarantined', scan_attempt_count = 0, scan_next_at = NULL,
+						       scan_lease_owner = NULL, scan_lease_expires_at = NULL
+						 WHERE file_blob_id = :id AND blob_state = :unscanned
+						""").param("id", existing.id()).param("unscanned", ScanMode.UNSCANNED).update();
+				return Optional.of(new Blob(existing.id(), "quarantined", existing.storageKey(), false));
+			}
 			return locked;
 		}
 		if (storageKey == null || storageKey.equals(existing.storageKey())) {

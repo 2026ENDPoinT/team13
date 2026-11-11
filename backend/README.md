@@ -81,7 +81,7 @@ git commit -m "Update reference to <변경 요약>"
 | Gradle | 9.8.2 (wrapper 포함, 따로 설치하지 않음) |
 | DB | MySQL 8.4, Flyway |
 
-테스트와 로컬 실행에는 Docker가 필요하다. Testcontainers가 MySQL 8.4와 S3 호환 저장소 컨테이너를 띄우고 마이그레이션을 적용한다.
+테스트와 로컬 실행에는 Docker와 `ffmpeg`·`ffprobe`(PATH)가 필요하다. Testcontainers가 MySQL 8.4와 S3 호환 저장소 컨테이너를 띄우고 마이그레이션을 적용한다. 영상 변환 테스트는 ffmpeg로 짧은 시험 영상을 만들어 쓴다.
 
 ```sh
 ./gradlew build          # Windows: gradlew.bat build
@@ -144,7 +144,7 @@ ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-eclass-Frontend에�
 | `ASTRA_FILES_GC_DERIVATIVE_GRACE` | `10m` | 파일을 지운 뒤 파생물·rendition 객체를 지우기까지 기다리는 시간 |
 | `ASTRA_FILES_GC_BLOB_GRACE` | `1h` | 참조가 0이 된 원본 객체를 지우기까지 기다리는 시간 |
 
-업로드는 파일 하나에 50 MB까지 받는다. 허용 확장자와 크기는 `upload_policies`에 있고, 확장자와 내용 형식이 맞지 않으면 거부한다([ADR-0010](docs/adr/0010-upload-acceptance.md)).
+업로드는 파일 하나에 50 MB까지 받는다. 허용 확장자와 크기는 `upload_policies`에 있고, 확장자와 내용 형식이 맞지 않으면 거부한다([ADR-0010](docs/adr/0010-upload-acceptance.md)). 강의 영상은 `POST /api/uploads/stream`으로 본문을 그대로 받고 `lecture_video` 정책의 `max_file_bytes`(기본 2 GiB)까지 받는다([ADR-0016](docs/adr/0016-video-upload-and-transcoder.md)). 상한을 바꾸려면 새 마이그레이션으로 그 행을 고친다.
 
 요약 작업과 저장소 GC(만료 업로드, 지운 파일의 파생물, 참조 없는 원본 객체 정리, [ADR-0011](docs/adr/0011-material-deletion.md))는 `worker` 프로필(`--spring.profiles.active=worker`)에서만 실행된다. converter는 같은 jar를 다른 main으로 띄운다. 외부 network가 없는 container에서 실행한다.
 
@@ -197,6 +197,41 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 |---|---|---|
 | `ASTRA_NOTIFICATION_SWEEP_INTERVAL` | `30s` | worker가 보낼 시각이 된 알림을 찾는 간격. 예약 알림은 보일 시각부터 이 간격만큼 늦을 수 있다 |
 
+### 영상 변환 설정
+
+강의 영상은 worker가 transcoder로 HLS segment를 만들고 AES-128로 암호화해 `delivery` bucket의 `vod/`에 게시한다([ADR-0016](docs/adr/0016-video-upload-and-transcoder.md)). transcoder는 converter처럼 같은 jar를 다른 main으로 띄운다. `ffmpeg`와 `ffprobe`가 있는 container에서, 외부 network와 AWS credential 없이 실행하고 worker에서 오는 요청만 받는다.
+
+```sh
+java -Dloader.main=com.stackcorp.transcoder.TranscoderServer -cp stack-eclass-backend.jar \
+  org.springframework.boot.loader.launch.PropertiesLauncher   # TRANSCODER_PORT 기본 8091
+```
+
+transcoder process의 환경 변수:
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `TRANSCODER_PORT` | `8091` | listen 포트 |
+| `TRANSCODER_MAX_BYTES` · `TRANSCODER_MAX_OUTPUT_BYTES` | 2 GiB · 4 GiB | 원본, 결과 전체의 크기 상한(byte) |
+| `TRANSCODER_MAX_DURATION_SECONDS` | `14400` | 재생 길이 상한 |
+| `TRANSCODER_TIMEOUT_SECONDS` | `7200` | ffmpeg 실행 제한 시간 |
+| `TRANSCODER_THREADS` | `2` | ffmpeg encoder thread 수. container CPU 상한과 맞춘다 |
+| `TRANSCODER_WORK_DIR` | `java.io.tmpdir` | 요청마다 작업 directory를 만들고 응답 뒤 지우는 곳 |
+| `TRANSCODER_FFMPEG` · `TRANSCODER_FFPROBE` | `ffmpeg` · `ffprobe` | 실행 파일 |
+
+api·worker의 환경 변수:
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_TRANSCODER_URL` | `http://transcoder:8091` | transcoder 주소 |
+| `ASTRA_TRANSCODER_TIMEOUT` | `3h` | 영상 하나의 변환과 응답을 기다리는 시간. transcoder 제한 시간보다 길게 둔다 |
+| `ASTRA_TRANSCODER_WORKER_POLL_INTERVAL` | `10s` | worker가 대기 작업과 삭제된 원본을 찾는 간격 |
+| `ASTRA_TRANSCODER_WORKER_MAX_ATTEMPTS` · `ASTRA_TRANSCODER_WORKER_RETRY_BACKOFF` | `3` · `1m` | 일시 오류일 때 실행 횟수와 첫 재시도 대기(4배씩 늘고 1시간 상한) |
+| `ASTRA_TRANSCODER_WORKER_LEASE` | `10m` | 실행 lease. worker가 멈추면 이 시간 뒤 작업을 다시 대기로 돌린다 |
+| `ASTRA_UPLOAD_STREAM_PART_SIZE` | `8MB` | 영상 업로드의 S3 multipart part 크기. 업로드 하나가 이만큼 메모리를 쓴다 |
+| `ASTRA_UPLOAD_STREAM_ABANDON_AFTER` | `24h` | 이 시간이 지나도 끝나지 않은 multipart upload는 worker가 취소한다 |
+
+`bootTestRun`은 transcoder를 같은 process에서 띄운다. PATH에 `ffmpeg`가 없으면 영상 콘텐츠가 `failed`로 끝난다.
+
 ### 인증과 CDN 서명 설정
 
 학교 IdP 연결 전까지 로그인은 break-glass 계정 하나만 된다([ADR-0004](docs/adr/0004-sso-bff-session.md) 6번). 비밀번호 hash와 TOTP secret은 DB가 아니라 Secrets Manager에서 환경 변수로 넣는다. 셋 중 하나라도 없으면 로컬 로그인은 꺼진다. 운영자는 `users`에 같은 `external_ref`의 행을 먼저 만든다.
@@ -245,16 +280,16 @@ IdP에는 confidential client로 등록하고 ID token 서명 알고리즘은 RS
 
 ### 컨테이너로 실행
 
-host 한 대에서 api, worker, converter를 container로 띄운다. 구성의 이유는 [ADR-0019](docs/adr/0019-container-image-and-single-host-compose.md)에 있다. Docker Engine과 Compose v2.24 이상이 필요하다.
+host 한 대에서 api, worker, converter, transcoder를 container로 띄운다. 구성의 이유는 [ADR-0019](docs/adr/0019-container-image-and-single-host-compose.md)에 있다. Docker Engine과 Compose v2.24 이상이 필요하다.
 
 ```sh
-docker build -t astra-backend:local .     # 이미지 하나. 역할은 command(api | worker | converter)로 고른다
+docker build -t astra-backend:local .     # 이미지 하나. 역할은 command(api | worker | converter | transcoder)로 고른다
 cp .env.example .env                       # 값을 채운다. .env는 커밋하지 않는다
 docker compose up -d --wait                # 모든 서비스가 healthcheck를 통과할 때까지 기다린다
 docker compose down                        # 종료. MySQL 데이터 volume까지 지우려면 --volumes
 ```
 
-`.env`에는 위 표의 환경 변수와 아래 compose 설정을 넣는다. 전체 목록과 설명은 [.env.example](.env.example)에 있다. api와 worker가 이 파일을 받고, converter와 MySQL은 받지 않는다. 쓰지 않는 값은 `KEY=`처럼 빈 값으로 두지 말고 줄을 지운다. `$`가 든 값(bcrypt hash)은 작은따옴표로 감싼다.
+`.env`에는 위 표의 환경 변수와 아래 compose 설정을 넣는다. 전체 목록과 설명은 [.env.example](.env.example)에 있다. api와 worker가 이 파일을 받고, converter, transcoder와 MySQL은 받지 않는다. 쓰지 않는 값은 `KEY=`처럼 빈 값으로 두지 말고 줄을 지운다. `$`가 든 값(bcrypt hash)은 작은따옴표로 감싼다.
 
 | 변수 | 기본값 | 내용 |
 |---|---|---|
@@ -266,20 +301,21 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 | 서비스 | 열리는 곳 | 외부 network | 하는 일 |
 |---|---|---|---|
 | `api` | host의 `ASTRA_API_BIND:ASTRA_API_PORT` → 8080 | 있음 | HTTP API |
-| `worker` | 없음(container 안의 127.0.0.1) | 있음 | 요약 작업 등 배경 작업. converter를 부른다 |
+| `worker` | 없음(container 안의 127.0.0.1) | 있음 | 요약 작업, 영상 변환 작업 등 배경 작업. converter와 transcoder를 부른다 |
 | `converter` | worker만 닿는 내부 network의 8090 | 없음 | PDF → 쪽 이미지·텍스트. 비밀값과 저장소 credential이 없다 |
+| `transcoder` | worker만 닿는 다른 내부 network의 8091 | 없음 | 영상 → HLS segment(ffmpeg). 비밀값, 저장소 credential, 암호화 key가 없다. 작업 파일은 volume `transcoder-work`(`/work`)에 요청마다 만들고 지운다. 영상 하나(원본 2 GiB, 결과 4 GiB까지)를 담을 디스크 여유를 둔다 |
 | `mysql` (프로필 `mysql`) | api, worker만 닿는 내부 network의 3306 | 없음 | DB. root는 container 안에서만 접속한다 |
 | `clamav` (프로필 `scan`) | api, worker만 닿는 내부 network의 3310 | 없음 | 업로드 검사(clamd). `ASTRA_SCAN_CLAMD_HOST=clamav`, `ASTRA_SCAN_CLAMD_PORT=3310`, `ASTRA_SCAN_REQUIRED=true`를 함께 넣는다 |
 | `freshclam` (프로필 `scan`) | 없음 | 있음 | ClamAV 서명 갱신. 업로드 파일을 받지 않는다 |
 
-- 상태 확인은 각 container 안의 `127.0.0.1:8081/actuator/health/readiness`(api, worker)와 `127.0.0.1:8090/health`(converter)뿐이다. host와 API port에는 `/actuator`가 없다. 상태는 `docker compose ps`로 본다.
+- 상태 확인은 각 container 안의 `127.0.0.1:8081/actuator/health/readiness`(api, worker), `127.0.0.1:8090/health`(converter), `127.0.0.1:8091/health`(transcoder)뿐이다. host와 API port에는 `/actuator`가 없다. 상태는 `docker compose ps`로 본다.
 - 로그는 stdout의 JSON(ECS) 한 줄이다. `docker compose logs api`로 본다.
-- container는 uid 10001로 실행하고 root filesystem은 읽기 전용이다. 쓰기는 `/tmp`(tmpfs)에만 한다.
+- container는 uid 10001로 실행하고 root filesystem은 읽기 전용이다. 쓰기는 `/tmp`(tmpfs)와 transcoder의 `/work` volume에만 한다. 이미지에는 transcoder가 쓰는 ffmpeg가 들어 있고 다른 역할은 실행하지 않는다.
 - 저장소는 S3 API면 된다. AWS S3와 instance role이면 bucket 이름만 넣고, S3 호환 저장소면 `ASTRA_STORAGE_ENDPOINT`, `ASTRA_STORAGE_ACCESS_KEY`, `ASTRA_STORAGE_SECRET_KEY`, `ASTRA_STORAGE_PATH_STYLE=true`를 넣는다. 이 구성은 저장소를 띄우지 않는다. EC2에서 container가 instance role을 쓰려면 instance metadata의 hop limit이 2여야 한다.
 - CloudFront 없이 문서와 영상을 보이려면 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)).
 - `docker compose stop`은 api가 처리 중인 요청을 끝낼 때까지, worker가 실행 중인 요약 작업을 `interrupted`로 닫을 때까지 최대 75초를 기다린다.
 
-[docker/smoke-test.sh](docker/smoke-test.sh)는 띄운 구성의 healthcheck, 공개 port, converter의 network 차단, 실행 user, 로그 형식, 종료 처리를 확인한다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 한다.
+[docker/smoke-test.sh](docker/smoke-test.sh)는 띄운 구성의 healthcheck, 공개 port, converter·transcoder의 network 차단과 비밀값 없음, transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, 종료 처리를 확인한다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 한다.
 
 ## CI
 
@@ -287,7 +323,7 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 
 | 작업 | 확인하는 것 |
 |---|---|
-| Build and test | `./gradlew build`. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다. `ModuleStructureTests`가 모듈 사이 의존이 [docs/architecture.md](docs/architecture.md) 4.1절 표를 벗어나지 않는지 확인하고 `build/spring-modulith-docs/`에 C4 component diagram을 쓴다 |
+| Build and test | `./gradlew build`. 빌드 전에 `ffmpeg`를 설치한다. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다. `ModuleStructureTests`가 모듈 사이 의존이 [docs/architecture.md](docs/architecture.md) 4.1절 표를 벗어나지 않는지 확인하고 `build/spring-modulith-docs/`에 C4 component diagram을 쓴다 |
 | Schema check and ERD snapshot | 마이그레이션을 MySQL 8.4에 적용한 뒤 `db/tools/check.sql`로 깨진 FK, COMMENT 누락, 고립 테이블을 찾는다. `db/erdcloud/snapshot.json`(ERD A)이 현재 스키마로 다시 만든 결과와 같은지도 확인한다 |
 | Container image and compose smoke test | `Dockerfile`로 이미지를 만들고, `compose.yaml`이 참조하는 변수가 `.env.example`에 모두 있는지 본 뒤, 비밀값 없는 `.env`로 구성을 띄워 `docker/smoke-test.sh`를 실행한다. registry에는 올리지 않는다 |
 
