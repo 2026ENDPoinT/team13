@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -32,10 +33,12 @@ import com.stackcorp.astra.summary.pipeline.Usage;
 /**
  * worker 프로필에서 대기 작업을 하나씩 실행한다. 여러 worker가 떠도 원장의 SKIP LOCKED로 한 곳만 잡는다.
  * 로그에는 작업 ID와 코드만 남긴다. 자료 본문과 모델 출력은 남기지 않는다(ADR-0007 9번).
+ * process가 종료할 때는 새 작업을 잡지 않고, 실행 중인 작업은 다음 모델 호출 경계에서 멈춰 lease 만료와 같은
+ * {@code interrupted}로 바로 닫는다. lease가 끝날 때까지 작업이 running으로 남지 않는다.
  */
 @Component
 @Profile("worker")
-class SummaryJobRunner implements AutoCloseable {
+class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 
 	private static final Logger log = LoggerFactory.getLogger(SummaryJobRunner.class);
 
@@ -55,6 +58,8 @@ class SummaryJobRunner implements AutoCloseable {
 
 	private final ScheduledExecutorService leaseRenewer = Executors
 		.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("summary-lease").factory());
+
+	private volatile boolean running;
 
 	SummaryJobRunner(SummaryJobRepository jobs, DocumentRenditions renditions, StoredFiles files,
 			SummaryStorage storage, ObjectProvider<LlmClient> llm, SummaryProperties properties) {
@@ -85,6 +90,9 @@ class SummaryJobRunner implements AutoCloseable {
 
 	/** @return 작업 하나를 실행했으면 true */
 	boolean runOnce() {
+		if (!this.running) {
+			return false;
+		}
 		LlmClient client = this.llm.getIfAvailable();
 		Optional<SummaryJob> claimed = this.jobs.claimNext(this.owner, this.properties.lease(),
 				client != null ? client.model() : null, SummaryPipeline.PROMPT_VERSION);
@@ -119,6 +127,22 @@ class SummaryJobRunner implements AutoCloseable {
 	}
 
 	@Override
+	public void start() {
+		this.running = true;
+	}
+
+	/** 종료 단계에서 부른다. 이후 대기 작업을 잡지 않고, 실행 중인 작업에 멈추라고 알린다. */
+	@Override
+	public void stop() {
+		this.running = false;
+	}
+
+	@Override
+	public boolean isRunning() {
+		return this.running;
+	}
+
+	@Override
 	public void close() {
 		this.leaseRenewer.shutdownNow();
 	}
@@ -143,7 +167,7 @@ class SummaryJobRunner implements AutoCloseable {
 		GenerateInput input = new GenerateInput(String.valueOf(job.fileId()), title,
 				new RenditionSource(this.renditions, rendition),
 				this.storage.checkpoints(job.fileId(), this.jobs.rootOf(job.id())),
-				() -> leaseLost.get() || this.jobs.cancelRequested(job.id()),
+				() -> !this.running || leaseLost.get() || this.jobs.cancelRequested(job.id()),
 				(GenerationProgress p) -> this.jobs.progress(job.id(), this.owner, p.stage().name().toLowerCase(),
 						p.pagesDone(), p.pagesTotal(), p.usage()),
 				GenerateInput.Limits.DEFAULT);
@@ -160,6 +184,11 @@ class SummaryJobRunner implements AutoCloseable {
 			if (ex.code() == GenerationException.Code.CANCELLED) {
 				if (leaseLost.get()) {
 					log.warn("summary job lost lease jobId={}", job.id());
+					return;
+				}
+				if (!this.running && !this.jobs.cancelRequested(job.id())) {
+					finish(job, JobState.FAILED, usage, "interrupted", "작업을 실행하던 worker가 멈췄습니다. 다시 시도해 주세요.");
+					log.info("summary job interrupted by shutdown jobId={}", job.id());
 					return;
 				}
 				finish(job, JobState.CANCELLED, usage, null, null);

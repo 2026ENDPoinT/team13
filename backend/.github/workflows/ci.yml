@@ -77,3 +77,51 @@ jobs:
             echo "::error::db/erdcloud/snapshot.json is stale. Run 'python db/tools/erdcloud_snapshot.py' and commit the result (db/README.md section 5 step 4)."
             exit 1
           fi
+
+  container:
+    name: Container image and compose smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 배포 이미지를 만든다. registry에는 올리지 않는다.
+      - name: Build image
+        run: docker build --tag astra-backend:ci .
+
+      # 실제 비밀값 없이 띄운다. S3 주소는 기동에 쓰이지 않으므로 해석되지 않는 이름을 넣는다.
+      - name: Write env file
+        run: |
+          {
+            echo "COMPOSE_PROFILES=mysql"
+            echo "ASTRA_IMAGE=astra-backend:ci"
+            echo "DB_URL=jdbc:mysql://mysql:3306/astra"
+            echo "DB_USERNAME=astra"
+            echo "DB_PASSWORD=$(openssl rand -hex 16)"
+            echo "ASTRA_STORAGE_ENDPOINT=http://storage.invalid:9000"
+            echo "ASTRA_STORAGE_ACCESS_KEY=ci"
+            echo "ASTRA_STORAGE_SECRET_KEY=ci"
+            echo "ASTRA_STORAGE_PATH_STYLE=true"
+          } > .env
+
+      # compose.yaml이 참조하는 변수가 모두 .env.example에 적혀 있는지, 구성이 schema에 맞는지 본다.
+      - name: Check compose file and env example
+        run: |
+          missing=$(grep -oE '\$\{[A-Z_]+' compose.yaml | cut -c3- | sort -u | while read -r name; do
+            grep -qE "^#? ?${name}=" .env.example || echo "${name}"
+          done)
+          if [ -n "$missing" ]; then
+            echo "::error::.env.example does not list: $missing"
+            exit 1
+          fi
+          docker compose config --quiet
+
+      - name: Smoke test
+        run: docker/smoke-test.sh
+
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes

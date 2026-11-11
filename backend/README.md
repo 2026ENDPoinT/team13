@@ -108,6 +108,8 @@ ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-eclass-Frontend에�
 ./gradlew bootTestRun --args=--server.port=18080    # Windows: gradlew.bat bootTestRun --args=--server.port=18080
 ```
 
+상태 확인용 관리 port 8081(`127.0.0.1`에만 열린다)도 같다. 겹치면 `--management.server.port=18081`을 함께 넘긴다.
+
 실제 DB에 붙여 실행할 때는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경 변수를 넣고 `./gradlew bootRun`을 쓴다.
 
 ### LLM 설정
@@ -165,14 +167,53 @@ java -Dloader.main=com.stackcorp.converter.ConverterServer -cp stack-eclass-back
 
 브라우저는 먼저 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키를 받고, 상태를 바꾸는 요청마다 그 값을 `X-XSRF-TOKEN` header로 보낸다.
 
+### 컨테이너로 실행
+
+host 한 대에서 api, worker, converter를 container로 띄운다. 구성의 이유는 [ADR-0019](docs/adr/0019-container-image-and-single-host-compose.md)에 있다. Docker Engine과 Compose v2.24 이상이 필요하다.
+
+```sh
+docker build -t astra-backend:local .     # 이미지 하나. 역할은 command(api | worker | converter)로 고른다
+cp .env.example .env                       # 값을 채운다. .env는 커밋하지 않는다
+docker compose up -d --wait                # 모든 서비스가 healthcheck를 통과할 때까지 기다린다
+docker compose down                        # 종료. MySQL 데이터 volume까지 지우려면 --volumes
+```
+
+`.env`에는 위 표의 환경 변수와 아래 compose 설정을 넣는다. 전체 목록과 설명은 [.env.example](.env.example)에 있다. api와 worker가 이 파일을 받고, converter와 MySQL은 받지 않는다. 쓰지 않는 값은 `KEY=`처럼 빈 값으로 두지 말고 줄을 지운다. `$`가 든 값(bcrypt hash)은 작은따옴표로 감싼다.
+
+| 변수 | 기본값 | 내용 |
+|---|---|---|
+| `COMPOSE_PROFILES` | 없음 | 함께 띄울 선택 서비스. `mysql`(같은 host의 MySQL 8.4), `scan`(ClamAV). 예: `mysql,scan`. RDS를 쓰면 `mysql`을 빼고 `DB_URL`을 RDS로 바꾼다 |
+| `ASTRA_IMAGE` | `astra-backend:local` | 실행할 이미지. ECR 이미지면 전체 이름과 tag |
+| `ASTRA_API_BIND` · `ASTRA_API_PORT` | `127.0.0.1` · `8080` | api를 publish할 host 주소와 port. CloudFront VPC origin이 붙는 EC2에서는 `0.0.0.0`으로 두고 security group으로 막는다 |
+| `JAVA_OPTS` | 없음 | JVM option. 이미지 기본값(`-XX:MaxRAMPercentage=60` 등) 뒤에 붙는다 |
+
+| 서비스 | 열리는 곳 | 외부 network | 하는 일 |
+|---|---|---|---|
+| `api` | host의 `ASTRA_API_BIND:ASTRA_API_PORT` → 8080 | 있음 | HTTP API |
+| `worker` | 없음(container 안의 127.0.0.1) | 있음 | 요약 작업 등 배경 작업. converter를 부른다 |
+| `converter` | worker만 닿는 내부 network의 8090 | 없음 | PDF → 쪽 이미지·텍스트. 비밀값과 저장소 credential이 없다 |
+| `mysql` (프로필 `mysql`) | api, worker만 닿는 내부 network의 3306 | 없음 | DB. root는 container 안에서만 접속한다 |
+| `clamav` (프로필 `scan`) | api, worker만 닿는 내부 network의 3310 | 없음 | 업로드 검사(clamd). `ASTRA_SCAN_CLAMD_HOST=clamav`, `ASTRA_SCAN_CLAMD_PORT=3310`, `ASTRA_SCAN_REQUIRED=true`를 함께 넣는다 |
+| `freshclam` (프로필 `scan`) | 없음 | 있음 | ClamAV 서명 갱신. 업로드 파일을 받지 않는다 |
+
+- 상태 확인은 각 container 안의 `127.0.0.1:8081/actuator/health/readiness`(api, worker)와 `127.0.0.1:8090/health`(converter)뿐이다. host와 API port에는 `/actuator`가 없다. 상태는 `docker compose ps`로 본다.
+- 로그는 stdout의 JSON(ECS) 한 줄이다. `docker compose logs api`로 본다.
+- container는 uid 10001로 실행하고 root filesystem은 읽기 전용이다. 쓰기는 `/tmp`(tmpfs)에만 한다.
+- 저장소는 S3 API면 된다. AWS S3와 instance role이면 bucket 이름만 넣고, S3 호환 저장소면 `ASTRA_STORAGE_ENDPOINT`, `ASTRA_STORAGE_ACCESS_KEY`, `ASTRA_STORAGE_SECRET_KEY`, `ASTRA_STORAGE_PATH_STYLE=true`를 넣는다. 이 구성은 저장소를 띄우지 않는다. EC2에서 container가 instance role을 쓰려면 instance metadata의 hop limit이 2여야 한다.
+- CloudFront 없이 문서와 영상을 보이려면 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)).
+- `docker compose stop`은 api가 처리 중인 요청을 끝낼 때까지, worker가 실행 중인 요약 작업을 `interrupted`로 닫을 때까지 최대 75초를 기다린다.
+
+[docker/smoke-test.sh](docker/smoke-test.sh)는 띄운 구성의 healthcheck, 공개 port, converter의 network 차단, 실행 user, 로그 형식, 종료 처리를 확인한다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 한다.
+
 ## CI
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 두 작업을 실행한다.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 세 작업을 실행한다.
 
 | 작업 | 확인하는 것 |
 |---|---|
 | Build and test | `./gradlew build`. 테스트가 MySQL 8.4 컨테이너에 Flyway 마이그레이션을 적용하고 앱이 뜨는지 확인한다. `ModuleStructureTests`가 모듈 사이 의존이 [docs/architecture.md](docs/architecture.md) 4.1절 표를 벗어나지 않는지 확인하고 `build/spring-modulith-docs/`에 C4 component diagram을 쓴다 |
 | Schema check and ERD snapshot | 마이그레이션을 MySQL 8.4에 적용한 뒤 `db/tools/check.sql`로 깨진 FK, COMMENT 누락, 고립 테이블을 찾는다. `db/erdcloud/snapshot.json`(ERD A)이 현재 스키마로 다시 만든 결과와 같은지도 확인한다 |
+| Container image and compose smoke test | `Dockerfile`로 이미지를 만들고, `compose.yaml`이 참조하는 변수가 `.env.example`에 모두 있는지 본 뒤, 비밀값 없는 `.env`로 구성을 띄워 `docker/smoke-test.sh`를 실행한다. registry에는 올리지 않는다 |
 
 마이그레이션을 추가했다면 같은 PR에서 `python db/tools/erdcloud_snapshot.py`로 스냅샷도 갱신해야 CI가 통과한다. CI는 `reference` 서브모듈을 받지 않는다. 빌드에 필요 없고, 비공개 레포라 기본 토큰으로는 받을 수 없기 때문이다.
 

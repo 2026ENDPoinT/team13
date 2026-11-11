@@ -23,6 +23,7 @@
 | [ADR-0008](adr/0008-llm-port-deepseek.md) | LLM 호출은 port 뒤에 두고 DeepSeek로 시작한다. 데이터 처리 정책은 미결이다 |
 | [ADR-0009](adr/0009-origin-delivery-without-cdn.md) | CDN이 없는 환경에서는 앱이 같은 cookie 흐름으로 `/doc`, `/vod`를 직접 응답한다 |
 | [ADR-0010](adr/0010-upload-acceptance.md) | 업로드는 용도, 권한, 이름, 확장자, 크기, 내용 형식을 검사해 받는다. 악성코드 검사는 port로 남긴다 |
+| [ADR-0019](adr/0019-container-image-and-single-host-compose.md) | 이미지 하나를 api, worker, converter 역할로 실행하고, health는 container 안의 관리 port로만 연다 |
 
 ## 2. 부하 가정
 
@@ -61,8 +62,9 @@ flowchart LR
 
 - 도메인은 하나다. CloudFront가 경로로 정적 파일, 영상, API를 나눈다. CORS가 필요 없다. session 쿠키의 `SameSite` 예외는 5절에 있다.
 - CloudFront [VPC origin](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html)이 private subnet의 EC2에 직접 연결한다. EC2와 RDS에는 public IP가 없다.
-- api와 worker는 같은 이미지를 프로필만 바꿔 같은 EC2에서 실행한다.
-- converter는 문서 변환만 하는 별도 container다. 앱과 같은 jar를 converter main(`com.stackcorp.converter.ConverterServer`)으로 실행한다. worker만 호출하고, 외부 network와 AWS credential을 주지 않는다(SC-08).
+- api, worker, converter는 같은 이미지를 역할만 바꿔 같은 EC2에서 실행한다. 이미지는 루트 `Dockerfile`, 구성은 루트 `compose.yaml`이다([ADR-0019](adr/0019-container-image-and-single-host-compose.md)).
+- converter는 문서 변환만 하는 별도 container다. 앱과 같은 jar를 converter main(`com.stackcorp.converter.ConverterServer`)으로 실행한다. worker와만 공유하는 내부 network에 있어 worker만 호출할 수 있고, 외부 network, 비밀값, AWS credential이 없다(SC-08).
+- compose에서 host에 publish하는 port는 api의 8080 하나다. MySQL, converter, 관리 port는 host에 열지 않는다. 같은 host의 MySQL은 compose 프로필로 띄울 수 있고 위 구성에서는 RDS를 쓴다.
 - bucket은 `frontend`, `content`, `delivery` 셋이다. 용도와 암호화는 [ADR-0007](adr/0007-confidential-content-placement.md)에 있다.
 - 배포 중 JVM 기동 시간 동안 API가 끊긴다. 배포는 사용량이 적은 시간에 한다. 기동은 JDK AOT cache(JEP 483, 514)로, warm-up은 JEP 515로 줄인다.
 
@@ -91,7 +93,7 @@ flowchart LR
 - WAF에 IP 기준 rate limit을 걸지 않는다. 교내 사용자가 NAT 하나로 나오면 학교 전체가 막힌다(SC-09). 요청 제한은 앱에서 사용자, 과목, 연산 단위로 건다.
 - Core rule set의 `SizeRestrictions_BODY`는 8 KB를 넘는 본문을 막는다. 업로드(`POST /api/uploads`), 글 작성, 제출이 걸리므로 이 규칙은 Count로 바꾸고, 본문 크기 상한은 경로별 WAF 규칙과 앱의 413 응답으로 둔다.
 - SSH 포트를 열지 않는다. 운영 접근은 SSM Session Manager로 한다.
-- `/actuator`는 CloudFront 경로에 넣지 않는다. 내부에서만 접근한다.
+- `/actuator`는 CloudFront 경로에 넣지 않는다. 앱은 `health`만 켜고, 관리 port(8081)를 API port와 따로 두어 container 안의 127.0.0.1에만 연다. API port에는 `/actuator` 경로가 없다. compose healthcheck가 container 안에서 readiness를 부른다.
 - 외부 호출은 allowlist한 scheme, host, port만 허용하고 redirect, timeout, 응답 크기를 제한한다(SC-08).
 - S3 외의 AWS API(SSM, ECR, Secrets Manager, CloudWatch, X-Ray, SQS, MediaConvert)도 fck-nat를 지난다. fck-nat가 멈추면 외부 IdP·AI 호출과 함께 배포, SSM 접속, 로그·지표 전송, 미디어 완료 처리가 멈춘다. interface endpoint는 개당 AZ별로 과금되어 이 단계의 NAT 비용보다 비싸므로 두지 않는다. 대신 fck-nat의 high-availability mode(크기 1 Auto Scaling group과 고정 ENI)로 인스턴스를 자동 교체하고, 교체되는 동안의 장애 범위는 받아들인다.
 
@@ -300,8 +302,8 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | 대상 | 방식 |
 |---|---|
-| 로그 | JSON 로그를 CloudWatch Logs로 보낸다. requestId를 모든 줄에 넣는다. 본문, query string, 토큰, 개인정보는 남기지 않는다(SC-07) |
-| 지표 | Actuator와 Micrometer를 OTLP로 내보내 CloudWatch에 쌓는다 |
+| 로그 | 앱은 stdout에 한 줄씩 JSON(ECS) 로그를 쓴다. 요청마다 method, 처리한 경로 pattern, 상태 코드, 처리 시간을 한 줄 남긴다. requestId를 모든 줄에 넣는다. 본문, query string, cookie, 토큰, 개인정보는 남기지 않는다(SC-07). CloudWatch Logs로는 host의 log driver나 agent가 보낸다(아직 구성 없음) |
+| 지표 | Actuator와 Micrometer를 OTLP로 내보내 CloudWatch에 쌓는다. 지금은 health(liveness, readiness)만 켰고 지표 내보내기는 없다 |
 | trace | OpenTelemetry를 X-Ray로 보낸다 |
 | 알람 | CloudWatch 알람을 SNS를 거쳐 Slack으로 보낸다. 외부 uptime check를 하나 둔다 |
 
@@ -310,9 +312,12 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 ## 10. 빌드와 배포
 
 - 인프라는 Terraform으로 관리한다.
+- 이미지는 루트 `Dockerfile`로 만든다. multi-stage이고 base 이미지는 tag와 digest로 고정한다. 실행 user는 root가 아니고 root filesystem은 읽기 전용으로 쓴다([ADR-0019](adr/0019-container-image-and-single-host-compose.md)).
+- CI의 `container` 작업이 이미지를 만들고 compose를 띄워 healthcheck, 공개 port, converter의 network 차단, 종료 처리를 확인한다. registry에는 올리지 않는다.
 - GitHub Actions가 OIDC로 AWS role을 받는다. CI에 AWS access key를 저장하지 않는다.
 - 이미지를 ECR에 push하고 SSM Run Command로 EC2의 compose를 갱신한다. 3.2절 전환 뒤에는 ECS rolling 배포와 circuit breaker를 쓴다.
-- 비밀값은 Secrets Manager에 두고 EC2 instance role로 읽는다.
+- 비밀값은 Secrets Manager에 두고 EC2 instance role로 읽어 compose의 `.env`로 넣는다. `.env`는 커밋하지 않는다.
+- 종료 신호를 받으면 api는 새 요청을 받지 않고 처리 중인 요청을 끝낸다. worker는 새 작업을 잡지 않고, 실행 중인 요약 작업을 다음 모델 호출 경계에서 `interrupted`로 닫는다.
 
 ## 11. 단계 계획
 
@@ -342,3 +347,6 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 파일 단위 요약 | 자료 상세 화면의 "ASTRA 서포터즈 요약"(`ai_file_summaries`)을 쪽별 요약의 story로 채울지 정하지 않았다 | `summary` 구현 때 정한다 |
 | 악성코드 검사 | 업로드는 형식만 검사한다([ADR-0010](adr/0010-upload-acceptance.md)). 형식이 맞는 문서 안의 악성 내용은 거르지 못한다 | 학교 자료를 받기 전에 검사기를 정해 `files`에 port로 붙인다. 외부 서비스면 데이터 처리 정책을 먼저 정한다 |
 | 멱등 원장과 감사 로그 | SC-05의 `(principal, operation, key)` 원장과 SC-09의 감사 기록이 없다. 업로드만 자체 key로 멱등이다 | 제출, 수강신청처럼 중복이 문제 되는 명령을 만들기 전에 `shared`에 만든다 |
+| 기동 시간과 AOT cache | 3.1절의 JDK AOT cache를 이미지에 넣지 않았다. training run에 DB가 필요해 이미지 빌드 안에서 만들 수 없다 | 배포 중 중단 시간이 문제가 되면 배포 단계에서 training run을 돌려 cache를 만드는 방식을 정한다 |
+| converter의 한글 글꼴 | 실행 이미지에 한글 글꼴이 없다. 글꼴을 포함하지 않은 PDF는 쪽 이미지에서 한글이 빠질 수 있다 | 학교 자료 표본으로 확인하고, 필요하면 converter 역할에 글꼴을 더한다 |
+| 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
