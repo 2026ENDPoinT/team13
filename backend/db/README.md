@@ -106,7 +106,7 @@ flowchart LR
 - **PK**: `BIGINT UNSIGNED AUTO_INCREMENT` 대리키. 부모와 1:1인 상세 테이블은 부모 PK를 그대로 PK+FK로 쓴다(`learning_material_details.activity_id` 등).
 - **COMMENT 필수**: 모든 테이블·컬럼에 한글 COMMENT를 단다. ERD의 한글 이름은 COMMENT에서 `:` 앞, 맨 뒤 괄호 앞까지를 잘라 만든다. 예를 들어 `역할: STUDENT|TA`는 `역할`이 되므로, COMMENT는 "이름(보충 설명): 값 목록" 형태로 쓴다.
 - **상태값**: MySQL ENUM이나 코드 테이블 대신 `VARCHAR`를 쓰고, 가능한 값은 COMMENT에 적는다.
-- **시간**: `DATETIME(3)`, `DEFAULT CURRENT_TIMESTAMP(3)`, 수정 일시는 `ON UPDATE CURRENT_TIMESTAMP(3)`. `DATE`는 학기·주차·학사일정만 쓴다.
+- **시간**: `DATETIME(3)`, `DEFAULT CURRENT_TIMESTAMP(3)`, 수정 일시는 `ON UPDATE CURRENT_TIMESTAMP(3)`. 값은 기관 시간대(기본 `Asia/Seoul`)의 벽시계다. 앱이 연결마다 session 시간대를 그 offset으로 정한다([ADR-0039](../docs/adr/0039-institution-wall-clock-time.md)). `DATE`는 학기·주차·학사일정만 쓴다.
 - **삭제**: 행을 지우지 않고 `deleted_at`, `revoked_at`, `canceled_at`, `item_state`로 표시한다.
 - **이력**: 덮어쓰면 안 되는 기록은 별도 테이블에 추가만 한다(`enrollment_events`, `learning_heartbeats`, `assignment_submission_versions`, `login_events`).
 - **첨부**: 부모 테이블은 `attachment_group_id` 하나만 가진다. 테이블마다 파일 테이블을 따로 만들지 않는다.

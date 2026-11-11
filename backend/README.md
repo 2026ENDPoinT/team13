@@ -96,7 +96,7 @@ git commit -m "Update reference to <변경 요약>"
 | 개발용 로그인 | `POST /api/auth/dev-login` `{"externalRef":"21101234"}`. 이 컴퓨터에서 온 요청만 받는다. CSRF token이 필요하다 |
 | `local` 프로필 | `127.0.0.1`에만 listen, cookie의 `Secure` 끔, 허용 Origin `http://127.0.0.1:4190`·`http://localhost:4190`, 앱이 `/doc`·`/vod`를 직접 응답([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)), `worker` 프로필 포함 |
 
-표본은 `src/test/java/com/stackcorp/astra/local/Local*Seed.java`가 영역마다 넣는다. 시각은 모두 표본을 넣는 때의 DB 시계 기준이고, 이미 있는 영역은 다시 넣지 않는다. 사람은 두 인물 말고도 교수 이준호(`P-2071`, 사이버보안·컴퓨터보안 공동 담당)와 학생 8명(`21101235`~`20101242`, 데이터베이스는 모두 수강)이 있다. 대부분의 표본은 데이터베이스(`bi`) 과목에 있다.
+표본은 `src/test/java/com/stackcorp/astra/local/Local*Seed.java`가 영역마다 넣는다. 시각은 모두 표본을 넣는 때의 DB 시계(기관 시간대, 기본 `Asia/Seoul`) 기준이고, 이미 있는 영역은 다시 넣지 않는다. 개발 PC나 MySQL container의 시간대와 관계없이 화면에는 한국 벽시계 시각이 나온다. 사람은 두 인물 말고도 교수 이준호(`P-2071`, 사이버보안·컴퓨터보안 공동 담당)와 학생 8명(`21101235`~`20101242`, 데이터베이스는 모두 수강)이 있다. 대부분의 표본은 데이터베이스(`bi`) 과목에 있다.
 
 | 화면 | 학생 박민준 | 교수 박은주 |
 |---|---|---|
@@ -129,6 +129,14 @@ ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-eclass-Frontend에�
 상태 확인용 관리 port 8081(`127.0.0.1`에만 열린다)도 같다. 겹치면 `--management.server.port=18081`을 함께 넘긴다.
 
 실제 DB에 붙여 실행할 때는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경 변수를 넣고 `./gradlew bootRun`을 쓴다.
+
+### 시간대 설정
+
+DB의 일시와 API의 offset 없는 일시(`openAt`, `closeAt`, `serverTime` 등)는 기관 시간대의 벽시계다([ADR-0039](docs/adr/0039-institution-wall-clock-time.md)). 앱은 DB 연결마다 session 시간대를 이 시간대의 offset으로 정하고, JVM 기본 시간대도 맞춘다. DB 서버의 시간대(RDS parameter group, MySQL 기본 UTC)나 JDBC URL에 기대지 않고, 시작할 때 설정·JVM·DB session의 offset이 다르면 세 값을 남기고 뜨지 않는다. `Z`가 붙은 일시(`createdAt` 등)는 절대 시각이다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_TIME_ZONE` | `Asia/Seoul` | 기관 시간대. 앱은 IANA 이름과 고정 offset(`+09:00`)을 받고, 서머타임이 있는 시간대는 받지 않는다. compose의 `mysql`(`TZ`)과 Terraform의 RDS `time_zone`도 이 값을 쓰므로 배포에는 IANA 이름을 넣는다. `GET /api/auth/methods`의 `timeZone`으로 client에 알린다. 이미지의 JVM option `-Duser.timezone`도 이 값이다 |
 
 ### LLM 설정
 

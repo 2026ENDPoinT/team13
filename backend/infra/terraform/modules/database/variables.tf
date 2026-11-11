@@ -66,3 +66,8 @@ variable "log_retention_days" {
   description = "Retention of the exported RDS error and slow query logs."
   type        = number
 }
+
+variable "time_zone" {
+  description = "Server default time_zone (IANA name). The app sets its own session offset on every connection (ADR-0039); this keeps operator sessions on the same wall clock."
+  type        = string
+}

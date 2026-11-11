@@ -10,6 +10,7 @@
 | 규모 | 1개 기관, 사용자 수백 명. 수만 명 규모를 전제로 설계하지 않는다 |
 | 서버 계약 | [00_server_contract.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/00_server_contract.md)의 SC-01~SC-10, [90_changes.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/90_changes.md)의 CHG-01~CHG-12 |
 | 실행 환경 | Java 25, Spring Boot 4.1, MySQL 8.4, AWS 서울 리전(`ap-northeast-2`) |
+| 시간 | 기관 시간대 하나(`astra.time.zone`, 기본 `Asia/Seoul`). DB의 일시와 API의 offset 없는 일시는 이 시간대의 벽시계이고, "DB 시계"는 이 시간대로 고정한 DB session의 `CURRENT_TIMESTAMP`다([ADR-0039](adr/0039-institution-wall-clock-time.md)) |
 
 | ADR | 결정 |
 |---|---|
@@ -50,6 +51,7 @@
 | [ADR-0036](adr/0036-notification-screen-target-and-instructor-roster.md) | 알림의 연결 대상은 화면이 그 대상을 여는 ID로 적는다(과제 알림은 과제 ID). 과목 없는 전체 알림은 사건 하나를 worker가 대상 사용자 묶음으로 나눠 보낸다. 담당자 수강생 명단은 그 과목 담당자에게 화면 항목(이름, 학번, 수강 근거)만 내보낸다 |
 | [ADR-0037](adr/0037-quiz-regrade-and-assessment-deletion.md) | 퀴즈 정답 정정은 한 transaction의 재채점이고, 평가 활동 삭제는 활동의 삭제 표시다 |
 | [ADR-0038](adr/0038-avatar-photo.md) | 아바타 사진은 상태를 identity가, 바이트를 files가 갖는다. 올린 원본은 검사 뒤 격리한 converter가 256px JPEG로 다시 만든 것만 내보내고, 본인과 폐강하지 않은 과목을 함께하는 사람만 본다 |
+| [ADR-0039](adr/0039-institution-wall-clock-time.md) | 일시는 기관 시간대(기본 `Asia/Seoul`)의 벽시계로 두고, DB session과 JVM을 그 시간대에 고정한 뒤 시작할 때 세 값이 같은지 확인한다. `Instant`는 절대 시각이고 기관 시간대는 `GET /api/auth/methods`가 알린다 |
 
 ## 2. 부하 가정
 
@@ -282,7 +284,7 @@ flowchart TD
 - SAML HTTP-POST 응답은 IdP에서 오는 cross-site POST라 `SameSite=Lax` 쿠키가 전송되지 않는다. SAML이면 로그인 전 요청 상태를 session 대신 `RelayState` 기준 저장소에 두거나, 로그인 전용 쿠키만 `SameSite=None`으로 둔다. OIDC의 GET callback에는 이 문제가 없다.
 - actor는 session principal 하나다. 요청 본문의 학번, `ud`, role 값은 받지 않는다(SC-02, CHG-01).
 - 과목 범위는 `/api/courses/{courseId}/...`처럼 요청에 명시한다. 서버 session에 현재 과목을 두지 않는다(SC-03, CHG-02).
-- 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06).
+- 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06). `serverTime`은 DB 시계, 곧 기관 시간대로 고정한 DB session의 `CURRENT_TIMESTAMP`다. client 시계는 쓰지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
 - 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. 잠금과 재사용 판정은 계정의 `users` 행을 잠근 뒤 하므로 동시에 보낸 시도도 한도를 넘지 못한다. 로그인 전이라 사용자 단위 제한을 쓸 수 없어 브라우저 주소마다 15분에 30번으로 제한한다. break-glass 계정은 과목 권한이 없다.
 - session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
 - 과목 구성원 판정은 `catalog`의 규칙 하나(`MembershipRule`)다. 역할(`CourseMemberships.roleOf`), 수강생 명단, 함께 듣는 사람, 내 과목, 시간표, 알림, 수강 신청 처리 권한이 모두 이 규칙을 쓴다. 폐강(`CANCELLED`)한 과목에는 구성원이 없으므로 조회와 명령 모두 404다. 담당·수강 행과 학습 기록은 지우지 않는다.
@@ -293,6 +295,7 @@ flowchart TD
 - 알림마당 공지와 자료실은 과목이 없어 session 사용자의 기관 역할로 대상(공통, 교수, 학생)을 고른다. 1:1 문의는 쓴 사람과 알림마당 운영자만 본다. 알림마당 운영자는 `community_operators`의 해제하지 않은 행으로만 정하고 요청마다 읽는다. 기관 역할(`STAFF` 포함)이나 break-glass 계정은 운영자가 아니다. 운영자만 공지·자료를 쓰고 1:1 문의에 답하며, 모두 감사 기록을 남긴다([ADR-0035](adr/0035-community-operators-and-outside-course-files.md)).
 - 과목이 없는 첨부(알림마당 공지·자료·문의, 쪽지)는 과목 없는 용도로 올리고 `GET /api/files/{fileId}/content`로만 연다. 이 경로는 `files.course_id`가 없는 파일만 보고 부모의 `allowedOutsideCourse`에 묻는다. 과목 부모는 이 판정이 언제나 거부이고, 과목 밖 부모는 과목 판정이 언제나 거부다. 쪽지 첨부는 쪽지를 아직 가진 사람(보낸함에서 지우지 않은 발신자, 회수되지 않았고 받은함에서 지우지 않은 수신자)만 읽는다.
 - 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
+- 일시 형식: offset 없는 일시(`openAt`, `closeAt`, `serverTime` 등 `2026-11-12T10:00:00`)는 기관 시간대의 벽시계이고 그대로 주고받는다. 요청의 이런 값에 `Z`나 offset이 붙으면 400이다. 날짜(`2026-11-12`)와 수업 시각(`10:00`)도 기관 시간대 기준이다. `Z`가 붙은 값(`createdAt` 등)은 절대 시각(UTC)이다. 기관 시간대는 `GET /api/auth/methods`의 `timeZone`(IANA ID)이 알린다. 시작할 때 설정, JVM, DB session의 시간대가 다르면 서버가 뜨지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
 - 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 다른 사용자의 ID를 넣지 않는다(SC-04).
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
 - `Idempotency-Key`를 받는 명령은 권한 판정과 입력 검사 뒤 멱등 원장을 거친다. 같은 key와 같은 요청이면 처음 응답을, 다른 요청이면 409 `idempotency_conflict`를, 같은 key가 처리 중이면 3초까지 기다린 뒤 409 `idempotency_in_progress`를 돌려준다(SC-05). key는 사용자와 연산마다 따로다. 같은 key에 다른 요청이면 어떤 명령도 처음 만든 객체를 돌려주지 않는다. 자체 key를 두는 업로드(multipart, 스트림, 파일함)도 같은 규칙의 요청 지문(용도, 과목, 이름, 크기, 내용 hash, 폴더)을 저장해 비교한다([ADR-0010](adr/0010-upload-acceptance.md) 10번). key가 반드시 있어야 하는 명령(수강신청, 과제·퀴즈 제출, 설문 완료, 쪽지 보내기·답장·전달, 파일함 ZIP, 학습 대화 질문)은 `shared.idempotency.Idempotency.requireKey` 하나로 검사하고, header가 없으면 400 `idempotency_key_required`, 형식(1~100자의 영문, 숫자, `.` `_` `-`)이 틀리면 400 `invalid_request`다.
@@ -320,7 +323,7 @@ flowchart TD
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, 로컬 실행의 `devLogin`) |
+| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, 로컬 실행의 `devLogin`)과 기관 시간대(`timeZone`) |
 | `GET /api/auth/login?returnTo=` | 누구나. IdP 설정이 없으면 404 | 로그인 전용 쿠키를 주고 IdP로 302 |
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
@@ -855,3 +858,4 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 미리보기 실패의 재시도 | 실패한 변환은 파일 버전마다 끝 상태다. converter 장애(연결 불가)와 worker 중단만 3번까지 다시 한다 | 실패 코드별 건수를 9절 지표에 넣는다. 다시 만들 필요가 생기면 담당자용 재변환 명령을 둔다 |
 | 학사 동기화 adapter | 내정보의 동기화 명령과 port(`identity.api.RegistrarDirectory`)만 있고 학사시스템 adapter가 없어 503 `not_configured`다(EP-0279). 학사시스템이 이름·소속·학년·연락처를 어떤 API로 주는지 모른다 | 학교 정보화본부에 학사시스템 조회 API, 인증 방식, 호출 host를 확인하고 `integration`에 adapter를 만든다 |
 | 아바타 사진 처리 | converter는 한 번에 하나만 처리해 긴 문서 변환 뒤에 사진이 기다린다. 사진 대기열의 길이·나이 지표는 없다. JPEG의 EXIF 회전은 적용하지 않는다(화면이 canvas로 그린 사진을 올린다). 카탈로그 과목 상세의 교수 아바타는 구성원이 아닌 사람에게 사진 없이 이름 글자로만 보인다([ADR-0038](adr/0038-avatar-photo.md)) | 사진 대기열 지표를 `FilesBacklog`에 더하고, 대기가 길면 converter에 사진 전용 실행 slot을 둔다. 교수 사진 공개 범위는 학교와 정한다 |
+| 한국 밖 브라우저의 일시 표시 | offset 없는 일시는 기관 시간대의 벽시계다. 프론트엔드가 `new Date(문자열)`로 읽으면 브라우저 시간대로 해석해 한국 밖에서 시각이 어긋난다([ADR-0039](adr/0039-institution-wall-clock-time.md)) | 프론트엔드가 `GET /api/auth/methods`의 `timeZone`으로 읽고 표시한다. 입력은 `datetime-local` 값을 그대로 보낸다 |

@@ -58,6 +58,13 @@ resource "aws_db_parameter_group" "this" {
     value = "FILE"
   }
 
+  # Default session zone for operator clients, so NOW() matches the stored wall-clock values. The app does not rely on
+  # it: every pooled connection sets its own offset and the app refuses to start if the session disagrees (ADR-0039).
+  parameter {
+    name  = "time_zone"
+    value = var.time_zone
+  }
+
   tags = { Name = var.name }
 
   lifecycle {

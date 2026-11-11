@@ -143,6 +143,11 @@ run "plan" {
     error_message = "Only the app subnet, where the CloudFront VPC origin ENIs sit, may supply the viewer address."
   }
 
+  assert {
+    condition     = output.app_environment["ASTRA_TIME_ZONE"] == "Asia/Seoul"
+    error_message = "The app must run in the institution zone, the same one the RDS parameter group sets (ADR-0039)."
+  }
+
   # M2: the default deployment runs and requires the malware scanner (ADR-0018).
   assert {
     condition = alltrue([for k, v in {
