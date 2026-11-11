@@ -32,6 +32,7 @@
 | [ADR-0014](adr/0014-learning-session-credit.md) | 온라인 강의 출석 인정은 서버 시각의 적립 원장으로 하고, 사용자당 활성 학습 session은 하나다. 새 session이 앞 session을 대체한다 |
 | [ADR-0011](adr/0011-material-deletion.md) | 강의 자료는 삭제 표시로 지우고 수정·삭제는 `If-Match` version으로 막는다. 참조가 끊긴 파일은 바로 지우고 worker GC가 저장소를 정리한다 |
 | [ADR-0023](adr/0023-gradebook-ownership-release-totals.md) | 성적부에서 과제 항목은 비율만 바꾼다. 학생 합계는 공개했고 점수를 받은 항목만 더하고, 점수 일괄 저장은 한 행이라도 틀리면 아무것도 저장하지 않는다 |
+| [ADR-0025](adr/0025-message-recipient-scope-and-boxes.md) | 쪽지 받는사람은 과목 관계로 서버가 정하고(담당자는 과목 구성원 누구에게나, 학생은 담당자에게만), 받은함과 보낸함은 따로 지운다. 읽음과 회수는 배타적인 조건부 전이다 |
 
 ## 2. 부하 가정
 
@@ -224,6 +225,7 @@ flowchart TD
 - 상태를 바꾸거나 민감한 연산은 감사 기록(`audit_events`)을 남긴다. 명령의 transaction 안이면 함께 commit하고, 밖이면 기록 실패가 요청을 실패시키지 않는다. 본문, 파일 이름, 자유 텍스트는 남기지 않는다(SC-09).
 - 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록·수정, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다.
+- 쪽지는 `communication`이 판정한다. 받는사람은 서버가 과목 관계로 계산한 범위 안에서만 고르고, 범위 밖 ID가 하나라도 있으면 보내지 않는다. 보관함의 주인이 아니면 존재와 관계없이 404다. 쪽지 조회는 읽음을 남기지 않고 읽음은 POST 명령이다. 발송, 받는사람 검색, 임시저장에 사용자 단위 요청 제한이 있다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)).
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
 - 성적은 `assessment`가 판정한다. 담당자만 성적부를 읽고 쓴다. 학생 성적 API는 session 사용자 본인 것만 돌려주고 대상 학생을 고르는 parameter가 없다. 공개하지 않은 항목의 점수, 의견, 그 점수가 들어간 합계는 속성 자체가 없다(SEC-14). 과제 항목의 이름, 배점, 공개, 점수는 과제 화면에서만 바꾼다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 점수 쓰기는 행마다 감사 기록을 남긴다.
 - 학교 IdP 로그인은 OpenID Connect authorization code flow + PKCE로 만들었다([ADR-0017](adr/0017-school-sso-oidc.md)). 학교 프로토콜이 정해지기 전의 가정이다. state, nonce, PKCE verifier, 돌아갈 경로는 암호화한 로그인 전용 쿠키에 두고 서버에는 두지 않는다. ID token의 claim 하나를 `users.external_ref`와 맞춰 ACTIVE 사용자만 로그인시키고, break-glass 계정은 IdP로 로그인하지 못한다. IdP token은 저장하지 않는다. 실패는 이유와 관계없이 같은 주소로 보낸다. `astra.oidc.issuer`가 없으면 로그인 경로는 404이고, IdP는 시작할 때 부르지 않으므로 IdP 장애가 앱 시작과 break-glass를 막지 않는다.
@@ -250,8 +252,8 @@ flowchart TD
 
 - session이 유효하면 IdP redirect를 거치지 않는다.
 - `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
-- 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수다. 알림(`notifications`) 수는 알림을 만드는 쪽이 아직 없어 넣지 않았다.
-- 쿼리는 과목 수와 관계없이 6개다(DB 시계, 과목, 할 일 목록과 건수, 안 읽은 공지 수, 최근 공지). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
+- 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 안 읽은 쪽지 수(`unreadMessages`)다. 알림(`notifications`) 수는 알림을 만드는 쪽이 아직 없어 넣지 않았다.
+- 쿼리는 과목 수와 관계없이 7개다(DB 시계, 과목, 할 일 목록과 건수, 안 읽은 공지 수, 최근 공지, 안 읽은 쪽지 수). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
 - 할 일은 학생으로 수강하는 과목의, 공개됐고 `open_at <= now < close_at`인 학습활동이다. 마감 일시가 없는 활동은 넣지 않는다. 제출·완료 여부는 아직 보지 않는다(12절).
 
 ## 7. 영상과 문서 전달
@@ -389,6 +391,28 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 다른 모듈은 `assessment.api.ReleasedGrades`로 학생에게 새로 공개된 본인 성적 항목(점수 값 없이)을 읽는다. 메인 화면에는 아직 붙이지 않았다.
 
+### 7.8 쪽지와 쪽지쓰기 임시저장
+
+받는사람 범위와 보관함 모델은 [ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)에 있다. 목록은 발송 일시 역순의 keyset cursor(`nextCursor`)로 쪽을 나누고 `size`는 50까지다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/messages/recipients?courseId=&q=&page=&size=` | 로그인한 사용자(`courseId`는 그 과목 구성원) | 보낼 수 있는 사람만 이름으로 찾는다. 이름과 그 과목의 역할 |
+| `POST /api/messages` | 로그인한 사용자 | 보내기. `Idempotency-Key` 필수. 범위 밖 받는사람이 있으면 400 `recipient_not_allowed`이고 아무에게도 보내지 않는다. 받는사람 300명, 본문 2000byte까지. 쪽지쓰기 초안을 지운다. 201 |
+| `POST /api/messages/inbox/{messageId}/reply` | 그 쪽지를 받은 사람 | 발신자에게 답장. 받는사람은 서버가 정한다. `Idempotency-Key` 필수. 201 |
+| `POST /api/messages/inbox/{messageId}/forward` · `/api/messages/sent/{messageId}/forward` | 그 쪽지를 받은 사람 · 보낸 사람 | 전달. 받는사람은 보내기와 같은 범위 판정. `Idempotency-Key` 필수. 201 |
+| `GET /api/messages/inbox?read=&q=&cursor=&size=` | 로그인한 사용자 | 받은함. 회수·삭제된 쪽지는 없다. `total`, `unreadCount`, 전체 삭제에 쓰는 `serverTime` |
+| `GET /api/messages/inbox/{messageId}` | 그 쪽지를 받은 사람 | 상세. 읽음을 남기지 않는다 |
+| `POST /api/messages/inbox/{messageId}/read` | 그 쪽지를 받은 사람 | 읽음. 처음 한 번만 시각을 남긴다. `wasUnread`, `unreadCount` |
+| `DELETE /api/messages/inbox/{messageId}` · `POST /api/messages/inbox/delete` | 그 쪽지를 받은 사람 | 받은함에서만 지운다. 일괄은 `messageIds`(하나라도 남의 것이면 404, 아무것도 안 지움) 또는 `all`+`read`·`q`+`until`+`exceptIds` |
+| `GET /api/messages/unread-count` | 로그인한 사용자 | 안 읽은 쪽지 수. 색인만 읽는다 |
+| `GET /api/messages/sent?q=&cursor=&size=` · `GET /api/messages/sent/{messageId}` | 보낸 사람 | 보낸함과 상세. 수신자별 읽은 시각과 회수 여부 |
+| `POST /api/messages/sent/{messageId}/recall` | 보낸 사람 | 아직 읽지 않은 수신자에게서만 거둔다. 수신자마다 `recalled` 또는 `read`. 몇 번 보내도 같다 |
+| `DELETE /api/messages/sent/{messageId}` · `POST /api/messages/sent/delete` | 보낸 사람 | 보낸함에서만 지운다. 수신자의 받은함은 그대로다. 일괄 규칙은 받은함과 같다(`read` 없음) |
+| `GET` · `PUT` · `DELETE /api/messages/draft` | 로그인한 사용자(본인 초안만) | 쪽지쓰기 임시저장. `PUT {revision, title, body}`는 저장된 revision보다 클 때만 덮어쓴다. 같은 revision·같은 내용이면 200, 아니면 409 `draft_stale`. 없으면 GET이 204 |
+
+제목과 본문은 일반 텍스트로만 받고 내보낸다. 쪽지 첨부와 도착 알림은 아직 없다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -461,6 +485,7 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | converter의 한글 글꼴 | 실행 이미지에 한글 글꼴이 없다. 글꼴을 포함하지 않은 PDF는 쪽 이미지에서 한글이 빠질 수 있다 | 학교 자료 표본으로 확인하고, 필요하면 converter 역할에 글꼴을 더한다 |
 | 로그 수집 | compose는 json-file driver로 container 로그를 host에 남긴다(파일당 20 MB, 5개). CloudWatch Logs 전송은 없다 | EC2 구성(Terraform)에서 awslogs driver나 CloudWatch agent를 정한다 |
 | 온라인 출석 정책 | 하트비트 주기 60초, 공백 상한(주기의 2배), lease(주기의 3배)는 제안값이다. 지각·결석 판정과 기간외 학습 시간은 만들지 않았다([ADR-0014](adr/0014-learning-session-credit.md)) | 학교 학사 담당과 허용 오차, 지각·결석 규칙을 정하고 규칙 버전을 올린다(CHG-05) |
+| 쪽지 보존과 범위 | 읽은 쪽지 30일 삭제(`purge_after_at`)와 임시저장 보존 기한(`expires_at`)을 채우지 않는다. 지난 학기 과목 구성원에게도 보낼 수 있고, 학생끼리는 보낼 수 없다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)) | 기관 정책으로 보존 기한과 학기 종료 뒤 연락 범위를 정하고 worker 정리 작업을 더한다 |
 | 2차 인증 만료와 학습 적립(SC-06-A) | 적립 유효기한이 close_at만 반영한다. 2차 인증 grant가 없다 | `identity`의 grant와 `learning_sessions.credit_authorized_until`, `reauth_required` 상태를 함께 만든다(ADR-0014 결과 절) |
 | 지운 자료의 CDN 쪽 이미지 | CloudFront가 직접 읽는 `doc/{key}/`는 이미 발급한 cookie가 끝나기 전, GC가 객체를 지우기 전이면 읽힐 수 있다([ADR-0011](adr/0011-material-deletion.md)) | 문서 cookie TTL을 짧게 유지한다. 더 줄여야 하면 삭제 commit 뒤 `doc/{key}/`를 바로 지우는 이벤트를 붙인다 |
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
