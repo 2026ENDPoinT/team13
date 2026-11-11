@@ -2,6 +2,7 @@ package com.stackcorp.astra;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.time.Duration;
 
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -44,7 +45,9 @@ public class TestcontainersConfiguration {
 		return new GenericContainer<>(DockerImageName
 			.parse("adobe/s3mock:5.2.3@sha256:ab01a6946750f451ca215a47e91030695b260e4003b8a5a6201d25029b8fca92"))
 			.withExposedPorts(S3_PORT)
-			.waitingFor(Wait.forListeningPort());
+			// 빌드가 겹친 host에서는 S3 mock이 늦게 뜨거나 시작하다 죽는다. 기다리는 시간을 늘리고 다시 띄운다.
+			.waitingFor(Wait.forListeningPort().withStartupTimeout(Duration.ofMinutes(3)))
+			.withStartupAttempts(3);
 	}
 
 	// office 형식은 LibreOffice 대신 같은 process의 가짜 엔진이 PDF로 바꾼다(FakeOfficeEngine). 로컬 실행도 같다.
