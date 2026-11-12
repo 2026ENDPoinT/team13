@@ -364,19 +364,19 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `POST /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 요약 생성 요청. 202. `Idempotency-Key` 지원 |
+| `POST /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자. 요청한 사람이 결정권자(담당자 명단의 교수, 비정규 담당자)여야 하고 조교는 403 `llm_decider_required` | 요약 생성 요청. 202. 요청한 사람의 `page_summary` 동의가 없으면 409 `llm_consent_required`. `Idempotency-Key` 지원 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 최근 작업 20개 |
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}` | 담당자 | 작업 상태와 진행 쪽 수 |
-| `POST /api/courses/{courseId}/summary-jobs/{jobId}/cancel` · `/retry` | 담당자 | 취소, 실패·취소한 작업 재시도 |
+| `POST /api/courses/{courseId}/summary-jobs/{jobId}/cancel` · `/retry` | 담당자. 재시도는 생성 요청과 같이 결정권자만 하고 조교는 403 `llm_decider_required` | 취소, 실패·취소한 작업 재시도 |
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}/result` | 담당자 | 게시 전 후보와 원본 대조가 필요한 쪽 |
-| `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시 |
+| `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시. 게시한 사람이 학습 대화의 책임 교수자다. 조교가 게시하면 그 파일의 학습 대화는 열리지 않고, 결정권자가 다시 게시해야 열린다 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary` | 열람 가능한 사람 | 게시본, `pageImageBase`, 쪽 이미지 signed cookie |
 | `DELETE /api/courses/{courseId}/files/{fileId}/summary` | 담당자 | 게시 내리기. 파일 요약과 학습 대화도 닫힌다 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary/overview` | 열람 가능한 사람 | 자료 상세의 파일 요약(게시본의 질문과 흐름, 모델 호출 없음) |
 | `GET /api/llm/policy` | 로그인 사용자 | 제공자 처리 조건, 고지 판, profile 지문, 외부 LLM 사용 여부 |
-| `GET /api/courses/{courseId}/llm-consents` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 내 범위별 동의와 현재 profile과의 일치 여부 |
+| `GET /api/courses/{courseId}/llm-consents` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 내 범위별 동의. `current`는 그 동의가 지금 문을 여는지다(현재 profile과 같고 내가 결정권자). 결정권자가 아닌 사람의 남은 동의는 `granted=true`, `current=false` |
 | `PUT /api/courses/{courseId}/llm-consents/{scope}` | 담당자 명단의 그 과목 교수, 비정규 담당자(조교는 아니다) | 동의(`page_summary`, `study_chat`). 본 고지 판·지문, 국외 이전·학습 이용 확인 |
-| `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 담당자 명단의 그 과목 교수, 비정규 담당자(조교는 아니다) | 철회. 대기 작업·질문 취소, 게시본은 유지 |
+| `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 그 과목의 담당자(교수, 조교, 비정규 담당자). 본인의 동의만 | 철회. 대기 작업·질문 취소, 게시본은 유지. 조교도 효력 없는 자기 동의를 거둘 수 있다 |
 | `GET /api/courses/{courseId}/llm-usage` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 과목의 호출 수·token 합계와 오늘의 학습 대화 예산 |
 | `POST /api/courses/{courseId}/files/{fileId}/study-chats` | 열람 가능한 사람 | 대화 열기. 게시본과 게시자의 `study_chat` 동의 필요. `Idempotency-Key` 지원 |
 | `GET /api/courses/{courseId}/files/{fileId}/study-chats?before=` | 열람 가능한 사람 | 그 파일에서 내가 연 대화(20개씩, ID 내림차순). `{items, nextBefore}`이고 다음 쪽이 없으면 `nextBefore`는 null |

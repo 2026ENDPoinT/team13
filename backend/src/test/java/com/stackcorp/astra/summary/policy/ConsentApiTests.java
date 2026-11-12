@@ -185,7 +185,7 @@ class ConsentApiTests extends IntegrationTest {
 	}
 
 	@Test
-	void onlyTheCoursesListedProfessorOrManagerGrantsOrRevokesConsent() throws Exception {
+	void onlyTheCoursesListedProfessorOrManagerGrantsConsentButAnyInstructorRevokesTheirOwn() throws Exception {
 		long listedTa = this.data.user("TA");
 		listAs(this.course, listedTa, "TA");
 		long enrolledTa = this.data.user("TA");
@@ -196,26 +196,72 @@ class ConsentApiTests extends IntegrationTest {
 		for (long staff : new long[] { listedTa, enrolledTa, enrolledProfessor }) {
 			ApiClient client = new ApiClient(this.mvc, this.data.session(staff));
 			grant(client, "page_summary").andExpect(status().isNotFound());
-			client.delete(consents() + "/page_summary").andExpect(status().isNotFound());
 			// 동의는 결정권자의 것이다. 조교도 과목 담당이라 자기 동의 목록과 사용량은 본다.
-			client.get(consents()).andExpect(status().isOk());
+			client.get(consents()).andExpect(status().isOk()).andExpect(jsonPath("$[0].granted").value(false));
 			client.get("/api/courses/" + this.course + "/llm-usage").andExpect(status().isOk());
-			// 예전에 남은 동의 행이 있어도 문은 열리지 않는다.
+			// 예전에 남은 동의 행이 있어도 문은 열리지 않고, 목록은 효력이 없다고(current=false) 보여 준다.
 			LlmConsents.grant(this.context, this.course, staff, ProcessingScope.PAGE_SUMMARY);
 			assertThat(gate.closed(this.course, staff, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
+			client.get(consents())
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].scope").value("page_summary"))
+				.andExpect(jsonPath("$[0].granted").value(true))
+				.andExpect(jsonPath("$[0].current").value(false));
 			client.post("/api/courses/" + this.course + "/files/" + this.fileId + "/summary-jobs")
-				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.code").value("llm_consent_required"));
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.code").value("llm_decider_required"));
+			// 철회는 처리를 좁히기만 하므로 본인이 직접 거둔다. 감사 기록이 남는다.
+			client.delete(consents() + "/page_summary").andExpect(status().isNoContent());
+			client.get(consents()).andExpect(jsonPath("$[0].granted").value(false));
 		}
+		assertThat(audits("llm_consent.revoke")).isEqualTo(3);
 		grant(this.student, "page_summary").andExpect(status().isNotFound());
 		this.student.delete(consents() + "/page_summary").andExpect(status().isNotFound());
 		assertThat(audits("llm_consent.grant")).isZero();
-		assertThat(audits("llm_consent.revoke")).isZero();
+		assertThat(audits("llm_consent.revoke")).isEqualTo(3);
 
 		grant(this.professor, "page_summary").andExpect(status().isOk()).andExpect(jsonPath("$.granted").value(true));
 		assertThat(gate.closed(this.course, this.professorId, ProcessingScope.PAGE_SUMMARY)).isEmpty();
+		this.professor.get(consents()).andExpect(jsonPath("$[0].current").value(true));
 		this.professor.delete(consents() + "/page_summary").andExpect(status().isNoContent());
 		assertThat(gate.closed(this.course, this.professorId, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
+	}
+
+	@Test
+	void aListedTaIsToldToAskTheDeciderEvenWhenTheProfessorConsented() throws Exception {
+		long taId = this.data.user("TA");
+		listAs(this.course, taId, "TA");
+		ApiClient ta = new ApiClient(this.mvc, this.data.session(taId));
+		grant("page_summary", true).andExpect(status().isOk());
+		long cancelled = ApiClient.json(requestJob().andExpect(status().isAccepted())).get("id").asLong();
+		this.professor.post("/api/courses/" + this.course + "/summary-jobs/" + cancelled + "/cancel")
+			.andExpect(status().isOk());
+
+		// 동의가 아니라 요청한 사람이 문제다. 조교가 할 수 없는 동의를 안내하지 않는다.
+		ta.post("/api/courses/" + this.course + "/files/" + this.fileId + "/summary-jobs")
+			.andExpect(status().isForbidden())
+			.andExpect(jsonPath("$.code").value("llm_decider_required"));
+		ta.post("/api/courses/" + this.course + "/summary-jobs/" + cancelled + "/retry")
+			.andExpect(status().isForbidden())
+			.andExpect(jsonPath("$.code").value("llm_decider_required"));
+		assertThat(SummaryRunnerDriver.runOnce(this.context)).isFalse();
+		assertThat(this.llm.log).isEmpty();
+	}
+
+	@Test
+	void aTaWhoIsAlsoListedAsProfessorAndAManagerOfARegularCourseGrantConsent() throws Exception {
+		long both = this.data.user("PROFESSOR");
+		listAs(this.course, both, "TA");
+		listAs(this.course, both, "PROFESSOR");
+		long managerId = this.data.user("STAFF");
+		listAs(this.course, managerId, "MANAGER");
+		LlmGate gate = this.context.getBean(LlmGate.class);
+		for (long decider : new long[] { both, managerId }) {
+			ApiClient client = new ApiClient(this.mvc, this.data.session(decider));
+			grant(client, "page_summary").andExpect(status().isOk()).andExpect(jsonPath("$.current").value(true));
+			client.get(consents()).andExpect(jsonPath("$[0].current").value(true));
+			assertThat(gate.closed(this.course, decider, ProcessingScope.PAGE_SUMMARY)).isEmpty();
+		}
 	}
 
 	@Test

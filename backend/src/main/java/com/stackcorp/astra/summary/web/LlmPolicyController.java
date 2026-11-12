@@ -29,9 +29,9 @@ import com.stackcorp.astra.summary.policy.UsageLedger;
 import com.stackcorp.astra.summary.policy.UsageLedger.Total;
 
 /**
- * 외부 LLM 처리 조건, 교수자 동의, 과목 사용량(ADR-0032). 처리 조건은 로그인한 누구나 본다. 사용량과 내 동의 목록은 그 과목
- * 담당자가 보고, 동의와 철회는 과목의 결정권자(담당자 명단의 교수와 비정규 담당자)만 한다. 해당하지 않으면 404다. 동의는 본인의
- * 것만 기록하고 철회한다.
+ * 외부 LLM 처리 조건, 교수자 동의, 과목 사용량(ADR-0032). 처리 조건은 로그인한 누구나 본다. 사용량, 내 동의 목록, 철회는 그 과목
+ * 담당자가 하고, 동의는 과목의 결정권자(담당자 명단의 교수와 비정규 담당자)만 한다. 해당하지 않으면 404다. 동의는 본인의 것만
+ * 기록하고 철회한다. 철회는 처리를 좁히기만 하므로 조교도 예전에 남긴 자기 동의를 거둘 수 있다.
  */
 @RestController
 class LlmPolicyController {
@@ -66,14 +66,18 @@ class LlmPolicyController {
 					p.acknowledgementRequired(), Arrays.stream(ProcessingScope.values()).map(ProcessingScope::value).toList()));
 	}
 
-	/** 내가 이 과목에 남긴 동의. 범위마다 하나이고, 동의하지 않은 범위는 granted=false다. */
+	/**
+	 * 내가 이 과목에 남긴 동의. 범위마다 하나이고, 동의하지 않은 범위는 granted=false다. 결정권자가 아닌 사람(조교 등)의 동의 행은
+	 * granted=true, current=false로 보인다. 문을 열지 않으므로 효력은 없고, 철회는 할 수 있다.
+	 */
 	@GetMapping("/api/courses/{courseId}/llm-consents")
 	ResponseEntity<List<ConsentView>> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		requireInstructor(actor, courseId);
+		boolean decider = this.staff.isDecider(actor.userId(), courseId);
 		Map<ProcessingScope, Consent> active = new EnumMap<>(ProcessingScope.class);
 		this.consents.active(courseId, actor.userId()).forEach((c) -> active.put(c.scope(), c));
 		List<ConsentView> views = Arrays.stream(ProcessingScope.values())
-			.map((s) -> active.containsKey(s) ? ConsentView.of(active.get(s)) : ConsentView.none(s))
+			.map((s) -> active.containsKey(s) ? ConsentView.of(active.get(s), decider) : ConsentView.none(s))
 			.toList();
 		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(views);
 	}
@@ -92,17 +96,17 @@ class LlmPolicyController {
 		}
 		Consent consent = this.consents.grant(actor.userId(), actor.sessionId(), courseId, target, body.noticeVersion(),
 				body.profileDigest(), Boolean.TRUE.equals(body.acknowledged()));
-		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ConsentView.of(consent));
+		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ConsentView.of(consent, true));
 	}
 
 	/**
 	 * 철회한다. 그 교수자의 동의에 기대던 대기 작업과 질문은 취소되고, 실행 중인 작업은 다음 모델 호출 전에 멈춘다. 게시한 요약은 남는다.
-	 * 동의가 없어도 204다.
+	 * 동의가 없어도 204다. 본인의 동의만 거두고 처리를 좁히기만 하므로 결정권자가 아닌 담당자(조교 등)도 한다.
 	 */
 	@DeleteMapping("/api/courses/{courseId}/llm-consents/{scope}")
 	ResponseEntity<Void> revoke(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable String scope) {
-		requireDecider(actor, courseId);
+		requireInstructor(actor, courseId);
 		this.consents.revoke(actor.userId(), actor.sessionId(), courseId, scope(scope));
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
@@ -151,14 +155,16 @@ class LlmPolicyController {
 	}
 
 	/**
-	 * @param current 동의한 profile이 지금 배포의 profile과 같은지. false면 효력이 없어 다시 동의해야 한다
+	 * @param current 이 동의가 지금 문을 여는지. 동의한 profile이 지금 배포의 profile과 같고, 동의한 사람이 지금도 과목의
+	 * 결정권자여야 한다. false면 효력이 없다. 결정권자는 다시 동의하고, 결정권자가 아닌 사람은 철회만 할 수 있다
 	 */
 	record ConsentView(String scope, boolean granted, boolean current, String noticeVersion, String profileDigest,
 			boolean acknowledged, Instant grantedAt) {
 
-		static ConsentView of(Consent c) {
-			return new ConsentView(c.scope().value(), true, c.current(), c.noticeVersion(), c.profileSha256(),
-					c.riskAcknowledged(), c.grantedAt());
+		/** @param decider 동의한 사람이 지금 과목의 결정권자인지 */
+		static ConsentView of(Consent c, boolean decider) {
+			return new ConsentView(c.scope().value(), true, decider && c.current(), c.noticeVersion(),
+					c.profileSha256(), c.riskAcknowledged(), c.grantedAt());
 		}
 
 		static ConsentView none(ProcessingScope scope) {

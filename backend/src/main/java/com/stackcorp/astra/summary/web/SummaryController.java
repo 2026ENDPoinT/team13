@@ -175,6 +175,7 @@ class SummaryController {
 			case NOT_FOUND -> HttpStatus.NOT_FOUND;
 			case CONFLICT, INVALID_STATE, FILE_NOT_READY -> HttpStatus.CONFLICT;
 			case UNSUPPORTED_FILE -> HttpStatus.UNPROCESSABLE_CONTENT;
+			case LLM_DECIDER_REQUIRED -> HttpStatus.FORBIDDEN;
 		};
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, ex.getMessage());
 		problem.setProperty("code", ex.code().name().toLowerCase());
