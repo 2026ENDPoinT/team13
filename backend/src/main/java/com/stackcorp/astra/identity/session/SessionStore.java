@@ -17,7 +17,8 @@ import org.springframework.stereotype.Repository;
 import com.stackcorp.astra.identity.api.UserRole;
 
 /**
- * user_sessions. 브라우저에는 불투명 token만 주고 DB에는 그 SHA-256만 둔다(ADR-0004 2번).
+ * user_sessions. 브라우저에는 불투명 token만 주고 DB에는 그 SHA-256만 둔다(ADR-0004 2번). session은 로그인한 브라우저의 등록
+ * 기기({@code user_devices})에 묶인다. 기기를 폐기하면 그 기기의 session도 폐기된다(IDENTITY-07).
  */
 @Repository
 public class SessionStore {
@@ -26,25 +27,34 @@ public class SessionStore {
 
 	private final JdbcClient jdbc;
 
-	SessionStore(JdbcClient jdbc) {
+	private final Devices devices;
+
+	SessionStore(JdbcClient jdbc, Devices devices) {
 		this.jdbc = jdbc;
+		this.devices = devices;
 	}
 
-	/** @return 새 session token. 쿠키 값으로만 쓰고 저장하지 않는다 */
-	public IssuedSession create(long userId, String ip, String userAgent) {
+	/**
+	 * @param presentedDevice 브라우저의 기기 쿠키({@link DeviceCookie#read}). 없으면 null이고 새 기기를 등록한다
+	 * @return 새 session token과 이 브라우저의 기기. token은 쿠키 값으로만 쓰고 저장하지 않는다
+	 */
+	public IssuedSession create(long userId, String presentedDevice, String ip, String userAgent) {
+		Devices.Device device = this.devices.bind(userId, presentedDevice);
 		String token = Base64.getUrlEncoder().withoutPadding().encodeToString(random(32));
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
-				INSERT INTO user_sessions (user_id, session_token_hash, session_epoch, ip_address, user_agent, last_seen_at)
-				VALUES (:user, :hash, :epoch, :ip, :ua, CURRENT_TIMESTAMP(3))
+				INSERT INTO user_sessions (user_id, device_id, session_token_hash, session_epoch, ip_address, user_agent,
+				                           last_seen_at)
+				VALUES (:user, :device, :hash, :epoch, :ip, :ua, CURRENT_TIMESTAMP(3))
 				""")
 			.param("user", userId)
+			.param("device", device.deviceId())
 			.param("hash", hash(token))
 			.param("epoch", HexFormat.of().formatHex(random(16)))
 			.param("ip", ip)
 			.param("ua", userAgent == null ? null : userAgent.substring(0, Math.min(255, userAgent.length())))
 			.update(key, "session_id");
-		return new IssuedSession(key.getKey().longValue(), token);
+		return new IssuedSession(key.getKey().longValue(), token, device.uuid());
 	}
 
 	Optional<ActiveSession> find(String token) {
@@ -77,7 +87,16 @@ public class SessionStore {
 				""").param("reason", reason).param("id", sessionId).update();
 	}
 
-	public record IssuedSession(long sessionId, String token) {
+	/**
+	 * @param deviceUuid 이 session이 묶인 기기. 기기 쿠키({@link DeviceCookie#issue})로 브라우저에 돌려준다
+	 */
+	public record IssuedSession(long sessionId, String token, String deviceUuid) {
+
+		@Override
+		public String toString() {
+			return "IssuedSession[sessionId=" + this.sessionId + "]";
+		}
+
 	}
 
 	record ActiveSession(long sessionId, long userId, String name, UserRole role, boolean active,

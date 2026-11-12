@@ -7,7 +7,7 @@ public class RenditionException extends RuntimeException {
 		NOT_FOUND,
 		/** 검사를 통과하지 않았다. */
 		NOT_READY,
-		/** PDF가 아니다. */
+		/** 쪽 이미지로 바꿀 수 없는 형식이다(PDF, pptx, docx, xlsx만 바꾼다). */
 		UNSUPPORTED,
 		/** converter가 변환하지 못했다. detail은 ConversionException.Code 이름이다. */
 		CONVERSION_FAILED,

@@ -14,7 +14,7 @@ import org.springframework.util.StringUtils;
 @ConfigurationProperties("astra.break-glass")
 public record BreakGlassProperties(String externalRef, String passwordHash, String totpSecret) {
 
-	boolean enabled() {
+	public boolean enabled() {
 		return StringUtils.hasText(this.externalRef) && StringUtils.hasText(this.passwordHash)
 				&& StringUtils.hasText(this.totpSecret);
 	}

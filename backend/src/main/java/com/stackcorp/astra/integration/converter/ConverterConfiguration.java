@@ -15,4 +15,9 @@ class ConverterConfiguration {
 		return new HttpPageConverter(properties);
 	}
 
+	@Bean(destroyMethod = "close")
+	HttpImageNormalizer imageNormalizer(ConverterProperties properties) {
+		return new HttpImageNormalizer(properties);
+	}
+
 }

@@ -35,3 +35,9 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### 실행 설정. 비밀값이 들어가므로 커밋하지 않는다(.env.example 참고) ###
+.env
+
+### JVM attach files left by tools ###
+.attach_pid*

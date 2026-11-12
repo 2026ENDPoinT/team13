@@ -36,6 +36,9 @@ class SecurityConfiguration {
 				.permitAll()
 				.requestMatchers(HttpMethod.POST, "/api/auth/break-glass")
 				.permitAll()
+				// 학교 IdP 로그인 시작·callback과 로그인 수단 조회(ADR-0017). 모두 GET이고 DB 상태를 바꾸는 것은 callback의 로그인뿐이다.
+				.requestMatchers(HttpMethod.GET, "/api/auth/login", "/api/auth/callback", "/api/auth/methods")
+				.permitAll()
 				.requestMatchers("/error")
 				.permitAll()
 				.requestMatchers("/api/**")

@@ -846,6 +846,19 @@
      "relType": null
     },
     {
+     "_id": "wRkDkXFsMobBSbbgh",
+     "name": "제출 본문",
+     "pName": "body_text",
+     "domain": "",
+     "type": "MEDIUMTEXT",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "제출 본문(일반 텍스트)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "NHQMnnsfuJj5rLcYY",
      "name": "제출 첨부 묶음 ID",
      "pName": "attachment_group_id",
@@ -906,6 +919,32 @@
      "defaultValue": "CURRENT_TIMESTAMP(3)",
      "isAllowNull": false,
      "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "mPB3AcbEPN9mgYmdj",
+     "name": "제출 요청의 Idempotency-Key",
+     "pName": "idempotency_key",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "제출 요청의 Idempotency-Key(제출자 단위 유일)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "jnaggKv5qaRMAzgTK",
+     "name": "제출 요청 정규형의 SHA-256",
+     "pName": "request_fingerprint",
+     "domain": "",
+     "type": "CHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "제출 요청 정규형의 SHA-256(같은 key의 다른 요청 판별)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -1121,6 +1160,32 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "5tLtbhQu2CYurSkfS",
+     "name": "임시저장 본문",
+     "pName": "draft_body_text",
+     "domain": "",
+     "type": "MEDIUMTEXT",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "임시저장 본문(일반 텍스트, 제출로 치지 않음)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "kkdSvNRZuAnEhRsTX",
+     "name": "임시저장 일시",
+     "pName": "draft_saved_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "임시저장 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
     }
    ]
   },
@@ -1333,6 +1398,19 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "MQM36AiKxoSZgwA3T",
+     "name": "과제 설정 수정 번호",
+     "pName": "revision_no",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "과제 설정 수정 번호(수정할 때마다 1 증가, 동시 수정 감지)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
     }
    ]
   },
@@ -1540,6 +1618,127 @@
    ]
   },
   {
+   "_id": "AqdeKW43tdmBSDLoy",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "attendance_record_changes",
+   "name": "출석 상태 변경 이력",
+   "position": {
+    "x": 6880,
+    "y": 50
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "LKnxqDggzFu8wQGqv",
+      "name": "출석 상태 변경 이력 ID",
+      "pName": "attendance_record_change_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "출석 상태 변경 이력 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "ngrQSLTZe2baea2Py",
+     "name": "출석 기록 ID",
+     "pName": "attendance_record_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "출석 기록 ID",
+     "relEntity": "v8km8wiQpEH56qh6F",
+     "relFieldId": "jJLtoWZHsz7Z2kGjX",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "vX9QC5Qt8FMQ2JG6P",
+     "name": "바꾸기 전 상태",
+     "pName": "previous_status",
+     "domain": "",
+     "type": "VARCHAR(20)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "바꾸기 전 상태(기록이 없었으면 NULL)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "thpZr8CrKwDgFYgj2",
+     "name": "바꾸기 전 산출 방식",
+     "pName": "previous_source",
+     "domain": "",
+     "type": "VARCHAR(20)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "바꾸기 전 산출 방식(smart|online|manual)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "9TnyK27HjkbWYp6TX",
+     "name": "바꾼 상태",
+     "pName": "new_status",
+     "domain": "",
+     "type": "VARCHAR(20)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "바꾼 상태(출석|지각|결석|공결)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "qMznYCvkEQH9GHbYE",
+     "name": "변경 사유",
+     "pName": "reason",
+     "domain": "",
+     "type": "VARCHAR(200)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "변경 사유(일반 텍스트)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "c3TRvbDh94iKc9dZq",
+     "name": "바꾼 담당자 사용자 ID",
+     "pName": "changed_by",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "바꾼 담당자 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "HQR6Ap4JcZfNvZjZs",
+     "name": "변경 일시",
+     "pName": "changed_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "변경 일시(DB 시계)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "v8km8wiQpEH56qh6F",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "attendance_records",
@@ -1620,6 +1819,19 @@
      "relType": null
     },
     {
+     "_id": "Foes5H22qcd8K5fLe",
+     "name": "이 기록을 만든 스마트출석 회차 ID",
+     "pName": "smart_attendance_round_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "이 기록을 만든 스마트출석 회차 ID(source smart일 때만)",
+     "relEntity": "k7c7tjEwYmmJRERmq",
+     "relFieldId": "RBNEs8FEy2r7d5L4n",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
      "_id": "vT7sEQ83SXfR7MLJX",
      "name": "온라인 학습 진도율",
      "pName": "progress_percent",
@@ -1667,6 +1879,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "판정 규칙 버전",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "frXPQKbFpSTo4asbD",
+     "name": "수정 낙관적 버전",
+     "pName": "row_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "수정 낙관적 버전(If-Match로 확인)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -1871,6 +2096,19 @@
      "relType": null
     },
     {
+     "_id": "jgA7cP2EZk3Q2enf9",
+     "name": "수정 낙관적 버전",
+     "pName": "row_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "수정 낙관적 버전(If-Match로 확인)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "BDcbGpkacYwFfSwyy",
      "name": "등록자 사용자 ID",
      "pName": "created_by",
@@ -1905,6 +2143,274 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "dALyJica9mJ87fHzW",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "attendance_settings",
+   "name": "과목 출석 정책",
+   "position": {
+    "x": 6880,
+    "y": 378
+   },
+   "keys": {
+    "pks": [],
+    "fks": [
+     {
+      "_id": "ZjPtAosEztSJ6XxtZ",
+      "name": "과목 ID",
+      "pName": "course_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "과목 ID(catalog.courses)",
+      "relEntity": "4RHRxFgn3tkTjfqW6",
+      "relFieldId": "kkFaq35H5vzyLELFL",
+      "relType": "ZERO_OR_ONE"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "Qmyot572J7Eb7r6Em",
+     "name": "스마트출석 개시 뒤 이 시간(분)이 지나면 지각",
+     "pName": "late_after_minutes",
+     "domain": "",
+     "type": "SMALLINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "스마트출석 개시 뒤 이 시간(분)이 지나면 지각",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "6CQ48ABgdgef4Jonq",
+     "name": "스마트출석 회차의 기본 진행 시간",
+     "pName": "round_minutes",
+     "domain": "",
+     "type": "SMALLINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "스마트출석 회차의 기본 진행 시간(분)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "9ewaMGWY8EAhYH2ng",
+     "name": "지각 몇 번을 결석 한 번으로 환산하는지",
+     "pName": "lates_per_absence",
+     "domain": "",
+     "type": "TINYINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "지각 몇 번을 결석 한 번으로 환산하는지(0이면 환산하지 않음)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "6qfWq45vD4Giaut9a",
+     "name": "수정 낙관적 버전",
+     "pName": "row_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "수정 낙관적 버전(If-Match로 확인, 설정 전 0)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "4zahowtn3KK7fLQb7",
+     "name": "마지막으로 바꾼 담당자 사용자 ID",
+     "pName": "updated_by",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "마지막으로 바꾼 담당자 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "KzygTsxTojFsN6NCR",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "BPNA5rTQnMtqRPcYv",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "nLdKDFbxhuT73beGS",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "audit_events",
+   "name": "감사 기록",
+   "position": {
+    "x": 6880,
+    "y": 706
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "bYvajztN7haXCsWMD",
+      "name": "감사 기록 ID",
+      "pName": "audit_event_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "감사 기록 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "PfL5h8SmPiWqRZoDx",
+     "name": "행위자 사용자 ID",
+     "pName": "actor_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "행위자 사용자 ID(로그인 실패처럼 정할 수 없으면 NULL)",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "uQv5YkRFzWaHsDqDT",
+     "name": "행위자 세션 ID",
+     "pName": "session_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "행위자 세션 ID",
+     "relEntity": "fjt6codbJxKB3AwQY",
+     "relFieldId": "MzP927MRyD8MYqCcu",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "s2SxuvWiMhGWi5MJn",
+     "name": "연산 이름",
+     "pName": "operation",
+     "domain": "",
+     "type": "VARCHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "연산 이름(예: material.create)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "tW7mW9mrf852KXcY5",
+     "name": "대상 종류",
+     "pName": "object_type",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "대상 종류(예: learning_activity, file)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "uuAok63zw9AHKHXsv",
+     "name": "대상 ID",
+     "pName": "object_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "대상 ID",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "X5p7itWfRPM8PriPS",
+     "name": "과목 범위 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "과목 범위 ID(경로의 과목, 값으로만 저장)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "4CapShJAZfAqJpNHZ",
+     "name": "결과 코드",
+     "pName": "result_code",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "결과 코드: ok 또는 거부 코드(예: rejected, locked)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "p38neHXPqxWp7RCZ5",
+     "name": "요청 ID",
+     "pName": "request_id",
+     "domain": "",
+     "type": "CHAR(36)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "요청 ID(응답 header X-Request-Id, worker 작업이면 NULL)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "7FHShEu584zmdX2zi",
+     "name": "발생 일시",
+     "pName": "occurred_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "발생 일시(DB 시계)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -2043,6 +2549,45 @@
      "defaultValue": "",
      "isAllowNull": false,
      "comment": "게시판 유형: K001(공지)|K002(질의응답)|K004(열린게시판)|H002(1:1 문의)|MATERIAL(자료실)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "SxEQSdC8oji6uwZv6",
+     "name": "과목 공지 게시판 중복 방지용 보조 키",
+     "pName": "course_notice_key",
+     "domain": "",
+     "type": "TINYINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "과목 공지 게시판 중복 방지용 보조 키(K001이면 1)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "JbL5bCEfjCcyA67d5",
+     "name": "과목 질의응답·열린게시판 중복 방지용 보조 키",
+     "pName": "course_board_key",
+     "domain": "",
+     "type": "VARCHAR(20)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "과목 질의응답·열린게시판 중복 방지용 보조 키(K002|K004이면 유형 코드)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "N9AifH993Gzo4WKPW",
+     "name": "알림마당 전역 게시판 중복 방지용 보조 키(board_type H002|MATERIAL|NOTICE(알림마당 공지)이면 유형 코드)",
+     "pName": "community_board_key",
+     "domain": "",
+     "type": "VARCHAR(20)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "알림마당 전역 게시판 중복 방지용 보조 키(board_type H002|MATERIAL|NOTICE(알림마당 공지)이면 유형 코드)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -2312,6 +2857,19 @@
      "relType": null
     },
     {
+     "_id": "9927LRSQA2itLDBxq",
+     "name": "수정 버전",
+     "pName": "version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "수정 버전(낙관적 잠금)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "s2XyeQuowtSq2GsMS",
      "name": "생성 일시",
      "pName": "created_at",
@@ -2346,6 +2904,101 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "삭제 일시(소프트 삭제)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "EwLrF6ovPyYpn3zrK",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "community_operators",
+   "name": "알림마당 운영자",
+   "position": {
+    "x": 7530,
+    "y": 50
+   },
+   "keys": {
+    "pks": [],
+    "fks": [
+     {
+      "_id": "fRwwENeA7B2F4NJcN",
+      "name": "운영자 사용자 ID",
+      "pName": "user_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "운영자 사용자 ID",
+      "relEntity": "qGnfMsvCrBxdAyZWm",
+      "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+      "relType": "ZERO_OR_ONE"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "fM688vCsus3p65h5j",
+     "name": "지정 근거",
+     "pName": "grant_reference",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "지정 근거(결재 문서 번호 등, 운영 절차가 적는다)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "JYy47XPvZBs4YE3MZ",
+     "name": "지정 일시",
+     "pName": "granted_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "지정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "93mKy3RbxrJwWz9Wf",
+     "name": "해제 일시",
+     "pName": "revoked_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "해제 일시(해제했으면 권한 없음)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "cfd8fiPyZMgNapz95",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "FW8qbq2AcvShtHSZX",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -2493,6 +3146,71 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "변환 실패 코드",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "XcPSp2nrpzcfivAGh",
+     "name": "변환 시도 수",
+     "pName": "attempt_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "변환 시도 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "dZoAAvWRubJwzFgPW",
+     "name": "다음 변환 시도 일시",
+     "pName": "next_attempt_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "다음 변환 시도 일시(빈 값=바로)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "YpBJ9Sn2zWZg2gEuu",
+     "name": "변환 중인 worker 식별자",
+     "pName": "lease_owner",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "변환 중인 worker 식별자",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Kyxf43vKE736sA2di",
+     "name": "변환 lease 만료 일시",
+     "pName": "lease_expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "변환 lease 만료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "MZNHecTQGd2gWaMo7",
+     "name": "대기·변환 중·완료 rendition의 파일 버전 식별값(유일). 실패·만료 행은 빈 값",
+     "pName": "live_slot",
+     "domain": "",
+     "type": "VARCHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "대기·변환 중·완료 rendition의 파일 버전 식별값(유일). 실패·만료 행은 빈 값",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -3107,6 +3825,19 @@
      "defaultValue": "0",
      "isAllowNull": false,
      "comment": "정렬 순서",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "PzjHZ586JjMqkhSwr",
+     "name": "수정 낙관적 버전",
+     "pName": "row_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "수정 낙관적 버전(If-Match로 확인)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -3861,6 +4592,32 @@
      "comment": "계획서 첨부 그룹 ID(files.attachment_groups)",
      "relEntity": "SZLmXPwMERnFbic5D",
      "relFieldId": "pAPGL4ActhDETSQvq",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "AqTjvyP5k57Mw9SyN",
+     "name": "수정 낙관적 버전",
+     "pName": "row_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "수정 낙관적 버전(If-Match로 확인, 저장 전 0)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "XHQz3AEM3mFermkLc",
+     "name": "마지막으로 바꾼 담당자 사용자 ID",
+     "pName": "updated_by",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "마지막으로 바꾼 담당자 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
      "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
@@ -4831,7 +5588,7 @@
      "type": "VARCHAR(12)",
      "defaultValue": "'quarantined'",
      "isAllowNull": false,
-     "comment": "검사 상태(quarantined|clean|rejected)",
+     "comment": "검사 상태(quarantined|clean|rejected|unscanned: 검사를 면제한 영상 원본)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -4845,6 +5602,84 @@
      "defaultValue": "0",
      "isAllowNull": false,
      "comment": "참조 중인 파일 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "yiYWWhzDi2F5S5ZM7",
+     "name": "악성코드 검사 시도 수",
+     "pName": "scan_attempt_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "악성코드 검사 시도 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "FrifehowcvCib4QsE",
+     "name": "다음 검사 시도 일시",
+     "pName": "scan_next_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "다음 검사 시도 일시(빈 값=바로)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "NsXYRBsKqaYozjZf6",
+     "name": "검사 중인 worker 식별자",
+     "pName": "scan_lease_owner",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "검사 중인 worker 식별자",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "FwbafgtBs2hvH5Pjv",
+     "name": "검사 lease 만료 일시",
+     "pName": "scan_lease_expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "검사 lease 만료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gcnaBmjbSHLuYJTtr",
+     "name": "탐지한 악성코드 signature 이름",
+     "pName": "scan_signature",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "탐지한 악성코드 signature 이름(rejected일 때)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "KRPvqsTBZbR9vLqjG",
+     "name": "검사 판정 일시",
+     "pName": "scanned_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "검사 판정 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -4920,26 +5755,26 @@
    "fields": [
     {
      "_id": "M8NsqYqvFwH4RSsFy",
-     "name": "콘텐츠 카탈로그 번호",
+     "name": "콘텐츠 카탈로그 번호(cid). 문서 썸네일은 빈 값",
      "pName": "content_catalog_id",
      "domain": "",
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
-     "isAllowNull": false,
-     "comment": "콘텐츠 카탈로그 번호(cid)",
+     "isAllowNull": true,
+     "comment": "콘텐츠 카탈로그 번호(cid). 문서 썸네일은 빈 값",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
     },
     {
      "_id": "4DNDnQYrBx69xk4Mu",
-     "name": "콘텐츠 항목 키",
+     "name": "콘텐츠 항목 키(id). 문서 썸네일은 빈 값",
      "pName": "content_item_key",
      "domain": "",
      "type": "CHAR(20)",
      "defaultValue": "",
-     "isAllowNull": false,
-     "comment": "콘텐츠 항목 키(id)",
+     "isAllowNull": true,
+     "comment": "콘텐츠 항목 키(id). 문서 썸네일은 빈 값",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -4959,16 +5794,68 @@
     },
     {
      "_id": "ea8GQY985sgJEptEF",
-     "name": "썸네일 파일 ID",
+     "name": "썸네일 파일 ID(콘텐츠 썸네일). 문서 썸네일은 빈 값",
      "pName": "file_id",
      "domain": "",
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
-     "isAllowNull": false,
-     "comment": "썸네일 파일 ID",
+     "isAllowNull": true,
+     "comment": "썸네일 파일 ID(콘텐츠 썸네일). 문서 썸네일은 빈 값",
      "relEntity": "bxoZkn979ue2k9gpi",
      "relFieldId": "tQ3z9cXG7sFPkGYM7",
      "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "bzhAicvXv2hsGbX26",
+     "name": "문서 썸네일을 만든 rendition(변환 작업) ID",
+     "pName": "conversion_job_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "문서 썸네일을 만든 rendition(변환 작업) ID",
+     "relEntity": "KyjL3nzyfcyriqqPh",
+     "relFieldId": "Gi4hCyu7kDPemZwaZ",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "GccauwdYwoP6t2tXX",
+     "name": "문서 썸네일 저장 키",
+     "pName": "storage_key",
+     "domain": "",
+     "type": "VARCHAR(400)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "문서 썸네일 저장 키(content bucket, 서버 생성)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "8YFtTRojTihCzZzk5",
+     "name": "저장할 때 정한 썸네일 MIME 타입",
+     "pName": "content_type",
+     "domain": "",
+     "type": "VARCHAR(50)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "저장할 때 정한 썸네일 MIME 타입",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "PqJtnycBF8Dtdn74G",
+     "name": "문서 썸네일 바이트 크기",
+     "pName": "size_bytes",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "문서 썸네일 바이트 크기",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
     },
     {
      "_id": "r7r3seJ5RoDE6FdAi",
@@ -5092,19 +5979,6 @@
      "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
-     "_id": "j5YJwCsoR89TLgCFg",
-     "name": "연결 활동 참조 수 캐시",
-     "pName": "reference_count",
-     "domain": "",
-     "type": "INT UNSIGNED",
-     "defaultValue": "0",
-     "isAllowNull": false,
-     "comment": "연결 활동 참조 수 캐시",
-     "relEntity": null,
-     "relFieldId": null,
-     "relType": null
-    },
-    {
      "_id": "37AvvrJiYnLMSYpWS",
      "name": "상태",
      "pName": "item_state",
@@ -5142,6 +6016,19 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "SxKzTXg9g7ohubQXT",
+     "name": "휴지통 root 항목 ID",
+     "pName": "trash_root_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "휴지통 root 항목 ID(함께 휴지통에 넣은 묶음, 사용자가 고른 항목이면 자기 ID)",
+     "relEntity": "kyYoJysmYtxCL5X7N",
+     "relFieldId": "4Mg72Dxif3xMzsmmA",
+     "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
      "_id": "5AYGiw84RF4LG534a",
@@ -5197,6 +6084,101 @@
     },
     {
      "_id": "MKreMqeTqcwWsisoC",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "qdz2Figpt7vAyFcXN",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "filebox_quotas",
+   "name": "파일함 사용량",
+   "position": {
+    "x": 6880,
+    "y": 1086
+   },
+   "keys": {
+    "pks": [],
+    "fks": [
+     {
+      "_id": "qQpgFhe87JvYg6iQM",
+      "name": "소유 사용자 ID",
+      "pName": "owner_user_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "소유 사용자 ID",
+      "relEntity": "qGnfMsvCrBxdAyZWm",
+      "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+      "relType": "ZERO_OR_ONE"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "fbEj4WykPCToGX2pc",
+     "name": "이 사용자의 용량 한도 바이트",
+     "pName": "quota_bytes",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "이 사용자의 용량 한도 바이트(빈 값=설정 astra.filebox.quota)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "AQqpocYaWLaN8KnHn",
+     "name": "파일함 파일이 차지하는 바이트",
+     "pName": "used_bytes",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "파일함 파일이 차지하는 바이트(활성+휴지통, 영구 삭제하면 줄어든다)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "boygRmnCSraByi9WA",
+     "name": "파일함 항목 수",
+     "pName": "item_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "파일함 항목 수(폴더 포함, 활성+휴지통)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "K33wDNdNHsBz8rX5K",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "F7i2HQwE8ReLDJZCK",
      "name": "수정 일시",
      "pName": "updated_at",
      "domain": "",
@@ -5369,6 +6351,19 @@
      "relType": null
     },
     {
+     "_id": "2e569RLLQDn5BJF6B",
+     "name": "파일함에서 다시 쓴 파일이면 그 파일함 항목 ID",
+     "pName": "source_filebox_item_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "파일함에서 다시 쓴 파일이면 그 파일함 항목 ID",
+     "relEntity": "kyYoJysmYtxCL5X7N",
+     "relFieldId": "4Mg72Dxif3xMzsmmA",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
      "_id": "jkMqWrx8iSHaKFkHn",
      "name": "검사 상태",
      "pName": "scan_state",
@@ -5442,6 +6437,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "삭제 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Fjc7yACH37Tn3sQKt",
+     "name": "삭제한 파일의 파생물·rendition 정리 일시",
+     "pName": "derivatives_purged_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "삭제한 파일의 파생물·rendition 정리 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -5899,6 +6907,19 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "She8daTFJb5QMvsQb",
+     "name": "성적 항목 수정 번호",
+     "pName": "revision_no",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "성적 항목 수정 번호(이름·배점·비율·공개를 바꿀 때마다 1 증가, 동시 수정 감지)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
     }
    ]
   },
@@ -6059,6 +7080,19 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "D2w3mHbX6MCKWR3ix",
+     "name": "학생 성적 수정 번호",
+     "pName": "revision_no",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "학생 성적 수정 번호(점수·의견을 쓸 때마다 1 증가, 동시 수정 감지)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
     }
    ]
   },
@@ -6151,6 +7185,166 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Dk5xyQgYkRL5wRuxa",
+     "name": "성적 설정 수정 번호",
+     "pName": "revision_no",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "성적 설정 수정 번호(수정할 때마다 1 증가, 동시 수정 감지)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "iGJsX28HqDN2nfzMD",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "idempotency_ledger",
+   "name": "멱등 원장",
+   "position": {
+    "x": 6880,
+    "y": 1362
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "BeJdTwSuPHJxHHhm3",
+      "name": "멱등 원장 항목 ID",
+      "pName": "ledger_entry_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "멱등 원장 항목 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "LMC5cYM83Xbcd4Qxk",
+     "name": "요청한 사용자 ID",
+     "pName": "principal_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "요청한 사용자 ID(session principal)",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "5sRCna5JB3W2YFq4E",
+     "name": "연산 이름",
+     "pName": "operation",
+     "domain": "",
+     "type": "VARCHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "연산 이름(예: material.create)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "7tBCK42rAEiEahCGe",
+     "name": "멱등 키",
+     "pName": "idempotency_key",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "멱등 키(Idempotency-Key header, [A-Za-z0-9._-] 1~100자)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ZY7v2XpqsqnYzKpfP",
+     "name": "요청 지문",
+     "pName": "request_fingerprint",
+     "domain": "",
+     "type": "CHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "요청 지문(대상 범위·본문·전제 조건의 정규 JSON SHA-256)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "5TFkeiahTKwueziM3",
+     "name": "상태",
+     "pName": "entry_state",
+     "domain": "",
+     "type": "VARCHAR(12)",
+     "defaultValue": "'reserved'",
+     "isAllowNull": false,
+     "comment": "상태: reserved(예약한 transaction 안에서만 보임)|completed",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "hA6wfkvL7dAsBZDrG",
+     "name": "완료 receipt",
+     "pName": "receipt_json",
+     "domain": "",
+     "type": "MEDIUMTEXT",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "완료 receipt(처음 돌려준 응답 본문 JSON)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "BfB3qxiesyjSE3iYw",
+     "name": "보존기한. 지나면 worker가 지운다",
+     "pName": "expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "보존기한. 지나면 worker가 지운다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "YqobKsgSWXJwf5b5j",
+     "name": "완료 일시",
+     "pName": "completed_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "완료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "tG4x4DQ5rjZtzwuJ4",
+     "name": "예약 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "예약 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -6342,6 +7536,19 @@
      "relType": null
     },
     {
+     "_id": "p8ghqDREXfoRjCich",
+     "name": "수정 낙관적 버전",
+     "pName": "row_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "수정 낙관적 버전(If-Match로 확인)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "bPGCfrm3mk26FoNKE",
      "name": "작성자(교수/조교) 사용자 ID",
      "pName": "created_by",
@@ -6379,6 +7586,32 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "t3FwQ9XmRyEtWYNXQ",
+     "name": "삭제 일시",
+     "pName": "deleted_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "삭제 일시(삭제 표시. 학습 기록 보존)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "iWfuQdSfPMYAXAHnm",
+     "name": "삭제한 사용자 ID",
+     "pName": "deleted_by",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "삭제한 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
     }
    ]
   },
@@ -6827,13 +8060,13 @@
     },
     {
      "_id": "tzpWC7Yn5Bvwj3K48",
-     "name": "세션 상태",
+     "name": "세션 상태(active|reauth_required|ended|superseded|lease_expired). reauth_required는 열려 있지만 학습 인증이 끝나 적립하지 않는 상태",
      "pName": "state",
      "domain": "",
      "type": "VARCHAR(20)",
      "defaultValue": "'active'",
      "isAllowNull": false,
-     "comment": "세션 상태(active|ended|superseded|lease_expired)",
+     "comment": "세션 상태(active|reauth_required|ended|superseded|lease_expired). reauth_required는 열려 있지만 학습 인증이 끝나 적립하지 않는 상태",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -6917,14 +8150,27 @@
      "relType": null
     },
     {
+     "_id": "FFqueYFPoApGB7q7T",
+     "name": "적립 유효기한 min(학습 인증 grant 만료, close_at, 로그인 session 만료). 학습 인증을 요구하지 않는 배포는 NULL",
+     "pName": "credit_authorized_until",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "적립 유효기한 min(학습 인증 grant 만료, close_at, 로그인 session 만료). 학습 인증을 요구하지 않는 배포는 NULL",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "6HapybjaNy7TJcT5K",
-     "name": "활성 세션 사용자",
+     "name": "열린 세션(active, reauth_required) 사용자",
      "pName": "active_user_key",
      "domain": "",
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "활성 세션 사용자(부분 유일 제약용)",
+     "comment": "열린 세션(active, reauth_required) 사용자(부분 유일 제약용)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -6951,6 +8197,353 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "ZsgDJGcvTvLtR6bWr",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "llm_consents",
+   "name": "외부 LLM 처리 동의",
+   "position": {
+    "x": 6880,
+    "y": 1742
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "asoj7AzNPew45NmuB",
+      "name": "외부 LLM 처리 동의 ID",
+      "pName": "llm_consent_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "외부 LLM 처리 동의 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "YZZYpPCjoC3xtfBzA",
+     "name": "동의 범위 과목 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "동의 범위 과목 ID",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "8Emzpk7DDGTmjfvRP",
+     "name": "동의한 교수자 사용자 ID",
+     "pName": "instructor_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "동의한 교수자 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "DZ8P5LMxZgHAr9XgY",
+     "name": "처리 범위",
+     "pName": "processing_scope",
+     "domain": "",
+     "type": "VARCHAR(20)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "처리 범위: page_summary(쪽별 요약 생성)|study_chat(학습 대화)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ZDndqYXducNpoThq8",
+     "name": "동의할 때 보여 준 고지 문구 판",
+     "pName": "notice_version",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "동의할 때 보여 준 고지 문구 판",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "D5E94fjWQtqmMWbHj",
+     "name": "동의할 때의 제공자 profile 지문(SHA-256). 배포 profile이 바뀌면 동의가 효력을 잃는다",
+     "pName": "profile_sha256",
+     "domain": "",
+     "type": "CHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "동의할 때의 제공자 profile 지문(SHA-256). 배포 profile이 바뀌면 동의가 효력을 잃는다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "qvLMYYsuQuFWv2STh",
+     "name": "제공자 이름",
+     "pName": "provider_name",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "제공자 이름(동의 당시 값)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "vrZFzCsPmakRFpFSm",
+     "name": "제공자 운영 주체",
+     "pName": "provider_operator",
+     "domain": "",
+     "type": "VARCHAR(200)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "제공자 운영 주체(동의 당시 값)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ium2gvYhLt5vA4PTh",
+     "name": "처리·저장 지역",
+     "pName": "processing_region",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "처리·저장 지역(동의 당시 값, 예: CN, KR)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "AbtZv5C9iQhf2ZJkF",
+     "name": "제공자 보관 기간 일수",
+     "pName": "retention_days",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "제공자 보관 기간 일수(동의 당시 값, 0이면 보관 안 함, NULL이면 제공자가 밝히지 않음)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "yCy4LmXiJi99KGSm4",
+     "name": "제공자가 입력을 학습·개선에 쓸 수 있는지",
+     "pName": "training_use",
+     "domain": "",
+     "type": "TINYINT(1)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "제공자가 입력을 학습·개선에 쓸 수 있는지(동의 당시 값)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Fabif35eeHM3tEGbK",
+     "name": "국외 이전 여부",
+     "pName": "cross_border_transfer",
+     "domain": "",
+     "type": "TINYINT(1)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "국외 이전 여부(동의 당시 값)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "S3Pj92cqNC4D8RcA4",
+     "name": "국외 이전·학습 이용을 따로 확인했는지",
+     "pName": "risk_acknowledged",
+     "domain": "",
+     "type": "TINYINT(1)",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "국외 이전·학습 이용을 따로 확인했는지",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "v3ccLJgKLW94hGBPy",
+     "name": "동의 일시",
+     "pName": "granted_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "동의 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "q2yajjpnQoru4N9sj",
+     "name": "철회 일시",
+     "pName": "revoked_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "철회 일시(다른 profile로 다시 동의해 대체된 때도 기록)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "PftcFWfYAPCB3ZGGL",
+     "name": "유효한 동의 키",
+     "pName": "active_key",
+     "domain": "",
+     "type": "TINYINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "유효한 동의 키(과목·교수자·범위마다 하나만 유효)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "nXrBHFqQLPRC5kpsN",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "llm_usage_daily",
+   "name": "과목별 일일 LLM 사용량",
+   "position": {
+    "x": 6880,
+    "y": 2278
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "N2wparR4wE9Z72yxG",
+      "name": "사용 날짜",
+      "pName": "usage_date",
+      "domain": "",
+      "type": "DATE",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "사용 날짜(DB 시계)",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     },
+     {
+      "_id": "EWCPu9FcsZGhhEwXe",
+      "name": "처리 범위",
+      "pName": "processing_scope",
+      "domain": "",
+      "type": "VARCHAR(20)",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "처리 범위: page_summary|study_chat",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": [
+     {
+      "_id": "WMRKKfwMRegTHyMyp",
+      "name": "과목 ID",
+      "pName": "course_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "과목 ID",
+      "relEntity": "4RHRxFgn3tkTjfqW6",
+      "relFieldId": "kkFaq35H5vzyLELFL",
+      "relType": "ZERO_OR_ONE_OR_MANY"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "6eQBiKacSdeyzHLfe",
+     "name": "끝난 요약 작업 또는 질문 수",
+     "pName": "request_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "끝난 요약 작업 또는 질문 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ewub82z6QKX82xo84",
+     "name": "모델 호출 수",
+     "pName": "call_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "모델 호출 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "tmJuvAf54Ncvqv2dw",
+     "name": "입력 token 수",
+     "pName": "input_tokens",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "입력 token 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ezDqgTxFxHzYznRyX",
+     "name": "출력 token 수",
+     "pName": "output_tokens",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "출력 token 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "shPScKK4hEawDagYE",
+     "name": "마지막 반영 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "마지막 반영 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -7358,6 +8951,32 @@
      "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
+     "_id": "zjvs5rExXBpHkHgNX",
+     "name": "답장·전달한 원래 쪽지 ID",
+     "pName": "origin_message_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "답장·전달한 원래 쪽지 ID(새로 쓴 쪽지면 NULL)",
+     "relEntity": "4uAg7ezkY377BbPfH",
+     "relFieldId": "knHe86qN8kwvtwa9W",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "ydv9xJzQaqRvBCaQz",
+     "name": "원래 쪽지와의 관계",
+     "pName": "origin_kind",
+     "domain": "",
+     "type": "VARCHAR(10)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "원래 쪽지와의 관계: REPLY(답장)|FORWARD(전달). origin_message_id와 함께 채운다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "nceAb4WgjqFcTaopD",
      "name": "중복 발송 방지 키",
      "pName": "client_request_id",
@@ -7500,6 +9119,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "과목분류 코드(학과·부서, SCH_CATEGORY)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "nayDpbrZB64zfcQb3",
+     "name": "과목분류 표시명",
+     "pName": "category_name",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "과목분류 표시명(SCH_CATEGORY 옵션 문구, 예: 건설시스템공학과. 없으면 화면은 코드를 보인다)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -7784,6 +9416,192 @@
    ]
   },
   {
+   "_id": "qJrYmLFxSuCe9F4Qo",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "notification_events",
+   "name": "알림 사건",
+   "position": {
+    "x": 6880,
+    "y": 2606
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "5kS62FwCPshHK6e9w",
+      "name": "알림 사건 ID",
+      "pName": "notification_event_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "알림 사건 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "4SNa4XZfmo78xABXL",
+     "name": "알림 유형",
+     "pName": "notification_type",
+     "domain": "",
+     "type": "VARCHAR(24)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "알림 유형(notifications.notification_type과 같은 값)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "3W2bMpSTiDRfBono4",
+     "name": "연결 대상 ID",
+     "pName": "target_ref_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "연결 대상 ID(공지 게시글, 학습활동, 과제. 다른 모듈의 행이라 값으로만 저장, FK 없음)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "RwTu7ioMHi4oYPx5X",
+     "name": "받는 사람을 정하는 과목 ID. 과목 없는 전체 알림이면 NULL",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "받는 사람을 정하는 과목 ID. 과목 없는 전체 알림이면 NULL",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "XgtiPkPkjoTeGTN9v",
+     "name": "관련 학습활동 ID",
+     "pName": "activity_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "관련 학습활동 ID(notifications.activity_id와 같이 learning_activities를 가리킨다)",
+     "relEntity": "u3Lr6vZYDg4qkRZLa",
+     "relFieldId": "EhuPSdSuhxMGW9N3z",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "Kcn5Nzrdfy46sCjdx",
+     "name": "과목 알림의 받는 사람 과목 내 역할",
+     "pName": "audience_role",
+     "domain": "",
+     "type": "VARCHAR(12)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "과목 알림의 받는 사람 과목 내 역할: STUDENT|INSTRUCTOR. 전체 알림이면 NULL",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gFLdAeG7hJzrycHWy",
+     "name": "전체 알림의 받는 대상",
+     "pName": "site_audience",
+     "domain": "",
+     "type": "VARCHAR(8)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "전체 알림의 받는 대상: all|student|staff(survey_targets.target_type과 같은 값). 과목 알림이면 NULL",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "uWHvtYGTjWzz6DLec",
+     "name": "알림 문장",
+     "pName": "message_text",
+     "domain": "",
+     "type": "VARCHAR(500)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "알림 문장(서버 생성)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "anrFTjgQh6QqwxjuA",
+     "name": "대상이 받는 사람에게 보이기 시작하는 일시(DB 시계). 이 시각 뒤에 알림을 만든다",
+     "pName": "visible_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "대상이 받는 사람에게 보이기 시작하는 일시(DB 시계). 이 시각 뒤에 알림을 만든다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "orpjWkRznPNmJKMvc",
+     "name": "알림 행을 만든 일시",
+     "pName": "delivered_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "알림 행을 만든 일시(만들기 전이면 NULL)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "TwGhmbZ5aP8nMFNxv",
+     "name": "전체 알림을 나눠 보낸 마지막 사용자 ID",
+     "pName": "delivered_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "전체 알림을 나눠 보낸 마지막 사용자 ID(다음 묶음은 그다음부터. 처음이면 NULL, 값으로만 저장)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "6vcpkPMxwjdmCpiQj",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "REoaxycLmNh6sEwCR",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "QZJmhSrkD7dXxWtrT",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "notifications",
@@ -7832,7 +9650,7 @@
      "type": "VARCHAR(24)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "알림 유형: COURSE_NOTICE|COMMUNITY_NOTICE|ONLINE_LECTURE|LECTURE_MATERIAL|SURVEY|MESSAGE|ABSENCE",
+     "comment": "알림 유형: COURSE_NOTICE|SITE_NOTICE|LECTURE_MATERIAL|ASSIGNMENT_OPENED|ASSIGNMENT_GRADED|QUESTION_ANSWERED|MESSAGE_RECEIVED",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -7871,7 +9689,7 @@
      "type": "VARCHAR(20)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "연결 대상 종류: ACTIVITY|ARTICLE|MESSAGE|ATTENDANCE",
+     "comment": "연결 대상 종류: ACTIVITY|ASSIGNMENT|ARTICLE|MESSAGE",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -7884,7 +9702,7 @@
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "연결 대상 ID(타 도메인 행 식별자, FK 없음)",
+     "comment": "연결 대상 ID(화면이 대상을 여는 ID: 학습활동, 과제, 게시글, 쪽지. 타 도메인 행 식별자, FK 없음)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -8110,6 +9928,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "판정 상태(met|under_required|unknown)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "SNfzNZuF5yf3zkQnH",
+     "name": "출석인정 충족 일시",
+     "pName": "met_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "출석인정 충족 일시(처음 충족한 서버 시각, 이후 바꾸지 않음)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -8435,6 +10266,45 @@
      "relType": null
     },
     {
+     "_id": "EvhjCt39zGA9KKTqC",
+     "name": "영상 첨부 그룹 ID",
+     "pName": "attachment_group_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "영상 첨부 그룹 ID(files.attachment_groups)",
+     "relEntity": "SZLmXPwMERnFbic5D",
+     "relFieldId": "pAPGL4ActhDETSQvq",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "7Bo2JswHZ5mLdnYpw",
+     "name": "영상 asset ID",
+     "pName": "video_asset_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "영상 asset ID(files.video_assets)",
+     "relEntity": "8RxY67pmigj4PoqKc",
+     "relFieldId": "whJ7wDkpx3MGniBo5",
+     "relType": "ZERO_OR_ONE"
+    },
+    {
+     "_id": "Jh9yJMEgs56YMbM2g",
+     "name": "영상 처리 상태",
+     "pName": "video_state",
+     "domain": "",
+     "type": "VARCHAR(12)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "영상 처리 상태(직접 등록한 경로는 NULL): processing|ready|failed|removed",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "QThixJAeiiPPZB5pu",
      "name": "대체영상 허용 여부",
      "pName": "allow_replacement_yn",
@@ -8469,6 +10339,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "96HP9YWjRiP9SPZXR",
+     "name": "삭제 일시",
+     "pName": "deleted_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "삭제 일시(삭제 표시. 학습 기록 보존)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -8815,14 +10698,27 @@
      "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
+     "_id": "TQNv7PDyssxMpd6cK",
+     "name": "임시저장 문맥",
+     "pName": "context_type",
+     "domain": "",
+     "type": "VARCHAR(20)",
+     "defaultValue": "'POST'",
+     "isAllowNull": false,
+     "comment": "임시저장 문맥: POST(게시글 작성·수정)|MESSAGE(쪽지 작성)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "53QRQRSYo2L8nzunK",
      "name": "게시판 ID",
      "pName": "board_id",
      "domain": "",
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
-     "isAllowNull": false,
-     "comment": "게시판 ID",
+     "isAllowNull": true,
+     "comment": "게시판 ID(쪽지 작성 초안이면 NULL)",
      "relEntity": "oWW7ffmqcffuLLuqc",
      "relFieldId": "52dDjBF4BcEGYNdXA",
      "relType": "ZERO_OR_ONE_OR_MANY"
@@ -8861,33 +10757,33 @@
      "type": "VARCHAR(20)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "작성 폼 구분(FROM_DIV: 1|2)",
+     "comment": "작성 폼 구분(게시글은 FROM_DIV 1|2, 쪽지는 compose)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
     },
     {
      "_id": "Qe3MSfdQnnp9tviiy",
-     "name": "직렬화된 폼 값",
+     "name": "초안 내용 JSON(일반 텍스트 title, body). HTML로 해석하지 않는다",
      "pName": "contents",
      "domain": "",
      "type": "MEDIUMTEXT",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "직렬화된 폼 값(HTML 포함, sanitize 결과)",
+     "comment": "초안 내용 JSON(일반 텍스트 title, body). HTML로 해석하지 않는다",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
     },
     {
      "_id": "2wuzpbdEDevKepxvW",
-     "name": "내용 지문",
+     "name": "내용 지문(SHA-256). 같은 revision의 재전송이 같은 내용인지 판단한다",
      "pName": "content_hash",
      "domain": "",
      "type": "CHAR(64)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "내용 지문(중복 저장 판단용)",
+     "comment": "내용 지문(SHA-256). 같은 revision의 재전송이 같은 내용인지 판단한다",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -8907,13 +10803,13 @@
     },
     {
      "_id": "NWjnZygBvudTMx9kB",
-     "name": "초안 버전",
+     "name": "클라이언트가 보낸 revision. 저장된 값보다 큰 요청만 덮어쓴다",
      "pName": "version",
      "domain": "",
      "type": "INT UNSIGNED",
      "defaultValue": "1",
      "isAllowNull": false,
-     "comment": "초안 버전(탭 간 충돌 감지)",
+     "comment": "클라이언트가 보낸 revision. 저장된 값보다 큰 요청만 덮어쓴다",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -8953,6 +10849,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "대상 글 스코프 키(NULL 대체)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "zoJgdkhjXLgMMcAzp",
+     "name": "게시판 스코프 키",
+     "pName": "board_key",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "게시판 스코프 키(NULL 대체)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -9811,13 +11720,26 @@
     },
     {
      "_id": "QnqJxH4ufohbechRD",
-     "name": "비공개 저장 경로",
+     "name": "재인코딩한 사진의 비공개 저장 경로(content bucket, 웹 루트 밖). 올릴 때 정하고 ACTIVE부터 객체가 있다",
      "pName": "storage_key",
      "domain": "",
      "type": "VARCHAR(512)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "비공개 저장 경로(웹 루트 밖)",
+     "comment": "재인코딩한 사진의 비공개 저장 경로(content bucket, 웹 루트 밖). 올릴 때 정하고 ACTIVE부터 객체가 있다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Mh5zAHbEWe6nTG6q4",
+     "name": "올린 원본의 비공개 저장 경로. 내보내지 않고 처리 뒤 지운다. 지웠으면 NULL",
+     "pName": "source_key",
+     "domain": "",
+     "type": "VARCHAR(512)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "올린 원본의 비공개 저장 경로. 내보내지 않고 처리 뒤 지운다. 지웠으면 NULL",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -9934,7 +11856,72 @@
      "type": "VARCHAR(10)",
      "defaultValue": "'TEMP'",
      "isAllowNull": false,
-     "comment": "상태: TEMP|ACTIVE|DELETED",
+     "comment": "상태: TEMP(검사·재인코딩 대기)|ACTIVE|FAILED|DELETED",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "FFMSm5b5cAKiaHf6B",
+     "name": "처리 시도 수",
+     "pName": "attempt_count",
+     "domain": "",
+     "type": "TINYINT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "처리 시도 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "r4ykS76xEXyfieD6Z",
+     "name": "다시 처리할 수 있는 일시",
+     "pName": "next_attempt_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "다시 처리할 수 있는 일시(검사기·converter 장애 뒤)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "acb7NEh6yHyDwnzZA",
+     "name": "처리 중인 worker",
+     "pName": "lease_owner",
+     "domain": "",
+     "type": "VARCHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "처리 중인 worker",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "JwgxpaJshm9BiXBad",
+     "name": "처리 lease 만료 일시",
+     "pName": "lease_expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "처리 lease 만료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "czyLjojYH9tonQoXw",
+     "name": "실패 코드",
+     "pName": "error_code",
+     "domain": "",
+     "type": "VARCHAR(30)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실패 코드: not_image|too_large|rejected|unavailable|failed",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -9961,6 +11948,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "삭제 표시 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "fkRBhGF6uTewvM3Gg",
+     "name": "DELETED·FAILED 행의 객체를 지운 일시",
+     "pName": "purged_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "DELETED·FAILED 행의 객체를 지운 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10182,6 +12182,19 @@
      "relType": null
     },
     {
+     "_id": "23Y4bg2M4mHr2Dvxu",
+     "name": "채점 의견",
+     "pName": "grader_comment",
+     "domain": "",
+     "type": "VARCHAR(1000)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "채점 의견(일반 텍스트, 수동 채점)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "hcNtpDsiHP4KL7R3b",
      "name": "채점 상태",
      "pName": "grading_status",
@@ -10189,7 +12202,7 @@
      "type": "VARCHAR(20)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "채점 상태(auto:자동, pending_similar:유사답 검사중, done:완료, manual:수동)",
+     "comment": "채점 상태(NULL=응시 중, auto:자동 채점, pending:수동 채점 대기, manual:수동 채점)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10206,6 +12219,19 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "KEXLXEvQqHStt8oJF",
+     "name": "수동 채점자 ID",
+     "pName": "graded_by_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수동 채점자 ID(자동 채점이면 NULL)",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
      "_id": "WcmtP8yKpzhRjZSdu",
@@ -10350,6 +12376,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "제출 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "9WJnijEAr34C6RnJn",
+     "name": "종료 사유",
+     "pName": "finish_reason",
+     "domain": "",
+     "type": "VARCHAR(20)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "종료 사유(submitted:학생 제출, deadline:응시 마감 일시에 서버가 닫음)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10628,9 +12667,9 @@
      "pName": "question_type",
      "domain": "",
      "type": "VARCHAR(20)",
-     "defaultValue": "'choice'",
+     "defaultValue": "'single'",
      "isAllowNull": false,
-     "comment": "문항 유형(choice:객관식, short:단답형, essay:서술형) [추정]",
+     "comment": "문항 유형(single:단일 선택, multiple:복수 선택, short:단답형 수동 채점)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10643,7 +12682,7 @@
      "type": "TEXT",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "문항 지문",
+     "comment": "문항 지문(일반 텍스트)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10669,7 +12708,7 @@
      "type": "TEXT",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "해설(결과 공개 후 노출) [추정]",
+     "comment": "해설(일반 텍스트, 정답 공개 뒤에만 학생에게 보인다)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10771,13 +12810,13 @@
     },
     {
      "_id": "MuTuXtFmpyraL85Yg",
-     "name": "응시 제한 시간",
+     "name": "응시 제한 시간(분, NULL=응시 마감까지). 응시 마감 일시는 시작할 때 고정한다",
      "pName": "duration_minutes",
      "domain": "",
      "type": "INT",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "응시 제한 시간(분) [추정]",
+     "comment": "응시 제한 시간(분, NULL=응시 마감까지). 응시 마감 일시는 시작할 때 고정한다",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10790,33 +12829,33 @@
      "type": "INT",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "허용 응시 횟수(NULL=제한 없음) [추정]",
+     "comment": "허용 응시 횟수(NULL=제한 없음)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
     },
     {
      "_id": "a7vdTkNjh5K4gm8oM",
-     "name": "문항 순서 섞기 여부",
+     "name": "응시마다 문항 순서를 섞는지",
      "pName": "shuffle_yn",
      "domain": "",
      "type": "TINYINT(1)",
      "defaultValue": "0",
      "isAllowNull": false,
-     "comment": "문항 순서 섞기 여부 [추정]",
+     "comment": "응시마다 문항 순서를 섞는지(응시 ID로 정해지는 고정 순서)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
     },
     {
      "_id": "vyd8z4oxj9FdFggGm",
-     "name": "정답·해설 공개 여부",
+     "name": "정답·해설·문항별 점수 공개 여부",
      "pName": "answer_release_yn",
      "domain": "",
      "type": "TINYINT(1)",
      "defaultValue": "0",
      "isAllowNull": false,
-     "comment": "정답·해설 공개 여부 [추정]",
+     "comment": "정답·해설·문항별 점수 공개 여부(점수 공개 뒤, 응시 기간이 끝난 뒤에만 보인다)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10843,6 +12882,114 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "BzPHe4yDi7t2NBuFC",
+     "name": "퀴즈 설정·문항 수정 번호",
+     "pName": "revision_no",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "퀴즈 설정·문항 수정 번호(수정할 때마다 1 증가, 동시 수정 감지)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "3c5xP4kQHE43oqTe6",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "scheduler_locks",
+   "name": "주기 작업 lease 잠금",
+   "position": {
+    "x": 6880,
+    "y": 3012
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "cwEGmqkPjsMp4cbtX",
+      "name": "주기 작업 잠금 ID",
+      "pName": "scheduler_lock_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "주기 작업 잠금 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "sRqmY87Nef4bzZrEd",
+     "name": "잠금 이름",
+     "pName": "lock_name",
+     "domain": "",
+     "type": "VARCHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "잠금 이름(주기 작업 이름, 예: files.storage_gc)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "raTFoY7YJuXdmDFr5",
+     "name": "lease 끝 일시(DB 시계). 이 시각이 지나면 다른 인스턴스가 잡을 수 있다",
+     "pName": "locked_until",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "lease 끝 일시(DB 시계). 이 시각이 지나면 다른 인스턴스가 잡을 수 있다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "TGdnq3pPhdcZx2uKP",
+     "name": "마지막으로 잡은 일시",
+     "pName": "locked_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "마지막으로 잡은 일시(DB 시계)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "xLZhauo7t8dNbLnQq",
+     "name": "잡은 인스턴스와 이번 실행의 token(host:pid:token). 놓을 때 같은 값인지 확인한다",
+     "pName": "locked_by",
+     "domain": "",
+     "type": "VARCHAR(160)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "잡은 인스턴스와 이번 실행의 token(host:pid:token). 놓을 때 같은 값인지 확인한다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "7CNi28GxPDKdC2Sxc",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -10950,7 +13097,7 @@
      "type": "TINYINT UNSIGNED",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "수단: 1 앱푸시|2 이메일|3 SMS|4 PUSH|5 앱인증",
+     "comment": "수단: 1 앱푸시|2 이메일|3 SMS|4 PUSH|5 앱인증|6 학교 IdP 재인증",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11149,7 +13296,7 @@
      "type": "VARCHAR(30)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "목적: CONTACT_VIEW|CONTACT_EDIT|PASSWORD_CHANGE|LEARNING_AUTH",
+     "comment": "목적: RECENT_AUTH(민감한 연산 전 재인증)|LEARNING_AUTH(학습 인증 grant)|CONTACT_VIEW|CONTACT_EDIT|PASSWORD_CHANGE",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11162,7 +13309,7 @@
      "type": "VARCHAR(20)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "통과 수단: PASSWORD|SSO|SECONDARY_AUTH",
+     "comment": "통과 수단: SSO(학교 IdP 재로그인)|TOTP(break-glass)|SECONDARY_AUTH(2차 인증 challenge)|DEV(로컬 실행 전용)|PASSWORD",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11182,13 +13329,13 @@
     },
     {
      "_id": "Gbops7tD55MN2vgxS",
-     "name": "만료 일시",
+     "name": "만료 일시. 폐기하면 폐기 시각으로 당긴다",
      "pName": "expires_at",
      "domain": "",
      "type": "DATETIME(3)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "만료 일시",
+     "comment": "만료 일시. 폐기하면 폐기 시각으로 당긴다",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11283,7 +13430,7 @@
      "type": "VARCHAR(20)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "결과(ok|bad_pin|bad_qr|expired|not_target|duplicate)",
+     "comment": "결과(ok|duplicate|bad_pin|bad_qr|locked|expired|closed|cancelled|not_target)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11423,6 +13570,32 @@
      "relType": null
     },
     {
+     "_id": "45zYpFXdkzsjgvKRo",
+     "name": "PIN·QR token을 만드는 회차 비밀값",
+     "pName": "round_secret",
+     "domain": "",
+     "type": "BINARY(32)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "PIN·QR token을 만드는 회차 비밀값(닫거나 취소하면 지운다)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "jCazAg9yAHhGr4WWP",
+     "name": "QR token 교체 주기",
+     "pName": "qr_rotation_sec",
+     "domain": "",
+     "type": "SMALLINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "QR token 교체 주기(초, qr 방식만)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "sZkc9yjWhZ26CzW4b",
      "name": "회차 상태",
      "pName": "state",
@@ -11431,6 +13604,19 @@
      "defaultValue": "'open'",
      "isAllowNull": false,
      "comment": "회차 상태(open|closed|cancelled)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "HSrJrPWFLzXMgYyXT",
+     "name": "진행 중 회차의 출석 차시",
+     "pName": "open_session_key",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "진행 중 회차의 출석 차시(차시당 하나 부분 유일 제약용)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11449,6 +13635,19 @@
      "relType": null
     },
     {
+     "_id": "pYKZAHm45EThfHmht",
+     "name": "이 시각부터 제출하면 지각",
+     "pName": "late_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "이 시각부터 제출하면 지각(개시 시각 + 지각 기준)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "NvQ7nwWKzECf4v6ZN",
      "name": "마감 일시",
      "pName": "ends_at",
@@ -11460,6 +13659,32 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "XsTMr9JpuXJWzp8nx",
+     "name": "마감·취소 처리 일시",
+     "pName": "closed_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "마감·취소 처리 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "weGnui4aivcoyh56r",
+     "name": "마감·취소한 사용자 ID",
+     "pName": "closed_by",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "마감·취소한 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
      "_id": "uCfkpkMhMYpR4Wdie",
@@ -11496,6 +13721,326 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "unArfB9RGWQwRXNbf",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_chat_exchanges",
+   "name": "학습 대화 질문·답",
+   "position": {
+    "x": 6880,
+    "y": 3288
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "YkDWYS44qGKCarsCS",
+      "name": "학습 대화 질문·답 ID",
+      "pName": "study_chat_exchange_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학습 대화 질문·답 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "FSfj5u9uMCuxMLLWY",
+     "name": "학습 대화 ID",
+     "pName": "study_chat_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학습 대화 ID",
+     "relEntity": "Bew5n8axK6XQg3bHH",
+     "relFieldId": "yHLSc936wG4wGpxm8",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "vNCe55A6XGCdEmk7c",
+     "name": "상태",
+     "pName": "exchange_state",
+     "domain": "",
+     "type": "VARCHAR(12)",
+     "defaultValue": "'queued'",
+     "isAllowNull": false,
+     "comment": "상태: queued|running|answered|failed|cancelled",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "H79CakiEFHBKDM582",
+     "name": "실패·취소 코드",
+     "pName": "error_code",
+     "domain": "",
+     "type": "VARCHAR(30)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실패·취소 코드: consent|disabled|forbidden|unavailable|not_configured|budget|provider|invalid_output|interrupted|deleted|internal",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "5eubd8fWraAucy4we",
+     "name": "모델 호출 수",
+     "pName": "call_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "모델 호출 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "i7jdzTjLGkft5D8co",
+     "name": "실행한 도구 호출 수",
+     "pName": "tool_call_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "실행한 도구 호출 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "J3QTPGKnQCgQ9Kau5",
+     "name": "입력 token 수",
+     "pName": "input_tokens",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "입력 token 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "d3jCpYssgChZDDjMC",
+     "name": "출력 token 수",
+     "pName": "output_tokens",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "출력 token 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "YyethmHCwd55FovoC",
+     "name": "실행 중인 worker 식별자",
+     "pName": "lease_owner",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실행 중인 worker 식별자",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gTaBnLyAGFTi5p3HP",
+     "name": "실행 lease 만료 일시",
+     "pName": "lease_expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실행 lease 만료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "PEEDR7yb98BbSrZJ5",
+     "name": "실행 시작 일시",
+     "pName": "started_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실행 시작 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "KX9Ym27jzenWDvMEt",
+     "name": "종료 일시",
+     "pName": "finished_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "종료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gQZeyvQtxQzeby9qi",
+     "name": "답을 기다리는 질문 키",
+     "pName": "active_chat_key",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "답을 기다리는 질문 키(대화마다 하나만)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "fhbBcECBBBkJCmZYK",
+     "name": "질문 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "질문 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "Bew5n8axK6XQg3bHH",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_chats",
+   "name": "학습 대화",
+   "position": {
+    "x": 6880,
+    "y": 3772
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "yHLSc936wG4wGpxm8",
+      "name": "학습 대화 ID",
+      "pName": "study_chat_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학습 대화 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "8u29kkRy5CDtD7Sht",
+     "name": "대화 소유 사용자 ID",
+     "pName": "owner_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "대화 소유 사용자 ID(소유자만 읽고 지운다)",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "J72WZ7d6xrDZ2PeCE",
+     "name": "대화를 연 경로의 과목 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "대화를 연 경로의 과목 ID",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "z43mtTB47fQLJssHf",
+     "name": "대화 근거 파일 ID",
+     "pName": "file_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "대화 근거 파일 ID(검색 범위는 이 파일 하나)",
+     "relEntity": "bxoZkn979ue2k9gpi",
+     "relFieldId": "tQ3z9cXG7sFPkGYM7",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "kCxHkcWHZ2PqDfv6R",
+     "name": "질문 수",
+     "pName": "exchange_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "질문 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ZQ4gxWz9TxucbSPWu",
+     "name": "마지막 질문 일시",
+     "pName": "last_activity_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "마지막 질문 일시(보존 기간 기준)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "B8kEz4wnFPLg8xeGG",
+     "name": "소유자 삭제 일시. 본문 객체를 지운 뒤 행도 지운다",
+     "pName": "deleted_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "소유자 삭제 일시. 본문 객체를 지운 뒤 행도 지운다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "YpWSiWhdcfYN6swZB",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -11555,6 +14100,19 @@
      "relEntity": null,
      "relFieldId": null,
      "relType": null
+    },
+    {
+     "_id": "kc2Q8kxgZysfqBkZf",
+     "name": "요청 경로의 과목 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "요청 경로의 과목 ID(동의 확인과 사용량 합계 범위, V31 이전 작업은 NULL)",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
      "_id": "jB4eDT3PfepYNLHhR",
@@ -11701,13 +14259,13 @@
     },
     {
      "_id": "BRT8FvK8bb9KWKfuZ",
-     "name": "실패 코드",
+     "name": "실패·취소 코드",
      "pName": "error_code",
      "domain": "",
      "type": "VARCHAR(30)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "실패 코드: interrupted|not_configured|file|provider|invalid_output|budget|input|internal",
+     "comment": "실패·취소 코드: interrupted|not_configured|file|provider|invalid_output|budget|input|internal|consent|disabled",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -12252,7 +14810,7 @@
       "type": "BIGINT UNSIGNED",
       "defaultValue": "",
       "isAllowNull": false,
-      "comment": "설문 답변 보기 ID",
+      "comment": "설문 답변 보기 ID(응용이 만드는 임의 값. 입력 순서가 드러나지 않는다, ADR-0022)",
       "relEntity": null,
       "relFieldId": null,
       "relType": null
@@ -12295,7 +14853,7 @@
      "type": "DATETIME(3)",
      "defaultValue": "CURRENT_TIMESTAMP(3)",
      "isAllowNull": false,
-     "comment": "생성 일시",
+     "comment": "생성 일시(익명 설문은 일 단위 절삭 저장)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -12321,7 +14879,7 @@
       "type": "BIGINT UNSIGNED",
       "defaultValue": "",
       "isAllowNull": false,
-      "comment": "설문 답변 ID",
+      "comment": "설문 답변 ID(응용이 만드는 임의 값. 입력 순서가 드러나지 않는다, ADR-0022)",
       "relEntity": null,
       "relFieldId": null,
       "relType": null
@@ -12358,13 +14916,13 @@
     },
     {
      "_id": "adP8FE9k22NX4B27q",
-     "name": "기타·서술형 답변",
+     "name": "서술형 답변",
      "pName": "answer_text",
      "domain": "",
      "type": "VARCHAR(2000)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "기타·서술형 답변(최대 1800바이트)",
+     "comment": "서술형 답변(일반 텍스트, 최대 2000자)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -12377,7 +14935,7 @@
      "type": "DATETIME(3)",
      "defaultValue": "CURRENT_TIMESTAMP(3)",
      "isAllowNull": false,
-     "comment": "생성 일시",
+     "comment": "생성 일시(익명 설문은 일 단위 절삭 저장)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -12472,7 +15030,7 @@
      "type": "DATETIME(3)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "응답 완료 일시",
+     "comment": "응답 완료 일시(익명 설문은 일 단위 절삭 저장)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -12485,7 +15043,7 @@
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "현재 응답 세트 ID",
+     "comment": "현재 응답 세트 ID(쓰지 않고 NULL로 둔다. 참여와 응답을 잇지 않는다, ADR-0022)",
      "relEntity": "qru4uPJLwM3FHNraN",
      "relFieldId": "eckDDp5FGTR9ALKJz",
      "relType": "ZERO_OR_ONE_OR_MANY"
@@ -12511,7 +15069,7 @@
      "type": "DATETIME(3)",
      "defaultValue": "CURRENT_TIMESTAMP(3)",
      "isAllowNull": false,
-     "comment": "생성 일시",
+     "comment": "생성 일시(익명 설문은 일 단위 절삭 저장)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -12525,6 +15083,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "zeyf3D9CLm5yTGaMd",
+     "name": "익명 설문 완료 요청의 Idempotency-Key",
+     "pName": "completion_key",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "익명 설문 완료 요청의 Idempotency-Key(SC-05-A 참여 원장. 실명 설문은 공용 멱등 원장을 쓰므로 NULL)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -12721,13 +15292,13 @@
     },
     {
      "_id": "vp2rp45bmnfwgfpMK",
-     "name": "문항 유형",
+     "name": "문항 유형(single:객관식 단일, multiple:객관식 복수, scale:척도(보기 번호가 척도 값), essay:서술형)",
      "pName": "question_type",
      "domain": "",
      "type": "VARCHAR(20)",
      "defaultValue": "'single'",
      "isAllowNull": false,
-     "comment": "문항 유형(single:객관식 단일, multiple:객관식 복수, essay:서술형)",
+     "comment": "문항 유형(single:객관식 단일, multiple:객관식 복수, scale:척도(보기 번호가 척도 값), essay:서술형)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -12857,7 +15428,7 @@
       "type": "BIGINT UNSIGNED",
       "defaultValue": "",
       "isAllowNull": false,
-      "comment": "설문 응답 세트 ID",
+      "comment": "설문 응답 세트 ID(응용이 만드는 임의 값. 입력 순서가 드러나지 않는다, ADR-0022)",
       "relEntity": null,
       "relFieldId": null,
       "relType": null
@@ -12939,7 +15510,7 @@
      "type": "DATETIME(3)",
      "defaultValue": "CURRENT_TIMESTAMP(3)",
      "isAllowNull": false,
-     "comment": "생성 일시",
+     "comment": "생성 일시(익명 설문은 일 단위 절삭 저장)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -13096,6 +15667,19 @@
      "relType": null
     },
     {
+     "_id": "2RqRLCgFWufn8moc5",
+     "name": "설문 안내",
+     "pName": "description_text",
+     "domain": "",
+     "type": "TEXT",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "설문 안내(일반 텍스트, 알림마당 설문만. 강의실 설문은 학습활동 설명을 쓴다)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "6z2cNfoxX4DcNz9Dh",
      "name": "응답방식",
      "pName": "response_mode",
@@ -13234,6 +15818,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "xGQppzh2Ty7C4HPza",
+     "name": "설문 설정 수정 번호",
+     "pName": "revision_no",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "설문 설정 수정 번호(수정할 때마다 1 증가, 동시 수정 감지)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -13381,6 +15978,19 @@
      "defaultValue": "0",
      "isAllowNull": false,
      "comment": "정렬 순서",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "o4v8x44Zjt9cZwAAC",
+     "name": "수정 낙관적 버전",
+     "pName": "row_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "수정 낙관적 버전(If-Match로 확인)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -13629,13 +16239,13 @@
    "fields": [
     {
      "_id": "BSBtevy7ya8dWaLiD",
-     "name": "경로 코드",
+     "name": "용도 코드",
      "pName": "policy_code",
      "domain": "",
-     "type": "VARCHAR(20)",
+     "type": "VARCHAR(40)",
      "defaultValue": "",
      "isAllowNull": false,
-     "comment": "경로 코드(K002,K004,K006,M001,H002,MY01)",
+     "comment": "용도 코드(lecture_material, assignment_submission 등. 원본 경로 코드 K002,K004,K006,M001,H002,MY01)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -13835,6 +16445,19 @@
      "defaultValue": "",
      "isAllowNull": true,
      "comment": "클라이언트 멱등 업로드 키",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "A2xwRuyWS3NQeEApn",
+     "name": "멱등 업로드 요청 지문",
+     "pName": "request_fingerprint",
+     "domain": "",
+     "type": "CHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "멱등 업로드 요청 지문(용도, 과목, 이름, 크기, 내용 SHA-256, 파일함 폴더를 정렬한 JSON의 SHA-256. key가 없으면 NULL)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -14885,7 +17508,7 @@
      "type": "VARCHAR(30)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "폐기 사유: LOGOUT|DEVICE_REVOKED|PASSWORD_CHANGED|EXPIRED|ADMIN",
+     "comment": "폐기 사유: LOGOUT|USER_REVOKED(본인이 다른 session 종료)|DEVICE_REVOKED|PASSWORD_CHANGED|EXPIRED|ADMIN",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -15092,6 +17715,378 @@
    ]
   },
   {
+   "_id": "8RxY67pmigj4PoqKc",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "video_assets",
+   "name": "영상 asset",
+   "position": {
+    "x": 6880,
+    "y": 4100
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "whJ7wDkpx3MGniBo5",
+      "name": "영상 asset ID",
+      "pName": "video_asset_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "영상 asset ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "g7enyvsMc6A8tcR3A",
+     "name": "원본 영상 파일 ID",
+     "pName": "file_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "원본 영상 파일 ID",
+     "relEntity": "bxoZkn979ue2k9gpi",
+     "relFieldId": "tQ3z9cXG7sFPkGYM7",
+     "relType": "ZERO_OR_ONE"
+    },
+    {
+     "_id": "o6xk2zex5hw8DW74K",
+     "name": "asset 키",
+     "pName": "asset_key",
+     "domain": "",
+     "type": "VARCHAR(64)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "asset 키(delivery bucket vod/{asset_key}/, content bucket vod-keys/{asset_key}.key)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "94eabteZJYugTzEe7",
+     "name": "HLS key URI",
+     "pName": "key_uri",
+     "domain": "",
+     "type": "VARCHAR(200)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "HLS key URI(재생 목록에 쓰는 백엔드 key API 경로)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "LmRJdSoKK48SGySwj",
+     "name": "상태",
+     "pName": "asset_state",
+     "domain": "",
+     "type": "VARCHAR(12)",
+     "defaultValue": "'processing'",
+     "isAllowNull": false,
+     "comment": "상태: processing|ready|failed|removed",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "4q23n4N37KypNDh2A",
+     "name": "재생 목록 경로",
+     "pName": "playlist_path",
+     "domain": "",
+     "type": "VARCHAR(200)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "재생 목록 경로(vod/{asset_key}/index.m3u8)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "sR5PA2sksyq3ooT64",
+     "name": "재생 길이",
+     "pName": "duration_sec",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "재생 길이(초)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "wf9kfRDQ6ogfC7xNJ",
+     "name": "segment 수",
+     "pName": "segment_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "segment 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "QYKCHBWXGKXYiMvtZ",
+     "name": "게시한 HLS 결과 크기",
+     "pName": "output_bytes",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "게시한 HLS 결과 크기(바이트)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Pkwi8AH7JEasEgfJG",
+     "name": "HLS 결과와 key를 지운 일시",
+     "pName": "purged_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "HLS 결과와 key를 지운 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "odrCqtc9GeJBkappW",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "9TDwhy3e2BRQ8HZJm",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "wAMsp8AEzpmrjDtAm",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "video_transcode_jobs",
+   "name": "영상 변환 작업",
+   "position": {
+    "x": 6880,
+    "y": 4532
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "4snJD8Lx2cLKLW76e",
+      "name": "영상 변환 작업 ID",
+      "pName": "video_transcode_job_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "영상 변환 작업 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "fGYtDdAwFX3oW3pRt",
+     "name": "영상 asset ID",
+     "pName": "video_asset_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "영상 asset ID",
+     "relEntity": "8RxY67pmigj4PoqKc",
+     "relFieldId": "whJ7wDkpx3MGniBo5",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "xpiQyQMGzwjaK9tWg",
+     "name": "작업 상태",
+     "pName": "job_state",
+     "domain": "",
+     "type": "VARCHAR(12)",
+     "defaultValue": "'queued'",
+     "isAllowNull": false,
+     "comment": "작업 상태: queued|running|succeeded|failed|cancelled",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gCbSb3x8LuHG3LCW4",
+     "name": "실행을 시작한 횟수",
+     "pName": "attempt_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "실행을 시작한 횟수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "RqACDeQD3fPS5PYDi",
+     "name": "다음 실행 가능 일시",
+     "pName": "next_attempt_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "다음 실행 가능 일시(재시도 대기)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ToAEmXMew6JpYqnT5",
+     "name": "마지막 실패 코드",
+     "pName": "error_code",
+     "domain": "",
+     "type": "VARCHAR(30)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "마지막 실패 코드: invalid_media|too_large|too_long|timeout|unavailable|failed|interrupted|internal",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "rsx3X3hiQJATrMxCG",
+     "name": "취소 요청 일시",
+     "pName": "cancel_requested_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "취소 요청 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gsrGTgPitkA22EPey",
+     "name": "실행 중인 worker 식별자",
+     "pName": "lease_owner",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실행 중인 worker 식별자",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "AoireKKuGufpmmRSA",
+     "name": "실행 lease 만료 일시",
+     "pName": "lease_expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실행 lease 만료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "BXHuiJnrmBmcEooKX",
+     "name": "마지막 실행 시작 일시",
+     "pName": "started_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "마지막 실행 시작 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "vN2J8CcjEJkjKmpYx",
+     "name": "종료 일시",
+     "pName": "finished_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "종료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ppmkYRPk3Scbcmf7X",
+     "name": "진행 중 작업 asset 키",
+     "pName": "active_asset_key",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "진행 중 작업 asset 키(asset당 하나만 진행)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "4j8d8CPukZpSkXja9",
+     "name": "요청 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "요청 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "3ZkdRpeTEb7wNunqv",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "qfZJMSTQmnaNNmYN8",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "zip_job_items",
@@ -15267,27 +18262,92 @@
      "relType": null
     },
     {
-     "_id": "9hwmFgSvSt2gL2WQm",
-     "name": "생성된 ZIP 파일 ID",
-     "pName": "result_file_id",
+     "_id": "4sh8dmK46TjGYDTEH",
+     "name": "생성 시도 수",
+     "pName": "attempt_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "생성 시도 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "j8jyRi4pYf7gFXmYM",
+     "name": "생성 중인 worker 식별자",
+     "pName": "lease_owner",
+     "domain": "",
+     "type": "VARCHAR(100)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "생성 중인 worker 식별자",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "sSZ8u7T3HcommLXSA",
+     "name": "생성 lease 만료 일시",
+     "pName": "lease_expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "생성 lease 만료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "SSfHmBQTmgzw5Nsg2",
+     "name": "생성물 저장 키",
+     "pName": "result_storage_key",
+     "domain": "",
+     "type": "VARCHAR(400)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "생성물 저장 키(content bucket zips/{작업 ID}/...)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "WXXhgtHR6eithMKNB",
+     "name": "생성물 바이트 크기",
+     "pName": "result_size_bytes",
      "domain": "",
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "생성된 ZIP 파일 ID",
-     "relEntity": "bxoZkn979ue2k9gpi",
-     "relFieldId": "tQ3z9cXG7sFPkGYM7",
-     "relType": "ZERO_OR_ONE_OR_MANY"
+     "comment": "생성물 바이트 크기",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "9inbev97ioWt9nhyn",
+     "name": "생성 완료 일시",
+     "pName": "completed_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "생성 완료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
     },
     {
      "_id": "utpca9fjssnfuMBhH",
-     "name": "실패 사유",
+     "name": "실패 사유 코드",
      "pName": "failure_reason",
      "domain": "",
      "type": "VARCHAR(200)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "실패 사유",
+     "comment": "실패 사유 코드(item_unavailable, build_failed)",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -15300,7 +18360,20 @@
      "type": "DATETIME(3)",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "생성물 만료 일시",
+     "comment": "생성물 만료 일시(ready, failed 뒤 TTL)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gwkbsHJmAiDnybowD",
+     "name": "만료 뒤 저장소 객체를 지운 일시",
+     "pName": "purged_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "만료 뒤 저장소 객체를 지운 일시",
      "relEntity": null,
      "relFieldId": null,
      "relType": null

@@ -10,7 +10,8 @@ import java.util.Optional;
 public interface DocumentRenditions {
 
 	/**
-	 * 파일의 현재 버전에 대한 rendition을 돌려준다. 없으면 converter로 만든다. 만드는 동안 blocking된다.
+	 * 파일의 현재 버전에 대한 rendition을 돌려준다. 없으면 converter로 만든다. 만드는 동안 blocking된다. 다른 worker가 같은 파일을
+	 * 변환하고 있으면 끝나기를 기다린다. office 문서는 converter 안에서 PDF로 바꾼 뒤 만든다(ADR-0033).
 	 *
 	 * @throws RenditionException
 	 */

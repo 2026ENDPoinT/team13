@@ -7,6 +7,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,7 +65,8 @@ class BreakGlassAuthTests extends IntegrationTest {
 		this.mvc.perform(get("/api/me").cookie(session))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.userId").value(this.adminId))
-			.andExpect(jsonPath("$.breakGlass").value(true));
+			.andExpect(jsonPath("$.breakGlass").value(true))
+			.andExpect(jsonPath("$.stepUpMethod").value("totp"));
 		this.mvc.perform(get("/api/me")).andExpect(status().isUnauthorized());
 		assertThat(token(session)).isNotEqualTo(storedHash(session));
 	}
@@ -97,6 +105,54 @@ class BreakGlassAuthTests extends IntegrationTest {
 		this.mvc.perform(login(csrf, BREAK_GLASS_PASSWORD, currentCode()))
 			.andExpect(status().isTooManyRequests())
 			.andExpect(jsonPath("$.code").value("locked"));
+	}
+
+	@Test
+	void concurrentGuessesCannotGetPastTheFailureLimit() throws Exception {
+		Cookie csrf = csrf();
+		int guesses = 8;
+		ExecutorService pool = Executors.newFixedThreadPool(guesses);
+		CountDownLatch go = new CountDownLatch(1);
+		try {
+			List<Future<Integer>> results = new ArrayList<>();
+			for (int i = 0; i < guesses; i++) {
+				String password = "guess-" + i;
+				results.add(pool.submit(() -> {
+					go.await();
+					return this.mvc.perform(from("198.51.100.21", login(csrf, password, currentCode())))
+						.andReturn()
+						.getResponse()
+						.getStatus();
+				}));
+			}
+			go.countDown();
+			List<Integer> statuses = new ArrayList<>();
+			for (Future<Integer> result : results) {
+				statuses.add(result.get(60, TimeUnit.SECONDS));
+			}
+			assertThat(statuses).containsOnly(401, 429);
+		}
+		finally {
+			pool.shutdownNow();
+		}
+		// 계정 행 잠금 아래에서 판정하므로 한도만큼만 비밀번호를 시험하고 나머지는 잠금으로 거절한다.
+		assertThat(this.jdbc.sql("""
+				SELECT failure_reason, COUNT(*) FROM login_events WHERE user_id = :id GROUP BY failure_reason
+				""").param("id", this.adminId).query((rs, n) -> rs.getString(1) + "=" + rs.getLong(2)).list())
+			.containsExactlyInAnyOrder("BAD_PASSWORD=" + BreakGlassLogin.MAX_FAILURES,
+					"LOCKED=" + (guesses - BreakGlassLogin.MAX_FAILURES));
+	}
+
+	@Test
+	void limitsAttemptsPerBrowserAddressWithoutBlockingOtherAddresses() throws Exception {
+		Cookie csrf = csrf();
+		for (int i = 0; i < AuthController.ADDRESS_LIMIT; i++) {
+			this.mvc.perform(from("198.51.100.22", unknownAccount(csrf))).andExpect(status().isUnauthorized());
+		}
+		this.mvc.perform(from("198.51.100.22", unknownAccount(csrf)))
+			.andExpect(status().isTooManyRequests())
+			.andExpect(jsonPath("$.code").value("rate_limited"));
+		this.mvc.perform(from("198.51.100.23", unknownAccount(csrf))).andExpect(status().isUnauthorized());
 	}
 
 	@Test
@@ -153,6 +209,21 @@ class BreakGlassAuthTests extends IntegrationTest {
 			.header("X-XSRF-TOKEN", csrf.getValue())
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(body(password, code));
+	}
+
+	private MockHttpServletRequestBuilder unknownAccount(Cookie csrf) {
+		return post("/api/auth/break-glass").cookie(csrf)
+			.header("X-XSRF-TOKEN", csrf.getValue())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"username\":\"nobody\",\"password\":\"x\",\"code\":\"000000\"}");
+	}
+
+	/** 연결한 쪽 주소를 정한다. 요청 제한은 이 주소로 센다. */
+	private static MockHttpServletRequestBuilder from(String address, MockHttpServletRequestBuilder request) {
+		return request.with((r) -> {
+			r.setRemoteAddr(address);
+			return r;
+		});
 	}
 
 	private static String body(String password, String code) {

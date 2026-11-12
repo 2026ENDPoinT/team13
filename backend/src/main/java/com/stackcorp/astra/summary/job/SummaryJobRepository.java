@@ -5,6 +5,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,7 +24,7 @@ import com.stackcorp.astra.summary.pipeline.Usage;
 class SummaryJobRepository {
 
 	private static final String COLUMNS = """
-			summary_job_id, file_id, file_version_no, requested_by_user_id, retry_of_job_id, job_state, job_stage,
+			summary_job_id, file_id, file_version_no, course_id, requested_by_user_id, retry_of_job_id, job_state, job_stage,
 			pages_done, pages_total, model_name, prompt_version, call_count, input_tokens, output_tokens, error_code,
 			error_message, cancel_requested_at, created_at, started_at, finished_at""";
 
@@ -36,14 +37,15 @@ class SummaryJobRepository {
 	/**
 	 * @throws org.springframework.dao.DuplicateKeyException 같은 파일에 진행 중인 작업이 있을 때
 	 */
-	long insert(long fileId, int fileVersionNo, Long requestedBy, Long retryOf) {
+	long insert(long fileId, int fileVersionNo, long courseId, Long requestedBy, Long retryOf) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
-				INSERT INTO summary_jobs (file_id, file_version_no, requested_by_user_id, retry_of_job_id)
-				VALUES (:fileId, :version, :requestedBy, :retryOf)
+				INSERT INTO summary_jobs (file_id, file_version_no, course_id, requested_by_user_id, retry_of_job_id)
+				VALUES (:fileId, :version, :courseId, :requestedBy, :retryOf)
 				""")
 			.param("fileId", fileId)
 			.param("version", fileVersionNo)
+			.param("courseId", courseId)
 			.param("requestedBy", requestedBy)
 			.param("retryOf", retryOf)
 			.update(key, "summary_job_id");
@@ -173,6 +175,26 @@ class SummaryJobRepository {
 				""").param("id", jobId).update() == 1;
 	}
 
+	/**
+	 * 철회한 동의에 기대던 작업을 멈춘다. 대기 작업은 바로 취소하고, 실행 중인 작업에는 취소를 요청한다. 행은 기본키 순서로 잠긴다.
+	 * @return 바로 취소한 대기 작업 수
+	 */
+	int cancelForRevokedConsent(long courseId, long requestedBy) {
+		int cancelled = this.jdbc.sql("""
+				UPDATE summary_jobs
+				   SET job_state = 'cancelled', error_code = 'consent', cancel_requested_at = CURRENT_TIMESTAMP(3),
+				       finished_at = CURRENT_TIMESTAMP(3)
+				 WHERE course_id = :course AND requested_by_user_id = :user AND job_state = 'queued'
+				 ORDER BY summary_job_id
+				""").param("course", courseId).param("user", requestedBy).update();
+		this.jdbc.sql("""
+				UPDATE summary_jobs SET cancel_requested_at = IFNULL(cancel_requested_at, CURRENT_TIMESTAMP(3))
+				 WHERE course_id = :course AND requested_by_user_id = :user AND job_state = 'running'
+				 ORDER BY summary_job_id
+				""").param("course", courseId).param("user", requestedBy).update();
+		return cancelled;
+	}
+
 	boolean cancelRequested(long jobId) {
 		return this.jdbc.sql("SELECT cancel_requested_at IS NOT NULL FROM summary_jobs WHERE summary_job_id = :id")
 			.param("id", jobId)
@@ -201,6 +223,13 @@ class SummaryJobRepository {
 				""").param("fileId", fileId).param("jobId", jobId).param("by", publishedBy).update();
 	}
 
+	/** @return 게시본이 있어 내렸으면 true */
+	boolean deletePublication(long fileId) {
+		return this.jdbc.sql("DELETE FROM summary_publications WHERE file_id = :fileId")
+			.param("fileId", fileId)
+			.update() == 1;
+	}
+
 	Optional<Publication> findPublication(long fileId) {
 		return this.jdbc.sql("""
 				SELECT summary_job_id, published_by_user_id, published_at FROM summary_publications WHERE file_id = :fileId
@@ -210,12 +239,18 @@ class SummaryJobRepository {
 			.optional();
 	}
 
-	record Publication(long fileId, long jobId, Long publishedByUserId, Instant publishedAt) {
+	/** 게시 pointer가 있는 파일. */
+	List<Long> publishedAmong(Collection<Long> fileIds) {
+		return this.jdbc.sql("SELECT file_id FROM summary_publications WHERE file_id IN (:ids)")
+			.param("ids", fileIds)
+			.query(Long.class)
+			.list();
 	}
 
 	private static SummaryJob map(ResultSet rs, int row) throws SQLException {
 		return new SummaryJob(rs.getLong("summary_job_id"), rs.getLong("file_id"), rs.getInt("file_version_no"),
-				rs.getObject("requested_by_user_id", Long.class), rs.getObject("retry_of_job_id", Long.class),
+				rs.getObject("course_id", Long.class), rs.getObject("requested_by_user_id", Long.class),
+				rs.getObject("retry_of_job_id", Long.class),
 				JobState.of(rs.getString("job_state")), rs.getString("job_stage"), rs.getInt("pages_done"),
 				rs.getObject("pages_total", Integer.class), rs.getString("model_name"), rs.getString("prompt_version"),
 				rs.getInt("call_count"), rs.getLong("input_tokens"), rs.getLong("output_tokens"),

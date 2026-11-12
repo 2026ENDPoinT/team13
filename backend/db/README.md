@@ -1,8 +1,8 @@
 # DB 설계와 ERD 작업 가이드
 
-ASTRA 재구현용 MySQL 8 스키마(97 테이블, FK 192개)를 어떻게 읽고, 바꾸고, ERDCloud ERD에 반영하는지 정한 문서다. 사람과 에이전트 모두 이 문서의 절차를 따른다. 경로는 이 레포 루트 기준이고, `reference/`는 [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈이다(`git submodule update --init`).
+ASTRA 재구현용 MySQL 8 스키마(113 테이블, FK 229개)를 어떻게 읽고, 바꾸고, ERDCloud ERD에 반영하는지 정한 문서다. 사람과 에이전트 모두 이 문서의 절차를 따른다. 경로는 이 레포 루트 기준이고, `reference/`는 [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈이다(`git submodule update --init`).
 
-- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`ASTRA DB`)
+- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`ASTRA DB`). 2026-11-12 기준 ERDCloud 화면에는 `V1__baseline.sql`의 97 테이블까지만 올라가 있다. `db/erdcloud/snapshot.json`은 모든 마이그레이션을 적용한 113 테이블이고, 6절대로 올려야 화면이 같아진다.
 - ERD B(캠퍼스 온, PostgreSQL)는 별개 서비스의 ERD라 [STack-Backend](https://github.com/STack-Corp/STack-Backend/blob/main/db/README.md)가 관리한다.
 - 근거 표기는 [reference/backend/README.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/README.md)의 `OBSERVED`/`CLIENT`/`INFERRED`/`PROPOSED`/`UNKNOWN`과 화면 명세의 `[추정]`을 그대로 쓴다. DB 설계 대부분은 화면·JS에서 역으로 추론한 `INFERRED`다. 운영 서버의 실제 테이블이 아니다.
 
@@ -11,10 +11,10 @@ ASTRA 재구현용 MySQL 8 스키마(97 테이블, FK 192개)를 어떻게 읽�
 | 파일 | 역할 |
 |---|---|
 | [src/main/resources/db/migration/](../src/main/resources/db/migration/) | **정본 DDL.** Flyway 마이그레이션 `V1__baseline.sql`, `V2__…sql` …을 버전 순서대로 적용한 결과가 기준이다 |
-| [reference/db/design/](https://github.com/STack-Corp/ASTRA-Reference/tree/main/db/design) `10_identity` ~ `60_files` | 영역별 설계 근거(Reference 레포): 테이블 목록, 근거, 경계·미결 사항. 문서 안의 DDL 조각은 설계 당시 초안이고 기준이 아니다 |
+| [reference/db/design/](https://github.com/STack-Corp/ASTRA-Reference/tree/main/db/design) `10_identity` ~ `80_shared` | 영역별 설계 근거(Reference 레포): 테이블 목록, 근거, 재구현 변경(마이그레이션별), 경계·미결 사항. 문서 안의 DDL 조각은 설계 당시 초안이고 기준이 아니다 |
 | [tools/check.sql](tools/check.sql) | 로드한 스키마 점검: 테이블/FK 수, 깨진 FK, COMMENT 누락, 고립 테이블 |
 | [tools/erdcloud_snapshot.py](tools/erdcloud_snapshot.py) | 로드한 스키마에서 ERDCloud 스냅샷 생성, `--compare`로 ERDCloud에서 내려받은 스냅샷과 비교 |
-| [erdcloud/snapshot.json](erdcloud/snapshot.json) | 현재 ERDCloud에 올라간 내용과 같은 스냅샷. 표 위치의 기준이기도 하다 |
+| [erdcloud/snapshot.json](erdcloud/snapshot.json) | 정본 DDL로 만든 ERDCloud 스냅샷. 6절대로 올린 뒤에는 ERDCloud 내용과 같다. 표 위치의 기준이기도 하다 |
 
 ERDCloud는 보기용 사본이다. ERDCloud 화면에서 직접 고친 내용은 정본에 반영되지 않으며, 다음 동기화 때 덮어써진다.
 
@@ -22,17 +22,18 @@ ERDCloud는 보기용 사본이다. ERDCloud 화면에서 직접 고친 내용�
 
 ## 2. 큰 그림
 
-### 2.1 7개 영역
+### 2.1 8개 영역
 
 | 영역 | 담당 | 테이블 | 중심 테이블 | 다른 영역으로 거는 FK |
 |---|---|---:|---|---|
 | 10 identity | 사용자·자격증명·기기·세션·재인증·개인설정·접속이력 | 13 | `users`, `user_sessions`, `user_devices` | 없음(의도적, [reference/db/design/10_identity.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/db/design/10_identity.md)) |
-| 20 catalog | 학기·과목·수강 원장·시간표·비정규 신청·좌석·학사일정·알림 | 14 | `terms`, `courses`, `course_enrollments` | identity, learning(`notifications.activity_id`) |
-| 30 learning | 주차·학습활동·온라인강의 진도·출석·그룹·강의계획서 | 23 | `learning_activities`, `course_weeks`, `attendance_sessions` | catalog, identity, files |
+| 20 catalog | 학기·과목·수강 원장·시간표·비정규 신청·좌석·학사일정·알림 | 15 | `terms`, `courses`, `course_enrollments` | identity, learning(`notifications.activity_id`) |
+| 30 learning | 주차·학습활동·온라인강의 진도·출석·그룹·강의계획서 | 25 | `learning_activities`, `course_weeks`, `attendance_sessions` | catalog, identity, files |
 | 40 assessment | 과제 제출·퀴즈 응시·설문 응답·성적 | 23 | `assignments`, `quiz_attempts`, `surveys`, `grade_items` | learning, catalog, identity, files |
-| 50 communication | 게시판·게시글·댓글·읽음·쪽지·서포터즈 채팅·임시저장 | 11 | `boards`, `posts`, `messages` | catalog, identity, learning, files |
-| 60 files | 업로드·파일·첨부 묶음·파일함·ZIP·미리보기·AI 요약 | 13 | `files`, `attachment_groups`, `filebox_items` | catalog, identity |
-| 70 summary | 강의 자료 쪽별 요약 작업·게시([ADR-0006](../docs/adr/0006-summary-module.md)) | 2 | `summary_jobs` | files, identity |
+| 50 communication | 게시판·게시글·댓글·읽음·쪽지·서포터즈 채팅·임시저장·알림마당 운영자 | 12 | `boards`, `posts`, `messages` | catalog, identity, learning, files |
+| 60 files | 업로드·파일·첨부 묶음·파일함·ZIP·미리보기·영상 asset·AI 요약 | 16 | `files`, `attachment_groups`, `filebox_items` | catalog, identity |
+| 70 summary | 강의 자료 쪽별 요약 작업·게시([ADR-0006](../docs/adr/0006-summary-module.md)), 외부 LLM 처리 동의·학습 대화·사용량([ADR-0032](../docs/adr/0032-llm-consent-and-study-chat.md)) | 6 | `summary_jobs`, `llm_consents`, `study_chats` | files, identity, catalog |
+| 80 shared | 감사 기록·멱등 원장([ADR-0012](../docs/adr/0012-idempotency-ledger-and-audit.md)), 주기 작업 잠금([ADR-0034](../docs/adr/0034-observability-and-scheduler-lock.md)) | 3 | `audit_events`, `idempotency_ledger` | identity. `scheduler_locks`는 FK가 없다 |
 
 ```mermaid
 flowchart LR
@@ -43,12 +44,14 @@ flowchart LR
   COM["50 communication"]
   FIL["60 files"]
   SUM["70 summary"]
+  SHR["80 shared"]
   CAT --> ID
   LRN --> CAT & ID & FIL
   ASM --> LRN & CAT & ID & FIL
   COM --> CAT & ID & LRN & FIL
   FIL --> CAT & ID
-  SUM --> FIL & ID
+  SUM --> FIL & ID & CAT
+  SHR --> ID
 ```
 
 화살표는 FK가 가리키는 방향이다. 이해와 구현 모두 identity → catalog → learning → 나머지 순서로 진행한다.
@@ -97,11 +100,13 @@ flowchart LR
 
 새 테이블·컬럼은 아래 규칙을 따른다. `tools/check.sql`이 COMMENT 누락과 깨진 FK를 잡는다.
 
+다른 테이블과 FK로 이어지지 않은 테이블도 `tools/check.sql`이 잡는다(isolated_table). 업무 행을 가리키지 않는 기반 테이블만 그 검사의 예외 목록에 이유와 함께 이름을 적는다. 지금은 주기 작업 lease 잠금 `scheduler_locks`(ADR-0034) 하나다.
+
 - **이름**: snake_case, 테이블은 복수형(원장은 `learning_credit_ledger`처럼 단수), PK는 `<단수>_id`, FK 제약은 `fk_<자식>_<부모>`. 예약어는 피한다(`role` → `enrollment_role`).
 - **PK**: `BIGINT UNSIGNED AUTO_INCREMENT` 대리키. 부모와 1:1인 상세 테이블은 부모 PK를 그대로 PK+FK로 쓴다(`learning_material_details.activity_id` 등).
 - **COMMENT 필수**: 모든 테이블·컬럼에 한글 COMMENT를 단다. ERD의 한글 이름은 COMMENT에서 `:` 앞, 맨 뒤 괄호 앞까지를 잘라 만든다. 예를 들어 `역할: STUDENT|TA`는 `역할`이 되므로, COMMENT는 "이름(보충 설명): 값 목록" 형태로 쓴다.
 - **상태값**: MySQL ENUM이나 코드 테이블 대신 `VARCHAR`를 쓰고, 가능한 값은 COMMENT에 적는다.
-- **시간**: `DATETIME(3)`, `DEFAULT CURRENT_TIMESTAMP(3)`, 수정 일시는 `ON UPDATE CURRENT_TIMESTAMP(3)`. `DATE`는 학기·주차·학사일정만 쓴다.
+- **시간**: `DATETIME(3)`, `DEFAULT CURRENT_TIMESTAMP(3)`, 수정 일시는 `ON UPDATE CURRENT_TIMESTAMP(3)`. 값은 기관 시간대(기본 `Asia/Seoul`)의 벽시계다. 앱이 연결마다 session 시간대를 그 offset으로 정한다([ADR-0039](../docs/adr/0039-institution-wall-clock-time.md)). `DATE`는 학기·주차·학사일정만 쓴다.
 - **삭제**: 행을 지우지 않고 `deleted_at`, `revoked_at`, `canceled_at`, `item_state`로 표시한다.
 - **이력**: 덮어쓰면 안 되는 기록은 별도 테이블에 추가만 한다(`enrollment_events`, `learning_heartbeats`, `assignment_submission_versions`, `login_events`).
 - **첨부**: 부모 테이블은 `attachment_group_id` 하나만 가진다. 테이블마다 파일 테이블을 따로 만들지 않는다.
@@ -151,9 +156,9 @@ python db/tools/erdcloud_snapshot.py
 
 1. 편집 권한이 있는 계정으로 ERD를 연다. 표 목록이 다 불러와질 때까지 몇 초 기다린다.
 2. 하단 **Export → Download Snapshot**으로 현재 상태를 백업한다. ERDCloud에서 표 위치를 옮긴 적이 있으면, 이 백업을 `--previous`로 주고 스냅샷을 다시 만들어 위치를 레포에 먼저 반영한다(`python db/tools/erdcloud_snapshot.py --previous "ASTRA DB-snapshot.json"`). 그러지 않으면 업로드할 때 옛 위치로 돌아간다.
-3. 기존 표를 모두 지운다. 업로드는 이름이 같은 테이블을 덮어쓰지 않고 건너뛰기 때문이다. 비우지 않고 올리면 아무것도 바뀌지 않는데 표 개수는 그대로 97개라서, 바뀌지 않은 것을 알아채기 어렵다.
+3. 기존 표를 모두 지운다. 업로드는 이름이 같은 테이블을 덮어쓰지 않고 건너뛰기 때문이다. 비우지 않고 올리면 아무것도 바뀌지 않는데 표 개수는 그대로라서, 바뀌지 않은 것을 알아채기 어렵다.
    - **직전 작업이 스냅샷 업로드나 SQL 가져오기인 경우:** 상단 Undo 한 번에 표가 모두 지워진다. 표가 0개가 됐는지 확인한다.
-   - **그 뒤 누가 ERDCloud에서 직접 편집한 경우:** Undo 한 번으로는 비워지지 않는다. Shift를 누른 채 끌면 여러 표가 선택되지만, Delete 키는 선택된 표 하나만 지운다(2026-11-07 확인). 화면을 최대로 줄여도 97개가 한 화면에 들어오지 않는다. 이때는 상단 **Create ERD**로 새 ERD를 만들어 4단계를 그 ERD에서 하고, 이 문서 맨 위의 ERD 주소를 새 주소로 바꾼다. 표를 하나씩 클릭해 Delete로 지워도 되지만 97번 반복해야 한다.
+   - **그 뒤 누가 ERDCloud에서 직접 편집한 경우:** Undo 한 번으로는 비워지지 않는다. Shift를 누른 채 끌면 여러 표가 선택되지만, Delete 키는 선택된 표 하나만 지운다(2026-11-07 확인). 화면을 최대로 줄여도 표 전체가 한 화면에 들어오지 않는다. 이때는 상단 **Create ERD**로 새 ERD를 만들어 4단계를 그 ERD에서 하고, 이 문서 맨 위의 ERD 주소를 새 주소로 바꾼다. 표를 하나씩 클릭해 Delete로 지워도 되지만 표 수만큼 반복해야 한다.
    - ERDCloud에서 직접 고친 내용은 정본에 없다. 남겨야 하면 먼저 새 마이그레이션으로 만들고 5절부터 다시 한다.
 4. 하단 **Import → Upload Snapshot**으로 `db/erdcloud/snapshot.json`을 올린다.
 5. 새로고침한 뒤 **Export → Download Snapshot**으로 다시 내려받아 생성본과 비교한다. 표 개수만 보는 것으로는 확인이 안 된다.

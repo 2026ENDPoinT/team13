@@ -13,29 +13,49 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.files.api.DocumentRenditions.Rendition;
 import com.stackcorp.astra.files.api.RenditionException;
 import com.stackcorp.astra.files.api.StoredFiles;
+import com.stackcorp.astra.shared.metrics.MetricTags;
 import com.stackcorp.astra.summary.api.LlmClient;
 import com.stackcorp.astra.summary.pipeline.GenerateInput;
 import com.stackcorp.astra.summary.pipeline.GenerateResult;
 import com.stackcorp.astra.summary.pipeline.GenerationException;
 import com.stackcorp.astra.summary.pipeline.GenerationProgress;
 import com.stackcorp.astra.summary.pipeline.SummaryPipeline;
+import com.stackcorp.astra.summary.pipeline.TextRedactor;
 import com.stackcorp.astra.summary.pipeline.Usage;
+import com.stackcorp.astra.summary.policy.LlmGate;
+import com.stackcorp.astra.summary.policy.MeteredLlmClient;
+import com.stackcorp.astra.summary.policy.ProcessingScope;
+import com.stackcorp.astra.summary.policy.ReadCommitted;
+import com.stackcorp.astra.summary.policy.UsageLedger;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * worker 프로필에서 대기 작업을 하나씩 실행한다. 여러 worker가 떠도 원장의 SKIP LOCKED로 한 곳만 잡는다.
  * 로그에는 작업 ID와 코드만 남긴다. 자료 본문과 모델 출력은 남기지 않는다(ADR-0007 9번).
+ * process가 종료할 때는 새 작업을 잡지 않고, 실행 중인 작업은 다음 모델 호출 경계에서 멈춰 lease 만료와 같은
+ * {@code interrupted}로 바로 닫는다. lease가 끝날 때까지 작업이 running으로 남지 않는다.
+ * <p>
+ * 끝낸 작업을 상태와 오류 code별로 세고(astra.summary.jobs.finished), 모델 호출은 {@link MeteredLlmClient}로 잰다. 대기열 길이와 나이는
+ * {@link SummaryBacklog}가 낸다.
+ * <p>
+ * 모델을 부르기 전마다 동의 문(LlmGate)을 다시 확인한다. 배포 스위치가 꺼지거나 요청한 교수자가 동의를 철회하면 다음 호출 경계에서
+ * 멈추고 {@code disabled}·{@code consent} 코드로 취소한다(ADR-0032). 끝난 작업의 사용량은 과목 합계에 더한다.
  */
 @Component
 @Profile("worker")
-class SummaryJobRunner implements AutoCloseable {
+class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 
 	private static final Logger log = LoggerFactory.getLogger(SummaryJobRunner.class);
 
@@ -51,20 +71,39 @@ class SummaryJobRunner implements AutoCloseable {
 
 	private final SummaryProperties properties;
 
+	private final LlmGate gate;
+
+	private final UsageLedger usage;
+
+	private final TextRedactor redactor;
+
+	private final ReadCommitted transaction;
+
 	private final String owner;
 
 	private final ScheduledExecutorService leaseRenewer = Executors
 		.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("summary-lease").factory());
 
+	private volatile boolean running;
+
+	private final MeterRegistry meters;
+
 	SummaryJobRunner(SummaryJobRepository jobs, DocumentRenditions renditions, StoredFiles files,
-			SummaryStorage storage, ObjectProvider<LlmClient> llm, SummaryProperties properties) {
+			SummaryStorage storage, ObjectProvider<LlmClient> llm, SummaryProperties properties, LlmGate gate,
+			UsageLedger usage, TextRedactor redactor, PlatformTransactionManager transactionManager,
+			MeterRegistry meters) {
 		this.jobs = jobs;
 		this.renditions = renditions;
 		this.files = files;
 		this.storage = storage;
 		this.llm = llm;
 		this.properties = properties;
+		this.gate = gate;
+		this.usage = usage;
+		this.redactor = redactor;
+		this.transaction = new ReadCommitted(transactionManager);
 		this.owner = properties.workerId() != null ? properties.workerId() : defaultOwner();
+		this.meters = meters;
 	}
 
 	@Scheduled(fixedDelayString = "${astra.summary.poll-interval:5s}",
@@ -78,6 +117,7 @@ class SummaryJobRunner implements AutoCloseable {
 	@Scheduled(fixedDelayString = "${astra.summary.lease-renewal:30s}")
 	void failExpired() {
 		int closed = this.jobs.failExpired();
+		finished(JobState.FAILED, "interrupted", closed);
 		if (closed > 0) {
 			log.warn("summary jobs interrupted by expired lease count={}", closed);
 		}
@@ -85,13 +125,23 @@ class SummaryJobRunner implements AutoCloseable {
 
 	/** @return 작업 하나를 실행했으면 true */
 	boolean runOnce() {
-		LlmClient client = this.llm.getIfAvailable();
+		if (!this.running) {
+			return false;
+		}
+		LlmClient configured = this.llm.getIfAvailable();
+		LlmClient client = configured != null
+				? new MeteredLlmClient(configured, this.meters, ProcessingScope.PAGE_SUMMARY) : null;
 		Optional<SummaryJob> claimed = this.jobs.claimNext(this.owner, this.properties.lease(),
 				client != null ? client.model() : null, SummaryPipeline.PROMPT_VERSION);
 		if (claimed.isEmpty()) {
 			return false;
 		}
 		SummaryJob job = claimed.get();
+		Optional<String> closed = gateClosed(job);
+		if (closed.isPresent()) {
+			finish(job, JobState.CANCELLED, new Usage(0, 0, 0), closed.get(), null);
+			return true;
+		}
 		if (client == null) {
 			finish(job, JobState.FAILED, new Usage(0, 0, 0), "not_configured",
 					"모델 제공자가 설정되지 않았습니다.");
@@ -119,6 +169,22 @@ class SummaryJobRunner implements AutoCloseable {
 	}
 
 	@Override
+	public void start() {
+		this.running = true;
+	}
+
+	/** 종료 단계에서 부른다. 이후 대기 작업을 잡지 않고, 실행 중인 작업에 멈추라고 알린다. */
+	@Override
+	public void stop() {
+		this.running = false;
+	}
+
+	@Override
+	public boolean isRunning() {
+		return this.running;
+	}
+
+	@Override
 	public void close() {
 		this.leaseRenewer.shutdownNow();
 	}
@@ -138,17 +204,25 @@ class SummaryJobRunner implements AutoCloseable {
 			finish(job, JobState.FAILED, new Usage(0, 0, 0), "file", "요청한 뒤 파일이 바뀌었습니다. 다시 요청해 주세요.");
 			return;
 		}
-		String title = this.files.find(job.fileId()).map((f) -> stripExtension(f.name())).orElse(null);
+		String title = this.files.find(job.fileId())
+			.map((f) -> this.redactor.redact(stripExtension(f.name())))
+			.orElse(null);
 		// 취소 요청은 모델 호출 앞뒤마다 원장에서 확인한다. 기본키 조회 한 번이라 모델 호출에 비해 비용이 없다.
+		// 자료 파일이 지워지거나 동의 문이 닫혀도 멈춘다. 지운 파일에는 결과를 쓰지 않는다(ADR-0011).
 		GenerateInput input = new GenerateInput(String.valueOf(job.fileId()), title,
-				new RenditionSource(this.renditions, rendition),
+				new RenditionSource(this.renditions, rendition, this.redactor),
 				this.storage.checkpoints(job.fileId(), this.jobs.rootOf(job.id())),
-				() -> leaseLost.get() || this.jobs.cancelRequested(job.id()),
+				() -> !this.running || leaseLost.get() || this.jobs.cancelRequested(job.id()) || fileDeleted(job)
+						|| gateClosed(job).isPresent(),
 				(GenerationProgress p) -> this.jobs.progress(job.id(), this.owner, p.stage().name().toLowerCase(),
 						p.pagesDone(), p.pagesTotal(), p.usage()),
 				GenerateInput.Limits.DEFAULT);
 		try {
 			GenerateResult result = new SummaryPipeline(client).generate(input);
+			if (fileDeleted(job)) {
+				finishFileDeleted(job, result.usage());
+				return;
+			}
 			this.storage.writeResult(job.fileId(), job.id(),
 					new SummaryResult(result.pack(), result.review(), result.warnings()));
 			finish(job, JobState.COMPLETED, result.usage(), null, null);
@@ -162,7 +236,20 @@ class SummaryJobRunner implements AutoCloseable {
 					log.warn("summary job lost lease jobId={}", job.id());
 					return;
 				}
-				finish(job, JobState.CANCELLED, usage, null, null);
+				if (fileDeleted(job)) {
+					finishFileDeleted(job, usage);
+					return;
+				}
+				if (!this.running && !this.jobs.cancelRequested(job.id())) {
+					finish(job, JobState.FAILED, usage, "interrupted", "작업을 실행하던 worker가 멈췄습니다. 다시 시도해 주세요.");
+					log.info("summary job interrupted by shutdown jobId={}", job.id());
+					return;
+				}
+				finish(job, JobState.CANCELLED, usage, gateClosed(job).orElse(null), null);
+				return;
+			}
+			if (fileDeleted(job)) {
+				finishFileDeleted(job, usage);
 				return;
 			}
 			String stage = ex.stage().name().toLowerCase();
@@ -170,16 +257,56 @@ class SummaryJobRunner implements AutoCloseable {
 			finish(job, JobState.FAILED, usage, ex.code().name().toLowerCase(), failureMessage(ex));
 		}
 		catch (RuntimeException ex) {
+			if (fileDeleted(job)) {
+				finishFileDeleted(job, new Usage(0, 0, 0));
+				return;
+			}
 			log.error("summary job failed jobId={} error={}", job.id(), ex.getClass().getName(), ex);
 			finish(job, JobState.FAILED, new Usage(0, 0, 0), "internal", "요약 작업 중 내부 오류가 났습니다.");
 		}
 	}
 
+	private Optional<String> gateClosed(SummaryJob job) {
+		return this.gate.closed(job.courseId(), job.requestedByUserId(), ProcessingScope.PAGE_SUMMARY);
+	}
+
+	private boolean fileDeleted(SummaryJob job) {
+		return this.files.find(job.fileId()).isEmpty();
+	}
+
+	// 실행 중에 자료가 지워졌다. 결과를 남기지 않고 실패로 닫는다. 지운 파일은 게시할 수도 없다.
+	private void finishFileDeleted(SummaryJob job, Usage usage) {
+		log.info("summary job stopped, file deleted jobId={}", job.id());
+		finish(job, JobState.FAILED, usage, "file", "자료 파일이 삭제됐습니다.");
+	}
+
 	private void finish(SummaryJob job, JobState state, Usage usage, String errorCode, String errorMessage) {
 		String message = errorMessage == null || errorMessage.length() <= 500 ? errorMessage
 				: errorMessage.substring(0, 500);
-		if (!this.jobs.finish(job.id(), this.owner, state, usage, errorCode, message)) {
+		// 상태 전이와 과목 사용량을 한 transaction으로 반영한다. lease를 잃었으면 다른 쪽이 닫았으므로 사용량도 더하지 않는다.
+		boolean finished = this.transaction.execute(() -> {
+			if (!this.jobs.finish(job.id(), this.owner, state, usage, errorCode, message)) {
+				return false;
+			}
+			this.usage.add(job.courseId(), ProcessingScope.PAGE_SUMMARY, usage.calls(), usage.inputTokens(),
+					usage.outputTokens());
+			return true;
+		});
+		if (!finished) {
 			log.warn("summary job finish ignored, lease lost jobId={} state={}", job.id(), state);
+			return;
+		}
+		finished(state, errorCode, 1);
+	}
+
+	private void finished(JobState state, String errorCode, int count) {
+		if (count > 0) {
+			Counter.builder("astra.summary.jobs.finished")
+				.description("끝난 요약 작업 수")
+				.tag("state", state.value())
+				.tag("code", MetricTags.code(errorCode))
+				.register(this.meters)
+				.increment(count);
 		}
 	}
 

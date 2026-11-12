@@ -8,6 +8,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.AbstractMockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 import tools.jackson.databind.JsonNode;
@@ -46,6 +47,11 @@ public final class ApiClient {
 			.perform(mutating(MockMvcRequestBuilders.delete(path)));
 	}
 
+	/** 상태를 바꾸는 그 밖의 요청. method와 header는 테스트가 정하고 session과 CSRF token은 여기서 붙인다. */
+	public <B extends AbstractMockHttpServletRequestBuilder<B>> ResultActions send(B request) throws Exception {
+		return this.mvc.perform(mutating(request));
+	}
+
 	public ResultActions upload(long courseId, String purpose, String fileName, byte[] content, String idempotencyKey)
 			throws Exception {
 		var request = MockMvcRequestBuilders.multipart("/api/uploads")
@@ -56,6 +62,13 @@ public final class ApiClient {
 			request.header("Idempotency-Key", idempotencyKey);
 		}
 		return this.mvc.perform(mutating(request));
+	}
+
+	/** 과목 밖 용도(community_material, inquiry_attachment, message_attachment)의 업로드. courseId를 보내지 않는다. */
+	public ResultActions uploadOutsideCourse(String purpose, String fileName, byte[] content) throws Exception {
+		return this.mvc.perform(mutating(MockMvcRequestBuilders.multipart("/api/uploads")
+			.file(new MockMultipartFile("file", fileName, "application/octet-stream", content))
+			.param("purpose", purpose)));
 	}
 
 	/** 올린 뒤 uploadId를 돌려준다. */

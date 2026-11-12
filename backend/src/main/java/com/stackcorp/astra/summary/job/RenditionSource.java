@@ -5,9 +5,10 @@ import java.util.List;
 import com.stackcorp.astra.files.api.DocumentRenditions;
 import com.stackcorp.astra.files.api.DocumentRenditions.Rendition;
 import com.stackcorp.astra.summary.pipeline.SourceDocument;
+import com.stackcorp.astra.summary.pipeline.TextRedactor;
 
 /**
- * files의 rendition을 요약 입력으로 쓴다.
+ * files의 rendition을 요약 입력으로 쓴다. 쪽 텍스트와 제목은 가림 hook을 거친 값이다(ADR-0032).
  */
 final class RenditionSource implements SourceDocument {
 
@@ -17,12 +18,15 @@ final class RenditionSource implements SourceDocument {
 
 	private final List<Page> pages;
 
-	RenditionSource(DocumentRenditions renditions, Rendition rendition) {
+	private final String title;
+
+	RenditionSource(DocumentRenditions renditions, Rendition rendition, TextRedactor redactor) {
 		this.renditions = renditions;
 		this.rendition = rendition;
+		this.title = redactor.redact(rendition.title());
 		this.pages = rendition.pages()
 			.stream()
-			.map((p) -> new Page(p.page(), p.text(), p.textTruncated(), p.modelImageBytes()))
+			.map((p) -> new Page(p.page(), redactor.redact(p.text()), p.textTruncated(), p.modelImageBytes()))
 			.toList();
 	}
 
@@ -33,7 +37,7 @@ final class RenditionSource implements SourceDocument {
 
 	@Override
 	public String title() {
-		return this.rendition.title();
+		return this.title;
 	}
 
 	@Override

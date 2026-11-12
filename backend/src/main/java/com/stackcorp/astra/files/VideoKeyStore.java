@@ -40,6 +40,11 @@ class VideoKeyStore implements VideoKeys {
 		return this.store.get(Bucket.CONTENT, objectKey(assetKey)).filter((key) -> key.length == 16);
 	}
 
+	/** asset을 거둘 때 key를 지운다. 없으면 아무것도 하지 않는다. */
+	void delete(String assetKey) {
+		this.store.delete(Bucket.CONTENT, objectKey(assetKey));
+	}
+
 	private static String objectKey(String assetKey) {
 		if (assetKey == null || !ASSET_KEY.matcher(assetKey).matches()) {
 			throw new IllegalArgumentException("asset key 형식이 아닙니다.");

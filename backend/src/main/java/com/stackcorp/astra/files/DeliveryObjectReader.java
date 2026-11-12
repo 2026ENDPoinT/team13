@@ -19,18 +19,24 @@ import org.springframework.stereotype.Service;
 @Service
 class DeliveryObjectReader implements DeliveryObjects {
 
-	private static final Pattern DOCUMENT = Pattern.compile("doc/[0-9a-f]{64}/[0-9]{3}\\.(jpg)");
+	private static final Pattern DOCUMENT = Pattern.compile("doc/([0-9a-f]{64})/[0-9]{3}\\.jpg");
 
-	private static final Pattern VIDEO = Pattern
-		.compile("vod/" + VideoKeys.ASSET_KEY_PATTERN + "/[A-Za-z0-9][A-Za-z0-9_-]{0,80}\\.(m3u8|ts|m4s|mp4|aac|vtt)");
+	private static final Pattern VIDEO = Pattern.compile("vod/(" + VideoKeys.ASSET_KEY_PATTERN
+			+ ")/[A-Za-z0-9][A-Za-z0-9_-]{0,80}\\.(m3u8|ts|m4s|mp4|aac|vtt)");
 
 	private static final Map<String, String> TYPES = Map.of("jpg", "image/jpeg", "m3u8", "application/vnd.apple.mpegurl",
 			"ts", "video/mp2t", "m4s", "video/iso.segment", "mp4", "video/mp4", "aac", "audio/aac", "vtt", "text/vtt");
 
 	private final ObjectStore store;
 
-	DeliveryObjectReader(ObjectStore store) {
+	private final ConversionRecords conversions;
+
+	private final VideoAssetRecords videos;
+
+	DeliveryObjectReader(ObjectStore store, ConversionRecords conversions, VideoAssetRecords videos) {
 		this.store = store;
+		this.conversions = conversions;
+		this.videos = videos;
 	}
 
 	@Override
@@ -38,14 +44,22 @@ class DeliveryObjectReader implements DeliveryObjects {
 		if (path == null) {
 			return Optional.empty();
 		}
-		for (Pattern pattern : new Pattern[] { DOCUMENT, VIDEO }) {
-			Matcher m = pattern.matcher(path);
-			if (m.matches()) {
-				String type = TYPES.get(m.group(1));
-				return this.store.get(Bucket.DELIVERY, path).map((bytes) -> new DeliveryObject(bytes, type));
-			}
+		Matcher document = DOCUMENT.matcher(path);
+		if (document.matches()) {
+			// 지운 파일의 쪽 이미지는 GC가 객체를 지우기 전에도 내보내지 않는다(ADR-0011).
+			return this.conversions.live(document.group(1)) ? read(path, "jpg") : Optional.empty();
 		}
-		return Optional.empty();
+		Matcher video = VIDEO.matcher(path);
+		if (!video.matches()) {
+			return Optional.empty();
+		}
+		// 거두거나 아직 게시하지 않은 영상 asset은 객체가 남아 있어도 내보내지 않는다(ADR-0016 10번).
+		return this.videos.servable(video.group(1)) ? read(path, video.group(2)) : Optional.empty();
+	}
+
+	private Optional<DeliveryObject> read(String path, String extension) {
+		String type = TYPES.get(extension);
+		return this.store.get(Bucket.DELIVERY, path).map((bytes) -> new DeliveryObject(bytes, type));
 	}
 
 }

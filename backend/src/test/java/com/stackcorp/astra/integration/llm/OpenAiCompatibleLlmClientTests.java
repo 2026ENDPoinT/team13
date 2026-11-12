@@ -28,6 +28,7 @@ import com.stackcorp.astra.summary.api.LlmRequest;
 import com.stackcorp.astra.summary.api.LlmRequest.Purpose;
 import com.stackcorp.astra.summary.api.LlmResponse;
 import com.stackcorp.astra.summary.api.LlmResponse.StopReason;
+import com.stackcorp.astra.summary.api.LlmTool;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -89,6 +90,47 @@ class OpenAiCompatibleLlmClientTests {
 		assertThat(response.text()).isEqualTo("{\"slides\":[]}");
 		assertThat(response.stopReason()).isEqualTo(StopReason.END);
 		assertThat(response.usage()).isEqualTo(new LlmResponse.Usage(11, 7));
+	}
+
+	@Test
+	void sendsToolsWithToolTurnsAndMapsRequestedToolCalls() {
+		AtomicReference<JsonNode> sent = new AtomicReference<>();
+		handle("/chat/completions", (exchange) -> {
+			sent.set(JsonMapper.builder().build().readTree(exchange.getRequestBody().readAllBytes()));
+			respond(exchange, 200, """
+					{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function",
+					 "function":{"name":"read_page","arguments":"{\\"page\\":2}"}}]},"finish_reason":"tool_calls"}],
+					 "usage":{"prompt_tokens":5,"completion_tokens":3}}""");
+		});
+		LlmRequest request = new LlmRequest(Purpose.CHAT, "system text",
+				List.of(new LlmMessage(LlmMessage.Role.USER, List.of(new LlmContent.Text("question"))),
+						new LlmMessage(LlmMessage.Role.ASSISTANT,
+								List.of(new LlmContent.ToolCall("call_0", "search_source", "{\"query\":\"x\"}"))),
+						new LlmMessage(LlmMessage.Role.TOOL,
+								List.of(new LlmContent.ToolResult("call_0", "result text", false)))),
+				100, List.of(new LlmTool("read_page", "read one page", Map.of("type", "object"))));
+
+		LlmResponse response = client(properties("", Map.of())).complete(request);
+
+		JsonNode body = sent.get();
+		assertThat(body.path("tools").path(0).path("type").stringValue()).isEqualTo("function");
+		assertThat(body.path("tools").path(0).path("function").path("name").stringValue()).isEqualTo("read_page");
+		assertThat(body.path("tools").path(0).path("function").path("parameters").path("type").stringValue())
+			.isEqualTo("object");
+		JsonNode assistant = body.path("messages").path(2);
+		assertThat(assistant.path("role").stringValue()).isEqualTo("assistant");
+		assertThat(assistant.path("content").isNull()).isTrue();
+		assertThat(assistant.path("tool_calls").path(0).path("id").stringValue()).isEqualTo("call_0");
+		assertThat(assistant.path("tool_calls").path(0).path("function").path("arguments").stringValue())
+			.isEqualTo("{\"query\":\"x\"}");
+		JsonNode tool = body.path("messages").path(3);
+		assertThat(tool.path("role").stringValue()).isEqualTo("tool");
+		assertThat(tool.path("tool_call_id").stringValue()).isEqualTo("call_0");
+		assertThat(tool.path("content").stringValue()).isEqualTo("result text");
+		assertThat(response.stopReason()).isEqualTo(StopReason.TOOL_USE);
+		assertThat(response.text()).isEmpty();
+		assertThat(response.toolCalls()).containsExactly(new LlmContent.ToolCall("call_1", "read_page", "{\"page\":2}"));
+		assertThat(client(properties("", Map.of())).body(REQUEST)).doesNotContainKey("tools");
 	}
 
 	@Test

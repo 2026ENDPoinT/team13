@@ -1,7 +1,7 @@
 # ADR-0010 업로드는 형식을 검사해 받고, 악성코드 검사는 port로 남긴다
 
 ## 상태
-채택 (2026-11-11)
+채택 (2026-11-11). 6번의 검사기는 [ADR-0018](0018-malware-scan-clamd.md)로 정했다. 9번의 inline 금지에는 서버가 판정한 PNG·JPEG 이미지 보기 예외가 있다([ADR-0033](0033-document-preview-and-office-conversion.md) 5번).
 
 ## 맥락
 서버 계약 SC-08은 업로드를 "주체·크기·형식 확인 → 격리 저장 → 검사·변환 → 권한을 가진 객체에 첨부 → 공개" 순서로 처리하도록 정했다. [60_files_integrations.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/60_files_integrations.md) 7절은 `POST /api/uploads` 하나와 `quarantined → clean → attached` 상태를 제안한다.
@@ -25,7 +25,7 @@
 7. 첨부 확정은 부모 저장과 같은 transaction에서 한다(SC-05-B). `files`의 `Attachments.attach`가 소유자, 과목, 용도, 상태, 만료를 한 조건으로 잠가 확인하고 `attached`로 바꾼다. 한 업로드는 한 번만 첨부된다. 조건에 맞지 않는 업로드가 하나라도 있으면 부모 저장 전체를 되돌린다. 어느 업로드가 왜 안 되는지는 응답에 밝히지 않는다.
 8. 첨부하지 않은 업로드는 올린 사람만 조회하고 지운다. 첨부하기 전에는 누구도 내려받지 못한다.
 9. 원본 내려받기는 `GET /api/courses/{courseId}/files/{fileId}/content`다. 요청마다 부모 객체의 권한을 판정하고, 언제나 `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Cache-Control: private, no-store`로 응답한다. 브라우저가 문서로 해석하는 inline 응답은 두지 않는다.
-10. `Idempotency-Key`를 보내면 같은 사용자의 같은 key는 처음 만든 업로드를 다시 돌려준다.
+10. `Idempotency-Key`를 보내면 같은 사용자의 같은 key에 같은 요청(용도, 과목, 이름, 크기, 내용 SHA-256, 파일함 폴더가 같다)은 처음 만든 업로드를 다시 돌려준다. 다른 요청이면 409 `idempotency_conflict`이고 아무것도 저장하지 않는다. 판정은 hash를 계산한 뒤, 객체를 저장하기 전에 한다. 지문은 `upload_sessions.request_fingerprint`(V34)에 있고 규칙은 공용 멱등 원장과 같다([ADR-0012](0012-idempotency-ledger-and-audit.md) 3번).
 
 ## 결과와 트레이드오프
 - 확장자를 바꾼 HTML, script, 실행 파일은 저장되지 않는다. 저장된 파일도 같은 origin에서 문서로 열리지 않는다.

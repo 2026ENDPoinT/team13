@@ -11,7 +11,7 @@ public interface VideoKeys {
 	/** asset key의 형식. 영문 소문자·숫자·하이픈 8~64자. */
 	String ASSET_KEY_PATTERN = "[a-z0-9][a-z0-9-]{7,63}";
 
-	/** key가 없으면 만든다. 이미 있으면 그 key를 돌려준다. MediaConvert 작업을 지시할 때 쓴다. */
+	/** key가 없으면 만든다. 이미 있으면 그 key를 돌려준다. 변환 worker가 segment를 암호화할 때 쓴다(ADR-0016). */
 	byte[] ensure(String assetKey);
 
 	Optional<byte[]> find(String assetKey);
