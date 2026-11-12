@@ -27,6 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.WebUtils;
 
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
@@ -40,7 +41,8 @@ import tools.jackson.databind.JsonNode;
 
 /**
  * 처리기가 예상하지 못한 예외도 problem JSON 500으로 응답하고, detail에 예외 메시지(SQL, 입력값, key)를 싣지 않는다. 처리하지
- * 못한 예외는 컨트롤러 앞 filter에서 났어도 응답의 requestId와 함께 ERROR 로그로 한 번 남는다. client 연결 끊김은 남기지 않는다.
+ * 못한 예외는 컨트롤러 앞 filter에서 났어도 응답의 requestId와 함께 ERROR 로그로 한 번 남는다. client 연결 끊김은 남기지 않는다. 응답이
+ * 이미 나간 뒤의 실패에는 problem을 덧붙이지 않는다.
  */
 @ExtendWith(OutputCaptureExtension.class)
 @Import({ UnexpectedErrorApiTests.Boom.class, UnexpectedErrorApiTests.FailingFilter.class })
@@ -54,6 +56,9 @@ class UnexpectedErrorApiTests extends IntegrationTest {
 
 	@Autowired
 	FailingFilter filter;
+
+	@Autowired
+	Boom boom;
 
 	@Test
 	void unexpectedExceptionsBecomeGenericProblemJson(CapturedOutput output) throws Exception {
@@ -130,6 +135,22 @@ class UnexpectedErrorApiTests extends IntegrationTest {
 		assertThat(unhandledLines(output, response.getHeader(RequestIds.HEADER))).hasSize(1);
 	}
 
+	@Test
+	void failuresAfterTheResponseIsCommittedAreRethrownAndLoggedOnce(CapturedOutput output) {
+		// 내려받기가 바이트를 이미 내보낸 뒤 실패하면 상태와 형식을 바꿀 수 없다. 처리기는 problem을 덧붙이지 않고 다시 던지며,
+		// RequestIdFilter가 한 줄 남긴다.
+		ApiClient client = new ApiClient(this.mvc, this.data.session(this.data.user("STUDENT")));
+		assertThatThrownBy(() -> client.get("/api/test-only/download-fails-midway")).isInstanceOf(IOException.class)
+			.hasMessage("storage read timed out");
+		MockHttpServletResponse response = this.boom.committed.get();
+		assertThat(response.isCommitted()).isTrue();
+		assertThat(response.getContentAsByteArray()).isEqualTo(Boom.PARTIAL);
+		assertThat(unhandledLines(output, this.filter.responseRequestId.get())).singleElement()
+			.asString()
+			.contains("\"ERROR\"", "route=/api/test-only/download-fails-midway", "java.io.IOException");
+		assertThat(output.getAll()).doesNotContain("Failure in @ExceptionHandler");
+	}
+
 	private static List<String> unhandledLines(CapturedOutput output, String id) {
 		return output.getAll().lines().filter((line) -> line.contains("unhandled exception requestId=" + id)).toList();
 	}
@@ -156,6 +177,19 @@ class UnexpectedErrorApiTests extends IntegrationTest {
 		@GetMapping("/api/test-only/broken-pipe")
 		String brokenPipe() throws IOException {
 			throw new IOException("Broken pipe");
+		}
+
+		static final byte[] PARTIAL = new byte[16 * 1024];
+
+		final AtomicReference<MockHttpServletResponse> committed = new AtomicReference<>();
+
+		@GetMapping("/api/test-only/download-fails-midway")
+		void downloadFailsMidway(HttpServletResponse response) throws IOException {
+			this.committed.set(WebUtils.getNativeResponse(response, MockHttpServletResponse.class));
+			response.setContentType("application/pdf");
+			response.getOutputStream().write(PARTIAL);
+			response.flushBuffer();
+			throw new IOException("storage read timed out");
 		}
 
 	}

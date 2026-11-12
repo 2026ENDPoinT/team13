@@ -16,6 +16,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 import org.springframework.web.util.DisconnectedClientHelper;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * 모든 API 오류를 RFC 9457 problem JSON으로 응답한다. 오류 응답도 캐시하지 않는다.
@@ -43,15 +44,20 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	/**
 	 * 예상하지 못한 예외는 기본 /error 대신 고정 문장의 500 problem JSON으로 응답한다. 예외 메시지(SQL, 입력값, key)는 응답에 싣지
 	 * 않고 requestId와 함께 서버 로그에만 남긴다. Spring Security 예외는 원래 흐름(401/403)으로 돌려보낸다. client가 연결을 끊었으면
-	 * 쓸 곳이 없으므로 로그도 본문도 남기지 않는다.
+	 * 쓸 곳이 없으므로 로그도 본문도 남기지 않는다. 응답이 이미 나가기 시작했으면(내려받기 도중 실패 등) 상태와 형식을 바꿀 수 없으므로
+	 * 본문을 쓰지 않고 다시 던진다. 로그는 {@link RequestIdFilter}가 한 번 남긴다.
 	 */
 	@ExceptionHandler(Exception.class)
-	ResponseEntity<ProblemDetail> unexpected(Exception ex, HttpServletRequest request) throws Exception {
+	ResponseEntity<ProblemDetail> unexpected(Exception ex, HttpServletRequest request, HttpServletResponse response)
+			throws Exception {
 		if (ex instanceof AccessDeniedException || ex instanceof AuthenticationException) {
 			throw ex;
 		}
 		if (DisconnectedClientHelper.isClientDisconnectedException(ex)) {
 			return null;
+		}
+		if (response.isCommitted()) {
+			throw ex;
 		}
 		RequestIdFilter.logUnhandled(request, ex);
 		return problem(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error", "요청을 처리하지 못했습니다.").build();
