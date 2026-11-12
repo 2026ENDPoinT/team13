@@ -6,11 +6,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import org.springframework.web.util.DisconnectedClientHelper;
+
+import jakarta.servlet.http.HttpServletRequest;
 
 /**
  * 모든 API 오류를 RFC 9457 problem JSON으로 응답한다. 오류 응답도 캐시하지 않는다.
@@ -33,6 +38,23 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 		return problem(HttpStatus.TOO_MANY_REQUESTS, "rate_limited", "요청이 너무 많습니다. 잠시 뒤 다시 시도해 주세요.")
 			.header(HttpHeaders.RETRY_AFTER, Long.toString(Math.max(1, ex.retryAfter().toSeconds())))
 			.build();
+	}
+
+	/**
+	 * 예상하지 못한 예외는 기본 /error 대신 고정 문장의 500 problem JSON으로 응답한다. 예외 메시지(SQL, 입력값, key)는 응답에 싣지
+	 * 않고 requestId와 함께 서버 로그에만 남긴다. Spring Security 예외는 원래 흐름(401/403)으로 돌려보낸다. client가 연결을 끊었으면
+	 * 쓸 곳이 없으므로 로그도 본문도 남기지 않는다.
+	 */
+	@ExceptionHandler(Exception.class)
+	ResponseEntity<ProblemDetail> unexpected(Exception ex, HttpServletRequest request) throws Exception {
+		if (ex instanceof AccessDeniedException || ex instanceof AuthenticationException) {
+			throw ex;
+		}
+		if (DisconnectedClientHelper.isClientDisconnectedException(ex)) {
+			return null;
+		}
+		RequestIdFilter.logUnhandled(request, ex);
+		return problem(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error", "요청을 처리하지 못했습니다.").build();
 	}
 
 	@Override

@@ -722,7 +722,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 | 대상 | 방식 |
 |---|---|
-| 로그 | 앱은 stdout에 한 줄씩 JSON(ECS) 로그를 쓴다. 요청마다 method, 처리한 경로 pattern, 상태 코드, 처리 시간을 한 줄 남긴다. requestId를 모든 줄에 넣는다. 본문, query string, cookie, 토큰, 개인정보는 남기지 않는다(SC-07). CloudWatch Logs로는 host의 log driver나 agent가 보낸다(아직 구성 없음) |
+| 로그 | 앱은 stdout에 한 줄씩 JSON(ECS) 로그를 쓴다. 요청마다 method, 처리한 경로 pattern, 상태 코드, 처리 시간을 한 줄 남긴다. requestId를 모든 줄에 넣는다. 처리하지 못한 예외는 컨트롤러에서 났든 filter에서 났든 `unhandled exception requestId=… method=… route=…` 한 줄과 stack trace로 ERROR에 한 번 남고, client 연결 끊김은 남기지 않는다. 본문, query string, cookie, 토큰, 개인정보는 남기지 않는다(SC-07). CloudWatch Logs로는 host의 log driver나 agent가 보낸다(아직 구성 없음) |
 | 감사 | `audit_events`에 행위자, 연산, 대상, 과목, 결과 코드, requestId, DB 시각을 남긴다(SC-09, [ADR-0012](adr/0012-idempotency-ledger-and-audit.md)) |
 | 지표 | Micrometer로 요청 시간(경로 pattern, 상태, problem code), 학습 하트비트 간격과 session 종료, GC·검사·요약 대기열, 학습 대화 대기열과 끝난 질문, 문서 변환·영상 변환·파일함 ZIP 대기열과 결과, 남은 multipart upload 취소, 변환 결과, 쓰임(요약, 학습 대화)별 모델 호출과 token, 멱등 충돌, 빠진 감사 기록, 요청 제한, DB pool을 잰다. tag에 사용자, 과목, 파일 ID, 실제 경로는 없다. 대기열 gauge는 worker가 1분마다 계산해 둔다. OTLP 내보내기는 기본으로 꺼져 있고 `ASTRA_OTLP_ENABLED`와 수신 주소를 줄 때만 보낸다. 지표 endpoint는 어느 port에도 열지 않는다([ADR-0034](adr/0034-observability-and-scheduler-lock.md)) |
 | trace | 같은 opt-in으로 OpenTelemetry trace를 OTLP로 보낸다. 표본 비율은 설정으로 정한다(기본 10%). client의 trace header와 baggage는 읽지 않고, span에는 경로 pattern, 상태, code와 서버가 만든 requestId만 남긴다. 수신 쪽(collector, X-Ray)은 아직 없다 |
