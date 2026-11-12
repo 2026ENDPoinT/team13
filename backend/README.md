@@ -303,7 +303,7 @@ transcoder process의 환경 변수:
 | `TRANSCODER_MAX_DURATION_SECONDS` | `14400` | 재생 길이 상한 |
 | `TRANSCODER_TIMEOUT_SECONDS` | `7200` | ffmpeg 실행 제한 시간 |
 | `TRANSCODER_THREADS` | `2` | ffmpeg encoder thread 수. container CPU 상한과 맞춘다 |
-| `TRANSCODER_WORK_DIR` | `java.io.tmpdir` | 요청마다 작업 directory를 만들고 응답 뒤 지우는 곳 |
+| `TRANSCODER_WORK_DIR` | `java.io.tmpdir` | 요청마다 작업 directory를 만들고 응답 뒤 지우는 곳. 시작할 때 이전 실행이 남긴 `transcode-*` directory를 지우므로 이 transcoder process만 써야 한다(다른 transcoder나 process와 공유하지 않는다) |
 | `TRANSCODER_FFMPEG` · `TRANSCODER_FFPROBE` | `ffmpeg` · `ffprobe` | 실행 파일 |
 
 api·worker의 환경 변수:

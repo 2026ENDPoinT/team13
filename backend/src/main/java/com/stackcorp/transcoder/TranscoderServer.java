@@ -3,6 +3,7 @@ package com.stackcorp.transcoder;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -67,8 +68,8 @@ public final class TranscoderServer implements AutoCloseable {
 
 	public static TranscoderServer start(InetSocketAddress address, Limits limits) throws IOException {
 		Files.createDirectories(limits.workRoot());
-		// work root는 container를 다시 만들어도 남는 volume일 수 있다. 변환은 한 번에 하나이고 아직 요청을 받기 전이므로,
-		// 이전 process가 중단되며 남긴 작업 directory는 모두 지운다.
+		// work root는 container를 다시 만들어도 남는 volume일 수 있다. work root는 이 transcoder process만 쓰고 아직 요청을 받기
+		// 전이므로, 이전 process가 중단되며 남긴 작업 directory는 모두 지운다. 지우지 못한 것은 경고만 남기고 넘어간다.
 		try (Stream<Path> stale = Files.list(limits.workRoot())) {
 			stale.filter((p) -> p.getFileName().toString().startsWith(JOB_PREFIX) && Files.isDirectory(p))
 				.forEach(TranscoderServer::deleteRecursively);
@@ -213,6 +214,7 @@ public final class TranscoderServer implements AutoCloseable {
 	}
 
 	private static void deleteRecursively(Path dir) {
+		// Files.walk는 시작 directory 아래의 오류를 UncheckedIOException으로 던진다. 어느 쪽이든 시작이나 slot 반환을 막지 않는다.
 		try (Stream<Path> paths = Files.walk(dir)) {
 			paths.sorted(Comparator.reverseOrder()).forEach((p) -> {
 				try {
@@ -223,8 +225,9 @@ public final class TranscoderServer implements AutoCloseable {
 				}
 			});
 		}
-		catch (IOException ex) {
+		catch (IOException | UncheckedIOException ex) {
 			// 위와 같다.
+			System.err.println("transcoder: 작업 directory를 다 지우지 못했습니다: " + dir + ": " + ex);
 		}
 	}
 

@@ -1,8 +1,10 @@
 package com.stackcorp.transcoder;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -12,10 +14,18 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.UserPrincipal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -122,6 +132,21 @@ class TranscoderServerTests {
 		assertThat(unrelated).exists();
 	}
 
+	@Test
+	void startsAndRemovesOtherLeftoversWhenALeftoverCannotBeFullyDeleted() throws Exception {
+		// 남은 작업 directory 안에 열 수 없는 하위 directory가 있으면 Files.walk가 UncheckedIOException을 던진다.
+		Path stuck = Files.createDirectories(this.workRoot.resolve("transcode-1").resolve("out"));
+		Path sibling = Files.createDirectory(this.workRoot.resolve("transcode-2"));
+		Files.write(sibling.resolve("input"), new byte[] { 1, 2, 3 });
+		try (Closeable restore = denyListing(stuck)) {
+			assumeTrue(listingFails(stuck), "권한을 빼도 directory를 열 수 있는 사용자다(예: root). 지우기 실패를 만들 수 없다");
+			this.server.close();
+			start();
+		}
+		assertThat(stuck).exists();
+		assertThat(sibling).doesNotExist();
+	}
+
 	private HttpResponse<byte[]> post(String container, byte[] body) throws Exception {
 		return this.http.send(HttpRequest.newBuilder(uri(container)).POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
 				HttpResponse.BodyHandlers.ofByteArray());
@@ -134,6 +159,40 @@ class TranscoderServerTests {
 	private List<Path> workFiles() throws IOException {
 		try (Stream<Path> files = Files.list(this.workRoot)) {
 			return files.toList();
+		}
+	}
+
+	/** 현재 사용자가 dir 목록을 읽지 못하게 한다. 닫으면 권한을 되돌린다. POSIX와 Windows(ACL) 둘 다 쓴다. */
+	private static Closeable denyListing(Path dir) throws IOException {
+		PosixFileAttributeView posix = Files.getFileAttributeView(dir, PosixFileAttributeView.class);
+		if (posix != null) {
+			Set<PosixFilePermission> before = posix.readAttributes().permissions();
+			posix.setPermissions(Set.of());
+			return () -> posix.setPermissions(before);
+		}
+		AclFileAttributeView acl = Files.getFileAttributeView(dir, AclFileAttributeView.class);
+		assumeTrue(acl != null, "POSIX 권한도 ACL도 없는 file system이다");
+		List<AclEntry> before = acl.getAcl();
+		UserPrincipal user = dir.getFileSystem()
+			.getUserPrincipalLookupService()
+			.lookupPrincipalByName(System.getProperty("user.name"));
+		List<AclEntry> denied = new ArrayList<>();
+		denied.add(AclEntry.newBuilder()
+			.setType(AclEntryType.DENY)
+			.setPrincipal(user)
+			.setPermissions(AclEntryPermission.LIST_DIRECTORY)
+			.build());
+		denied.addAll(before);
+		acl.setAcl(denied);
+		return () -> acl.setAcl(before);
+	}
+
+	private static boolean listingFails(Path dir) {
+		try (Stream<Path> files = Files.list(dir)) {
+			return false;
+		}
+		catch (IOException ex) {
+			return true;
 		}
 	}
 
