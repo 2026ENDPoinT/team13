@@ -158,6 +158,12 @@ run "plan" {
     } : lookup(output.app_environment, k, null) == v])
     error_message = "By default the app environment must start the scan profile and require the scanner."
   }
+
+  # Every upload endpoint must be exempt from the 16 KB WAF body rule, or uploads get 413 at the edge.
+  assert {
+    condition     = length(setsubtract(["/api/uploads", "/api/filebox/files", "/api/me/profile/image"], var.waf_large_body_path_prefixes)) == 0
+    error_message = "waf_large_body_path_prefixes must cover /api/uploads, /api/filebox/files and /api/me/profile/image."
+  }
 }
 
 # Renders the deploy document from the environment the run above produced.
