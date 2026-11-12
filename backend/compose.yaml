@@ -73,7 +73,6 @@ services:
     environment:
       ASTRA_CONVERTER_URL: http://converter:8090
       ASTRA_TRANSCODER_URL: http://transcoder:8091
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
     networks: [egress, data, conversion, transcoding, scanning]
     depends_on:
       mysql:
