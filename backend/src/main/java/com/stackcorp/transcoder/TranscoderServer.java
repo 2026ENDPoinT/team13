@@ -44,6 +44,8 @@ public final class TranscoderServer implements AutoCloseable {
 
 	private static final Pattern SEGMENT = Pattern.compile("seg_[0-9]{5}\\.ts");
 
+	private static final String JOB_PREFIX = "transcode-";
+
 	private static final Duration PROBE_TIMEOUT = Duration.ofMinutes(2);
 
 	private final HttpServer server;
@@ -65,6 +67,12 @@ public final class TranscoderServer implements AutoCloseable {
 
 	public static TranscoderServer start(InetSocketAddress address, Limits limits) throws IOException {
 		Files.createDirectories(limits.workRoot());
+		// work root는 container를 다시 만들어도 남는 volume일 수 있다. 변환은 한 번에 하나이고 아직 요청을 받기 전이므로,
+		// 이전 process가 중단되며 남긴 작업 directory는 모두 지운다.
+		try (Stream<Path> stale = Files.list(limits.workRoot())) {
+			stale.filter((p) -> p.getFileName().toString().startsWith(JOB_PREFIX) && Files.isDirectory(p))
+				.forEach(TranscoderServer::deleteRecursively);
+		}
 		HttpServer server = HttpServer.create(address, 0);
 		ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 		TranscoderServer transcoder = new TranscoderServer(server, executor, limits);
@@ -131,7 +139,7 @@ public final class TranscoderServer implements AutoCloseable {
 			}
 			Path workDir;
 			try {
-				workDir = Files.createTempDirectory(this.limits.workRoot(), "transcode-",
+				workDir = Files.createTempDirectory(this.limits.workRoot(), JOB_PREFIX,
 						PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
 			}
 			catch (IOException ex) {
@@ -211,7 +219,7 @@ public final class TranscoderServer implements AutoCloseable {
 					Files.deleteIfExists(p);
 				}
 				catch (IOException ex) {
-					// 남은 파일은 container를 다시 만들 때 사라진다. 다음 요청에는 새 directory를 쓴다.
+					// 남은 파일은 다음 시작 때 start()가 지운다. 다음 요청에는 새 directory를 쓴다.
 				}
 			});
 		}

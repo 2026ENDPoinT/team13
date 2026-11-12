@@ -111,6 +111,17 @@ class TranscoderServerTests {
 		assertThat(workFiles()).isEmpty();
 	}
 
+	@Test
+	void removesJobDirectoriesLeftByAnInterruptedRunOnStartup() throws Exception {
+		this.server.close();
+		Path stale = Files.createDirectory(this.workRoot.resolve("transcode-123"));
+		Files.write(stale.resolve("input"), new byte[] { 1, 2, 3 });
+		Path unrelated = Files.createDirectory(this.workRoot.resolve("other"));
+		start();
+		assertThat(stale).doesNotExist();
+		assertThat(unrelated).exists();
+	}
+
 	private HttpResponse<byte[]> post(String container, byte[] body) throws Exception {
 		return this.http.send(HttpRequest.newBuilder(uri(container)).POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
 				HttpResponse.BodyHandlers.ofByteArray());
