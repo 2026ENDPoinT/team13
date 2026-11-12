@@ -11,6 +11,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.firewall.RequestRejectedHandler;
 
 /**
  * 모든 요청은 session 쿠키로 인증하고, 객체 권한은 모듈별 Policy가 판정한다. HttpSession은 쓰지 않는다.
@@ -30,6 +31,7 @@ class SecurityConfiguration {
 			.logout((l) -> l.disable())
 			.csrf((csrf) -> csrf.spa())
 			.addFilterBefore(new OriginCheckFilter(properties), CsrfFilter.class)
+			.addFilterBefore(new MultipartCsrfHeaderFilter(), CsrfFilter.class)
 			.addFilterBefore(new SessionAuthenticationFilter(sessions, properties, breakGlass),
 					AnonymousAuthenticationFilter.class)
 			.authorizeHttpRequests((a) -> a.requestMatchers(HttpMethod.GET, "/api/auth/csrf")
@@ -54,6 +56,16 @@ class SecurityConfiguration {
 				.accessDeniedHandler((req, res, ex) -> ProblemResponses.write(res, 403, "forbidden",
 						"요청을 처리할 수 없습니다. CSRF token을 확인해 주세요.")));
 		return http.build();
+	}
+
+	/**
+	 * firewall이 거부한 요청(경로의 {@code ;}, 인코딩한 {@code /} 등)은 400 problem JSON을 바로 쓴다. 기본 처리는 sendError(400)로
+	 * {@code /error}에 넘기는데, 그곳의 DispatcherServlet이 multipart 본문 전체를 임시 디스크로 받는다.
+	 */
+	@Bean
+	RequestRejectedHandler requestRejectedHandler() {
+		return (request, response, ex) -> ProblemResponses.write(response, 400, "invalid_request",
+				"요청 형식이 올바르지 않습니다.");
 	}
 
 	@Bean

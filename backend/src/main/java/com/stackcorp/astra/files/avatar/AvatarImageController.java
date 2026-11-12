@@ -1,7 +1,5 @@
 package com.stackcorp.astra.files.avatar;
 
-import java.time.Duration;
-
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -19,7 +17,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.stackcorp.astra.files.avatar.AvatarImages.Photo;
 import com.stackcorp.astra.identity.api.Actor;
-import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
 
 /**
@@ -33,24 +30,21 @@ class AvatarImageController {
 
 	private final AvatarImages images;
 
-	private final RateLimiter rateLimiter;
-
 	private final AuditLog audit;
 
-	AvatarImageController(AvatarImages images, RateLimiter rateLimiter, AuditLog audit) {
+	AvatarImageController(AvatarImages images, AuditLog audit) {
 		this.images = images;
-		this.rateLimiter = rateLimiter;
 		this.audit = audit;
 	}
 
 	/**
 	 * 사진 올리기(EP-0273). multipart {@code file} 하나, PNG나 JPEG, 5MB 이하. 202 {@code processing}이고 결과는
 	 * {@code GET /api/me/profile}의 {@code avatar.photo}로 본다. 다시 올리면 앞 사진을 바꾼다(대기 중인 사진은 버린다). 바꾸는 명령이라
-	 * {@code Idempotency-Key}를 받지 않는다. 사용자당 10분에 10번.
+	 * {@code Idempotency-Key}를 받지 않는다. 사용자당 10분에 10번. 이 요청 제한은 본문을 받기 전에
+	 * {@code files.upload.MultipartRateLimitFilter}가 센다.
 	 */
 	@PostMapping(path = "/api/me/profile/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	ResponseEntity<Upload> upload(@AuthenticationPrincipal Actor actor, @RequestParam("file") MultipartFile file) {
-		this.rateLimiter.check("avatar-upload", actor.userId(), 10, Duration.ofMinutes(10));
 		long imageId = this.images.upload(actor.userId(), file);
 		this.audit.success(actor.userId(), actor.sessionId(), "account.avatar_image_upload", "profile_image", imageId,
 				null);

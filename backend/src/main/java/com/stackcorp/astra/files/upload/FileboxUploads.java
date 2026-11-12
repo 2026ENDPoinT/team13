@@ -61,8 +61,7 @@ public class FileboxUploads {
 	 * @return 업로드 ID
 	 */
 	public long receive(long userId, MultipartFile file, String clientKey, Long folderId, Target target) {
-		// 거부한 업로드도 센다. 본문은 이미 받은 뒤라 횟수로 막는다.
-		this.rateLimiter.check("upload", userId, this.properties.rateLimit(), this.properties.rateWindow());
+		// 요청 제한(upload)은 본문을 받기 전에 MultipartRateLimitFilter가 센다.
 		if (clientKey != null && !UploadService.CLIENT_KEY.matcher(clientKey).matches()) {
 			throw ApiException.invalid("Idempotency-Key 형식이 올바르지 않습니다.");
 		}
