@@ -8,7 +8,8 @@ import org.springframework.stereotype.Service;
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 
 /**
- * 판정은 {@link MembershipRule}이다. 폐강한 과목에서는 누구도 역할이 없다.
+ * 판정은 {@link MembershipRule}이다. 결정권자는 수강 신청 처리와 같은 {@link EnrollmentRecords#deciderRole}이다. 폐강한
+ * 과목에서는 누구도 역할이 없다.
  */
 @Service
 class CourseMembershipQueries implements CourseMemberships {
@@ -18,8 +19,11 @@ class CourseMembershipQueries implements CourseMemberships {
 
 	private final JdbcClient jdbc;
 
-	CourseMembershipQueries(JdbcClient jdbc) {
+	private final EnrollmentRecords records;
+
+	CourseMembershipQueries(JdbcClient jdbc, EnrollmentRecords records) {
 		this.jdbc = jdbc;
+		this.records = records;
 	}
 
 	@Override
@@ -30,6 +34,11 @@ class CourseMembershipQueries implements CourseMemberships {
 			case 2 -> Optional.of(CourseRole.STUDENT);
 			default -> Optional.empty();
 		};
+	}
+
+	@Override
+	public boolean isDecider(long userId, long courseId) {
+		return this.records.deciderRole(userId, courseId).isPresent();
 	}
 
 }

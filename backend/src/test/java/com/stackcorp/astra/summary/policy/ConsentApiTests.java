@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +23,7 @@ import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.summary.FakeLlm;
+import com.stackcorp.astra.summary.LlmConsents;
 import com.stackcorp.astra.summary.job.SummaryRunnerDriver;
 
 import tools.jackson.databind.JsonNode;
@@ -183,6 +185,77 @@ class ConsentApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void onlyTheCoursesListedProfessorOrManagerGrantsOrRevokesConsent() throws Exception {
+		long listedTa = this.data.user("TA");
+		listAs(this.course, listedTa, "TA");
+		long enrolledTa = this.data.user("TA");
+		enrollAs(enrolledTa, "TA");
+		long enrolledProfessor = this.data.user("PROFESSOR");
+		enrollAs(enrolledProfessor, "PROFESSOR");
+		LlmGate gate = this.context.getBean(LlmGate.class);
+		for (long staff : new long[] { listedTa, enrolledTa, enrolledProfessor }) {
+			ApiClient client = new ApiClient(this.mvc, this.data.session(staff));
+			grant(client, "page_summary").andExpect(status().isNotFound());
+			client.delete(consents() + "/page_summary").andExpect(status().isNotFound());
+			// 동의는 결정권자의 것이다. 조교도 과목 담당이라 자기 동의 목록과 사용량은 본다.
+			client.get(consents()).andExpect(status().isOk());
+			client.get("/api/courses/" + this.course + "/llm-usage").andExpect(status().isOk());
+			// 예전에 남은 동의 행이 있어도 문은 열리지 않는다.
+			LlmConsents.grant(this.context, this.course, staff, ProcessingScope.PAGE_SUMMARY);
+			assertThat(gate.closed(this.course, staff, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
+			client.post("/api/courses/" + this.course + "/files/" + this.fileId + "/summary-jobs")
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("llm_consent_required"));
+		}
+		grant(this.student, "page_summary").andExpect(status().isNotFound());
+		this.student.delete(consents() + "/page_summary").andExpect(status().isNotFound());
+		assertThat(audits("llm_consent.grant")).isZero();
+		assertThat(audits("llm_consent.revoke")).isZero();
+
+		grant(this.professor, "page_summary").andExpect(status().isOk()).andExpect(jsonPath("$.granted").value(true));
+		assertThat(gate.closed(this.course, this.professorId, ProcessingScope.PAGE_SUMMARY)).isEmpty();
+		this.professor.delete(consents() + "/page_summary").andExpect(status().isNoContent());
+		assertThat(gate.closed(this.course, this.professorId, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
+	}
+
+	@Test
+	void theManagerOfANonRegularCourseGrantsAndRevokesConsent() throws Exception {
+		long nonRegular = this.data.insert("INSERT INTO courses (course_type, course_name) VALUES ('비정규', '특강')",
+				Map.of());
+		long managerId = this.data.user("STAFF");
+		listAs(nonRegular, managerId, "MANAGER");
+		ApiClient manager = new ApiClient(this.mvc, this.data.session(managerId));
+		LlmGate gate = this.context.getBean(LlmGate.class);
+
+		grant(manager, nonRegular, "page_summary").andExpect(status().isOk())
+			.andExpect(jsonPath("$.granted").value(true));
+		assertThat(gate.closed(nonRegular, managerId, ProcessingScope.PAGE_SUMMARY)).isEmpty();
+		manager.delete("/api/courses/" + nonRegular + "/llm-consents/page_summary").andExpect(status().isNoContent());
+		assertThat(gate.closed(nonRegular, managerId, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
+		// 폐강한 과목에는 결정권자가 없다.
+		this.jdbc.sql("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :c").param("c", nonRegular).update();
+		grant(manager, nonRegular, "page_summary").andExpect(status().isNotFound());
+	}
+
+	@Test
+	void aQueuedJobStopsWhenItsRequesterIsNoLongerTheCoursesDecider() throws Exception {
+		grant("page_summary", true).andExpect(status().isOk());
+		long queued = ApiClient.json(requestJob().andExpect(status().isAccepted())).get("id").asLong();
+		// 교수가 조교로 바뀌었다. 남은 동의 행은 조교의 것이 되어 문을 열지 않는다.
+		this.jdbc.sql("UPDATE course_instructors SET instructor_role = 'TA' WHERE course_id = :c AND user_id = :u")
+			.param("c", this.course)
+			.param("u", this.professorId)
+			.update();
+
+		SummaryRunnerDriver.runOnce(this.context);
+
+		assertThat(this.llm.log).isEmpty();
+		this.professor.get("/api/courses/" + this.course + "/summary-jobs/" + queued)
+			.andExpect(jsonPath("$.state").value("cancelled"))
+			.andExpect(jsonPath("$.errorCode").value("consent"));
+	}
+
+	@Test
 	void pageTextIsRedactedBeforeTheSummaryModelSeesIt() throws Exception {
 		grant("page_summary", true).andExpect(status().isOk());
 		requestJob().andExpect(status().isAccepted());
@@ -254,10 +327,29 @@ class ConsentApiTests extends IntegrationTest {
 	}
 
 	private ResultActions grant(ApiClient client, String scope) throws Exception {
-		return client.send(MockMvcRequestBuilders.put(consents() + "/" + scope)
+		return grant(client, this.course, scope);
+	}
+
+	private ResultActions grant(ApiClient client, long courseId, String scope) throws Exception {
+		return client.send(MockMvcRequestBuilders.put("/api/courses/" + courseId + "/llm-consents/" + scope)
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"noticeVersion\":\"" + this.consents.profile().noticeVersion() + "\",\"profileDigest\":\""
 					+ this.consents.profile().digest() + "\",\"acknowledged\":true}"));
+	}
+
+	private void listAs(long courseId, long userId, String role) {
+		this.jdbc.sql("INSERT INTO course_instructors (course_id, user_id, instructor_role) VALUES (:c, :u, :r)")
+			.param("c", courseId)
+			.param("u", userId)
+			.param("r", role)
+			.update();
+	}
+
+	private void enrollAs(long userId, String role) {
+		this.jdbc.sql("""
+				INSERT INTO course_enrollments (course_id, user_id, enrollment_kind, enrollment_role, enrollment_status)
+				VALUES (:c, :u, 'REGISTRAR', :r, 'ENROLLED')
+				""").param("c", this.course).param("u", userId).param("r", role).update();
 	}
 
 	private ResultActions put(String scope, String json) throws Exception {

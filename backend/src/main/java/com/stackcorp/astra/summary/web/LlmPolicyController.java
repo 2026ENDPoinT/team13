@@ -29,8 +29,9 @@ import com.stackcorp.astra.summary.policy.UsageLedger;
 import com.stackcorp.astra.summary.policy.UsageLedger.Total;
 
 /**
- * 외부 LLM 처리 조건, 교수자 동의, 과목 사용량(ADR-0032). 처리 조건은 로그인한 누구나 본다. 동의와 사용량은 그 과목 담당 교수자만
- * 다루고, 담당이 아니면 404다. 동의는 교수자 본인의 것만 기록하고 철회한다.
+ * 외부 LLM 처리 조건, 교수자 동의, 과목 사용량(ADR-0032). 처리 조건은 로그인한 누구나 본다. 사용량과 내 동의 목록은 그 과목
+ * 담당자가 보고, 동의와 철회는 과목의 결정권자(담당자 명단의 교수와 비정규 담당자)만 한다. 해당하지 않으면 404다. 동의는 본인의
+ * 것만 기록하고 철회한다.
  */
 @RestController
 class LlmPolicyController {
@@ -84,7 +85,7 @@ class LlmPolicyController {
 	@PutMapping("/api/courses/{courseId}/llm-consents/{scope}")
 	ResponseEntity<ConsentView> grant(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable String scope, @RequestBody GrantRequest body) {
-		requireInstructor(actor, courseId);
+		requireDecider(actor, courseId);
 		ProcessingScope target = scope(scope);
 		if (body == null || body.noticeVersion() == null || body.profileDigest() == null) {
 			throw ApiException.invalid("noticeVersion과 profileDigest 값이 필요합니다.");
@@ -101,7 +102,7 @@ class LlmPolicyController {
 	@DeleteMapping("/api/courses/{courseId}/llm-consents/{scope}")
 	ResponseEntity<Void> revoke(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@PathVariable String scope) {
-		requireInstructor(actor, courseId);
+		requireDecider(actor, courseId);
 		this.consents.revoke(actor.userId(), actor.sessionId(), courseId, scope(scope));
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
@@ -119,6 +120,13 @@ class LlmPolicyController {
 
 	private void requireInstructor(Actor actor, long courseId) {
 		if (!this.staff.isInstructor(actor.userId(), courseId)) {
+			throw ApiException.notFound();
+		}
+	}
+
+	/** 수강 신청 처리처럼 조교는 하지 않는다. 거부는 담당이 아닐 때와 같은 404다. */
+	private void requireDecider(Actor actor, long courseId) {
+		if (!this.staff.isDecider(actor.userId(), courseId)) {
 			throw ApiException.notFound();
 		}
 	}

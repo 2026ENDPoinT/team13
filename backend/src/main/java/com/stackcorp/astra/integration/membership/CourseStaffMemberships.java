@@ -23,4 +23,9 @@ class CourseStaffMemberships implements CourseStaff {
 		return this.memberships.roleOf(userId, courseId).filter(CourseRole.INSTRUCTOR::equals).isPresent();
 	}
 
+	@Override
+	public boolean isDecider(long userId, long courseId) {
+		return this.memberships.isDecider(userId, courseId);
+	}
+
 }

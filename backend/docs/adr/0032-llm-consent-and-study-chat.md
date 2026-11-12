@@ -21,8 +21,12 @@
 ### 교수자 동의
 3. 동의는 과목 × 교수자 × 범위마다 하나다. 범위는 `page_summary`(쪽별 요약 생성, 쪽 이미지와 텍스트 전송)와 `study_chat`(학습 대화, 쪽 텍스트와 게시한 해설 전송) 둘이다. 파일 요약은 모델 호출 없이 만들므로 범위가 아니다(9번). `llm_consents`에 누가, 언제, 어느 고지 판과 profile 지문에, 동의 당시의 profile 값을 그대로 남긴다.
 4. 동의 요청(`PUT /api/courses/{courseId}/llm-consents/{scope}`)은 교수자가 본 `noticeVersion`과 `profileDigest`를 담는다. 지금 배포의 값과 다르면 409 `llm_policy_changed`다. profile이 국외 이전이나 학습 이용을 밝히면 `acknowledged=true`가 있어야 하고, 없으면 422 `llm_acknowledgement_required`다. 과목 담당 교수자만 하고, 본인의 동의만 남긴다.
+   - "과목 담당 교수자"는 그 과목의 결정권자다. 담당자 명단(`course_instructors`)에 `PROFESSOR`나 `MANAGER`(비정규 담당자)로 올라 있고 과목이 폐강하지 않았다. 수강 신청 처리([ADR-0026](0026-enrollment-seat-accounting.md), `EnrollmentRecords.deciderRole`)와 같은 판정이다.
+   - 조교는 명단에 `TA`로 올라 있어도, 수강(`enrollment_role` `PROFESSOR`·`TA`)만 확정된 사람도 동의하거나 철회하지 못한다(404). 동의의 근거가 자료 저작자의 이용허락(맥락 첫째 항목)이라 권리자가 아닌 조교의 동의는 근거가 약하다. 비정규 과목은 담당자가 `MANAGER`뿐이라 `MANAGER`를 넣는다.
+   - 조교에게 동의를 맡기는 일은 수강 승인 위임과 함께 미정 항목이다([architecture.md](../architecture.md) 12절 "수강신청 정책 미정 항목"의 조교의 승인 위임).
+   - 내 동의 목록(`GET …/llm-consents`)과 사용량(`GET …/llm-usage`)은 조교를 포함한 과목 담당자가 본다.
 5. profile이 바뀌면(제공자 교체, 보관 조건 변경) 지문이 바뀌어 이전 동의는 효력을 잃는다. 다시 동의하면 이전 행을 철회로 닫고 새 행을 남긴다. PIPA 제28조의8③의 재동의와 저작권법 제46조의 허락 범위를 코드로 맞추는 방법이다.
-6. 문(`LlmGate`)은 책임 교수자의 유효한 현재 동의와 그 교수자가 지금도 과목 담당인지를 함께 본다. 책임 교수자는 쪽별 요약이면 생성을 요청한 교수자, 학습 대화면 그 파일의 요약을 게시한 교수자다. api는 명령을 받을 때, worker는 모델을 부르기 전마다 확인한다. 요약 생성·재시도에 동의가 없으면 409 `llm_consent_required`다.
+6. 문(`LlmGate`)은 책임 교수자의 유효한 현재 동의와 그 교수자가 지금도 과목의 결정권자(4번)인지를 함께 본다. 그래서 조교가 남긴 동의 행은 문을 열지 않는다. 책임 교수자는 쪽별 요약이면 생성을 요청한 교수자, 학습 대화면 그 파일의 요약을 게시한 교수자다. api는 명령을 받을 때, worker는 모델을 부르기 전마다 확인한다. 요약 생성·재시도에 동의가 없으면 409 `llm_consent_required`다.
 7. 철회(`DELETE …/llm-consents/{scope}`)는 행을 지우지 않고 철회 일시를 남긴다. 같은 transaction에서 그 동의에 기대던 대기 작업과 질문을 `cancelled`(`consent`)로 바꾸고, 실행 중인 작업에는 취소를 요청한다. 실행 중인 작업과 질문은 다음 모델 호출 전에 문을 다시 보고 멈춘다. **게시한 요약은 그대로 둔다.** 철회는 앞으로의 전송을 멈추는 것이고, 이미 만든 결과물을 학생에게서 거두는 일은 수업 운영 판단이라 교수자가 `DELETE /api/courses/{courseId}/files/{fileId}/summary`(게시 내리기)로 따로 한다. 동의와 철회, 게시 내리기는 감사 기록(`llm_consent.grant`, `llm_consent.revoke`, `summary.unpublish`)에 남긴다.
 
 ### 개인정보 가림
