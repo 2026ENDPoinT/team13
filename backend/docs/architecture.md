@@ -497,7 +497,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `POST /api/courses/{courseId}/assignments` | 담당자 | 과제 활동, 과제 설정, 성적 항목을 한 transaction으로 만든다. 201 |
+| `POST /api/courses/{courseId}/assignments` | 담당자 | 과제 활동, 과제 설정, 성적 항목을 한 transaction으로 만든다. 201. `Idempotency-Key` 지원(공용 원장). 같은 key의 같은 요청은 처음 응답(201), 다른 본문·과목은 409 `idempotency_conflict` |
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}` | 담당자 | 과제 수정. 읽은 `revision`이 다르면 409 `edit_conflict`. 점수 공개(`scoresReleased`)도 여기서 바꿀 수 있다 |
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}/release` | 담당자 | `{released, revision}`. 과제 전체를 보내지 않고 점수 공개와 거둠만 바꾼다. 읽은 `revision`이 다르면 409 `edit_conflict`, 성공하면 `revision`이 1 오른다. 성적부 공개 명령과 같은 감사 기록(`grade_item.release`·`grade_item.withhold`)과 알림("점수 공개" 보냄·거둠) |
 | `DELETE /api/courses/{courseId}/assignments/{assignmentId}` | 담당자 | 과제 삭제. `If-Match`에 읽은 `revision`(없으면 428, 다르면 409 `edit_conflict`). 활동에 삭제 표시만 남기고 제출물, 버전, 첨부 파일, 임시저장, 점수는 보존한다. 그 commit부터 과제, 제출, 제출 파일, 성적 항목은 누구에게도 없고 보낸 알림을 거둔다. 204 |

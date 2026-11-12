@@ -5,9 +5,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.nio.charset.StandardCharsets;
+
 import com.stackcorp.astra.ApiClient;
 
 import org.junit.jupiter.api.Test;
+
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
  * 담당자의 과제 등록·수정·조회와 학생의 과제 조회. 권한은 과목 관계, 과제의 과목, 공개·시작 일시로만 정해진다(SC-02, SC-03).
@@ -69,6 +74,41 @@ class AssignmentApiTests extends AssessmentTestSupport {
 			.andExpect(jsonPath("$[0].assignmentId").value(id))
 			.andExpect(jsonPath("$[0].submittedCount").value(0))
 			.andExpect(jsonPath("$[0].status").doesNotExist());
+	}
+
+	@Test
+	void sameIdempotencyKeyCreatesOneAssignment() throws Exception {
+		String body = """
+				{"weekNo":1,"title":"재전송","closeAt":"2999-01-01T00:00:00","maxScore":10}
+				""";
+		String first = this.professor
+			.send(MockMvcRequestBuilders.post(assignments(this.course))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(body)
+				.header("Idempotency-Key", "assignment-create-1"))
+			.andExpect(status().isCreated())
+			.andReturn()
+			.getResponse()
+			.getContentAsString(StandardCharsets.UTF_8);
+		String second = this.professor
+			.send(MockMvcRequestBuilders.post(assignments(this.course))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(body)
+				.header("Idempotency-Key", "assignment-create-1"))
+			.andExpect(status().isCreated())
+			.andReturn()
+			.getResponse()
+			.getContentAsString(StandardCharsets.UTF_8);
+		assertThat(ApiClient.json(this.professor.get(assignments(this.course)))).hasSize(1);
+		assertThat(second).isEqualTo(first);
+		// 같은 key로 다른 내용을 보내면 새 과제를 만들지 않고 거절한다.
+		this.professor
+			.send(MockMvcRequestBuilders.post(assignments(this.course))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(body.replace("재전송", "다른 과제"))
+				.header("Idempotency-Key", "assignment-create-1"))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
 	}
 
 	@Test

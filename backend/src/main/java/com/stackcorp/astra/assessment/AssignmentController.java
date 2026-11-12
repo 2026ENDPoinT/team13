@@ -19,6 +19,7 @@ import com.stackcorp.astra.learning.api.ReportActivities.ReportActivity;
 import com.stackcorp.astra.learning.api.ReportActivities.ReportActivityInput;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
+import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -61,18 +62,23 @@ class AssignmentController {
 
 	private final RateLimiter rateLimiter;
 
+	private final Idempotency idempotency;
+
 	AssignmentController(AssignmentAccess access, AssignmentService assignments, SubmissionRecords submissions,
-			SubmissionService submissionService, RateLimiter rateLimiter) {
+			SubmissionService submissionService, RateLimiter rateLimiter, Idempotency idempotency) {
 		this.access = access;
 		this.assignments = assignments;
 		this.submissions = submissions;
 		this.submissionService = submissionService;
 		this.rateLimiter = rateLimiter;
+		this.idempotency = idempotency;
 	}
 
+	/** 201. {@code Idempotency-Key}를 보내면 같은 key의 재전송은 처음 응답을 다시 받고 과제를 더 만들지 않는다(SC-05). */
 	@PostMapping("/api/courses/{courseId}/assignments")
 	ResponseEntity<InstructorAssignment> create(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
-			@RequestBody AssignmentRequest body) {
+			@RequestBody AssignmentRequest body,
+			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
 		if (this.access.role(actor.userId(), courseId) != CourseRole.INSTRUCTOR) {
 			throw ApiException.notFound();
 		}
@@ -81,11 +87,12 @@ class AssignmentController {
 		}
 		AssignmentInput input = validated(body);
 		this.rateLimiter.check("assignment-create", actor.userId(), 60, Duration.ofMinutes(10));
-		long assignmentId = this.assignments.create(actor, courseId, input);
-		Assignment created = this.access.find(courseId, assignmentId).orElseThrow();
-		return ResponseEntity.status(HttpStatus.CREATED)
-			.cacheControl(CacheControl.noStore())
-			.body(instructorView(created, this.access.now()));
+		InstructorAssignment created = this.idempotency.execute(actor.userId(), "assignment.create", idempotencyKey,
+				List.of(courseId, input), InstructorAssignment.class, () -> {
+					long assignmentId = this.assignments.create(actor, courseId, input);
+					return instructorView(this.access.find(courseId, assignmentId).orElseThrow(), this.access.now());
+				});
+		return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(created);
 	}
 
 	@PutMapping("/api/courses/{courseId}/assignments/{assignmentId}")
