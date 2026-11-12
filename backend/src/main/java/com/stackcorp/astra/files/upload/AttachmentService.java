@@ -43,7 +43,7 @@ class AttachmentService implements Attachments {
 		if (uploadIds.isEmpty() || (policy.maxFileCount() != null && uploadIds.size() > policy.maxFileCount())) {
 			throw new AttachmentException("첨부 개수가 올바르지 않습니다.");
 		}
-		long group = createGroup(request.title(), request.ownerUserId());
+		long group = createGroup(request.ownerUserId());
 		addUploads(group, policy, request.ownerUserId(), request.courseId(), uploadIds, 1);
 		return group;
 	}
@@ -66,7 +66,7 @@ class AttachmentService implements Attachments {
 			if (add.isEmpty()) {
 				return Optional.empty();
 			}
-			group = createGroup(request.title(), request.ownerUserId());
+			group = createGroup(request.ownerUserId());
 		}
 		List<Attached> kept = new ArrayList<>();
 		for (Attached a : current) {
@@ -100,7 +100,7 @@ class AttachmentService implements Attachments {
 		if (keep.isEmpty() && add.isEmpty()) {
 			return Optional.empty();
 		}
-		long group = createGroup(request.title(), request.ownerUserId());
+		long group = createGroup(request.ownerUserId());
 		int order = 1;
 		for (Attached a : current) {
 			if (keep.contains(a.fileId())) {
@@ -134,10 +134,9 @@ class AttachmentService implements Attachments {
 			.orElseThrow(() -> new AttachmentException("첨부할 수 없는 용도입니다."));
 	}
 
-	private long createGroup(String title, long ownerUserId) {
+	private long createGroup(long ownerUserId) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
-		this.jdbc.sql("INSERT INTO attachment_groups (group_title, created_by_user_id) VALUES (:title, :user)")
-			.param("title", title)
+		this.jdbc.sql("INSERT INTO attachment_groups (created_by_user_id) VALUES (:user)")
 			.param("user", ownerUserId)
 			.update(key, "attachment_group_id");
 		return key.getKey().longValue();
