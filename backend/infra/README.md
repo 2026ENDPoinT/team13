@@ -94,7 +94,7 @@ infra/terraform/
    openssl pkey -in cf-k2026a.pem -pubout -out cf-k2026a.pub.pem
    ```
 4. **apply.** `terraform plan -out=tfplan`으로 확인한 뒤 `terraform apply tfplan`.
-5. **비밀값.** secret마다 key가 환경 변수 이름인 JSON object를 넣는다. 허용한 key는 출력 `app_secret_arns`에 있고, 그 밖의 key가 있으면 배포가 멈춘다. `db-app`만 필수다.
+5. **비밀값.** secret마다 key가 환경 변수 이름인 JSON object를 넣는다. 허용한 key는 출력 `app_secret_arns`에 있고, 그 밖의 key가 있으면 배포가 멈춘다. `db-app`과 `cloudfront-private-key`가 필수다. Terraform이 `ASTRA_CLOUDFRONT_KEY_PAIR_ID`를 늘 넣으므로 개인 key가 없으면 api와 worker가 시작하지 않는다. 필수 secret에 값을 한 번도 넣지 않았으면 배포 문서가 컨테이너를 띄우기 전에 멈춘다. 값은 있지만 key가 빠졌거나 비어 있으면(`{}` 등) 배포 문서는 이를 보지 않으므로 배포는 api와 worker가 시작하지 못해 실패한다. 개인 key가 빠졌을 때는 앱 log에 `ASTRA_CLOUDFRONT_PRIVATE_KEY`가 없다고 나온다.
    ```sh
    aws secretsmanager put-secret-value --secret-id astra-pre/cloudfront-private-key \
      --secret-string "$(jq -n --rawfile k cf-k2026a.pem '{ASTRA_CLOUDFRONT_PRIVATE_KEY: $k}')"
