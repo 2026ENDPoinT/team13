@@ -26,7 +26,8 @@ final class RenditionSource implements SourceDocument {
 		this.title = redactor.redact(rendition.title());
 		this.pages = rendition.pages()
 			.stream()
-			.map((p) -> new Page(p.page(), redactor.redact(p.text()), p.textTruncated(), p.modelImageBytes()))
+			.map((p) -> new Page(p.page(), redactor.redact(p.text()), p.textTruncated(), p.modelImageBytes(),
+					p.imageUnavailable()))
 			.toList();
 	}
 

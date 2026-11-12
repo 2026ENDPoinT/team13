@@ -39,7 +39,11 @@ public interface DocumentRenditions {
 
 	}
 
-	record RenditionPage(int page, String text, boolean textTruncated, long modelImageBytes) {
+	/**
+	 * @param imageUnavailable 쪽 이미지가 대체 그림인지. 모델에는 그림 없이 텍스트로만 보낸다. 이 값이 생기기 전에 만든 rendition에는
+	 * 없으므로 false로 읽는다
+	 */
+	record RenditionPage(int page, String text, boolean textTruncated, long modelImageBytes, boolean imageUnavailable) {
 	}
 
 }

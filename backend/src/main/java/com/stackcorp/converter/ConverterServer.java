@@ -12,8 +12,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 /**
@@ -21,23 +23,33 @@ import com.sun.net.httpserver.HttpServer;
  *
  * <ul>
  * <li>{@code POST /render?maxPages=N&format=F}: 본문은 문서 바이트다. format은 {@code pdf}(기본)이거나 {@link OfficeFormat}의 값이다.
- * office 형식은 {@link OfficeEngine}이 PDF로 바꾼 뒤 PDF와 같은 길로 처리한다. 성공하면 200과 zip을 돌려준다. 형식은
- * {@link PdfRendering#writeZip}에 있다. 변환할 수 없는 입력은 422와 {@code {"code","message"}}를 돌려준다. 받지 않는 형식이거나
- * 엔진이 없는 converter면 code는 {@code unsupported_format}이다.</li>
+ * office 형식은 {@link OfficeEngine}이 PDF로 바꾼 뒤 PDF와 같은 길로 처리한다. PDF는 heap과 시간을 묶은 자식 JVM이 쪽 그림과
+ * 텍스트로 바꾼다({@link RenderProcess}). 자식이 모두 끝난 뒤에만 200과 zip을 돌려준다. 형식은 {@link RenderProcess.Rendered#writeZip}에
+ * 있다. 변환할 수 없는 입력은 422와 {@code {"code","message"}}를 돌려준다. 받지 않는 형식이거나 엔진이 없는 converter면 code는
+ * {@code unsupported_format}, 자식의 메모리 상한을 넘으면 {@code too_large}, 제한 시간을 넘으면 {@code timeout}이다.</li>
  * <li>{@code POST /avatar}: 본문은 PNG나 JPEG 바이트다. 성공하면 200과 {@value AvatarImage#SIZE}px 정사각형 JPEG를 돌려준다
  * ({@link AvatarImage}). 이미지가 아니면 422 {@code not_image}, 상한을 넘으면 413·422 {@code too_large}다.</li>
  * <li>{@code GET /health}: 200.</li>
  * </ul>
  *
- * 한 번에 한 문서만 변환한다. 실행: {@code java -Dloader.main=com.stackcorp.converter.ConverterServer -cp app.jar
+ * 한 번에 한 문서만 변환한다({@code /render}와 {@code /avatar}는 같은 잠금으로 직렬화). {@code /health}는 변환 중에도 바로 답한다.
+ * 실행: {@code java -Dloader.main=com.stackcorp.converter.ConverterServer -cp app.jar
  * org.springframework.boot.loader.launch.PropertiesLauncher}. 환경 변수 {@code CONVERTER_PORT}(기본 8090),
  * {@code CONVERTER_MAX_BYTES}(기본 50 MiB)를 읽는다. {@code CONVERTER_SOFFICE}에 LibreOffice 실행 파일의 절대 경로가 있으면
  * office 형식을 받는다. 그때 {@code CONVERTER_PRLIMIT}(기본 /usr/bin/prlimit), {@code CONVERTER_OFFICE_TIMEOUT_SECONDS}(기본 120),
- * {@code CONVERTER_OFFICE_MAX_PDF_BYTES}(기본 100 MiB), {@code CONVERTER_OFFICE_MEMORY_BYTES}(기본 3 GiB)를 읽는다.
+ * {@code CONVERTER_OFFICE_MAX_PDF_BYTES}(기본 100 MiB), {@code CONVERTER_OFFICE_MEMORY_BYTES}(기본 3 GiB)를 읽는다. PDF 변환 자식의
+ * heap 상한은 {@code CONVERTER_RENDER_HEAP_MB}(기본 768), 문서 하나의 제한 시간은 {@code CONVERTER_RENDER_TIMEOUT_SECONDS}(기본
+ * 300), 쪽 하나의 텍스트 뽑기나 그리기 한 번의 제한 시간은 {@code CONVERTER_RENDER_STEP_TIMEOUT_SECONDS}(기본 20)이다.
  */
 public final class ConverterServer implements AutoCloseable {
 
 	public static final int MAX_PAGES = 200;
+
+	// 변환 하나가 도는 동안 줄 서서 기다릴 수 있는 요청 수. 넘으면 바로 503 busy로 돌려보낸다.
+	static final int MAX_WAITING = 8;
+
+	// HTTP 스레드 수. 변환 1 + 대기 MAX_WAITING을 다 채워도 /health와 503 응답에 쓸 스레드가 남는다.
+	private static final int THREADS = 2 * (MAX_WAITING + 1);
 
 	private final HttpServer server;
 
@@ -45,13 +57,23 @@ public final class ConverterServer implements AutoCloseable {
 
 	private final long maxBytes;
 
+	// 변환 작업(/render, /avatar)을 한 번에 하나만 돌린다. /health는 이 자리를 쓰지 않는다.
+	private final Semaphore slot = new Semaphore(1, true);
+
+	// slot을 쥐었거나 기다리는 요청 수의 상한. 스레드가 대기 요청으로 다 차 /health를 굶기지 않게 한다.
+	private final Semaphore admission = new Semaphore(MAX_WAITING + 1);
+
 	private final OfficeEngine office;
 
-	private ConverterServer(HttpServer server, ExecutorService executor, long maxBytes, OfficeEngine office) {
+	private final RenderProcess renderer;
+
+	private ConverterServer(HttpServer server, ExecutorService executor, long maxBytes, OfficeEngine office,
+			RenderProcess renderer) {
 		this.server = server;
 		this.executor = executor;
 		this.maxBytes = maxBytes;
 		this.office = office;
+		this.renderer = renderer;
 	}
 
 	/** PDF만 받는 converter. */
@@ -64,12 +86,20 @@ public final class ConverterServer implements AutoCloseable {
 	 */
 	public static ConverterServer start(InetSocketAddress address, long maxBytes, OfficeEngine office)
 			throws IOException {
+		return start(address, maxBytes, office, RenderProcess.sameJvm(Path.of(System.getProperty("java.io.tmpdir")),
+				RenderProcess.DEFAULT_HEAP_MB, RenderProcess.DEFAULT_TIMEOUT, RenderProcess.DEFAULT_STEP_TIMEOUT));
+	}
+
+	static ConverterServer start(InetSocketAddress address, long maxBytes, OfficeEngine office, RenderProcess renderer)
+			throws IOException {
 		System.setProperty("java.awt.headless", "true");
 		HttpServer server = HttpServer.create(address, 0);
-		ExecutorService executor = Executors.newSingleThreadExecutor();
-		ConverterServer converter = new ConverterServer(server, executor, maxBytes, office);
-		server.createContext("/render", converter::render);
-		server.createContext("/avatar", converter::avatar);
+		// /avatar의 Java2D 처리와 자식 JVM을 기다리는 요청은 thread를 오래 잡는다. virtual thread면 carrier를 붙잡아 /health까지
+		// 굶길 수 있어 개수가 정해진 platform thread를 쓴다.
+		ExecutorService executor = Executors.newFixedThreadPool(THREADS);
+		ConverterServer converter = new ConverterServer(server, executor, maxBytes, office, renderer);
+		server.createContext("/render", (exchange) -> converter.serialized(exchange, converter::render));
+		server.createContext("/avatar", (exchange) -> converter.serialized(exchange, converter::avatar));
 		server.createContext("/health", (exchange) -> respond(exchange, 200, "application/json", "{}"));
 		server.setExecutor(executor);
 		server.start();
@@ -99,9 +129,45 @@ public final class ConverterServer implements AutoCloseable {
 					Long.parseLong(env.getOrDefault("CONVERTER_OFFICE_MAX_PDF_BYTES", String.valueOf(100L << 20))),
 					Long.parseLong(env.getOrDefault("CONVERTER_OFFICE_MEMORY_BYTES", String.valueOf(3L << 30))));
 		}
-		ConverterServer server = start(new InetSocketAddress(port), maxBytes, office);
+		RenderProcess renderer = RenderProcess.sameJvm(Path.of(System.getProperty("java.io.tmpdir")),
+				Integer.parseInt(env.getOrDefault("CONVERTER_RENDER_HEAP_MB", String.valueOf(RenderProcess.DEFAULT_HEAP_MB))),
+				Duration.ofSeconds(Long.parseLong(env.getOrDefault("CONVERTER_RENDER_TIMEOUT_SECONDS",
+						String.valueOf(RenderProcess.DEFAULT_TIMEOUT.toSeconds())))),
+				Duration.ofSeconds(Long.parseLong(env.getOrDefault("CONVERTER_RENDER_STEP_TIMEOUT_SECONDS",
+						String.valueOf(RenderProcess.DEFAULT_STEP_TIMEOUT.toSeconds())))));
+		ConverterServer server = start(new InetSocketAddress(port), maxBytes, office, renderer);
 		Runtime.getRuntime().addShutdownHook(new Thread(server::close));
 		System.out.println("converter listening on " + server.port() + " office=" + (office != null ? "on" : "off"));
+	}
+
+	private void serialized(HttpExchange exchange, HttpHandler handler) throws IOException {
+		if (!this.admission.tryAcquire()) {
+			try (exchange) {
+				respond(exchange, 503, "application/json", failure("busy", "converter가 다른 변환으로 바쁩니다."));
+			}
+			return;
+		}
+		try {
+			try {
+				this.slot.acquire();
+			}
+			catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				try (exchange) {
+					respond(exchange, 503, "application/json", failure("unavailable", "converter가 멈추는 중입니다."));
+				}
+				return;
+			}
+			try {
+				handler.handle(exchange);
+			}
+			finally {
+				this.slot.release();
+			}
+		}
+		finally {
+			this.admission.release();
+		}
 	}
 
 	private void render(HttpExchange exchange) throws IOException {
@@ -125,19 +191,21 @@ public final class ConverterServer implements AutoCloseable {
 						failure("unsupported_format", "이 converter가 받지 않는 형식입니다."));
 				return;
 			}
-			PdfRendering rendering;
+			RenderProcess.Rendered rendered;
 			try {
 				byte[] pdf = officeFormat.isPresent() ? this.office.toPdf(body, officeFormat.get()) : body;
-				rendering = PdfRendering.open(pdf, maxPages);
+				rendered = this.renderer.render(pdf, maxPages);
 			}
 			catch (ConversionFailure ex) {
 				respond(exchange, 422, "application/json", failure(ex.code(), ex.getMessage()));
 				return;
 			}
-			exchange.getResponseHeaders().set("content-type", "application/zip");
-			exchange.sendResponseHeaders(200, 0);
-			try (OutputStream out = exchange.getResponseBody()) {
-				rendering.writeZip(out);
+			try (rendered) {
+				exchange.getResponseHeaders().set("content-type", "application/zip");
+				exchange.sendResponseHeaders(200, 0);
+				try (OutputStream out = exchange.getResponseBody()) {
+					rendered.writeZip(out);
+				}
 			}
 		}
 	}

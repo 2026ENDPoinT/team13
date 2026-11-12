@@ -222,6 +222,9 @@ converter는 PDF를 받는다. `CONVERTER_SOFFICE`에 LibreOffice 실행 파일�
 | `CONVERTER_OFFICE_TIMEOUT_SECONDS` | `120` | 문서 하나를 PDF로 바꾸는 제한 시간. 넘으면 process tree를 강제로 끝낸다 |
 | `CONVERTER_OFFICE_MAX_PDF_BYTES` | `104857600` | 변환한 PDF의 크기 상한 |
 | `CONVERTER_OFFICE_MEMORY_BYTES` | `3221225472` | soffice의 주소 공간 상한 |
+| `CONVERTER_RENDER_HEAP_MB` | `768` | PDF를 그리는 자식 JVM의 heap 상한(MiB). 문서마다 자식 JVM을 새로 띄운다. 쪽 하나가 넘으면 그 쪽을 낮은 해상도로 다시 그리고, 그래도 넘으면 "이 쪽은 표시할 수 없습니다" 그림과 그 쪽 텍스트로 바꾼다. 문서를 읽다가 넘으면 `too_large`다 |
+| `CONVERTER_RENDER_TIMEOUT_SECONDS` | `300` | 문서 하나를 쪽 이미지로 바꾸는 제한 시간. 넘으면 자식 process tree를 강제로 끝내고 `timeout`이다 |
+| `CONVERTER_RENDER_STEP_TIMEOUT_SECONDS` | `20` | 쪽 하나의 텍스트 뽑기나 그리기 한 번의 제한 시간. 그리기가 넘으면 낮은 해상도로 다시 그리지 않고 바로 "이 쪽은 표시할 수 없습니다" 그림과 그 쪽 텍스트로 바꾼다. 텍스트 뽑기가 넘으면 그 쪽 텍스트 없이 그림만 그린다 |
 
 ### 악성코드 검사 설정
 

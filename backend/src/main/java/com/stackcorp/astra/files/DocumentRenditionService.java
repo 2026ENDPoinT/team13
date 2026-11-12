@@ -43,6 +43,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
 import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -74,7 +75,10 @@ class DocumentRenditionService implements DocumentRenditions {
 
 	private static final Logger log = LoggerFactory.getLogger(DocumentRenditionService.class);
 
-	private static final JsonMapper JSON = JsonMapper.builder().build();
+	// 저장한 document.json을 읽는다. 쪽 정보에 나중에 더한 boolean(imageUnavailable)이 없는, 전에 만든 rendition도 false로 읽는다.
+	static final JsonMapper JSON = JsonMapper.builder()
+		.disable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+		.build();
 
 	private static final Pattern KEY = Pattern.compile("[0-9a-f]{64}");
 
@@ -272,7 +276,8 @@ class DocumentRenditionService implements DocumentRenditions {
 				String n = "%03d.jpg".formatted(page.page());
 				this.store.put(Bucket.DELIVERY, deliveryPrefix(key) + n, page.displayJpeg(), "image/jpeg");
 				this.store.put(Bucket.CONTENT, modelImageKey(key, page.page()), page.modelJpeg(), "image/jpeg");
-				pages.add(new RenditionPage(page.page(), page.text(), page.textTruncated(), page.modelJpeg().length));
+				pages.add(new RenditionPage(page.page(), page.text(), page.textTruncated(), page.modelJpeg().length,
+						page.imageUnavailable()));
 			});
 			if (doc.pageCount() != pages.size() || doc.thumbnailJpeg() == null) {
 				throw new ConversionException(ConversionException.Code.FAILED, "converter가 보낸 쪽 수나 썸네일이 맞지 않습니다.");
