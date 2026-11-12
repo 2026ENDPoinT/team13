@@ -85,7 +85,21 @@ git commit -m "Update reference to <변경 요약>"
 
 ```sh
 ./gradlew build          # Windows: gradlew.bat build
-./gradlew bootTestRun    # DB 없이 로컬 실행. MySQL 컨테이너를 자동으로 띄운다
+./gradlew bootTestRun    # DB 없이 로컬 실행. MySQL과 S3 호환 저장소 컨테이너를 자동으로 띄운다
+```
+
+`bootTestRun`은 테스트 소스의 `TestStackBackendApplication`을 실행한다. 배포하는 jar에 없는 것을 세 가지 더한다.
+
+| 더하는 것 | 내용 |
+|---|---|
+| 표본 데이터 | 학생 박민준(`21101234`), 교수 박은주(`P-1042`), 이번 학기 과목 7개. 과목 키는 프론트엔드가 `kj`로 쓰는 값(`bi`, `algo`, `ai`, `db`, `oss`, `se`, `secu`)이다 |
+| 개발용 로그인 | `POST /api/auth/dev-login` `{"externalRef":"21101234"}`. 이 컴퓨터에서 온 요청만 받는다. CSRF token이 필요하다 |
+| `local` 프로필 | `127.0.0.1`에만 listen, cookie의 `Secure` 끔, 허용 Origin `http://127.0.0.1:4190`·`http://localhost:4190`, 앱이 `/doc`·`/vod`를 직접 응답([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)), `worker` 프로필 포함 |
+
+프론트엔드([STack-eclass-Frontend](https://github.com/STack-Corp/STack-eclass-Frontend))는 개발 서버가 `/api`, `/doc`, `/vod`를 이 서버로 넘긴다. 브라우저는 프론트엔드 주소만 쓴다. 백엔드는 CORS를 열지 않는다.
+
+```sh
+ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-eclass-Frontend에서
 ```
 
 8080 포트를 다른 프로그램이 쓰고 있으면 `Port 8080 was already in use`로 실패한다. Docker로 띄운 다른 앱이 8080을 쓰는 경우가 많다. 이때는 포트를 바꿔 실행한다.
@@ -121,6 +135,10 @@ git commit -m "Update reference to <변경 요약>"
 | `ASTRA_STORAGE_REGION` | `ap-northeast-2` | |
 | `ASTRA_CONVERTER_URL` | `http://converter:8090` | converter 주소 |
 | `ASTRA_SUMMARY_POLL_INTERVAL` | `5s` | worker가 대기 중인 요약 작업을 찾는 간격 |
+| `ASTRA_UPLOAD_TTL` | `24h` | 첨부하지 않은 업로드를 쓸 수 있는 시간 |
+| `ASTRA_UPLOAD_RATE_LIMIT` · `ASTRA_UPLOAD_RATE_WINDOW` | `30` · `10m` | 한 사용자가 구간 안에 올릴 수 있는 파일 수 |
+
+업로드는 파일 하나에 50 MB까지 받는다. 허용 확장자와 크기는 `upload_policies`에 있고, 확장자와 내용 형식이 맞지 않으면 거부한다([ADR-0010](docs/adr/0010-upload-acceptance.md)).
 
 요약 작업은 `worker` 프로필(`--spring.profiles.active=worker`)에서만 실행된다. converter는 같은 jar를 다른 main으로 띄운다. 외부 network가 없는 container에서 실행한다.
 
@@ -142,6 +160,8 @@ java -Dloader.main=com.stackcorp.converter.ConverterServer -cp stack-eclass-back
 | `ASTRA_CLOUDFRONT_BASE_URL` | 없음 | 서비스 도메인(https). signed cookie 정책의 resource 기준 |
 | `ASTRA_CLOUDFRONT_KEY_PAIR_ID` | 없음 | CloudFront key group의 public key ID. 없으면 signed cookie를 발급하지 않는다 |
 | `ASTRA_CLOUDFRONT_PRIVATE_KEY` | 없음 | PKCS#8 PEM RSA 개인 key |
+| `ASTRA_DELIVERY_ORIGIN_ENABLED` | `false` | CloudFront 없이 앱이 `/doc`, `/vod`를 직접 응답한다. CloudFront 서명과 함께 켤 수 없다 |
+| `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY` | 없음 | 위 방식의 cookie 서명 key(Base64, 32 byte 이상). 비밀값이다 |
 
 브라우저는 먼저 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키를 받고, 상태를 바꾸는 요청마다 그 값을 `X-XSRF-TOKEN` header로 보낸다.
 
