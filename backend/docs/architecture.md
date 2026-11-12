@@ -18,6 +18,9 @@
 | [ADR-0003](adr/0003-aws-single-ec2-until-adoption.md) | 학교 도입 전까지 CloudFront VPC origin과 EC2 1대로 운영하고, ALB는 도입할 때 붙인다 |
 | [ADR-0004](adr/0004-sso-bff-session.md) | 학교 SSO를 백엔드가 받는 BFF 방식, 브라우저에는 opaque session 쿠키, Zero-Trust 전환용 경계 |
 | [ADR-0005](adr/0005-first-paint-static-shell.md) | 첫 화면은 CDN의 정적 shell과 집계 API 한 번으로 그린다. SSR 서버를 두지 않는다 |
+| [ADR-0006](adr/0006-summary-module.md) | 강의 자료의 쪽별 요약을 `summary` 모듈로 구현한다. LessonViewer container를 붙이지 않는다 |
+| [ADR-0007](adr/0007-confidential-content-placement.md) | 영상, 강의 자료, 요약 본문은 object storage에만 두고 SSE-KMS로 암호화한다. 영상은 HLS AES-128을 적용한다 |
+| [ADR-0008](adr/0008-llm-port-deepseek.md) | LLM 호출은 port 뒤에 두고 DeepSeek로 시작한다. 데이터 처리 정책은 미결이다 |
 
 ## 2. 부하 가정
 
@@ -37,25 +40,28 @@
 flowchart LR
   U[브라우저] --> R53[Route 53] --> CF["CloudFront + AWS WAF"]
   CF -->|"/* 정적"| S3FE[("S3 frontend · OAC")]
-  CF -->|"/vod/* signed cookie"| S3V[("S3 HLS · OAC")]
+  CF -->|"/vod/* · /doc/* signed cookie"| S3D[("S3 delivery · OAC · SSE-KMS")]
   CF -->|"/api/* · /ws (캐시 안 함)"| EC2
   subgraph VPC["VPC (ap-northeast-2)"]
     subgraph PUB[Public subnet]
       NAT["fck-nat (t4g.nano)"]
     end
     subgraph PRIV[Private subnet]
-      EC2["EC2 1대 · docker compose<br/>api + worker"]
+      EC2["EC2 1대 · docker compose<br/>api + worker + converter"]
       RDS[("RDS MySQL 8.4<br/>single-AZ")]
     end
   end
   EC2 --> RDS
+  EC2 --> S3C[("S3 content · SSE-KMS")]
   EC2 --> NAT --> EXT["학교 IdP · 학사 · AI API (allowlist)"]
-  EC2 --> MC[MediaConvert] --> S3V
+  EC2 --> MC[MediaConvert] --> S3D
 ```
 
 - 도메인은 하나다. CloudFront가 경로로 정적 파일, 영상, API를 나눈다. CORS가 필요 없다. session 쿠키의 `SameSite` 예외는 5절에 있다.
 - CloudFront [VPC origin](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html)이 private subnet의 EC2에 직접 연결한다. EC2와 RDS에는 public IP가 없다.
 - api와 worker는 같은 이미지를 프로필만 바꿔 같은 EC2에서 실행한다.
+- converter는 문서 변환만 하는 별도 container다. 앱과 같은 jar를 converter main(`com.stackcorp.converter.ConverterServer`)으로 실행한다. worker만 호출하고, 외부 network와 AWS credential을 주지 않는다(SC-08).
+- bucket은 `frontend`, `content`, `delivery` 셋이다. 용도와 암호화는 [ADR-0007](adr/0007-confidential-content-placement.md)에 있다.
 - 배포 중 JVM 기동 시간 동안 API가 끊긴다. 배포는 사용량이 적은 시간에 한다. 기동은 JDK AOT cache(JEP 483, 514)로, warm-up은 JEP 515로 줄인다.
 
 ### 3.2 학교 도입
@@ -76,6 +82,7 @@ flowchart LR
 |---|---|---|
 | CloudFront | 인터넷 443. AWS WAF managed rule(Core, SQL database, Known bad inputs) | origin만 |
 | EC2(api, worker) | `CloudFront-VPCOrigins-Service-SG`에서 오는 앱 포트만 | RDS 3306, S3(gateway endpoint), 그 밖의 모든 외부·AWS API는 fck-nat 경유 |
+| converter | 같은 host의 worker에서 오는 요청만 | 없음 |
 | RDS | EC2 security group의 3306만 | 없음 |
 | fck-nat | private subnet에서 오는 트래픽만 | 인터넷 |
 
@@ -99,7 +106,8 @@ flowchart LR
 | `learning` | 강의실, 주차, 학습활동, 영상 학습 session, 출석 | `catalog`, `identity`, `files` |
 | `assessment` | 과제, 퀴즈, 설문, 성적 | `learning`, `catalog`, `identity`, `files` |
 | `communication` | 공지, Q&A, 게시판, 쪽지, 임시저장 | `catalog`, `identity`, `learning`, `files` |
-| `files` | 업로드 lifecycle, 첨부, 파일함, 미리보기, 영상 asset | `catalog`, `identity` |
+| `files` | 업로드 lifecycle, 첨부, 파일함, 미리보기, 문서 rendition, 영상 asset, 파일 파생물 저장 | `catalog`, `identity` |
+| `summary` | 강의 자료의 쪽별 요약 생성 작업, 후보 확인, 게시, 조회 | `files`, `identity` |
 | `integration` | 학교 IdP, 학사 동기화, AI, 외부 allowlist client | 각 모듈의 공개 API |
 | `shared` | 오류 형식, requestId, 시간, 멱등 원장, 감사 로그, 페이지네이션 | 없음. 모든 모듈이 쓸 수 있다 |
 | `home` | 메인 화면 집계 조회(`/api/me/home`)와 할 일 목록. 쓰기 없음 | `catalog`, `learning`, `assessment`, `communication`의 공개 API. 어떤 모듈도 `home`에 의존하지 않는다 |
@@ -109,6 +117,7 @@ flowchart LR
 - 알림: `notifications`는 `catalog` 소유이고 `activity_id`로 `learning`을 가리킨다. `catalog`는 `learning`에 의존하지 않는다. 알림 생성 API는 `catalog`가 공개 API로 정의하고, 이미 `catalog`에 의존하는 `learning`, `assessment`, `communication`이 원래 변경과 같은 transaction 안에서 호출한다. `activity_id`는 값으로만 저장한다.
 - 할 일: 별도 테이블 없이 활성 수강 × 공개 활동 × serverTime으로 계산한다([reference/db/design/20_catalog.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/db/design/20_catalog.md)). 계산에 `learning`, `assessment`가 필요하므로 `home`에 둔다.
 - 외부 연동: `identity`가 `ExternalIdentityProvider` 같은 포트를 공개 API로 정의하고 `integration`이 구현한다. 다른 모듈도 외부 결과가 필요하면 같은 방식을 쓴다.
+- 요약과 전달: `summary`가 `LlmClient` port를, `files`가 문서 변환 port와 전달 서명 port를 공개 API로 정의하고 `integration`이 구현한다. S3를 읽고 쓰는 모듈은 `files` 하나다([ADR-0007](adr/0007-confidential-content-placement.md)).
 
 ### 4.2 모듈 규칙
 
@@ -123,12 +132,62 @@ flowchart LR
 | 프로세스 | 프로필 | 하는 일 |
 |---|---|---|
 | api | `api` | HTTP API, WebSocket, api에서 발행한 이벤트의 listener(예: 업로드 확정 뒤 MediaConvert 작업 지시) |
-| worker | `worker` | 미완료 이벤트 재전송, MediaConvert 완료 처리(SQS), 업로드 GC, ZIP job, 학습 session lease 만료 처리, 학사 동기화 |
+| worker | `worker` | 미완료 이벤트 재전송, MediaConvert 완료 처리(SQS), 업로드 GC, ZIP job, 문서 rendition, 요약 작업, 학습 session lease 만료 처리, 학사 동기화 |
 
 - session은 DB(`user_sessions`)에 둔다. 서버 메모리에 사용자 상태를 두지 않는다.
 - 파일은 S3에만 쓴다. 컨테이너 로컬 디스크는 임시 작업 공간으로만 쓰고 요청 사이에 남기지 않는다.
 - `@Scheduled` 작업은 ShedLock(JDBC)으로 묶는다. 인스턴스가 늘어도 한 번만 실행된다.
 - WebSocket fan-out은 인스턴스가 1대일 때 in-memory broker로 하고, 2대가 되면 Valkey pub/sub로 바꾼다(8절).
+
+### 4.4 C4 보기
+
+container 수준이다. 기밀 본문이 지나는 경로만 그렸다.
+
+```mermaid
+flowchart LR
+  U[교수자 · 학생 브라우저] --> CF["CloudFront + WAF"]
+  CF -->|"/* 정적 shell"| FE[("S3 frontend")]
+  CF -->|"/vod/* · /doc/* signed cookie"| DL[("S3 delivery<br/>HLS · 쪽 이미지")]
+  CF -->|"/api/* no-store"| API["api"]
+  API -->|"상태 · 메타데이터"| DB[("MySQL")]
+  API -->|"요약 · 영상 key 읽기"| CT[("S3 content<br/>원본 · 요약 · 영상 key")]
+  WK["worker"] --> DB
+  WK --> CT
+  WK --> DL
+  WK -->|"PDF ↔ 쪽 이미지 · 텍스트"| CV["converter<br/>network · credential 없음"]
+  WK -->|"쪽 이미지 · 텍스트"| LLM["LLM 제공자"]
+  WK -->|"원본 · 영상 key"| MC["MediaConvert"] --> DL
+```
+
+component 수준이다. 요약에 관여하는 모듈만 그렸다. 점선은 port 구현이다.
+
+```mermaid
+flowchart TD
+  subgraph summary
+    WEB["web"] --> POL["SummaryPolicy"]
+    WEB --> SVC["SummaryService<br/>생성 · 취소 · 재시도 · 게시 · 조회"]
+    RUN["JobRunner (worker)"] --> PIPE["Pipeline<br/>pages → story → validate"]
+    SVC --> LED["JobLedger"]
+    RUN --> LED
+    PIPE --> LLMP{{"port LlmClient"}}
+  end
+  subgraph files
+    FAPI["api<br/>FileAccess · DocumentRenditions · FileDerivatives · DeliveryCookies"]
+    FAPI --> CVP{{"port PageConverter"}}
+    FAPI --> SGP{{"port DeliverySigner"}}
+  end
+  subgraph integration
+    LLMA["OpenAI 호환 adapter"] -.-> LLMP
+    CVA["converter adapter"] -.-> CVP
+    SGA["CloudFront signer"] -.-> SGP
+  end
+  POL --> FAPI
+  SVC --> FAPI
+  PIPE --> FAPI
+```
+
+- 각 모듈의 `package-info.java`가 4.1절 표의 의존을 `allowedDependencies`로 선언한다. 선언하지 않은 의존이 생기면 `ModuleStructureTests`의 `verify()`가 실패한다.
+- 같은 테스트가 코드에서 읽은 모듈 의존을 `build/spring-modulith-docs/`에 C4 component diagram(PlantUML)으로 쓴다. 위 그림과 다르면 코드가 기준이다.
 
 ## 5. 인증과 인가
 
@@ -140,7 +199,9 @@ flowchart LR
 - actor는 session principal 하나다. 요청 본문의 학번, `ud`, role 값은 받지 않는다(SC-02, CHG-01).
 - 과목 범위는 `/api/courses/{courseId}/...`처럼 요청에 명시한다. 서버 session에 현재 과목을 두지 않는다(SC-03, CHG-02).
 - 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06).
-- 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA를 강제한다.
+- 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. break-glass 계정은 과목 권한이 없다.
+- session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
+- 파일 권한은 `files`의 `FileAccess`가 첨부한 부모 객체에 묻는다. 학습활동 첨부는 `learning`이 판정한다. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 권한이 없거나 경로의 과목과 객체가 맞지 않으면 존재를 드러내지 않도록 404로 응답한다.
 
 ## 6. 첫 화면 성능
 
@@ -156,16 +217,40 @@ flowchart LR
 - session이 유효하면 IdP redirect를 거치지 않는다.
 - `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
 
-## 7. 영상 전달
+## 7. 영상과 문서 전달
 
-1. 업로드 원본은 private S3에 `quarantined` 상태로 들어간다(SC-08, `files` 모듈).
-2. 검사가 끝나면 업로드 확정 이벤트의 listener가 MediaConvert에 HLS 멀티비트레이트 작업을 지시한다. 기본 화질은 720p다.
-3. 완료 이벤트는 EventBridge에서 SQS를 거쳐 worker가 받는다. 결과는 영상 bucket에 저장된다.
-4. CloudFront는 OAC로 bucket을 읽는다. 영상 bucket과 frontend bucket 모두 CloudFront 외의 공개 접근을 막는다.
+암호화와 bucket 구분은 [ADR-0007](adr/0007-confidential-content-placement.md)에 있다.
+
+### 7.1 영상
+
+1. 업로드 원본은 `content` bucket에 `quarantined` 상태로 들어간다(SC-08, `files` 모듈).
+2. 검사가 끝나면 업로드 확정 이벤트의 listener가 영상 asset의 AES-128 key를 만들어 `content` bucket에 저장하고, MediaConvert에 HLS 멀티비트레이트 작업을 지시한다. 기본 화질은 720p다.
+3. 완료 이벤트는 EventBridge에서 SQS를 거쳐 worker가 받는다. 암호화된 결과는 `delivery` bucket의 `vod/`에 저장된다.
+4. CloudFront는 OAC로 bucket을 읽는다. `delivery` bucket과 `frontend` bucket 모두 CloudFront 외의 공개 접근을 막는다.
 5. 재생할 때 백엔드가 권한을 판정한 뒤, 그 강의 경로에만 유효한 짧은 TTL의 CloudFront signed cookie를 발급한다. 긴 강의를 보는 동안에는 하트비트 응답에서 만료 전에 다시 발급하고, 권한이 사라지면 재발급하지 않는다. CDN URL은 권한을 대신하지 않는다.
-6. 출석 인정은 서버 하트비트 원장으로 한다. 재생 위치는 이어보기 힌트로만 쓴다(SC-06, CHG-05).
+6. player는 manifest의 key URI인 `GET /api/courses/{courseId}/lecture-items/{itemId}/hls-key`에서 key를 받는다. 이 API는 요청마다 권한을 판정하고 `no-store`로 응답한다. key는 영상 asset마다 16 byte이고 `content` bucket의 `vod-keys/`에 있다.
+7. 출석 인정은 서버 하트비트 원장으로 한다. 재생 위치는 이어보기 힌트로만 쓴다(SC-06, CHG-05).
 
-DRM은 두지 않는다. 필요해지면 HLS AES-128부터 적용한다.
+HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화면 녹화는 막지 못한다.
+
+### 7.2 문서 쪽 이미지와 요약
+
+흐름과 실패 처리는 [ADR-0006](adr/0006-summary-module.md)에 있다.
+
+1. 검사가 끝난 PDF를 worker가 converter로 쪽 이미지와 쪽 텍스트로 바꾼다. 화면용 쪽 이미지는 `delivery` bucket의 `doc/{renditionKey}/`에, 모델 입력용 이미지와 텍스트는 `content` bucket에 저장한다.
+2. 교수자가 요약 생성을 요청하면 api가 `summary_jobs`에 작업을 기록한다. worker가 작업을 잡아 쪽 묶음마다 LLM을 호출하고 결과를 검사한다. 끝난 쪽은 checkpoint로 `content` bucket에 남긴다.
+3. 완료된 결과는 후보다. 교수자가 게시하면 학생에게 보인다.
+4. 학생이 자료를 열면 api가 권한을 판정한 뒤 요약 본문을 `no-store`로 응답하고, `/doc/{renditionKey}/*`에만 유효한 signed cookie를 발급한다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `POST /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 요약 생성 요청. 202 |
+| `GET /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 최근 작업 20개 |
+| `GET /api/courses/{courseId}/summary-jobs/{jobId}` | 담당자 | 작업 상태와 진행 쪽 수 |
+| `POST /api/courses/{courseId}/summary-jobs/{jobId}/cancel` · `/retry` | 담당자 | 취소, 실패·취소한 작업 재시도 |
+| `GET /api/courses/{courseId}/summary-jobs/{jobId}/result` | 담당자 | 게시 전 후보와 원본 대조가 필요한 쪽 |
+| `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시 |
+| `GET /api/courses/{courseId}/files/{fileId}/summary` | 열람 가능한 사람 | 게시본, `pageImageBase`, 쪽 이미지 signed cookie |
 
 ## 8. Valkey 도입 기준
 
@@ -202,7 +287,7 @@ DRM은 두지 않는다. 필요해지면 HLS AES-128부터 적용한다.
 |---|---|---|
 | 0. 기반 | Terraform으로 VPC, subnet, fck-nat, ECR, GitHub OIDC role | 의존성(security, oauth2-client, data-jpa, validation, actuator, modulith), 모듈 골격과 경계 테스트, requestId·오류 형식 |
 | 1. 핵심 기능 | CloudFront + WAF, S3 frontend, VPC origin, EC2 1대, RDS single-AZ | identity(session, CSRF, Policy)와 integration(IdP adapter) → catalog → learning → communication(공지 조회) → home. CHG-01~03, CHG-05, CHG-07 |
-| 2. 기능 확장 | S3 영상, MediaConvert, EventBridge·SQS | files, assessment, communication(Q&A, 게시판, 쪽지), 영상 signed cookie, ShedLock·event registry. CHG-04, CHG-06, CHG-08~10 |
+| 2. 기능 확장 | S3 content·delivery와 KMS key, MediaConvert, EventBridge·SQS, converter | files, assessment, communication(Q&A, 게시판, 쪽지), summary, 영상 signed cookie와 key API, ShedLock·event registry. CHG-04, CHG-06, CHG-08~10 |
 | 3. 학교 도입 | 3.2절 전환(ALB, ECS min 2, Valkey, Multi-AZ) | k6 부하 시험(메인 첫 진입, 시험 시작, 정원 경쟁), 백업 복원 리허설, 알람. CHG-11, CHG-12 |
 
 1단계의 `home`은 과목, 알림, 공지를 채운다. 할 일의 과제·퀴즈 항목은 2단계 `assessment` 구현 뒤에 채운다.
@@ -220,3 +305,5 @@ ShedLock과 event publication registry 테이블은 2단계에서 [db/README.md]
 | 배포 중 API 중단 | 3.1절 | 사용량이 적은 시간에 배포한다. 불만이 생기면 3.2절 전환을 앞당긴다 |
 | [db/README.md](../db/README.md) 7절 미결 결정 | 시험, 출석, 익명 설문 등 해당 기능 구현 | 구현 전에 STAC-76 하위 일감에 결정을 남긴다 |
 | 발표 데모(STAC-88)의 백엔드 | 1차 데모는 프론트엔드에 목업 데이터를 넣어 동작만 보여준다(팀 합의 2026-11-08). 이 문서의 단계는 e-class 백엔드 기준이다 | 데모 이후 실제 API 연결 대상을 STAC-91/92에서 정한다 |
+| 외부 LLM 데이터 처리 정책 | 제공자의 보존 기간, 학습 이용 여부, 국외 이전, 교수자 동의 절차가 정해지지 않았다([ADR-0008](adr/0008-llm-port-deepseek.md)) | 학교 자료로 요약을 생성하기 전에 정한다 |
+| 파일 단위 요약 | 자료 상세 화면의 "ASTRA 서포터즈 요약"(`ai_file_summaries`)을 쪽별 요약의 story로 채울지 정하지 않았다 | `summary` 구현 때 정한다 |
