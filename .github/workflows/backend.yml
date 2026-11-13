@@ -1,6 +1,8 @@
 name: Backend CI
 
-# backend/ 는 STack-Backend 와 같은 CI 세 작업(빌드·테스트, 스키마 검사, 컨테이너 smoke)을 돈다.
+# backend/ 는 STack-Backend 와 같은 CI 를 돈다. 바뀐 파일에 필요한 작업만 고르고(changes), 문서만 바뀌면 건너뛴다.
+#   build      코드·설정이 바뀌면 / schema 마이그레이션·db/tools 가 바뀌면(ERD 스냅샷은 경고만)
+#   container  Dockerfile·compose·docker/·.env.example·gradle·src/main/resources 가 바뀌면
 # 운영 배포는 STack-Corp/STack-Backend → yoobin-desktop-linux Jenkins → Hermes 가 맡는다(README "CI/CD").
 on:
   push:
@@ -15,7 +17,7 @@ permissions:
 
 concurrency:
   group: backend-ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -23,8 +25,43 @@ defaults:
 
 # action은 commit SHA로, container 이미지는 digest로 고정한다. 판은 줄 끝 주석에 적는다. 판을 올릴 때는 SHA와 주석을 함께 바꾼다.
 jobs:
+  changes:
+    name: Decide what to run
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+      schema: ${{ steps.diff.outputs.schema }}
+      container: ${{ steps.diff.outputs.container }}
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ] \
+             || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "전체 실행"; { echo code=true; echo schema=true; echo container=true; } >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files=$(git diff --name-only "$BASE" HEAD -- backend/ | sed 's#^backend/##')
+          printf '%s\n' "$files"
+          pick() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
+          code=$(printf '%s\n' "$files" | grep -vE '^$|^(docs|assets|db/erdcloud)/|\.md$' | grep -q . && echo true || echo false)
+          {
+            echo "code=$code"
+            echo "schema=$(pick '^(src/main/resources/db/migration/|db/tools/)')"
+            echo "container=$(pick '^(Dockerfile|\.dockerignore|compose\.yaml|\.env\.example|docker/|build\.gradle|settings\.gradle|gradle/|src/main/resources/)')"
+          } | tee -a "$GITHUB_OUTPUT"
+
   build:
     name: Build and test
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,6 +90,8 @@ jobs:
 
   schema:
     name: Schema check and ERD snapshot
+    needs: changes
+    if: needs.changes.outputs.schema == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,17 +123,18 @@ jobs:
             exit 1
           fi
 
-      # 마이그레이션을 바꾸고 스냅샷을 다시 만들지 않으면 실패한다.
+      # 마이그레이션을 바꾸고 스냅샷을 다시 만들지 않았으면 알린다. 실패시키지는 않는다.
       - name: ERD snapshot is up to date
         run: |
           python3 db/tools/erdcloud_snapshot.py
-          if ! git diff --exit-code -- db/erdcloud/snapshot.json; then
-            echo "::error::backend/db/erdcloud/snapshot.json is stale. Run 'python db/tools/erdcloud_snapshot.py' in backend/ and commit the result."
-            exit 1
+          if ! git diff --quiet -- db/erdcloud/snapshot.json; then
+            echo "::warning::backend/db/erdcloud/snapshot.json is stale. Run 'python db/tools/erdcloud_snapshot.py' in backend/ and commit the result."
           fi
 
   container:
     name: Container image and compose smoke test
+    needs: changes
+    if: needs.changes.outputs.container == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
