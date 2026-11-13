@@ -45,6 +45,8 @@ let root: Root;
 const path = (part: string, id = 901) => `/api/courses/${id}/${part}`;
 const ECLASS = "https://eclass.seoultech.ac.kr/ilos/mp/todo_list_connect.acl";
 const url = (seq: number, gubun: string) => `${ECLASS}?SEQ=${seq}&gubun=${gubun}&KJKEY=A2026`;
+/** STack's own detail of an imported video (no player): `m=lecture_weeks&n=school-<n>`. */
+const VIDEO_801 = `/ilos/cls/st/activity/activity_form.acl?${new URLSearchParams({ m: "lecture_weeks", n: "school-801", kj: "c901" })}`;
 
 /** One imported row as the contract describes it; override only what a test is about. */
 function school(id: number, type: string, overrides: Record<string, unknown> = {}) {
@@ -156,7 +158,9 @@ describe("activitySnapshot: 가져온 학교 활동", () => {
       ["school-807", "clicker", "clicker", 1, false, true, true, false],
       ["school-805", "survey", "survey", 21, false, true, true, false],
     ]);
-    expect(imported[0]!.href).toBe(url(801, "lecture_weeks"));
+    expect(imported[0]!.href).toBe(VIDEO_801);
+    expect(imported[0]!.external).toBe(false);
+    expect(imported.find((row) => row.key === "school-802")!.external).toBe(true);
     // Native rows keep their own mapping, and no imported row turns into an unopenable "other" row.
     expect(rows.filter((row) => !row.school).map((row) => row.key)).toEqual(["lecture-11", "report-812", "other-15", "material-13", "test-814"]);
     expect(rows.some((row) => row.type === "other" && String(row.activityId).startsWith("school-"))).toBe(false);
@@ -180,21 +184,27 @@ describe("activitySnapshot: 가져온 학교 활동", () => {
 });
 
 describe("학생 강의실의 학교 활동 행", () => {
-  it("유형·상태·기간을 보이고 허용한 학교 주소만 새 탭 링크로 연다", async () => {
+  it("유형·상태·기간을 보이고, 학교 영상은 STack 상세로, 그 밖은 허용한 학교 주소만 새 탭 링크로 연다", async () => {
     await mount();
     const video = host.querySelector<HTMLAnchorElement>('[data-row="school-801"]')!;
     expect(video.tagName).toBe("A");
-    expect(video.getAttribute("href")).toBe(url(801, "lecture_weeks"));
-    expect(video.getAttribute("target")).toBe("_blank");
-    expect(video.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(video.getAttribute("aria-label")).toBe("학교 video 801, 영상, 미완료 — 학교 e-Class에서 열기(새 탭)");
-    expect(video.querySelector(".activity-ext")?.textContent).toContain("e-Class");
+    expect(video.getAttribute("href")).toBe(VIDEO_801);
+    expect(video.hasAttribute("target")).toBe(false);
+    expect(video.querySelector(".activity-ext")).toBeNull();
     expect(video.querySelector(".activity-status")?.textContent).toBe("미완료");
     expect(video.getAttribute("title")).toContain("출석 1 주 1차시");
     expect(video.getAttribute("title")).toContain("학습시간 25분 5초");
-    expect(video.getAttribute("title")).toContain("e-Class에서 열기");
+    expect(video.getAttribute("title")).toContain("학교 영상");
     expect(video.getAttribute("title")).toContain("1주");
     expect(video.children).toHaveLength(3);
+
+    const linkOut = host.querySelector<HTMLAnchorElement>('[data-row="school-802"]')!;
+    expect(linkOut.getAttribute("href")).toBe(url(802, "report"));
+    expect(linkOut.getAttribute("target")).toBe("_blank");
+    expect(linkOut.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(linkOut.getAttribute("aria-label")).toBe("학교 report 802, 과제, 완료 — 학교 e-Class에서 열기(새 탭)");
+    expect(linkOut.querySelector(".activity-ext")?.textContent).toContain("e-Class");
+    expect(linkOut.getAttribute("title")).toContain("e-Class에서 열기");
 
     const report = host.querySelector('[data-row="school-802"]')!;
     expect(report.querySelector(".check")?.getAttribute("aria-label")).toBe("완료");
@@ -243,15 +253,15 @@ describe("학생 강의실의 학교 활동 행", () => {
     expect(next.hasAttribute("target")).toBe(false);
   });
 
-  it("학교 행만 있는 과목은 다음 학교 행을 새 탭으로 연다", async () => {
+  it("학교 행만 있는 과목은 다음 학교 행을 연다: 영상이면 STack의 학교 영상 상세", async () => {
     fixture({ native: false });
     await mount();
     const next = host.querySelector<HTMLAnchorElement>(".crs-hero .btn-primary")!;
     expect(next.tagName).toBe("A");
-    expect(next.getAttribute("href")).toBe(url(801, "lecture_weeks"));
-    expect(next.getAttribute("target")).toBe("_blank");
-    expect(next.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(next.getAttribute("aria-label")).toContain("e-Class");
+    expect(next.getAttribute("href")).toBe(VIDEO_801);
+    expect(next.hasAttribute("target")).toBe(false);
+    // Opening a list never reads a school detail.
+    expect(server.get.mock.calls.map(([path]) => String(path)).some((path) => path.includes("/activities/"))).toBe(false);
   });
 });
 
@@ -259,7 +269,8 @@ describe("학습활동 목록의 학교 활동 행", () => {
   it("영상·미제출 필터가 학교 행을 포함한다", async () => {
     await mount("51_activity_filter_video");
     expect(titles()).toEqual(["서버 영상", "학교 video 801"]);
-    expect(host.querySelector('[data-row="school-801"]')?.getAttribute("target")).toBe("_blank");
+    expect(host.querySelector('[data-row="school-801"]')?.getAttribute("href")).toBe(VIDEO_801);
+    expect(host.querySelector('[data-row="school-801"]')?.hasAttribute("target")).toBe(false);
     await mount("56_activity_filter_not_submit");
     expect(titles()).toEqual(["서버 과제", "학교 video 801", "학교 clicker 807", "서버 시험", "학교 survey 805"]);
   });

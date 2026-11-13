@@ -17,9 +17,16 @@ export interface GradeTotal {
   weightTotal?: number | null;
 }
 
-/** One of my grade items (`GET …/grades/me`). Unreleased items have no score, feedback or gradedAt. */
+/**
+ * One of my grade items (`GET …/grades/me`). Unreleased items have no score, feedback or gradedAt. A school course's student
+ * gets the school's items (`origin: "school"`, `itemId` `school-<n>`, `schoolType`, `offline`).
+ */
 export interface MyGradeItem {
-  itemId: number;
+  itemId: number | string;
+  origin?: "school";
+  schoolType?: string | null;
+  activityId?: number | string | null;
+  offline?: boolean;
   type: string;
   name: string;
   maxScore: number;
@@ -34,8 +41,9 @@ export interface MyGradeItem {
   gradedAt?: string | null;
 }
 
-/** `GET …/grades/me`. */
+/** `GET …/grades/me`. 학교 과목의 학생은 `origin: "school"`. */
 export interface MyGrades {
+  origin?: "school";
   activitiesVisible: boolean;
   items?: MyGradeItem[];
   total?: GradeTotal | null;

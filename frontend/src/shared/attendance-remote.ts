@@ -18,6 +18,8 @@ export interface AttendanceCell {
   reason?: string | null;
   decidedAt?: string | null;
   version: number;
+  /** 학교 과목: 학교가 붙인 상태 글("결석 (0%)" 등). */
+  statusLabel?: string | null;
 }
 
 export interface AttendanceSummary {
@@ -38,13 +40,16 @@ export interface AttendanceSettings {
 }
 
 export interface AttendanceSession {
-  sessionId: number;
+  /** 학교 과목(`origin: "school"`)은 그 응답 안에서만 쓰는 `school-<n>`. */
+  sessionId: number | string;
   weekNo: number;
   sessionNo: number;
   classDate?: string | null;
   startTime?: string | null;
   endTime?: string | null;
-  method?: string;
+  method?: string | null;
+  /** 학교 과목: 학교의 출석 방식 글("Smart" 등). */
+  schoolMethod?: string | null;
   cancelled?: boolean;
   makeup?: boolean;
   makeupOfSessionId?: number | null;
@@ -60,8 +65,9 @@ export interface AttendanceWeek {
   sessions?: AttendanceSession[];
 }
 
-/** `GET …/attendance`. */
+/** `GET …/attendance`. 학교 과목의 학생은 학교 출석부(`origin: "school"`, `settings` null, 기록마다 `statusLabel`)를 받는다. */
 export interface AttendanceView {
+  origin?: "school";
   role?: string;
   serverTime?: string;
   settings?: AttendanceSettings | null;
@@ -156,13 +162,14 @@ export const ROSTER_PAGE = 30;
 export const ROSTER_SORTS: readonly (readonly [string, string])[] = [["studentNo", "학번순"], ["name", "이름순"]];
 export const rosterSort = (value: unknown): string => (typeof value === "string" && ROSTER_SORTS.some(([key]) => key === value) ? value : "studentNo");
 
-export const STATUS: Record<string, string> = { present: "출석", late: "지각", absent: "결석", excused: "유고", unmarked: "미처리" };
+/** `other`는 학교 과목에서 STack 상태로 옮길 수 없는 학교 상태다. */
+export const STATUS: Record<string, string> = { present: "출석", late: "지각", absent: "결석", excused: "유고", unmarked: "미처리", other: "기타" };
 /** 담당자가 정할 수 있는 상태. `unmarked`는 보내지 않는다. */
 export const DECIDABLE: readonly string[] = ["present", "late", "absent", "excused"];
 export const SOURCE: Record<string, string> = { smart: "스마트출석", online: "온라인 학습", manual: "담당 교수" };
 export const METHOD: Record<string, string> = { smart: "스마트출석", online: "온라인", manual: "일반" };
 /** 학생 화면 색 클래스(`st-*`)에 맞춘 이름. */
-export const statusTone = (status: string | null | undefined): string => (status === "unmarked" || !status ? "empty" : status);
+export const statusTone = (status: string | null | undefined): string => (status === "unmarked" || status === "other" || !status ? "empty" : status);
 
 const course = (courseId: Id): string => `/api/courses/${encodeURIComponent(courseId)}`;
 const sessionPath = (courseId: Id, sessionId: Id): string => `${course(courseId)}/attendance-sessions/${encodeURIComponent(sessionId)}`;

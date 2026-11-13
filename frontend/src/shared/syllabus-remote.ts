@@ -15,9 +15,9 @@ export interface SyllabusWeek {
   note: string | null;
 }
 
-/** One instructor card. Contact fields only for course members. */
+/** One instructor card. Contact fields only for course members. A school course's syllabus (`origin: "school"`) has no `userId`. */
 export interface SyllabusInstructor {
-  userId: number;
+  userId?: number | null;
   name?: string;
   department?: string | null;
   email?: string | null;
@@ -28,8 +28,12 @@ export interface SyllabusInstructor {
   version?: number;
 }
 
-/** `GET …/syllabus`. Non-members get no contact fields and no `version`. */
+/**
+ * `GET …/syllabus`. Non-members get no contact fields and no `version`. A school course's student gets the school's syllabus
+ * (`origin: "school"`, no `version`, the school's own labels in `school*`).
+ */
 export interface Syllabus {
+  origin?: "school";
   courseName?: string;
   courseCode?: string;
   section?: string | null;
@@ -46,6 +50,11 @@ export interface Syllabus {
   weeks?: SyllabusWeek[];
   instructors?: SyllabusInstructor[];
   version?: number;
+  schoolTermName?: string | null;
+  schoolCourseName?: string | null;
+  schoolCodeSection?: string | null;
+  schoolCompletionType?: string | null;
+  schoolCredit?: string | null;
 }
 
 /** `PUT …/syllabus` body. */
@@ -79,6 +88,7 @@ export const OUTCOME: Record<OutcomeLevel, string> = { L1: "낮음", L2: "보통
 export function syllabusMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return "강의계획서를 불러오지 못했습니다.";
   if (error.status === 401) return "ASTRA 서버 로그인이 필요합니다.";
+  if (error.status === 404 && error.code === "syllabus_not_provided") return "이 과목은 학교 e-Class에 강의계획서가 없습니다.";
   if (error.status === 404) return "이 과목의 강의계획서를 볼 수 없습니다.";
   if (error.status === 429) return retryLater(error);
   if (error.status === 0) return error.message;

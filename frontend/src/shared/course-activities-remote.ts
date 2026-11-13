@@ -7,7 +7,7 @@
 import { ApiError } from "./api.ts";
 import { backendStatus, courseIdFor } from "./backend.ts";
 import type { Entry, Resource } from "./remote-cache.ts";
-import { serverActivityHref, materialHref, targetIdOf } from "./activity-links.ts";
+import { serverActivityHref, materialHref, schoolVideoHref, targetIdOf } from "./activity-links.ts";
 import { courseWeeks, lectureDetails, lectureProgress, courseKey, detailKey, lectureRows, weeksOf } from "./lectures-remote.ts";
 import type { WeekActivity } from "./lectures-remote.ts";
 import { materialLists, materialKey, materialsOf } from "./materials-remote.ts";
@@ -243,13 +243,14 @@ export function activitySnapshot(parts: ActivityPart[], kj: string, { instructor
         const type = typeof activity.type === "string" && activity.type ? activity.type : "etc";
         const ongoing = activity.phase === "open";
         const id = String(activity.activityId);
-        // A school material opens STack's own material detail; any other imported row opens the school's e-Class.
+        // A school material or video opens STack's own detail (a video has no player there); any other imported row opens the school's e-Class.
         const material = (type === "material" || activity.schoolType === "lecture_material") && SCHOOL_MATERIAL_ID.test(id);
-        const href = material ? materialHref(kj, id) : schoolHref(activity.schoolUrl);
+        const video = !material && activity.schoolType === "lecture_weeks" ? schoolVideoHref(kj, id) : null;
+        const href = material ? materialHref(kj, id) : video || schoolHref(activity.schoolUrl);
         rows.push({
           type, kind: activity.schoolType || type, key: `school-${id.replace(/^school-/, "")}`, weekNo: week.weekNo,
           title: activity.title, openAt: activity.openAt, closeAt: activity.closeAt, phase: activity.phase || null, href,
-          activityId: activity.activityId, ongoing, done: activity.done === true, school: true, external: !material && href !== null, item: activity,
+          activityId: activity.activityId, ongoing, done: activity.done === true, school: true, external: !material && !video && href !== null, item: activity,
           missing: ongoing && activity.done === false && type !== "material" && activity.offline !== true,
           ...(material ? { files: schoolFilesOf(schoolMaterials.get(id)) } : {}),
         });

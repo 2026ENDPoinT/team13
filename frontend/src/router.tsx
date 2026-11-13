@@ -72,6 +72,14 @@ export function resolveScreen(pathname: string, params: URLSearchParams): Screen
       course: courseOf(params), layout: "course",
     };
   }
+  // A video imported from the school's e-Class (`m=lecture_weeks&n=school-<n>`): the school's facts, no player.
+  const schoolLecture = pathname === activityPath && params.get("m") === "lecture_weeks" && /^school-[1-9]\d{0,17}$/.test(String(itemId || "")) ? String(itemId) : null;
+  if (schoolLecture) {
+    return {
+      id: `srv-lecture-${schoolLecture}`, role: "student", title: "영상", path: activityPath, nav: "activity", kind: "activity",
+      serverSchoolLecture: schoolLecture, course: courseOf(params), layout: "course",
+    };
+  }
   // A backend material (`m=lecture_material&n=srv-<activityId>`) or an activity link that only knows the
   // learning activity id (`m=report|test|survey&act=<activityId>`, to-do and notifications).
   const materialId = pathname === activityPath && params.get("m") === "lecture_material" ? lectureIdOf(itemId) : null;
