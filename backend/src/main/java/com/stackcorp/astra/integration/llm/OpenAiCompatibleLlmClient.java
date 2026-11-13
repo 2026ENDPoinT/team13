@@ -92,7 +92,7 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 			.header("authorization", "Bearer " + this.properties.apiKey())
 			.POST(HttpRequest.BodyPublishers.ofByteArray(MAPPER.writeValueAsBytes(body(request))))
 			.build();
-		HttpResponse<byte[]> response = send(httpRequest);
+		HttpResponse<byte[]> response = send(httpRequest, request.timeout());
 		int status = response.statusCode();
 		if (status < 200 || status >= 300) {
 			throw httpFailure(status, response.body());
@@ -122,13 +122,16 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 								Map.of("name", t.name(), "description", t.description(), "parameters", t.parameters())))
 						.toList());
 		}
+		if (request.jsonObject()) {
+			body.put("response_format", Map.of("type", "json_object"));
+		}
 		body.put("stream", false);
 		if (this.official) {
 			body.put("max_completion_tokens", request.maxOutputTokens());
 		}
 		else {
 			body.put("max_tokens", request.maxOutputTokens());
-			body.put("temperature", TEMPERATURE);
+			body.put("temperature", request.temperature() != null ? request.temperature() : TEMPERATURE);
 		}
 		return body;
 	}
@@ -185,20 +188,30 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 		};
 	}
 
-	private HttpResponse<byte[]> send(HttpRequest request) {
+	// 요청의 timeout이 있으면 동시 요청 자리를 기다리는 시간까지 그 안에 센다. 자리를 못 얻고 시간이 다 되면 제한 시간 초과와 같은
+	// 실패다. 없으면 자리를 얻을 때까지 기다리고, 설정한 timeout은 보낸 뒤부터 센다.
+	private HttpResponse<byte[]> send(HttpRequest request, Duration requestTimeout) {
+		long started = System.nanoTime();
 		try {
-			this.permits.acquire();
+			if (requestTimeout == null) {
+				this.permits.acquire();
+			}
+			else if (!this.permits.tryAcquire(requestTimeout.toNanos(), TimeUnit.NANOSECONDS)) {
+				throw new LlmException(Code.NETWORK, "동시 요청 자리를 제한 시간 안에 얻지 못했습니다.", new TimeoutException());
+			}
 		}
 		catch (InterruptedException ex) {
 			Thread.currentThread().interrupt();
 			throw new LlmException(Code.NETWORK, "모델 호출을 기다리다 중단되었습니다.", ex);
 		}
+		long wait = requestTimeout == null ? this.properties.timeout().toNanos()
+				: Math.max(0, requestTimeout.toNanos() - (System.nanoTime() - started));
 		long max = this.properties.maxResponseBytes().toBytes();
 		CompletableFuture<HttpResponse<byte[]>> future = this.http.sendAsync(request,
 				(info) -> new CappedBody(info.statusCode() / 100 == 2 ? max : ERROR_BODY_BYTES,
 						info.statusCode() / 100 == 2));
 		try {
-			return future.get(this.properties.timeout().toMillis(), TimeUnit.MILLISECONDS);
+			return future.get(wait, TimeUnit.NANOSECONDS);
 		}
 		catch (InterruptedException ex) {
 			future.cancel(true);
