@@ -14074,6 +14074,503 @@
    ]
   },
   {
+   "_id": "5a9h6RhRpiPnZw5LW",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_room_folders",
+   "name": "학습실 폴더",
+   "position": {
+    "x": 8180,
+    "y": 50
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "MWu32uAYtB3WNmMLB",
+      "name": "학습실 폴더 ID",
+      "pName": "study_room_folder_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학습실 폴더 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "wusmCQc5DidKRhPB6",
+     "name": "소유 사용자 ID",
+     "pName": "owner_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "소유 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "7TvcvkWA4pRdghsru",
+     "name": "과목 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "과목 ID",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "Yx7kWfa3rw8DDzFYw",
+     "name": "폴더 이름",
+     "pName": "folder_name",
+     "domain": "",
+     "type": "VARCHAR(60)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "폴더 이름",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "KJqc5iPWP7FZSBzN7",
+     "name": "과목 안 표시 순서",
+     "pName": "folder_position",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "과목 안 표시 순서(1부터)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "9gmdMtvsravxMzJJj",
+     "name": "이름 바꾸기·순서 바꾸기·지우기 낙관적 버전",
+     "pName": "folder_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "이름 바꾸기·순서 바꾸기·지우기 낙관적 버전",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "7KXYiiDeEwNxo9up2",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ngdKxfw9xTAiQKBH6",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "6kA8yZSzTJBkzTgiv",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_room_placements",
+   "name": "학습실 배치",
+   "position": {
+    "x": 8180,
+    "y": 378
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "k8CTDvLJA3ckXpN2M",
+      "name": "학습실 배치 ID",
+      "pName": "study_room_placement_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학습실 배치 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "wSJep4rX9mHk7jd3z",
+     "name": "소유 사용자 ID",
+     "pName": "owner_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "소유 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "vkZN6uensiGDfwjjf",
+     "name": "둔 폴더 ID",
+     "pName": "study_room_folder_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "둔 폴더 ID",
+     "relEntity": "5a9h6RhRpiPnZw5LW",
+     "relFieldId": "MWu32uAYtB3WNmMLB",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "vmi2g7rvc2tq5LK3L",
+     "name": "과목 강의자료 파일 ID",
+     "pName": "file_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "과목 강의자료 파일 ID(녹음이면 NULL)",
+     "relEntity": "bxoZkn979ue2k9gpi",
+     "relFieldId": "tQ3z9cXG7sFPkGYM7",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "JxjFFs7XaXx2t8qrC",
+     "name": "녹음 ID",
+     "pName": "study_room_recording_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "녹음 ID(강의자료 파일이면 NULL)",
+     "relEntity": "mghTfTgoNHkh8xbFF",
+     "relFieldId": "BCYyrAdt27jKKfy8Z",
+     "relType": "ZERO_OR_ONE"
+    },
+    {
+     "_id": "GF6xihdKJ9fDBPGHx",
+     "name": "옮기기·빼기 낙관적 버전",
+     "pName": "placement_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "옮기기·빼기 낙관적 버전",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Gb7nJeMyk44Mqp9tE",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "KX8dYA5JhvDGjdDoN",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "hwA4LrodKMHAJoB5Z",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_room_quotas",
+   "name": "학습실 사용량",
+   "position": {
+    "x": 8180,
+    "y": 706
+   },
+   "keys": {
+    "pks": [],
+    "fks": [
+     {
+      "_id": "3ok7yhPeihDkZHWSB",
+      "name": "소유 사용자 ID",
+      "pName": "owner_user_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "소유 사용자 ID",
+      "relEntity": "qGnfMsvCrBxdAyZWm",
+      "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+      "relType": "ZERO_OR_ONE"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "kjY4ojSymBR63LaeG",
+     "name": "녹음 파일이 차지하는 바이트",
+     "pName": "used_bytes",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "녹음 파일이 차지하는 바이트",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "AJf2pktCvhea36MJS",
+     "name": "녹음 수",
+     "pName": "recording_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "녹음 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "6Q3HiGy6BZpGyH9GC",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "s8bywPyaqEXWJ6F5R",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "mghTfTgoNHkh8xbFF",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_room_recordings",
+   "name": "학습실 녹음",
+   "position": {
+    "x": 8180,
+    "y": 956
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "BCYyrAdt27jKKfy8Z",
+      "name": "학습실 녹음 ID",
+      "pName": "study_room_recording_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학습실 녹음 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "XtQBaanjRd6jWY8v4",
+     "name": "소유 사용자 ID",
+     "pName": "owner_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "소유 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "CgbdxfMT6o8uYdFns",
+     "name": "과목 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "과목 ID",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "HaMtj2MSu5dezdXsv",
+     "name": "오디오 파일 ID",
+     "pName": "file_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "오디오 파일 ID",
+     "relEntity": "bxoZkn979ue2k9gpi",
+     "relFieldId": "tQ3z9cXG7sFPkGYM7",
+     "relType": "ZERO_OR_ONE"
+    },
+    {
+     "_id": "4Na7MsJAerEiTJXJ9",
+     "name": "녹음 제목",
+     "pName": "recording_title",
+     "domain": "",
+     "type": "VARCHAR(200)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "녹음 제목",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "L9g3Xiitph2R9n7YS",
+     "name": "녹음 출처",
+     "pName": "recording_source",
+     "domain": "",
+     "type": "VARCHAR(8)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "녹음 출처: mic|tab|audio",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "LEXnGPAPj6iSPKxoQ",
+     "name": "재생 MIME",
+     "pName": "audio_mime_type",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "재생 MIME(내용으로 판정한 형식의 audio 형식)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "WA5v3bd8oMktSiKiJ",
+     "name": "재생 길이",
+     "pName": "duration_ms",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "재생 길이(밀리초, 브라우저가 잰 값)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ffKixWvoWZ7nj23nS",
+     "name": "녹음 시작 일시",
+     "pName": "recorded_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "녹음 시작 일시(브라우저가 보낸 값, 가져온 파일은 가져온 일시)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "GFeTxHEXAuo9WCzF3",
+     "name": "이름 바꾸기·지우기 낙관적 버전",
+     "pName": "recording_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "이름 바꾸기·지우기 낙관적 버전",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gpcQ9ZkNQjR5zG9pE",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Bh9ex7u9a8H5LME3Z",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "Kx8Hhg2Cq4ABiERiv",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "summary_jobs",

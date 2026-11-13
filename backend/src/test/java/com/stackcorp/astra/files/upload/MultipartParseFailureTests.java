@@ -50,9 +50,10 @@ class MultipartParseFailureTests {
 
 	static final String LIMIT = "1MB";
 
-	// 업로드 경로 세 곳. 일반 업로드의 purpose는 과목이 필요 없는 것을 쓴다.
+	// 업로드 경로 네 곳. 일반 업로드의 purpose는 과목이 필요 없는 것을 쓴다. 본문을 나누는 일은 handler보다 먼저라 녹음 경로의 과목은
+	// 구성원이 아니어도 된다.
 	private static final String[] ENDPOINTS = { "/api/uploads?purpose=message_attachment", "/api/filebox/files",
-			"/api/me/profile/image" };
+			"/api/me/profile/image", "/api/me/study-room/courses/1/recordings" };
 
 	@LocalServerPort
 	int port;

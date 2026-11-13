@@ -147,7 +147,8 @@ class UploadService {
 			.orElseThrow(() -> rejected("content_mismatch", "파일 내용이 확장자와 맞지 않습니다."));
 		String sha = inspected.sha256();
 		String fingerprint = clientKey == null ? null
-				: fingerprint(purposeCode, courseId, name, size, sha, folderId);
+				: placement.request() == null ? fingerprint(purposeCode, courseId, name, size, sha, folderId)
+						: Idempotency.fingerprint(new PlacedUploadRequest(purposeCode, name, size, sha, placement.request()));
 		if (clientKey != null) {
 			Optional<Upload> replay = this.records.findByKey(userId, clientKey).map((k) -> sameRequest(k, fingerprint));
 			if (replay.isPresent()) {
@@ -195,7 +196,7 @@ class UploadService {
 				});
 			}
 			catch (DuplicateKeyException ex) {
-				discardUnused(sha, storageKey, null);
+				discardUnused(sha, size, mime, storageKey, null);
 				// 같은 멱등 key의 요청이 동시에 들어왔다. 먼저 끝난 쪽이 같은 요청이면 그 결과를 돌려주고, 다르면 409다.
 				if (clientKey == null) {
 					throw ex;
@@ -208,16 +209,16 @@ class UploadService {
 					this.store.delete(Bucket.CONTENT, storageKey);
 				}
 				else {
-					discardUnused(sha, storageKey, null);
+					discardUnused(sha, size, mime, storageKey, null);
 				}
 				throw ex;
 			}
 			catch (RuntimeException ex) {
-				discardUnused(sha, storageKey, null);
+				discardUnused(sha, size, mime, storageKey, null);
 				throw ex;
 			}
 			if (recorded != null) {
-				discardUnused(sha, storageKey, recorded.blobKey());
+				discardUnused(sha, size, mime, storageKey, recorded.blobKey());
 				return recorded.upload();
 			}
 			if (attempt >= 2) {
@@ -247,13 +248,29 @@ class UploadService {
 		return "blobs/" + sha.substring(0, 2) + "/" + sha;
 	}
 
-	// 새 key에 저장했지만 blob이 그 key를 쓰지 않게 됐으면 지운다. 기본 key는 같은 내용의 다른 요청과 함께 쓰므로 남긴다.
-	private void discardUnused(String sha, String storageKey, String blobKey) {
-		if (storageKey == null || storageKey.equals(baseKey(sha)) || storageKey.equals(blobKey)) {
+	/**
+	 * 저장했지만 기록하지 못했거나 blob이 쓰지 않게 된 객체를 정리한다.
+	 * <ul>
+	 * <li>새 임의 key에 저장했으면 그 key는 이 요청만 쓰므로 바로 지운다.</li>
+	 * <li>기본 key는 같은 내용의 다른 요청이 저장한 뒤 아직 기록하지 않았을 수 있어 바로 지우면 그 요청의 원본이 사라진다. 기록이 실패했고
+	 * 그 내용의 blob 행이 없으면 참조 수 0인 blob 행으로 남겨 저장소 GC가 유예 시간 뒤 지우게 한다. 같은 내용의 다른 요청은 그 행을
+	 * 함께 쓰고, GC와의 엇갈림은 이미 있는 blob 행 잠금(ADR-0011 5번)이 막는다. 행이 있으면 그 행이 객체를 쓰거나 GC가 지운다.</li>
+	 * </ul>
+	 *
+	 * @param blobKey 기록에 성공했으면 blob이 쓰는 key, 실패했으면 null
+	 */
+	private void discardUnused(String sha, long size, String mime, String storageKey, String blobKey) {
+		if (storageKey == null || storageKey.equals(blobKey)) {
 			return;
 		}
 		try {
-			this.store.delete(Bucket.CONTENT, storageKey);
+			if (!storageKey.equals(baseKey(sha))) {
+				this.store.delete(Bucket.CONTENT, storageKey);
+			}
+			else if (blobKey == null) {
+				this.transaction.executeWithoutResult(
+						(tx) -> this.records.registerUnreferenced(sha, size, mime, storageKey, this.scan.initialBlobState()));
+			}
 		}
 		catch (RuntimeException ex) {
 			log.warn("failed to discard unused upload object", ex);
@@ -332,6 +349,14 @@ class UploadService {
 	}
 
 	/**
+	 * 업로드와 함께 기록하는 행의 값(학습실 녹음의 과목, 제목, 길이 등)까지 같은 요청인지 보는 업로드의 지문 정규형.
+	 *
+	 * @param placed {@link Placement#request()}가 돌려준 값
+	 */
+	record PlacedUploadRequest(String purpose, String name, long sizeBytes, String sha256, Object placed) {
+	}
+
+	/**
 	 * 업로드를 어디에 둘지 정하는 쪽이 업로드 기록과 같은 transaction에서 하는 일. 파일함은 앞에서 용량을 잡고 뒤에서 항목을 만든다.
 	 * 잠금 순서를 지키도록 before는 blob을 잠그기 전에 부른다.
 	 */
@@ -344,6 +369,14 @@ class UploadService {
 		}
 
 		default void after(long fileId, long uploadId, String name) {
+		}
+
+		/**
+		 * 업로드와 함께 기록하는 값. null이 아니면 멱등 업로드의 요청 지문에 넣어, 같은 key로 같은 파일을 다른 값과 보내면 409
+		 * {@code idempotency_conflict}가 된다. 기본은 null이고 지문은 {@link UploadService#fingerprint}다.
+		 */
+		default Object request() {
+			return null;
 		}
 
 	}

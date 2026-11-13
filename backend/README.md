@@ -71,7 +71,7 @@ git commit -m "Update reference to <변경 요약>"
 - 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
 - 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
-- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 113 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
+- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 117 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
 
 ## 빌드와 실행
 
@@ -274,6 +274,18 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 | `ASTRA_FILEBOX_ZIP_LEASE` · `ASTRA_FILEBOX_ZIP_MAX_ATTEMPTS` | `10m` · `3` | worker가 작업 하나를 잡는 lease(파일 하나를 넣을 때마다 늘린다)와 생성 시도 수 상한 |
 | `ASTRA_FILEBOX_ZIP_POLL_INTERVAL` | `10s` | worker가 대기 작업과 만료 생성물을 찾는 간격 |
 | `ASTRA_FILEBOX_ZIP_RATE_LIMIT` · `ASTRA_FILEBOX_ZIP_RATE_WINDOW` | `10` · `10m` | 한 사용자가 구간 안에 요청할 수 있는 ZIP 작업 수 |
+
+### 학습실 설정
+
+학습실의 내 폴더, 항목 배치, 강의 녹음(`/api/me/study-room/**`)은 [ADR-0040](docs/adr/0040-study-room-sync.md)을 따른다. 녹음 파일 하나의 크기와 확장자는 `upload_policies`의 `study_recording` 행(50 MB, `webm, weba, ogg, opus, mp3, m4a, mp4, wav, aac, flac`)이 정한다. 행에 확장자를 더하려면 `StudyRoomService.AUDIO_TYPES`에 재생 형식도 더한다(없으면 422). 크기를 올리면 clamd `StreamMaxLength`와 `ASTRA_SCAN_CLAMD_MAX_STREAM_BYTES`도 그보다 크게 둔다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_STUDYROOM_QUOTA` | `2GB` | 사용자 한 사람의 녹음 바이트 합 상한. 파일함 용량과 따로 센다 |
+| `ASTRA_STUDYROOM_MAX_RECORDINGS` | `500` | 사용자 한 사람의 녹음 수 상한 |
+| `ASTRA_STUDYROOM_MAX_FOLDERS_PER_COURSE` | `50` | 한 과목 학습실의 폴더 수 상한 |
+| `ASTRA_STUDYROOM_RATE_LIMIT` · `ASTRA_STUDYROOM_RATE_WINDOW` | `120` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 학습실 변경 명령 수. 녹음 올리기는 업로드 제한(`ASTRA_UPLOAD_RATE_LIMIT`)을 쓴다 |
+| `ASTRA_STUDYROOM_PLAY_RATE_LIMIT` | `600` | 한 사용자가 같은 구간 안에 보낼 수 있는 녹음 재생 요청 수(GET·HEAD, 탐색마다 하나) |
 
 ### 온라인 강의 학습 설정
 

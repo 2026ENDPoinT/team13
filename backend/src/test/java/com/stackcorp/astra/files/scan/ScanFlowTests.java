@@ -24,11 +24,14 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.ResultMatcher;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -117,15 +120,17 @@ class ScanFlowTests extends IntegrationTest {
 
 	long course;
 
+	long studentId;
+
 	ApiClient student;
 
 	@BeforeEach
 	void course() {
 		clamd.reset();
 		this.course = this.data.course();
-		long stu = this.data.user("STUDENT");
-		this.data.enroll(this.course, stu);
-		this.student = new ApiClient(this.mvc, this.data.session(stu));
+		this.studentId = this.data.user("STUDENT");
+		this.data.enroll(this.course, this.studentId);
+		this.student = new ApiClient(this.mvc, this.data.session(this.studentId));
 	}
 
 	@Test
@@ -541,6 +546,206 @@ class ScanFlowTests extends IntegrationTest {
 				SELECT reference_count, blob_state, CAST(purged_at IS NOT NULL AS SIGNED) AS purged FROM file_blobs
 				 WHERE file_blob_id = :id
 				""").param("id", blobId).query().singleRow();
+	}
+
+	/**
+	 * 원본을 저장한 뒤 기록하지 못한 파일함 업로드(용량 초과)는 참조 수 0인 blob 행을 남긴다(ADR-0040 9번). 그 내용은 다른 blob처럼
+	 * 검사를 받고, 그 사이 같은 내용을 올린 업로드는 clean을 물려받지 않고 그 검사를 기다린다. 아무도 참조하지 않으면 저장소 GC가 유예
+	 * 시간 뒤 지운다.
+	 */
+	@Test
+	void aFileboxUploadRefusedAfterStoringLeavesAZeroReferenceBlobThatIsScannedAndPurged() throws Exception {
+		this.jdbc.sql("INSERT INTO filebox_quotas (owner_user_id, quota_bytes) VALUES (:u, 1000)")
+			.param("u", this.studentId)
+			.update();
+		byte[] shared = notes();
+		byte[] alone = notes();
+		refusedAfterStoring(shared);
+		refusedAfterStoring(alone);
+		Map<String, Object> left = blobOf(shared);
+		long sharedBlob = number(left, "file_blob_id");
+		assertThat(number(left, "reference_count")).isZero();
+		assertThat(left).containsEntry("blob_state", "quarantined").containsEntry("purged", 0L);
+		assertThat(this.store.get(Bucket.CONTENT, (String) left.get("storage_key"))).isPresent();
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM files WHERE file_blob_id = :id")
+			.param("id", sharedBlob)
+			.query(Long.class)
+			.single()).isZero();
+
+		// 같은 내용의 업로드는 그 행을 함께 쓰고 검사를 기다린다.
+		ApiClient professor = instructor();
+		long later = uploadId(upload(professor, shared).andExpect(jsonPath("$.state").value("quarantined")));
+		assertThat(number(row(later), "file_blob_id")).isEqualTo(sharedBlob);
+
+		drain();
+
+		professor.get("/api/uploads/" + later).andExpect(jsonPath("$.state").value("clean"));
+		assertThat(clamd.scansOf(shared)).isEqualTo(1);
+		assertThat(clamd.scansOf(alone)).isEqualTo(1);
+		Map<String, Object> unused = blobOf(alone);
+		assertThat(unused).containsEntry("blob_state", "clean").containsEntry("reference_count", 0L);
+
+		age(sharedBlob);
+		age(number(unused, "file_blob_id"));
+		gc();
+		assertThat(blobOf(alone)).containsEntry("purged", 1L);
+		assertThat(this.store.get(Bucket.CONTENT, (String) unused.get("storage_key"))).isEmpty();
+		assertThat(blobOf(shared)).containsEntry("purged", 0L).containsEntry("reference_count", 1L);
+		assertThat(this.store.get(Bucket.CONTENT, (String) left.get("storage_key"))).isPresent();
+	}
+
+	/**
+	 * 미리 보는 용량 검사는 통과하고, 원본을 저장한 뒤 용량 행을 잠가 다시 볼 때 넘치는 파일함 업로드. 다른 transaction이 용량 행을 잡고
+	 * 있다가 업로드가 그 행을 기다리기 시작하면 용량을 다 쓴 것으로 바꾸고 놓는다.
+	 */
+	private void refusedAfterStoring(byte[] content) throws Exception {
+		CountDownLatch locked = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			Future<?> holder = pool.submit(() -> this.transaction.executeWithoutResult((tx) -> {
+				this.jdbc.sql("SELECT used_bytes FROM filebox_quotas WHERE owner_user_id = :u FOR UPDATE")
+					.param("u", this.studentId)
+					.query(Long.class)
+					.single();
+				locked.countDown();
+				try {
+					assertThat(release.await(30, TimeUnit.SECONDS)).isTrue();
+				}
+				catch (InterruptedException ex) {
+					Thread.currentThread().interrupt();
+					throw new IllegalStateException(ex);
+				}
+				this.jdbc.sql("UPDATE filebox_quotas SET used_bytes = quota_bytes WHERE owner_user_id = :u")
+					.param("u", this.studentId)
+					.update();
+			}));
+			assertThat(locked.await(30, TimeUnit.SECONDS)).isTrue();
+			Future<ResultActions> upload = pool.submit(() -> this.student
+				.send(MockMvcRequestBuilders.multipart("/api/filebox/files")
+					.file(new MockMultipartFile("file", "notes.txt", "text/plain", content))));
+			// 원본을 저장한 뒤(미리 보는 용량 검사는 그 전이다) 용량 행을 만들거나(INSERT … ON DUPLICATE KEY) 잠그는 문장에서
+			// 기다린다.
+			String key = "blobs/" + sha(content).substring(0, 2) + "/" + sha(content);
+			long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+			while (this.store.get(Bucket.CONTENT, key).isEmpty() || this.jdbc.sql("""
+					SELECT COUNT(*) FROM information_schema.PROCESSLIST
+					 WHERE ID <> CONNECTION_ID() AND INFO LIKE '%filebox_quotas%' AND INFO LIKE :owner
+					""")
+				.param("owner", "%owner_user_id%" + this.studentId + "%")
+				.query(Integer.class)
+				.single() == 0) {
+				assertThat(System.nanoTime()).as("업로드가 원본을 저장한 뒤 용량 행을 기다리지 않았다").isLessThan(deadline);
+				Thread.sleep(10);
+			}
+			release.countDown();
+			holder.get(30, TimeUnit.SECONDS);
+			upload.get(30, TimeUnit.SECONDS)
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("quota_exceeded"));
+			this.jdbc.sql("UPDATE filebox_quotas SET used_bytes = 0 WHERE owner_user_id = :u")
+				.param("u", this.studentId)
+				.update();
+		}
+		finally {
+			release.countDown();
+			pool.shutdownNow();
+		}
+	}
+
+	private Map<String, Object> blobOf(byte[] content) throws Exception {
+		return this.jdbc.sql("""
+				SELECT file_blob_id, reference_count, blob_state, storage_key, CAST(purged_at IS NOT NULL AS SIGNED) AS purged
+				  FROM file_blobs WHERE content_sha256 = :sha
+				""").param("sha", sha(content)).query().singleRow();
+	}
+
+	private static String sha(byte[] content) throws Exception {
+		return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(content));
+	}
+
+	@Test
+	void studyRoomRecordingsWaitForTheScannerAndInfectedOnesNeverPlay() throws Exception {
+		byte[] clean = ("OggS clean recording " + UUID.randomUUID()).getBytes(StandardCharsets.US_ASCII);
+		byte[] infected = ("OggS " + FakeClamd.EICAR + UUID.randomUUID()).getBytes(StandardCharsets.ISO_8859_1);
+		long ok = ApiClient.json(recording(clean, status().isCreated()).andExpect(jsonPath("$.state").value("scanning")))
+			.get("id")
+			.asLong();
+		long bad = ApiClient.json(recording(infected, status().isCreated()).andExpect(jsonPath("$.state").value("scanning")))
+			.get("id")
+			.asLong();
+		this.student.get("/api/me/study-room/recordings/" + ok + "/content")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("not_ready"));
+
+		drain();
+
+		this.student.get("/api/me/study-room/recordings/" + ok).andExpect(jsonPath("$.state").value("ready"));
+		this.student.get("/api/me/study-room/recordings/" + ok + "/content")
+			.andExpect(status().isOk())
+			.andExpect(content().bytes(clean));
+		this.student.get("/api/me/study-room/recordings/" + bad).andExpect(jsonPath("$.state").value("rejected"));
+		this.student.get("/api/me/study-room/recordings/" + bad + "/content")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("content_rejected"));
+		// 거부한 내용은 다시 올려도 저장하지 않는다.
+		recording(infected, status().isUnprocessableContent()).andExpect(jsonPath("$.code").value("content_rejected"));
+	}
+
+	@Test
+	void aScanVerdictArrivingWhileARecordingIsDeletedLeavesConsistentState() throws Exception {
+		byte[] content = ("OggS deleted during scan " + UUID.randomUUID()).getBytes(StandardCharsets.US_ASCII);
+		long id = ApiClient.json(recording(content, status().isCreated())).get("id").asLong();
+		long fileId = this.jdbc.sql("SELECT file_id FROM study_room_recordings WHERE study_room_recording_id = :id")
+			.param("id", id)
+			.query(Long.class)
+			.single();
+		clamd.slow(java.time.Duration.ofMillis(300));
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			CountDownLatch start = new CountDownLatch(1);
+			Future<?> scan = pool.submit(() -> {
+				start.await();
+				drain();
+				return null;
+			});
+			Future<Integer> delete = pool.submit(() -> {
+				start.await();
+				return this.student
+					.send(MockMvcRequestBuilders.delete("/api/me/study-room/recordings/" + id).header("If-Match", "\"1\""))
+					.andReturn()
+					.getResponse()
+					.getStatus();
+			});
+			start.countDown();
+			scan.get(30, TimeUnit.SECONDS);
+			assertThat(delete.get(30, TimeUnit.SECONDS)).isEqualTo(204);
+		}
+		finally {
+			pool.shutdownNow();
+		}
+		// 판정은 내용(blob)에 남고, 지운 녹음과 파일은 되살아나지 않으며 사용량은 0이다.
+		Map<String, Object> file = this.jdbc.sql("""
+				SELECT f.state, f.original_file_name, b.blob_state, b.reference_count
+				  FROM files f JOIN file_blobs b ON b.file_blob_id = f.file_blob_id WHERE f.file_id = :id
+				""").param("id", fileId).query().singleRow();
+		assertThat(file).containsEntry("state", "deleted").containsEntry("original_file_name", "recording.ogg");
+		assertThat(number(file, "reference_count")).isZero();
+		assertThat(file.get("blob_state")).isIn("clean", "quarantined");
+		this.student.get("/api/me/study-room/recordings/" + id).andExpect(status().isNotFound());
+		assertThat(ApiClient.json(this.student.get("/api/me/study-room/recordings")).get("usage").get("usedBytes").asLong())
+			.isZero();
+	}
+
+	private ResultActions recording(byte[] content, ResultMatcher expected) throws Exception {
+		return this.student
+			.send(MockMvcRequestBuilders.multipart("/api/me/study-room/courses/" + this.course + "/recordings")
+				.file(new MockMultipartFile("file", "lecture.ogg", "audio/ogg", content))
+				.param("title", "녹음")
+				.param("source", "audio")
+				.param("durationMs", "1000")
+				.param("recordedAt", "2026-11-12T05:00:00Z"))
+			.andExpect(expected);
 	}
 
 	private ApiClient instructor() {

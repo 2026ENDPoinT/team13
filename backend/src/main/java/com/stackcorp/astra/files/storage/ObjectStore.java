@@ -1,6 +1,8 @@
 package com.stackcorp.astra.files.storage;
 
 import java.io.ByteArrayInputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -9,6 +11,7 @@ import java.util.Optional;
 
 import org.springframework.stereotype.Component;
 
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CompletedPart;
@@ -61,6 +64,57 @@ public class ObjectStore {
 		catch (NoSuchKeyException ex) {
 			return Optional.empty();
 		}
+	}
+
+	/**
+	 * 객체의 한 구간(first~last, 둘 다 포함)만 읽는다. 오디오 탐색처럼 Range 요청에 답할 때 쓴다. 호출한 쪽이 stream을 닫는다. 끝까지 읽기
+	 * 전에 닫으면(client가 응답 도중 끊음) 남은 내용을 읽어 연결을 재사용하지 않고 연결을 끊는다. 구간이 크면 읽어 버리는 비용이 연결 하나를
+	 * 새로 여는 비용보다 크기 때문이다.
+	 */
+	public Optional<InputStream> openRange(Bucket bucket, String key, long first, long last) {
+		try {
+			return Optional.of(new AbortOnEarlyClose(
+					this.s3.getObject((b) -> b.bucket(name(bucket)).key(key).range("bytes=" + first + "-" + last))));
+		}
+		catch (NoSuchKeyException ex) {
+			return Optional.empty();
+		}
+	}
+
+	/** 끝(-1)까지 읽지 않고 닫으면 HTTP 연결을 끊는 stream. */
+	static final class AbortOnEarlyClose extends FilterInputStream {
+
+		private final ResponseInputStream<?> response;
+
+		private boolean ended;
+
+		AbortOnEarlyClose(ResponseInputStream<?> response) {
+			super(response);
+			this.response = response;
+		}
+
+		@Override
+		public int read() throws IOException {
+			int b = super.read();
+			this.ended |= b == -1;
+			return b;
+		}
+
+		@Override
+		public int read(byte[] buffer, int offset, int length) throws IOException {
+			int n = super.read(buffer, offset, length);
+			this.ended |= n == -1;
+			return n;
+		}
+
+		@Override
+		public void close() throws IOException {
+			if (!this.ended) {
+				this.response.abort();
+			}
+			super.close();
+		}
+
 	}
 
 	public Optional<byte[]> get(Bucket bucket, String key) {

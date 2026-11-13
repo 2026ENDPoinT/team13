@@ -52,6 +52,7 @@
 | [ADR-0037](adr/0037-quiz-regrade-and-assessment-deletion.md) | 퀴즈 정답 정정은 한 transaction의 재채점이고, 평가 활동 삭제는 활동의 삭제 표시다 |
 | [ADR-0038](adr/0038-avatar-photo.md) | 아바타 사진은 상태를 identity가, 바이트를 files가 갖는다. 올린 원본은 검사 뒤 격리한 converter가 256px JPEG로 다시 만든 것만 내보내고, 본인과 폐강하지 않은 과목을 함께하는 사람만 본다 |
 | [ADR-0039](adr/0039-institution-wall-clock-time.md) | 일시는 기관 시간대(기본 `Asia/Seoul`)의 벽시계로 두고, DB session과 JVM을 그 시간대에 고정한 뒤 시작할 때 세 값이 같은지 확인한다. `Instant`는 절대 시각이고 기관 시간대는 `GET /api/auth/methods`가 알린다 |
+| [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음은 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 녹음 바이트는 업로드 흐름(용도 `study_recording`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 구간 응답으로 내보낸다 |
 
 ## 2. 부하 가정
 
@@ -144,7 +145,7 @@ flowchart LR
 | `learning` | 강의실, 주차, 학습활동, 영상 학습 session, 출석 | `catalog`, `identity`, `files` |
 | `assessment` | 과제, 퀴즈, 설문, 성적 | `learning`, `catalog`, `identity`, `files` |
 | `communication` | 공지, Q&A, 게시판, 쪽지, 임시저장 | `catalog`, `identity`, `files` |
-| `files` | 업로드 lifecycle, 첨부, 파일함, 미리보기, 문서 rendition, 영상 asset, 파일 파생물 저장, 아바타 사진의 바이트(상태는 `identity`) | `catalog`, `identity` |
+| `files` | 업로드 lifecycle, 첨부, 파일함, 학습실 폴더·배치·녹음, 미리보기, 문서 rendition, 영상 asset, 파일 파생물 저장, 아바타 사진의 바이트(상태는 `identity`) | `catalog`, `identity` |
 | `summary` | 강의 자료의 쪽별 요약 생성 작업, 후보 확인, 게시, 조회 | `files`, `identity` |
 | `integration` | 학교 IdP, 학사 동기화, AI, 외부 allowlist client | port를 정의한 모듈의 공개 API(`identity`, `catalog`, `learning`, `files`, `summary`) |
 | `shared` | 오류 형식, requestId, 요청 제한, 멱등 원장, 감사 기록. 목록 query 규칙은 첫 페이지 목록과 함께 만든다 | 없음. 모든 모듈이 쓸 수 있다 |
@@ -720,6 +721,25 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 파일을 지우면 같은 commit부터 세 API 모두 404다. GC가 rendition을 닫을 때 썸네일 행과 대기 중인 변환도 닫고 객체를 지운다.
 
+### 7.21 학습실 폴더와 강의 녹음
+
+결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음은 요약과 학습 대화에 들어가지 않는다.
+
+| API | 권한 | 하는 일 |
+|---|---|---|
+| `GET /api/me/study-room/courses/{courseId}` | 로그인한 사용자 | 그 과목의 내 폴더(`position` 순), 녹음(녹음 시작 일시 역순), 배치, 사용량. 강의자료 배치는 지금 그 과목에서 그 파일을 읽을 수 있을 때만 나온다 |
+| `POST /api/me/study-room/courses/{courseId}/folders` | 그 과목 구성원 | `{name}`(1~60자, 제어 문자 말고는 `/`, `\`도 받는다). 끝에 붙는다. 201. 같은 과목에 글자 그대로 같은 이름이면 409 `name_conflict`(대소문자·악센트가 다르면 다른 이름), 과목마다 50개까지(409 `too_many_folders`). `Idempotency-Key` 지원: 재전송은 그 폴더의 지금 상태, 그 사이 지웠으면 410 `folder_deleted` |
+| `PATCH /api/me/study-room/folders/{folderId}` · `DELETE` | 소유자 | 이름 바꾸기, 지우기. `If-Match` 필수. 지우면 그 안의 배치도 지워 항목이 과목 맨 위로 돌아간다. 녹음은 남는다 |
+| `PUT /api/me/study-room/courses/{courseId}/folder-order` | 소유자 | `{folders:[{id, version}]}`, 그 과목 폴더 전부를 새 순서로. 목록이 다르면 409 `folder_set_changed`, version이 다르면 409 `version_conflict`. 자리가 바뀐 폴더만 version이 오른다 |
+| `PUT /api/me/study-room/placements/{course-files\|recordings}/{itemId}` | 소유자 | `{folderId}`. 배치가 없으면 `If-Match: "0"`, 있으면 그 배치의 version. 강의자료는 폴더 과목에서 지금 읽을 수 있어야 하고(아니면 404), 녹음은 같은 과목 폴더에만(409 `course_mismatch`) |
+| `DELETE /api/me/study-room/placements/{course-files\|recordings}/{itemId}` | 소유자 | 배치를 지워 과목 맨 위로. `If-Match` 필수 |
+| `POST /api/me/study-room/courses/{courseId}/recordings` | 그 과목 구성원 | multipart `file`, `title`(1~200자, UTF-16 단위), `source`(`mic`·`tab`·`audio`), `durationMs`(1~86400000), `recordedAt`(offset이 있는 절대 시각, 2000-01-01부터 지금 + 5분까지. 가져온 파일은 파일의 마지막 수정 일시), `folderId`(선택). 용도 `study_recording`(50 MB, `webm, weba, ogg, opus, mp3, m4a, mp4, wav, aac, flac`, 내용 signature 확인)으로 받고 사용자마다 2 GB·500개(409 `quota_exceeded`, `too_many_recordings`). 201. `state`는 `scanning`·`ready`·`rejected`. `Idempotency-Key` 지원(지문에 과목, 제목, 출처, 길이, 시작 일시, 폴더가 들어간다): 재전송은 한도·폴더 검사 없이 그 녹음의 지금 상태, 그 사이 지웠으면 410 `recording_deleted` |
+| `GET /api/me/study-room/recordings` · `/recordings/{recordingId}` | 소유자 | 모든 과목의 내 녹음과 사용량, 녹음 하나(`ETag`). 과목을 잃어도 보인다 |
+| `PATCH /api/me/study-room/recordings/{recordingId}` · `DELETE` | 소유자 | 제목 바꾸기, 지우기. `If-Match` 필수. 지우면 배치를 지우고 파일 참조를 놓는다. 원본은 저장소 GC가 지운다 |
+| `GET /api/me/study-room/recordings/{recordingId}/content` · `HEAD` | 소유자 | 오디오. `Range` 하나면 206과 `Content-Range`, 내용 밖이면 416, 여러 구간이면 200 전체. 언제나 `attachment`, `Accept-Ranges: bytes`, `nosniff`, `CSP: sandbox`, `private, no-store`. 검사 전 409 `not_ready`, 거부 409 `content_rejected`. `HEAD`는 행만 읽는다. 사용자마다 10분에 600번. 감사 기록은 session·녹음마다 10분에 한 번, 저장소를 열기 전에 남긴다. 이미 남겼는지 찾지 못하면 재생을 막지 않고 다시 남긴다 |
+
+한 사용자의 학습실 변경은 `study_room_quotas`의 그 사용자 행을 먼저 잠그고 차례로 한다. 녹음 파일은 과목 없이(`files.course_id` NULL) 첨부 없이 기록하므로 과목 파일 내려받기, 미리보기, 요약, 학습 대화는 그 파일을 열지 못한다. 변경 명령은 사용자마다 10분에 120번(`astra.study-room.rate-limit`), 녹음 올리기는 업로드 요청 제한도 함께 쓴다.
+
 ## 8. Valkey 도입 기준
 
 처음에는 두지 않는다. 캐시는 Spring Cache 추상화로만 작성해 저장소를 나중에 바꿀 수 있게 한다. 아래 조건이 생기면 ElastiCache for Valkey를 붙인다.
@@ -739,7 +759,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 |---|---|
 | 로그 | 앱은 stdout에 한 줄씩 JSON(ECS) 로그를 쓴다. 요청마다 method, 처리한 경로 pattern, 상태 코드, 처리 시간을 한 줄 남긴다. requestId를 모든 줄에 넣는다. 처리하지 못한 예외는 컨트롤러에서 났든 filter에서 났든 `unhandled exception requestId=… method=… route=…` 한 줄과 stack trace로 ERROR에 한 번 남고, client 연결 끊김은 남기지 않는다. 본문, query string, cookie, 토큰, 개인정보는 남기지 않는다(SC-07). CloudWatch Logs로는 host의 log driver나 agent가 보낸다(아직 구성 없음) |
 | 감사 | `audit_events`에 행위자, 연산, 대상, 과목, 결과 코드, requestId, DB 시각을 남긴다(SC-09, [ADR-0012](adr/0012-idempotency-ledger-and-audit.md)) |
-| 지표 | Micrometer로 요청 시간(경로 pattern, 상태, problem code), 학습 하트비트 간격과 session 종료, GC·검사·요약 대기열, 학습 대화 대기열과 끝난 질문, 문서 변환·영상 변환·파일함 ZIP 대기열과 결과, 남은 multipart upload 취소, 변환 결과, 쓰임(요약, 학습 대화)별 모델 호출과 token, 멱등 충돌, 빠진 감사 기록, 요청 제한, DB pool을 잰다. tag에 사용자, 과목, 파일 ID, 실제 경로는 없다. 대기열 gauge는 worker가 1분마다 계산해 둔다. OTLP 내보내기는 기본으로 꺼져 있고 `ASTRA_OTLP_ENABLED`와 수신 주소를 줄 때만 보낸다. 지표 endpoint는 어느 port에도 열지 않는다([ADR-0034](adr/0034-observability-and-scheduler-lock.md)) |
+| 지표 | Micrometer로 요청 시간(경로 pattern, 상태, problem code), 학습 하트비트 간격과 session 종료, GC·검사·요약 대기열, 학습 대화 대기열과 끝난 질문, 문서 변환·영상 변환·파일함 ZIP 대기열과 결과, 남은 multipart upload 취소, 변환 결과, 쓰임(요약, 학습 대화)별 모델 호출과 token, 멱등 충돌, 빠진 감사 기록과 감사 기록 찾기 실패, 요청 제한, DB pool을 잰다. tag에 사용자, 과목, 파일 ID, 실제 경로는 없다. 대기열 gauge는 worker가 1분마다 계산해 둔다. OTLP 내보내기는 기본으로 꺼져 있고 `ASTRA_OTLP_ENABLED`와 수신 주소를 줄 때만 보낸다. 지표 endpoint는 어느 port에도 열지 않는다([ADR-0034](adr/0034-observability-and-scheduler-lock.md)) |
 | trace | 같은 opt-in으로 OpenTelemetry trace를 OTLP로 보낸다. 표본 비율은 설정으로 정한다(기본 10%). client의 trace header와 baggage는 읽지 않고, span에는 경로 pattern, 상태, code와 서버가 만든 requestId만 남긴다. 수신 쪽(collector, X-Ray)은 아직 없다 |
 | 알람 | CloudWatch 알람을 SNS로 보낸다. 알람 목록과 첫 대응은 [operations/alarms.md](operations/alarms.md)에 있다. 지금 Terraform에는 EC2, fck-nat, RDS, CloudFront 알람만 있고, 앱 지표 알람은 내보내기를 켠 뒤 더한다. Slack 연동과 외부 uptime check는 아직 없다 |
 
@@ -825,5 +845,6 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 수강생 화면의 최근 학습 | `lastAccessAt`은 영상 학습을 시작할 때 남기는 이어보기 포인터(`course_continue_pointers.recorded_at`)다. 강의실 입장, 주차 목록, 자료 열람, 과제·퀴즈 화면은 과목별 접속 기록이 없어 반영하지 않는다. 로그인 활동(`identity`의 `user_sessions.last_seen_at`)은 과목과 무관해 쓰지 않는다 | 원본 pf_monitor의 "최근 접속" 기준을 확인한다. 과목 접속이 필요하면 `learning`이 강의실 첫 화면 조회 때 과목별 접속 일시를 남기고 `RosterLearning`이 그 값을 낸다 |
 | 아바타 사진 처리 | converter는 한 번에 하나만 처리해 긴 문서 변환 뒤에 사진이 기다린다. 사진 대기열의 길이·나이 지표는 없다. JPEG의 EXIF 회전은 적용하지 않는다(화면이 canvas로 그린 사진을 올린다). 카탈로그 과목 상세의 교수 아바타는 구성원이 아닌 사람에게 사진 없이 이름 글자로만 보인다([ADR-0038](adr/0038-avatar-photo.md)) | 사진 대기열 지표를 `FilesBacklog`에 더하고, 대기가 길면 converter에 사진 전용 실행 slot을 둔다. 교수 사진 공개 범위는 학교와 정한다 |
 | 한국 밖 브라우저의 일시 표시 | offset 없는 일시는 기관 시간대의 벽시계다. 프론트엔드가 `new Date(문자열)`로 읽으면 브라우저 시간대로 해석해 한국 밖에서 시각이 어긋난다([ADR-0039](adr/0039-institution-wall-clock-time.md)) | 프론트엔드가 `GET /api/auth/methods`의 `timeZone`으로 읽고 표시한다. 입력은 `datetime-local` 값을 그대로 보낸다 |
+| 학습실 녹음의 크기와 계정 삭제 | 녹음 파일은 50 MB까지라 브라우저 기본 bitrate로는 긴 강의가 넘을 수 있다. 계정 삭제 흐름이 없어 학습실 행과 녹음 파일은 소유자가 지울 때까지 남고, `users` 행을 cascade 없이 가리킨다([ADR-0040](adr/0040-study-room-sync.md)) | 프론트엔드가 `audioBitsPerSecond`를 낮춘다. 더 긴 녹음이 필요하면 clamd `StreamMaxLength`와 함께 상한을 올리고 스트림 업로드에 기록 자리를 더한다. 계정 삭제를 만들 때 같은 transaction에서 녹음 파일 참조를 놓고 학습실 행을 지운다 |
 | 오류 문장의 필드 이름 | 사용자가 입력하거나 고르는 값(제목, 본문, 설명, 기간, 배점, 문항·보기, 강의계획서 항목, 사유, 그룹 이름, 쪽지 고르기)의 400 문장은 화면의 항목 이름으로 바꿨다. `size`, `cursor`, `page`, `revision`, `version`, `If-Match`, `Idempotency-Key`, 열거 값(`type`, `status`, `sort`, `audience` 등), ID 목록의 400 문장은 바르게 만든 client가 보내지 않는 계약 오류라 아직 필드 이름을 쓴다 | client는 계약 오류 문장을 그대로 보이지 말고 `code`와 일반 문구로 바꾼다. 화면에 그대로 보이는 경로가 생기면 그 문장부터 바꾼다 |
 | 쪽지 목록의 기준 시각 | 다음 쪽은 첫 쪽의 기준 시각까지의 쪽지만 낸다. 오래 열어 둔 목록은 그 뒤 온 쪽지를 다음 쪽에 넣지 않는다 | 화면이 새 쪽지를 알리면 cursor 없이 첫 쪽을 다시 읽는다 |

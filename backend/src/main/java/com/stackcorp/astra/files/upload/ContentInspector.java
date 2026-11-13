@@ -25,6 +25,14 @@ final class ContentInspector {
 
 	private static final byte[] EBML = { 0x1A, 0x45, (byte) 0xDF, (byte) 0xA3 };
 
+	private static final byte[] ID3 = "ID3".getBytes(StandardCharsets.US_ASCII);
+
+	private static final byte[] OGG = "OggS".getBytes(StandardCharsets.US_ASCII);
+
+	private static final byte[] FLAC = "fLaC".getBytes(StandardCharsets.US_ASCII);
+
+	private static final byte[] RIFF = "RIFF".getBytes(StandardCharsets.US_ASCII);
+
 	private static final String QUICKTIME_BRAND = "qt  ";
 
 	private ContentInspector() {
@@ -51,7 +59,15 @@ final class ContentInspector {
 			case "mp4" -> when(isoBrand(head).filter((brand) -> !QUICKTIME_BRAND.equals(brand)).isPresent(), "video/mp4");
 			case "mov" -> when(isoBrand(head).filter(QUICKTIME_BRAND::equals).isPresent(), "video/quicktime");
 			case "webm" -> when(ebmlDocType(head).filter("webm"::equals).isPresent(), "video/webm");
+			case "weba" -> when(ebmlDocType(head).filter("webm"::equals).isPresent(), "audio/webm");
 			case "mkv" -> when(ebmlDocType(head).filter("matroska"::equals).isPresent(), "video/x-matroska");
+			case "m4a" -> when(isoBrand(head).filter((brand) -> !QUICKTIME_BRAND.equals(brand)).isPresent(), "audio/mp4");
+			case "mp3" -> when(startsWith(head, ID3) || mpegAudioFrame(head), "audio/mpeg");
+			case "aac" -> when(startsWith(head, ID3) || adtsFrame(head), "audio/aac");
+			case "ogg", "opus" -> when(startsWith(head, OGG), "audio/ogg");
+			case "flac" -> when(startsWith(head, FLAC), "audio/flac");
+			case "wav" -> when(startsWith(head, RIFF) && head.length >= 12
+					&& "WAVE".equals(new String(head, 8, 4, StandardCharsets.US_ASCII)), "audio/wav");
 			default -> Optional.empty();
 		};
 	}
@@ -84,6 +100,17 @@ final class ContentInspector {
 			}
 		}
 		return false;
+	}
+
+	// MPEG 오디오(mp3) frame header: 11 bit sync, 예약 version(01)이 아니고, layer가 00(ADTS·예약)이 아니고, bitrate index가 1111이 아니다.
+	private static boolean mpegAudioFrame(byte[] head) {
+		return head.length >= 3 && (head[0] & 0xFF) == 0xFF && (head[1] & 0xE0) == 0xE0 && (head[1] & 0x18) != 0x08
+				&& (head[1] & 0x06) != 0 && (head[2] & 0xF0) != 0xF0;
+	}
+
+	// ADTS(AAC) frame header: 12 bit sync와 layer 00.
+	private static boolean adtsFrame(byte[] head) {
+		return head.length >= 2 && (head[0] & 0xFF) == 0xFF && (head[1] & 0xF6) == 0xF0;
 	}
 
 	private static boolean plainText(byte[] head) {
