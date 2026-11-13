@@ -2,6 +2,7 @@ package com.stackcorp.astra.home;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
@@ -29,7 +30,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 화면 AI 도우미 {@code POST /api/assistant}(ADR-0044). 모델은 가짜다. 규칙 답, 모델 답, 모델 답 검사, 행동 주소, 본문 상한, 감사 기록을
- * 본다. 한도는 {@link AssistantLimitsTests}, 스위치는 {@link AssistantDisabledTests}와 LlmDisabledTests, LlmNotConfiguredTests가 본다.
+ * 본다. 전체 한도는 RateLimiterTests, 스위치는 AssistantSwitchTests와 LlmDisabledTests, LlmNotConfiguredTests가 본다.
  */
 class AssistantApiTests extends IntegrationTest {
 
@@ -200,6 +201,29 @@ class AssistantApiTests extends IntegrationTest {
 		this.client
 			.send(MockMvcRequestBuilders.post("/api/assistant").contentType(MediaType.TEXT_PLAIN).content("{\"text\":\"안녕\"}"))
 			.andExpect(status().isBadRequest());
+	}
+
+	// 사용자별 모델 한도(기본 분당 10)와 요청 한도(기본 분당 30, 규칙 답 포함). 이 사용자만의 counter라 다른 테스트와 섞이지 않는다.
+	@Test
+	void perUserLimitsAnswer429WithRetryAfter() throws Exception {
+		this.llm.reset((r) -> reply("{\"intent\":\"none\",\"targets\":[],\"say\":\"없어요\"}"));
+		for (int i = 0; i < 10; i++) {
+			ask("아무거나 찾아줘").andExpect(status().isOk()).andExpect(jsonPath("$.source").value("model"));
+		}
+		limited(ask("아무거나 찾아줘"));
+		// 규칙 답은 모델 한도를 쓰지 않는다.
+		for (int i = 0; i < 19; i++) {
+			ask("할 일 목록 보여줘").andExpect(status().isOk()).andExpect(jsonPath("$.source").value("rule"));
+		}
+		// 31번째 요청은 요청 한도에 걸린다.
+		limited(ask("할 일 목록 보여줘"));
+		assertThat(this.llm.log).hasSize(10);
+	}
+
+	private static void limited(org.springframework.test.web.servlet.ResultActions result) throws Exception {
+		result.andExpect(status().isTooManyRequests())
+			.andExpect(jsonPath("$.code").value("rate_limited"))
+			.andExpect(header().exists("Retry-After"));
 	}
 
 	@Test
