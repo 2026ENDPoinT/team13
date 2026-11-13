@@ -24,6 +24,7 @@ export default defineConfig({
         "src/shared/page-image-retry.ts",
         "src/shared/dialog-names.ts",
         "src/shared/recording-join.ts",
+        "src/shared/live-transcript.ts",
         "src/shared/assistant/course-match.ts",
         "src/shared/assistant/aliases.ts",
         "src/shared/assistant/resolve.ts",
