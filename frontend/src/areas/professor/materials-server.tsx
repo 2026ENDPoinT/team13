@@ -268,7 +268,7 @@ function MaterialEditor({ courseId, material, reload }: { courseId: number | str
   const [saveLabel, setSaveLabel] = useState("수정 저장");
   const [removeLabel, setRemoveLabel] = useState("자료 삭제");
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const alive = () => edits.get(id) === memo;
 
   const say = (text: string, alert = false) => {

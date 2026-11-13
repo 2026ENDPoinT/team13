@@ -171,7 +171,7 @@ function ScopeRow({ item, enabled, decider, policy, courseId, acknowledged, say,
   const [revoking, setRevoking] = useState(false);
   const [armed, setArmed] = useState(false);
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const state = !item.granted ? "동의하지 않음"
     : !decider ? "예전에 남긴 동의(효력 없음)"
     : !item.current ? "처리 조건이 바뀌어 다시 동의해야 합니다"

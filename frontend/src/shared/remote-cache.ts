@@ -48,12 +48,22 @@ export interface Entry<T> {
 export interface Resource<T, A extends unknown[] = any[]> {
   peek(key: string): Entry<T> | null;
   load(key: string, ...args: A): Promise<void>;
+  /** A load of `key` that starts after now: waits for one already in flight (it may have read the state before a write), then loads again. */
+  reload(key: string, ...args: A): Promise<void>;
   /** Loads `key` when the screen was navigated to, or when nothing is cached for it yet. */
   visit(scope: string, key: string, ...args: A): Promise<void>;
   /** Changes cached data in place (e.g. a notice marked read) and re-renders its readers. */
   patch(match: (key: string) => boolean, change: (data: T) => void): void;
-  /** Forgets matching keys so the next visit loads them again. */
+  /**
+   * Forgets matching keys after a write, so their next visit loads them. A key that a mounted
+   * `useResource` reader shows is decided once the writing code has run on (a delete may close the
+   * screen that showed it): still shown, it is loaded again with the arguments of the load that
+   * first filled it, keeping the old data on screen meanwhile and never reusing a load that
+   * started before the write; no longer shown, it is forgotten. A load started after the drop wins.
+   */
   drop(match: (key: string) => boolean): void;
+  /** Marks `key` as shown by a mounted reader (`useResource` does this); returns the release function. */
+  watch(key: string): () => void;
   clear(): void;
   /** Calls `listener(key)` after any entry changed; returns the unsubscribe function. */
   subscribe(listener: (key: string) => void): () => void;
@@ -67,6 +77,8 @@ export interface Resource<T, A extends unknown[] = any[]> {
  */
 export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args: A) => Promise<T>): Resource<T, A> {
   const entries = new Map<string, Entry<T>>();
+  const origins = new Map<string, A>(); // key -> arguments of the load that created its entry (a first page, not a "more")
+  const readers = new Map<string, number>(); // key -> mounted readers
   const listeners = new Set<(key: string) => void>();
   let generation = 0;
   let changes = 0;
@@ -74,6 +86,11 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
   function notify(key: string) {
     changes += 1;
     for (const listener of [...listeners]) listener(key);
+  }
+
+  function forget(key: string) {
+    entries.delete(key);
+    origins.delete(key);
   }
 
   const resource: Resource<T, A> = {
@@ -85,6 +102,7 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       if (current && current.loading) return current.loading;
       const gen = generation;
       const entry: Entry<T> = { data: current ? current.data : null, error: null, loading: null };
+      if (!current) origins.set(key, args);
       entry.loading = Promise.resolve()
         .then(() => fetcher(...args))
         .then((data) => {
@@ -101,6 +119,11 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       notify(key);
       return entry.loading;
     },
+    async reload(key, ...args) {
+      const running = entries.get(key)?.loading;
+      if (running) await running;
+      return resource.load(key, ...args);
+    },
     visit(scope, key, ...args) {
       const fresh = freshVisit(scope, key);
       const entry = entries.get(key);
@@ -115,11 +138,34 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       }
     },
     drop(match) {
-      for (const key of [...entries.keys()]) if (match(key)) entries.delete(key);
+      for (const key of [...entries.keys()]) {
+        if (!match(key)) continue;
+        if (!readers.get(key)) {
+          forget(key);
+          continue;
+        }
+        const dropped = entries.get(key);
+        const gen = generation;
+        setTimeout(() => {
+          if (gen !== generation || entries.get(key) !== dropped) return;
+          const args = origins.get(key);
+          if (readers.get(key) && args) void resource.reload(key, ...args);
+          else forget(key);
+        }, 0);
+      }
+    },
+    watch(key) {
+      readers.set(key, (readers.get(key) || 0) + 1);
+      return () => {
+        const left = (readers.get(key) || 0) - 1;
+        if (left > 0) readers.set(key, left);
+        else readers.delete(key);
+      };
     },
     clear() {
       generation += 1;
       entries.clear();
+      origins.clear();
       notify("");
     },
     subscribe(listener) {
@@ -145,12 +191,33 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
 
 /**
  * The cached entry for `key` (null key: nothing), re-rendering the caller whenever any entry of
- * `resource` changes. `refresh` (optional) runs on window focus and when the tab becomes visible.
+ * `resource` changes. While mounted, `drop()` of `key` reloads it instead of leaving the screen
+ * without an entry. `refresh` (optional) runs on window focus and when the tab becomes visible.
  */
 export function useResource<T>(resource: Resource<T, any[]>, key: string | null, refresh?: () => void): Entry<T> | null {
   useSyncExternalStore(resource.subscribe, resource.version);
   useRefreshOnFocus(refresh);
+  useWatch(key == null ? [] : [{ resource, key }]);
   return key == null ? null : resource.peek(key);
+}
+
+/** Marks every `{resource, key}` as shown while mounted, so `drop()` reloads them (screens composed of several resources). */
+export function useWatch(parts: readonly { resource: Pick<Resource<unknown>, "watch">; key: string }[]) {
+  const latest = useRef(parts);
+  latest.current = parts;
+  const id = parts.map((part) => `${resourceId(part.resource)}:${part.key}`).join("\n");
+  useEffect(() => {
+    const release = latest.current.map((part) => part.resource.watch(part.key));
+    return () => release.forEach((off) => off());
+  }, [id]);
+}
+
+const resourceIds = new WeakMap<object, number>();
+let lastResourceId = 0;
+function resourceId(resource: object): number {
+  let id = resourceIds.get(resource);
+  if (id === undefined) resourceIds.set(resource, (id = ++lastResourceId));
+  return id;
 }
 
 /** Calls the latest `refresh` on window focus and when the tab becomes visible, while mounted. */

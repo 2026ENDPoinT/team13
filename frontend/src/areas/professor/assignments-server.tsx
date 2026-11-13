@@ -34,6 +34,8 @@ type CourseId = number;
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
 const pf = (screenId: string, extra?: Record<string, string>) => routeFor("professor", "screen", { screenId, ...(extra || {}) });
+// Assignments created from this screen: after a create it navigates to itself, and the new key gives an empty form.
+let created = 0;
 
 function toastNow(text: string) {
   getState().toast = text;
@@ -98,7 +100,7 @@ export function serverReportFields(ctx: ScreenCtx, course: Course, parts: FormPa
   return (
     <div className="stack">
       {backendPanel()}
-      <AssignmentForm key={edit ?? "new"} week={ctx.state.week || 1} course={course} courseId={courseId} editId={edit} parts={parts} />
+      <AssignmentForm key={edit ?? `new:${created}`} week={ctx.state.week || 1} course={course} courseId={courseId} editId={edit} parts={parts} />
       <AssignmentList course={course} courseId={courseId} target="pf_report_create" />
     </div>
   );
@@ -188,7 +190,7 @@ function AssignmentForm({ week, course, courseId, editId, parts }: { week: numbe
   const [busy, setBusy] = useState(false);
   const [latest, setLatest] = useState<LatestAssignment | null>(null);
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     if (!key || !editId) return;
     if (freshVisit("pf-assignment-edit", key) === "entry" || !assignmentDetails.peek(key)) void assignmentDetails.load(key, courseId, editId);
@@ -253,6 +255,7 @@ function AssignmentForm({ week, course, courseId, editId, parts }: { week: numbe
     try {
       if (editId) await updateAssignment(courseId, editId, { ...read.payload, revision: Number(revision) });
       else await createAssignment(courseId, read.payload);
+      if (!editId) created += 1;
       getState().toast = editId ? "과제를 수정했습니다" : "과제를 서버에 등록했습니다";
       navigate(pf("pf_report_create", { kj: course.id }));
     } catch (error) {
@@ -387,7 +390,7 @@ function AssignmentHeader({ course, courseId, assignmentId, screen }: { course: 
   const [releaseNote, setReleaseNote] = useState("");
   const [releasing, setReleasing] = useState(false);
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   /**
    * `pf-assignment-release`: 점수 공개 명령(`PUT …/release`, `{ released, revision }`). 응답의 새 `revision`이 상세 캐시에
@@ -504,7 +507,7 @@ function SubmissionView({ course, courseId, assignmentId, submissionId }: { cour
   const [status, setStatus] = useState<{ text: string; alert: boolean }>({ text: "", alert: false });
   const [saving, setSaving] = useState(false);
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const data = entry && entry.data;
   const info = head && head.data && head.data.assignment;
   useEffect(() => {

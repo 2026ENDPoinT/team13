@@ -89,7 +89,7 @@ function MessageForm({ courseId, onSent }: { courseId: number; onSent: () => voi
   const [sending, setSending] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const say = (text: string, alert = false) => setStatus({ text, alert });
   const picker = messageFiles(memo.files);
   const bytes = screenBytes(memo.body.trim());

@@ -121,19 +121,11 @@ export const viewKey = (courseId: Id): string => String(courseId);
  */
 export async function loadCourseView(courseId: Id, fresh = false): Promise<StudyCourseView> {
   const key = viewKey(courseId);
-  if (fresh) await reloadAfterWrite(key, courseId);
-  else await courseViews.load(key, courseId);
+  await (fresh ? courseViews.reload(key, courseId) : courseViews.load(key, courseId));
   const entry = courseViews.peek(key);
   if (entry && entry.error) throw entry.error;
   if (!entry || !entry.data) throw new ApiError(0, { detail: "학습실 정보를 받지 못했습니다." });
   return entry.data;
-}
-
-/** A load that starts after now: a load already in flight may have read the state before a write. */
-async function reloadAfterWrite(key: string, courseId: Id): Promise<void> {
-  const running = courseViews.peek(key)?.loading;
-  if (running) await running;
-  await courseViews.load(key, courseId);
 }
 
 /** Cached view, or null; starts a load when nothing is cached for it yet. */
@@ -173,7 +165,7 @@ courseViews.subscribe((key) => {
 
 /** Reloads the view after a write (never reusing a load that started before it); errors stay in the cache entry. */
 export function refreshCourseView(courseId: Id): Promise<void> {
-  return reloadAfterWrite(viewKey(courseId), courseId);
+  return courseViews.reload(viewKey(courseId), courseId);
 }
 
 // ---------- writes ----------
