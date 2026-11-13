@@ -3,6 +3,7 @@ package com.stackcorp.astra.communication;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -99,6 +100,46 @@ class MessageApiTests extends IntegrationTest {
 		this.student2 = client(this.stu2);
 		this.otherProfessor = client(this.otherProf);
 		this.outsider = client(user("외부인" + tag, "STUDENT"));
+	}
+
+	@Test
+	void recipientsCarryAPhotoFlagLookedUpOncePerPage() throws Exception {
+		// 받는사람 후보도 아바타 경로가 200인 사람만 hasPhoto가 true다. 화면이 사진 없는 사람의 아바타를 묻지 않게 한다.
+		this.data.photo(this.stu1);
+		String contacts = "/api/messages/recipients?courseId=" + this.course;
+		this.professor.get(contacts)
+			.andExpect(jsonPath("$.total").value(2))
+			.andExpect(jsonPath("$.items[?(@.userId == " + this.stu1 + ")].hasPhoto").value(contains(true)))
+			.andExpect(jsonPath("$.items[?(@.userId == " + this.stu2 + ")].hasPhoto").value(contains(false)));
+		this.student1.get("/api/messages/recipients")
+			.andExpect(jsonPath("$.items[0].userId").value(this.prof))
+			.andExpect(jsonPath("$.items[0].hasPhoto").value(false));
+
+		long few = statements(contacts);
+		for (int i = 0; i < 6; i++) {
+			long student = this.data.user("STUDENT");
+			this.data.enroll(this.course, student);
+			this.data.photo(student);
+		}
+		this.professor.get(contacts)
+			.andExpect(jsonPath("$.total").value(8))
+			.andExpect(jsonPath("$.items[?(@.hasPhoto == true)]").value(hasSize(7)));
+		assertThat(statements(contacts)).isEqualTo(few);
+	}
+
+	/** 받는사람 한 쪽 동안 DB가 받은 문장 수. 서버 전체 counter라 다른 작업이 끼면 늘어나기만 하므로 세 번 재어 가장 작은 값을 쓴다. */
+	private long statements(String contacts) throws Exception {
+		long min = Long.MAX_VALUE;
+		for (int i = 0; i < 3; i++) {
+			long before = questions();
+			this.professor.get(contacts).andExpect(status().isOk());
+			min = Math.min(min, questions() - before);
+		}
+		return min;
+	}
+
+	private long questions() {
+		return this.jdbc.sql("SHOW GLOBAL STATUS LIKE 'Questions'").query((rs, n) -> rs.getLong(2)).single();
 	}
 
 	@Test

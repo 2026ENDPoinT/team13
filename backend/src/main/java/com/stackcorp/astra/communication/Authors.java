@@ -52,6 +52,15 @@ class Authors {
 		return new Known(found, ids, this.photos.visibleTo(viewerId, existing));
 	}
 
+	/**
+	 * 이름을 이미 아는 사람(받는사람 후보 등)의 사진 유무만 묻는다. 쿼리 두 번 이하이고 빈 목록이면 쿼리가 없다.
+	 * @param shown ID까지 드러내는 사람
+	 * @return 요청한 사람이 사진을 받을 수 있는 사람
+	 */
+	Set<Long> photos(long viewerId, Collection<Long> shown) {
+		return this.photos.visibleTo(viewerId, shown);
+	}
+
 	/** @param shown null이면 드러내지 않는 사람이고 쿼리가 없다 */
 	Author one(long viewerId, Long shown) {
 		return shown == null ? Author.HIDDEN : of(viewerId, List.of(shown)).author(shown);
