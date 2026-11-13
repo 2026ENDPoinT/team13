@@ -6,7 +6,7 @@ import { useSyncExternalStore } from "react";
 import { ApiError } from "./api.ts";
 import { courseIdFor, currentUserId } from "./backend.ts";
 import {
-  courseViews, peekCourseView, cachedViews, createServerFolder, putPlacement, deletePlacement, refreshCourseView, loadCourseView,
+  courseViews, peekCourseView, cachedViews, createServerFolder, deleteServerFolder, putPlacement, deletePlacement, refreshCourseView, loadCourseView,
   serverStudyCourse, studyRoomOnServer, studyRoomMessage, isMissingEndpoint, type ServerFolder, type PlacementKind,
 } from "./study-room-remote.ts";
 
@@ -283,6 +283,36 @@ export async function unplaceItem(courseId: string, itemId: string): Promise<voi
   } finally {
     if (!reloaded) void refreshCourseView(server);
   }
+}
+
+/** Takes an item that is only in this browser out of its folder, back to the course root. */
+export function leaveFolder(itemId: string): void {
+  const data = read();
+  if (!(itemId in data.placement)) return;
+  delete data.placement[itemId];
+  write(data);
+}
+
+/**
+ * Deletes a folder. A browser folder is removed here; a server folder with `DELETE …/folders/{id}`. Either way the
+ * browser placements into it are dropped, so those items sit in the course root again.
+ */
+export async function deleteFolder(folder: StudyFolder): Promise<void> {
+  if (!folder.local && folder.version != null) {
+    const server = serverStudyCourse(folder.courseId);
+    if (server == null) throw new Error("ASTRA 서버에 연결되어 있지 않아 이 폴더를 지울 수 없습니다.");
+    try {
+      await deleteServerFolder({ id: folder.id, version: folder.version, courseId: server });
+    } catch (error) {
+      throw new Error(studyRoomMessage(error));
+    }
+  }
+  const data = read();
+  const before = data.folders.length;
+  data.folders = data.folders.filter((item) => item.id !== folder.id);
+  const orphaned = Object.keys(data.placement).filter((itemId) => data.placement[itemId] === folder.id);
+  for (const itemId of orphaned) delete data.placement[itemId];
+  if (data.folders.length !== before || orphaned.length) write(data);
 }
 
 // ---------- moving browser folders to the account ----------

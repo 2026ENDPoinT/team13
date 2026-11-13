@@ -6,14 +6,14 @@ import { Link } from "../../router.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { readQuery, pageSearch } from "../../shared/query.tsx";
-import { listCoursePdfs, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
+import { listCoursePdfs, deleteCoursePdf, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
 import { backendStatus, backendState, courseIdFor, kjOfCourseId, subscribe as onBackendChange } from "../../shared/backend.ts";
-import { listRecordings, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, fromServer, type RecordingRecord, type MoveScope } from "../../shared/course-recordings.ts";
+import { listRecordings, deleteRecording, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, fromServer, type RecordingRecord, type MoveScope } from "../../shared/course-recordings.ts";
 import {
-  listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
+  listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, deleteFolder, leaveFolder, placeItem, unplaceItem, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
 } from "../../shared/study-folders.ts";
 import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings, refreshCourseView } from "../../shared/study-room-remote.ts";
-import { studyDocuments, scanDelay, SCAN_CHECKS, type StudyDocRecord } from "../../shared/study-documents.ts";
+import { studyDocuments, deleteStudyDocument, scanDelay, SCAN_CHECKS, type StudyDocRecord } from "../../shared/study-documents.ts";
 import { serverCourseViews } from "../../shared/course-view.ts";
 import { thumbnailImage } from "../../shared/preview-remote.tsx";
 import { ApiError } from "../../shared/api.ts";
@@ -24,6 +24,7 @@ import {
 } from "../../shared/lectures-remote.ts";
 import { serverStudySummary, studyLectureHref } from "./study-server.tsx";
 import { LessonViewer, type LessonDoc } from "../../shared/lesson-viewer.tsx";
+import { CardMenu } from "./study-card-menu.tsx";
 import { wallFormat } from "../../shared/home-remote.ts";
 
 const REFRESH_MS = 30000;
@@ -90,11 +91,14 @@ interface FileCardProps {
   meta: (string | null | undefined | false)[];
   label?: string;
   thumb?: ReactNode;
+  /** The vertical-dots menu at the right of the title. */
+  menu?: ReactNode;
 }
 
-function FileCard({ href, kind, badge, title, preview, iconName, meta, label, thumb }: FileCardProps) {
+// The title is a stretched link (see .sf-stretch): the whole card opens it, while the menu button next to it stays a separate control.
+function FileCard({ href, kind, badge, title, preview, iconName, meta, label, thumb, menu }: FileCardProps) {
   return (
-    <Link className={`study-card file-card kind-${kind}`} href={href} aria-label={label}>
+    <div className={`study-card file-card kind-${kind}`}>
       <span className="sf-thumb fc-thumb" aria-hidden="true">
         {badge ? <span className="fc-badge">{badge}</span> : null}
         {preview
@@ -102,11 +106,14 @@ function FileCard({ href, kind, badge, title, preview, iconName, meta, label, th
           : <span className="sf-icon"><Icon name={iconName || "file"} /></span>}
         {thumb}
       </span>
-      <b className="sf-name" title={title}>{title}</b>
+      <div className="sf-head">
+        <Link className="sf-stretch" href={href} aria-label={label}><b className="sf-name" title={title}>{title}</b></Link>
+        {menu}
+      </div>
       <span className="sf-meta">
         {meta.filter(Boolean).map((text, i) => <span key={i} className={i ? undefined : "sf-count"}>{text}</span>)}
       </span>
-    </Link>
+    </div>
   );
 }
 
@@ -120,7 +127,7 @@ function SampleCard({ item, showCourse }: { item: StudyMaterial; showCourse: boo
   );
 }
 
-function PdfCard({ record, showCourse }: { record: CoursePdfRecord; showCourse: boolean }) {
+function PdfCard({ record, showCourse, menu }: { record: CoursePdfRecord; showCourse: boolean; menu?: ReactNode }) {
   const ready = record.status !== "no-text";
   // Server list records carry no overview (it is extracted when the document is opened).
   const preview = ready && !record.remote ? record.overview.slice(0, 2).map((point) => point.text.replace(/\s+/g, " ")).join(" ") : "";
@@ -132,18 +139,20 @@ function PdfCard({ record, showCourse }: { record: CoursePdfRecord; showCourse: 
       meta={[record.remote ? "ASTRA 서버 자료" : ready ? "개요 준비됨" : "텍스트 없음", showCourse ? courseName(courseById(record.courseId)) : detail]}
       // Server PDFs: the first-page thumbnail the backend made while converting (nothing when there is none).
       thumb={record.remote ? thumbnailImage(record.backendCourseId, record.fileId, "fc-thumb-img") : null}
+      menu={menu}
     />
   );
 }
 
 /** The student's own PDF in the study room: opens in the document view once the malware scan has passed. */
-function StudyDocCard({ record }: { record: StudyDocRecord }) {
+function StudyDocCard({ record, menu }: { record: StudyDocRecord; menu?: ReactNode }) {
   const state = record.state === "scanning" ? "검사 중" : record.state === "rejected" ? "검사 거부" : "내 PDF";
   return (
     <FileCard
       href={pdfHref(record)} kind="pdf" badge="PDF" title={record.title} iconName="file"
       meta={[state, shortDate.format(record.uploadedAt)]}
       label={`${record.title} 내 PDF${record.state === "ready" ? "" : `, ${state}`}`}
+      menu={menu}
     />
   );
 }
@@ -182,12 +191,13 @@ function recordingStatus(record: RecordingRecord): string | null {
   return record.uploadError ? `이 브라우저에만 저장 · ${record.uploadError}` : "이 브라우저에만 저장";
 }
 
-function RecordingCard({ record, showCourse }: { record: RecordingRecord; showCourse: boolean }) {
+function RecordingCard({ record, showCourse, menu }: { record: RecordingRecord; showCourse: boolean; menu?: ReactNode }) {
   return (
     <FileCard
       href={recordingHref(record.courseId, record.id)} kind="rec" badge={record.source === "audio" ? "오디오 파일" : record.source === "tab" ? "탭 녹음" : "마이크 녹음"}
       title={record.title} iconName="play"
       meta={[recordingStatus(record) || formatDuration(record.durationMs), showCourse ? courseName(courseById(record.courseId)) : shortDate.format(record.createdAt)]}
+      menu={menu}
     />
   );
 }
@@ -275,19 +285,24 @@ function LectureSection({ course, courseId }: { course: Course; courseId: number
   );
 }
 
-function UserFolderCard({ course, folder, count, note }: { course: Course; folder: StudyFolder; count: number; note?: string }) {
+function UserFolderCard({ course, folder, count, note, menu }: { course: Course; folder: StudyFolder; count: number; note?: string; menu?: ReactNode }) {
   return (
-    <Link className="study-folder user-folder" href={folderHref(course.id, folder.id)} aria-label={`${folder.name} 폴더`}>
+    <div className="study-folder user-folder">
       <span className="sf-thumb" aria-hidden="true">
         <span className="sf-icon"><Icon name="folder" /></span>
         <span className="sf-open"><Icon name="chev" /></span>
       </span>
-      <b className="sf-name" title={folder.name}>{folder.name}</b>
+      <div className="sf-head">
+        <Link className="sf-stretch" href={folderHref(course.id, folder.id)} aria-label={`${folder.name} 폴더`}>
+          <b className="sf-name" title={folder.name}>{folder.name}</b>
+        </Link>
+        {menu}
+      </div>
       <span className="sf-meta">
         <span className="sf-count">{count ? `${count}개` : "비어 있음"}</span>
         {note || (folder.local ? <span>이 브라우저에만 저장</span> : null)}
       </span>
-    </Link>
+    </div>
   );
 }
 
@@ -431,12 +446,48 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
         notifyStudyChanged();
       });
   };
+  const failure = (error: unknown) => say(error instanceof Error ? error.message : String(error), true);
+  // Browser-only changes (placements, folders) are not observed: re-render now, and let open lists re-read.
+  const afterChange = () => {
+    setFolderVersion((n) => n + 1);
+    notifyStudyChanged();
+  };
+  // Where an item can go: this course's own folders except the one open now.
+  const targets = courseFolders.filter((item) => item.id !== folderId).map((item) => ({ id: item.id, name: item.name }));
+  const itemMenu = (record: { id: string; title: string; remote?: boolean; studyDocument?: true; pendingFolderId?: string }, remove: () => Promise<void>, blocked?: string) => (
+    <CardMenu
+      title={record.title}
+      move={{
+        targets,
+        canLeave: Boolean(folderOfItem(record)),
+        // An item the server holds goes back to the root with `DELETE …/placements`; a browser-only one just loses its local placement.
+        onMove: (target) => (target ? placeItem(record.id, target) : record.remote || record.studyDocument ? unplaceItem(course.id, record.id) : Promise.resolve(leaveFolder(record.id)))
+          .then(() => say(`"${record.title}"을 ${target ? `"${targets.find((item) => item.id === target)?.name ?? ""}" 폴더` : "과목 폴더"}로 옮겼습니다.`), failure)
+          .finally(afterChange),
+      }}
+      remove={{ blocked, onRemove: () => remove().then(() => say(`"${record.title}"을 삭제했습니다.`), failure).finally(afterChange) }}
+    />
+  );
+  const folderMenu = (item: StudyFolder) => {
+    // Counted now: once the folder is gone its items are no longer listed under it.
+    const inside = item.local || item.version == null ? countIn(item.id) : 0;
+    return (
+      <CardMenu
+        title={item.name}
+        remove={{
+          onRemove: () => deleteFolder(item)
+            .then(() => say(`"${item.name}" 폴더를 삭제했습니다.${inside ? ` 안에 있던 자료 ${inside}개는 과목 폴더에 남아 있습니다.` : ""}`), failure)
+            .finally(afterChange),
+        }}
+      />
+    );
+  };
   const account = `지금 로그인한 계정${accountName ? `(${accountName})` : ""}`;
   const folderCard = (item: StudyFolder) => {
     const stuck = item.movedTo ? stuckIn(item.id) : 0;
     return (
       <UserFolderCard
-        key={`folder-${item.id}`} course={course} folder={item} count={countIn(item.id)}
+        key={`folder-${item.id}`} course={course} folder={item} count={countIn(item.id)} menu={folderMenu(item)}
         note={stuck ? `강의자료 ${stuck}개는 서버에서 열 수 없어 옮기지 못함` : undefined}
       />
     );
@@ -481,9 +532,14 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
             ) : null}
             {/* Server folder and recording ids are both small numbers: keys carry the kind. */}
             {folders.map(folderCard)}
-            {pdfs.map((record) => <PdfCard key={record.id} record={record} showCourse={false} />)}
-            {docs.map((record) => <StudyDocCard key={record.id} record={record} />)}
-            {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
+            {pdfs.map((record) => (
+              <PdfCard
+                key={record.id} record={record} showCourse={false}
+                menu={itemMenu(record, () => deleteCoursePdf(record.id), record.remote ? "서버에 등록한 자료는 강의자료 화면의 서버 자료 목록에서 삭제합니다." : undefined)}
+              />
+            ))}
+            {docs.map((record) => <StudyDocCard key={record.id} record={record} menu={itemMenu(record, () => deleteStudyDocument(record))} />)}
+            {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} menu={itemMenu(record, () => deleteRecording(record))} />)}
             {samples.map((item) => <SampleCard key={item.id} item={item} showCourse={false} />)}
           </>
         ) : null}
@@ -502,7 +558,7 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
             <Button kind="ghost" disabled={moving} onClick={() => moveAll({ kj: course.id, group })}>{moving ? "옮기는 중…" : text.button}</Button>
             <div className="study-grid">
               {separate[group].map(folderCard)}
-              {loose.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
+              {loose.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} menu={itemMenu(record, () => deleteRecording(record))} />)}
             </div>
           </section>
         );
