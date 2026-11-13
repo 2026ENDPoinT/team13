@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.api.ExternalIdentityProvider;
 import com.stackcorp.astra.identity.session.ClientAddresses;
+import com.stackcorp.astra.identity.session.CsrfCookie;
 import com.stackcorp.astra.identity.session.DeviceCookie;
 import com.stackcorp.astra.identity.session.DevLoginMarker;
 import com.stackcorp.astra.identity.session.SessionProperties;
@@ -91,17 +92,18 @@ class AuthController {
 				DeviceCookie.read(request), address, request.getHeader(HttpHeaders.USER_AGENT));
 		return ResponseEntity.noContent()
 			.header(HttpHeaders.SET_COOKIE, cookie(session.token(), this.properties.absoluteTimeout()).toString(),
-					DeviceCookie.issue(session.deviceUuid(), this.properties).toString())
+					DeviceCookie.issue(session.deviceUuid(), this.properties).toString(),
+					CsrfCookie.renew(request).toString())
 			.header(HttpHeaders.CACHE_CONTROL, "no-store")
 			.build();
 	}
 
 	@PostMapping("/api/auth/logout")
-	ResponseEntity<Void> logout(@AuthenticationPrincipal Actor actor) {
+	ResponseEntity<Void> logout(@AuthenticationPrincipal Actor actor, HttpServletRequest request) {
 		this.sessions.revoke(actor.sessionId(), "LOGOUT");
 		this.audit.success(actor.userId(), actor.sessionId(), "auth.logout", "user_session", actor.sessionId(), null);
 		return ResponseEntity.noContent()
-			.header(HttpHeaders.SET_COOKIE, cookie("", Duration.ZERO).toString())
+			.header(HttpHeaders.SET_COOKIE, cookie("", Duration.ZERO).toString(), CsrfCookie.renew(request).toString())
 			.header(HttpHeaders.CACHE_CONTROL, "no-store")
 			.build();
 	}

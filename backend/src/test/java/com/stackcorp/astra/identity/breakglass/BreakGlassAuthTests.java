@@ -62,6 +62,7 @@ class BreakGlassAuthTests extends IntegrationTest {
 		String setCookie = login.getResponse().getHeader("Set-Cookie");
 		assertThat(setCookie).startsWith("ASTRA_SESSION=").contains("HttpOnly", "Secure", "SameSite=Lax", "Path=/");
 		Cookie session = login.getResponse().getCookie("ASTRA_SESSION");
+		assertThat(login.getResponse().getCookie("XSRF-TOKEN").getValue()).isNotEqualTo(csrf.getValue());
 		this.mvc.perform(get("/api/me").cookie(session))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.userId").value(this.adminId))

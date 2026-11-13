@@ -23,10 +23,13 @@ import com.stackcorp.astra.identity.account.AccountSessions.LoginView;
 import com.stackcorp.astra.identity.account.AccountSessions.SessionView;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.api.RecentAuthentication;
+import com.stackcorp.astra.identity.session.CsrfCookie;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
+
+import jakarta.servlet.http.HttpServletRequest;
 
 /**
  * 접속이력(EP-0267, EP-0268, 화면 11의 등록 기기·로그인 기록)과 로그인 session 관리. 모든 경로는 요청한 사용자의 것만 다룬다.
@@ -106,9 +109,10 @@ class SessionsController {
 		return ok(Page.of(rows, limit, DeviceView::cursorId));
 	}
 
-	/** 기기 폐기(EP-0267). 기기의 session도 끝난다. */
+	/** 기기 폐기(EP-0267). 기기의 session도 끝난다. 지금 기기면 로그아웃처럼 session 쿠키를 지우고 CSRF token을 새로 준다. */
 	@DeleteMapping("/api/me/devices/{deviceId}")
-	ResponseEntity<DeviceRevoked> revokeDevice(@AuthenticationPrincipal Actor actor, @PathVariable String deviceId) {
+	ResponseEntity<DeviceRevoked> revokeDevice(@AuthenticationPrincipal Actor actor, @PathVariable String deviceId,
+			HttpServletRequest request) {
 		this.rateLimiter.check("device-revoke", actor.userId(), 30, Duration.ofMinutes(10));
 		DeviceRevocation revocation = this.sessions.revokeDevice(actor.userId(), deviceId, actor.sessionId())
 			.orElseThrow(ApiException::notFound);
@@ -123,7 +127,7 @@ class SessionsController {
 				.path("/")
 				.maxAge(Duration.ZERO)
 				.build()
-				.toString());
+				.toString(), CsrfCookie.renew(request).toString());
 		}
 		return response.body(new DeviceRevoked(revocation.revokedSessions(), revocation.currentSessionRevoked()));
 	}

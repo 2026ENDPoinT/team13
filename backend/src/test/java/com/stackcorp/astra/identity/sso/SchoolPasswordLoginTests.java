@@ -78,6 +78,7 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 		Cookie session = result.getResponse().getCookie("ASTRA_SESSION");
 		assertThat(session).isNotNull();
 		assertThat(session.isHttpOnly()).isTrue();
+		assertThat(result.getResponse().getCookie("XSRF-TOKEN")).isNotNull();
 		this.mvc.perform(get("/api/me").cookie(session))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.name").value("이진우"))

@@ -367,7 +367,7 @@ PIN/QR 출석의 보안 값이다([ADR-0030](docs/adr/0030-attendance-and-smart-
 | `ASTRA_DELIVERY_ORIGIN_ENABLED` | `false` | CloudFront 없이 앱이 `/doc`, `/vod`를 직접 응답한다. CloudFront 서명과 함께 켤 수 없다 |
 | `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY` | 없음 | 위 방식의 cookie 서명 key(Base64, 32 byte 이상). 비밀값이다 |
 
-브라우저는 먼저 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키를 받고, 상태를 바꾸는 요청마다 그 값을 `X-XSRF-TOKEN` header로 보낸다.
+브라우저는 먼저 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키를 받고, 상태를 바꾸는 요청마다 그 값을 `X-XSRF-TOKEN` header로 보낸다. 값은 브라우저 session 동안 바뀌지 않는다. 로그인, 로그아웃, 지금 기기 폐기 응답만 새 값을 주므로 그 뒤에는 쿠키를 다시 읽는다([ADR-0004](docs/adr/0004-sso-bff-session.md) 4번).
 
 ### 멱등 원장 설정
 
