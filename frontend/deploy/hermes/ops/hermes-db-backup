@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Hermes DB 일일 백업. systemd hermes-db-backup.timer 가 매일 KST 04:30 에 돌린다.
+#   gyeongmae (호스트 PostgreSQL 16)          → ~/backups/db/gyeongmae/*.dump      (pg_dump -Fc)
+#   campus_on (campus-on-demo postgres 17)    → ~/backups/db/campus-on/*.dump
+#   astra     (e-class MySQL 8.4, compose astra) → ~/backups/db/eclass-astra/*.sql.gz
+# 각 7개를 남기고, 끝나면 yoobin-desktop-linux(~/hermes-backups/db, ssh 별칭 desktop)로 rsync 한다.
+# 복원 예: pg_restore -d <db> --clean --if-exists <file>.dump / gunzip -c <file>.sql.gz | mysql ...
+set -euo pipefail
+umask 077
+root=~/backups/db
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+keep=7
+failed=()
+
+rotate() { ls -1t "$1"/* 2>/dev/null | tail -n +$((keep + 1)) | xargs -r rm -f; }
+
+run() {  # run <name> <ext> <command...>: 표준 출력을 파일로 받는다. 실패하면 파일을 지우고 기록한다.
+  local name=$1 ext=$2; shift 2
+  local dir=$root/$name file
+  mkdir -p "$dir"
+  file=$dir/$name-$stamp.$ext
+  if nice -n 19 ionice -c2 -n7 "$@" > "$file.part"; then
+    mv "$file.part" "$file"
+    echo "ok $name $(du -h "$file" | cut -f1)"
+    rotate "$dir"
+  else
+    rm -f "$file.part"
+    echo "FAILED $name" >&2
+    failed+=("$name")
+  fi
+}
+
+run gyeongmae dump sudo -n -u postgres pg_dump -Fc -d gyeongmae
+run campus-on dump docker compose --project-directory ~/projects/campus-on-demo exec -T postgres \
+  sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+# pipefail: mysqldump 가 실패하면 빈 .sql.gz 를 성공으로 남기지 않는다.
+run eclass-astra sql.gz bash -o pipefail -c "docker compose --project-directory ~/projects/eclass-backend/app exec -T mysql \
+  sh -c 'exec mysqldump --single-transaction --quick --no-tablespaces -u\"\$MYSQL_USER\" -p\"\$MYSQL_PASSWORD\" \"\$MYSQL_DATABASE\" 2>/dev/null' | gzip"
+
+# 호스트 밖 사본. 같은 디스크의 백업은 디스크 장애를 막지 못한다.
+# --delete 를 쓰지 않는다(이 호스트에서 파일이 지워져도 사본은 남는다). 사본은 30일 지난 것만 지운다.
+if ! timeout 1800 rsync -a -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' "$root/" desktop:hermes-backups/db/ ||
+   ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 desktop 'find ~/hermes-backups/db -type f -mtime +30 -delete'; then
+  echo "FAILED offsite rsync" >&2
+  failed+=(offsite)
+fi
+
+if (( ${#failed[@]} )); then
+  echo "failed: ${failed[*]}" >&2
+  exit 1
+fi
