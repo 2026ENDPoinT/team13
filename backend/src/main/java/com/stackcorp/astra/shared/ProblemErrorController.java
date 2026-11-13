@@ -1,6 +1,7 @@
 package com.stackcorp.astra.shared;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 
 import org.springframework.boot.webmvc.error.ErrorController;
 import org.springframework.http.ProblemDetail;
@@ -34,9 +35,15 @@ class ProblemErrorController implements ErrorController {
 		ResponseEntity<ProblemDetail> problem = ApiExceptionHandler.forStatus(
 				request.getAttribute(RequestDispatcher.ERROR_STATUS_CODE) instanceof Integer status ? status
 						: HttpServletResponse.SC_NOT_FOUND);
-		// 컨트롤러 단계의 problem처럼 instance는 처음 요청한 경로다. 비워 두면 Spring이 /error를 넣는다.
+		// 컨트롤러 단계의 problem처럼 instance는 처음 요청한 경로다. 비워 두면 Spring이 /error를 넣는다. 처음 경로를 URI로 읽을 수
+		// 없으면 그대로 둔다. 여기서 예외가 나면 container의 기본 오류 페이지가 나간다.
 		if (request.getAttribute(RequestDispatcher.ERROR_REQUEST_URI) instanceof String uri) {
-			problem.getBody().setInstance(URI.create(uri));
+			try {
+				problem.getBody().setInstance(new URI(uri));
+			}
+			catch (URISyntaxException ex) {
+				// instance는 Spring이 채운다.
+			}
 		}
 		return problem;
 	}
