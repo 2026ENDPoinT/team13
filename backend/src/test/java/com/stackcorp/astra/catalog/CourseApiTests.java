@@ -106,9 +106,22 @@ class CourseApiTests extends IntegrationTest {
 			.param("c", taught)
 			.param("u", ta)
 			.update();
+		// 담당자 행 없이 학사 원장의 TA 수강 행으로 담당자가 된 사람. 청강 행이 있어도 명단과 수강생 수에 없다.
+		long enrolledTa = this.data.user("STUDENT");
+		enroll(taught, enrolledTa, "REGISTRAR", "TA", "ENROLLED");
+		enroll(taught, enrolledTa, "AUDIT", "AUDITOR", "ENROLLED");
 		this.data.enroll(attended, alice);
 		this.data.enroll(empty, carol);
 		cancel(empty, carol);
+
+		ApiClient assistant = new ApiClient(this.mvc, this.data.session(enrolledTa));
+		assistant.get("/api/courses/" + taught + "/students").andExpect(jsonPath("$.total").value(3));
+		assistant.get("/api/me/courses")
+			.andExpect(jsonPath("$.length()").value(1))
+			.andExpect(jsonPath("$[0].courseId").value(taught))
+			.andExpect(jsonPath("$[0].role").value("INSTRUCTOR"))
+			.andExpect(jsonPath("$[0].learners").value(3));
+		assistant.get("/api/courses/" + taught).andExpect(jsonPath("$.learners").value(3));
 
 		professor.get("/api/courses/" + taught + "/students").andExpect(jsonPath("$.total").value(3));
 		professor.get("/api/courses/" + empty + "/students").andExpect(jsonPath("$.total").value(0));
