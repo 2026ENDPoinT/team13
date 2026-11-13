@@ -57,13 +57,16 @@ class LlmPolicyController {
 		this.chat = chat;
 	}
 
-	/** 이 배포의 제공자 profile. 교수자는 이 값과 profileDigest를 보고 동의한다. */
+	/**
+	 * 이 배포의 제공자 profile. 교수자는 이 값과 profileDigest를 보고 동의한다. enabled는 새 요청을 받을 수 있는지다. 스위치가 꺼졌거나
+	 * 제공자(API key)가 설정되지 않았으면 false이고, 그때 요약 생성과 학습 대화는 503 {@code llm_disabled}다.
+	 */
 	@GetMapping("/api/llm/policy")
 	ResponseEntity<PolicyView> policy() {
 		ProviderProfile p = this.gate.profile();
 		return ResponseEntity.ok()
 			.cacheControl(CacheControl.noStore())
-			.body(new PolicyView(this.gate.enabled(), p.providerName(), p.providerOperator(), p.processingRegion(),
+			.body(new PolicyView(this.gate.available(), p.providerName(), p.providerOperator(), p.processingRegion(),
 					p.retentionDays(), p.trainingUse(), p.crossBorderTransfer(), p.noticeVersion(), p.digest(),
 					p.acknowledgementRequired(), Arrays.stream(ProcessingScope.values()).map(ProcessingScope::value).toList()));
 	}
@@ -150,6 +153,7 @@ class LlmPolicyController {
 	}
 
 	/**
+	 * @param enabled 새 요약 생성과 학습 대화를 받는지. 배포 스위치와 제공자 설정을 함께 본다({@link LlmGate#available})
 	 * @param retentionDays 0이면 보관하지 않음, null이면 제공자가 밝히지 않음
 	 * @param scopes 동의 범위 값
 	 */

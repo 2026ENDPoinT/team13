@@ -17,6 +17,7 @@
 ### 처리 조건(provider profile)과 배포 스위치
 1. 배포가 쓰는 제공자의 데이터 처리 조건을 설정 `astra.llm.policy.*`로 적는다: 제공자 이름, 계약 주체, 처리 지역, 보관 일수(모르면 비움), 학습 이용 여부, 국외 이전 여부, 고지 문구 판. 기본값은 자료 1절의 DeepSeek API 사실(CN, 보관 미공개, 학습 이용 가능, 국외 이전)이다. `GET /api/llm/policy`가 이 값과 지문(SHA-256)을 그대로 보여 준다. 화면은 이 값으로 고지를 그린다.
 2. `astra.llm.enabled=false`면 요약 생성과 학습 대화를 모두 503 `llm_disabled`로 막고, 모델 client bean을 만들지 않으며, 이미 원장에 있는 작업과 질문은 worker가 모델을 부르지 않고 `cancelled`(`disabled`)로 닫는다. 게시한 요약과 파일 요약은 계속 보인다. 이미 학생에게 보인 결과물이고 새 전송이 없기 때문이다.
+   - 제공자가 설정되지 않은 배포(`astra.llm.api-key`가 비어 모델 client bean이 없다)는 새 요청에서 스위치를 끈 배포와 같다. `GET /api/llm/policy`의 `enabled`는 `false`이고 요약 생성·재시도, 학습 대화 열기와 질문은 503 `llm_disabled`다(`LlmGate.available`). 스위치의 기본값이 `true`라 key를 넣지 않은 배포가 이 상태가 된다. 화면은 `enabled=false`를 보고 동의 버튼과 요약 생성 안내 대신 "외부 AI 기능을 쓰지 않는다"를 보인다. 이미 원장에 있는 작업과 질문은 worker가 지금처럼 `failed`(`not_configured`)로 닫는다. 판단은 bean이 있는지만 보므로 제공자에 닿지 못하는 일시 장애는 이 상태가 아니고 그 작업의 실패로 남는다. api와 worker가 같은 환경 변수를 받는다고 본다(compose는 두 서비스에 같은 `.env`를 넘긴다).
 
 ### 교수자 동의
 3. 동의는 과목 × 교수자 × 범위마다 하나다. 범위는 `page_summary`(쪽별 요약 생성, 쪽 이미지와 텍스트 전송)와 `study_chat`(학습 대화, 쪽 텍스트와 게시한 해설 전송) 둘이다. 파일 요약은 모델 호출 없이 만들므로 범위가 아니다(9번). `llm_consents`에 누가, 언제, 어느 고지 판과 profile 지문에, 동의 당시의 profile 값을 그대로 남긴다.

@@ -146,7 +146,7 @@ DB의 일시와 API의 offset 없는 일시(`openAt`, `closeAt`, `serverTime` �
 
 ### LLM 설정
 
-쪽별 요약([ADR-0006](docs/adr/0006-summary-module.md))은 OpenAI Chat Completions 호환 제공자를 부른다([ADR-0008](docs/adr/0008-llm-port-deepseek.md)). 설정은 환경 변수로 넣는다. key가 없으면 앱은 뜨고 요약 생성만 쓸 수 없다.
+쪽별 요약([ADR-0006](docs/adr/0006-summary-module.md))은 OpenAI Chat Completions 호환 제공자를 부른다([ADR-0008](docs/adr/0008-llm-port-deepseek.md)). 설정은 환경 변수로 넣는다. key가 없으면 앱은 뜨고, 외부 AI 기능은 `ASTRA_LLM_ENABLED=false`일 때와 같이 꺼진 것으로 보인다. `GET /api/llm/policy`가 `enabled=false`를 알리고, 요약 생성과 학습 대화는 503 `llm_disabled`다. key를 넣기 전에 원장에 들어온 작업은 worker가 `not_configured`로 실패시킨다.
 
 | 환경 변수 | 기본값 | 내용 |
 |---|---|---|
@@ -157,7 +157,7 @@ DB의 일시와 API의 offset 없는 일시(`openAt`, `closeAt`, `serverTime` �
 | `ASTRA_LLM_TIMEOUT` | `300s` | 요청 하나의 전체 제한 시간 |
 | `ASTRA_LLM_MAX_CONCURRENCY` | `2` | 동시에 보내는 요청 수 상한 |
 | `ASTRA_LLM_EXTRABODY_*` | 없음 | 요청 본문에 더하는 제공자 전용 값. 예: `ASTRA_LLM_EXTRABODY_THINKING_TYPE=disabled`는 본문에 `{"thinking":{"type":"disabled"}}`를 더한다 |
-| `ASTRA_LLM_ENABLED` | `true` | `false`면 요약 생성과 학습 대화를 모두 503 `llm_disabled`로 막고 모델을 부르지 않는다 |
+| `ASTRA_LLM_ENABLED` | `true` | `false`면 요약 생성과 학습 대화를 모두 503 `llm_disabled`로 막고 모델을 부르지 않는다. `true`여도 `ASTRA_LLM_API_KEY`가 없으면 새 요청은 같은 503이다 |
 
 Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`, `ASTRA_LLM_MODEL=gemini-3.5-flash`. Gemini는 도구 호출에 `extra_content.google.thought_signature`를 붙이고 다음 요청에 같은 값이 없으면 400을 내므로, client는 도구 호출의 `extra_content`를 받은 그대로 돌려보낸다.
 

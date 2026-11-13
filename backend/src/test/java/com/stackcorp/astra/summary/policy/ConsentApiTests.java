@@ -1,6 +1,7 @@
 package com.stackcorp.astra.summary.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -24,6 +25,7 @@ import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.summary.FakeLlm;
 import com.stackcorp.astra.summary.LlmConsents;
+import com.stackcorp.astra.summary.api.LlmException;
 import com.stackcorp.astra.summary.job.SummaryRunnerDriver;
 
 import tools.jackson.databind.JsonNode;
@@ -101,6 +103,24 @@ class ConsentApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.profileDigest").value(this.consents.profile().digest()))
 			.andExpect(jsonPath("$.scopes.length()").value(2));
 		new ApiClient(this.mvc, null).get("/api/llm/policy").andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void aProviderOutageDoesNotLookLikeADisabledDeployment() throws Exception {
+		this.llm.reset((request) -> {
+			throw new LlmException(LlmException.Code.NETWORK, "connection refused");
+		});
+		grant("page_summary", true).andExpect(status().isOk());
+
+		this.student.get("/api/llm/policy").andExpect(jsonPath("$.enabled").value(true));
+		long job = ApiClient.json(requestJob().andExpect(status().isAccepted())).get("id").asLong();
+		SummaryRunnerDriver.runOnce(this.context);
+
+		// 장애는 그 작업의 결과로 남고 배포 상태(enabled)와 새 요청의 거절 사유는 바뀌지 않는다.
+		this.professor.get("/api/courses/" + this.course + "/summary-jobs/" + job)
+			.andExpect(jsonPath("$.errorCode").value(not("not_configured")));
+		this.student.get("/api/llm/policy").andExpect(jsonPath("$.enabled").value(true));
+		requestJob().andExpect((result) -> assertThat(result.getResponse().getStatus()).isNotEqualTo(503));
 	}
 
 	@Test
