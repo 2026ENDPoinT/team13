@@ -34,7 +34,7 @@
   <img src="docs/screenshots/home.png" alt="STack e-Class 홈" width="900">
 </p>
 
-> ENDPoinT 해커톤 2026 **Team 13** 제출 저장소입니다. 실제 서비스는 `https://eclass.stack-edu.com`(팀 허용 계정만 접속)에서 돌아가고 있습니다.
+> ENDPoinT 해커톤 2026 **Team 13** 제출 저장소입니다. 실제 서비스: **https://eclass.stack-edu.com** (학교 e-Class 학번으로 로그인).
 
 ---
 
@@ -177,7 +177,7 @@ flowchart TB
 
 | 영역 | 방식 |
 |---|---|
-| 공개 범위 | Cloudflare Access(허용 이메일) → Tunnel. 서버는 인터넷에 포트를 열지 않음 |
+| 공개 범위 | Cloudflare Tunnel 로만 들어옴(서버는 인터넷에 포트를 열지 않음). 필요하면 Cloudflare Access 로 허용 이메일만 열 수 있음 |
 | 세션 | 서버 세션 쿠키 + CSRF 토큰, 허용 Origin 검사(`ASTRA_SESSION_ALLOWED_ORIGINS`) |
 | 로그인 | 학교 e-Class 학번 로그인(비밀번호는 확인 요청 한 번에만 쓰고 저장하지 않음), 운영자 break-glass(비밀번호 + TOTP, 잠금·재사용 방지) |
 | 업로드 | 형식 검사 → 격리(quarantined) → ClamAV 검사 통과 후 공개. 검사기는 외부와 끊긴 네트워크에만 있음 |
