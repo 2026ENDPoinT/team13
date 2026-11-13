@@ -196,12 +196,14 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 			rendition = this.renditions.prepare(job.fileId());
 		}
 		catch (RenditionException ex) {
-			String detail = ex.detail() != null ? " (" + ex.detail().toLowerCase() + ")" : "";
-			finish(job, JobState.FAILED, new Usage(0, 0, 0), "file", ex.getMessage() + detail);
+			// 화면에는 정해 둔 문장만 둔다. converter가 돌려준 문구는 로그에만 남긴다.
+			log.warn("summary job rendition failed jobId={} code={} detail={} message={}", job.id(), ex.code(),
+					ex.detail(), ex.getMessage());
+			finish(job, JobState.FAILED, new Usage(0, 0, 0), "file", FailureText.file(ex.code(), ex.detail()));
 			return;
 		}
 		if (rendition.fileVersionNo() != job.fileVersionNo()) {
-			finish(job, JobState.FAILED, new Usage(0, 0, 0), "file", "요청한 뒤 파일이 바뀌었습니다. 다시 요청해 주세요.");
+			finish(job, JobState.FAILED, new Usage(0, 0, 0), "file", FailureText.FILE_CHANGED);
 			return;
 		}
 		String title = this.files.find(job.fileId())
@@ -253,6 +255,11 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 				return;
 			}
 			String stage = ex.stage().name().toLowerCase();
+			if (ex.code() == GenerationException.Code.PROVIDER) {
+				// 제공자 문구(key는 client가 지웠다)와 예외 종류는 로그에만 남긴다.
+				log.warn("summary job provider call failed jobId={} stage={} kind={} detail={}", job.id(), stage,
+						ex.providerFailure(), ex.getMessage());
+			}
 			this.storage.writeFailure(job.fileId(), job.id(), stage, ex.getMessage());
 			finish(job, JobState.FAILED, usage, ex.code().name().toLowerCase(), failureMessage(ex));
 		}
@@ -277,7 +284,7 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 	// 실행 중에 자료가 지워졌다. 결과를 남기지 않고 실패로 닫는다. 지운 파일은 게시할 수도 없다.
 	private void finishFileDeleted(SummaryJob job, Usage usage) {
 		log.info("summary job stopped, file deleted jobId={}", job.id());
-		finish(job, JobState.FAILED, usage, "file", "자료 파일이 삭제됐습니다.");
+		finish(job, JobState.FAILED, usage, "file", FailureText.FILE_DELETED);
 	}
 
 	private void finish(SummaryJob job, JobState state, Usage usage, String errorCode, String errorMessage) {
@@ -310,12 +317,14 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 		}
 	}
 
-	// DB에는 자료 본문이 섞이지 않는 문구만 둔다. 검사 실패의 세부는 failure.json에 있다.
+	// DB에는 자료 본문과 바깥에서 온 문구가 섞이지 않는 문장만 둔다. 검사 실패의 세부는 failure.json에, 제공자 실패의 세부는 로그에
+	// 있다. 모델 호출 수 상한과 입력 검사의 문구는 pipeline이 정한 문장이다.
 	private static String failureMessage(GenerationException ex) {
 		String stage = ex.stage().name().toLowerCase();
 		return switch (ex.code()) {
 			case INVALID_OUTPUT -> "모델 출력이 검사를 통과하지 못했습니다 (단계: " + stage + ").";
-			case PROVIDER, BUDGET, INPUT -> ex.getMessage();
+			case PROVIDER -> FailureText.provider(ex.providerFailure());
+			case BUDGET, INPUT -> ex.getMessage();
 			case CANCELLED -> null;
 		};
 	}
