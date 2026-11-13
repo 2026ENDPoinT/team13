@@ -606,6 +606,51 @@ class StudyChatApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.code").value("llm_consent_required"));
 	}
 
+	/** 담당자 명단에서 교수가 조교로 바뀌었다. 여전히 과목 담당이지만 결정권자가 아니므로 그 사람이 게시한 요약의 대화는 닫힌다. */
+	@Test
+	void publisherDemotedToTaNoLongerAuthorizesChats() throws Exception {
+		long chat = open(this.student);
+		this.jdbc.sql("UPDATE course_instructors SET instructor_role = 'TA' WHERE course_id = :c AND user_id = :u")
+			.param("c", this.course)
+			.param("u", this.professorId)
+			.update();
+
+		ask(this.student, chat, "demoted", "질문").andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("llm_consent_required"));
+		this.student.post(files(this.course, this.fileId) + "/study-chats")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("llm_consent_required"));
+	}
+
+	/**
+	 * 조교가 게시하면 게시자인 조교가 책임 교수자다. 교수가 학습 대화에 동의했고 조교에게 예전에 남긴 동의 행이 있어도, 조교는
+	 * 결정권자가 아니므로 대화는 열리지 않는다(ADR-0032 결과와 트레이드오프).
+	 */
+	@Test
+	void aSummaryPublishedByAnAssistantDoesNotOpenStudyChatEvenWithTheProfessorsConsent() throws Exception {
+		long taId = this.data.user("TA");
+		this.jdbc.sql("INSERT INTO course_instructors (course_id, user_id, instructor_role) VALUES (:c, :u, 'TA')")
+			.param("c", this.course)
+			.param("u", taId)
+			.update();
+		LlmConsents.grant(this.context, this.course, taId, ProcessingScope.STUDY_CHAT);
+		ApiClient assistant = client(taId);
+		long file = this.data.pdfFile(TestPdfs.pdfWithText("Assistant published page"), "clean");
+		this.data.activity(this.course, "lecture_material", true, null, this.data.attachmentGroup(file));
+		long job = ApiClient.json(this.professor.post(files(this.course, file) + "/summary-jobs")
+			.andExpect(status().isAccepted())).get("id").asLong();
+		assertThat(SummaryRunnerDriver.runOnce(this.context)).isTrue();
+		assistant.post("/api/courses/" + this.course + "/summary-jobs/" + job + "/publish").andExpect(status().isOk());
+
+		this.student.post(files(this.course, file) + "/study-chats")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("llm_consent_required"));
+		// 교수가 다시 게시하면 열린다.
+		this.professor.post("/api/courses/" + this.course + "/summary-jobs/" + job + "/publish")
+			.andExpect(status().isOk());
+		this.student.post(files(this.course, file) + "/study-chats").andExpect(status().isCreated());
+	}
+
 	private void publish(ApiClient instructor, long courseId, long file) throws Exception {
 		long job = ApiClient.json(instructor.post(files(courseId, file) + "/summary-jobs").andExpect(status().isAccepted()))
 			.get("id")

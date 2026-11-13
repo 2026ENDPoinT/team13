@@ -321,8 +321,11 @@ class ConsentApiTests extends IntegrationTest {
 		assertThat(gate.closed(nonRegular, managerId, ProcessingScope.PAGE_SUMMARY)).isEmpty();
 		manager.delete("/api/courses/" + nonRegular + "/llm-consents/page_summary").andExpect(status().isNoContent());
 		assertThat(gate.closed(nonRegular, managerId, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
-		// 폐강한 과목에는 결정권자가 없다.
+		// 폐강한 과목에는 결정권자가 없다. 유효한 동의가 남아 있어도 폐강만으로 문이 닫힌다.
+		LlmConsents.grant(this.context, nonRegular, managerId, ProcessingScope.PAGE_SUMMARY);
+		assertThat(gate.closed(nonRegular, managerId, ProcessingScope.PAGE_SUMMARY)).isEmpty();
 		this.jdbc.sql("UPDATE courses SET course_status = 'CANCELLED' WHERE course_id = :c").param("c", nonRegular).update();
+		assertThat(gate.closed(nonRegular, managerId, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
 		grant(manager, nonRegular, "page_summary").andExpect(status().isNotFound());
 	}
 
