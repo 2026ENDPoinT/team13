@@ -360,11 +360,12 @@ function BoxListBody({ name, currentId, options, rebuild, focusAfter }: BoxListB
       const id = item.messageId;
       const who = inbox ? (item.sender && item.sender.name) || "보낸 사람" : recipientsText(item);
       // 받은 쪽지는 보낸 사람, 보낸 쪽지는 첫 받는 사람의 사진이다. 사진이 없으면 지금처럼 첫 글자를 둔다.
+      // `hasPhoto: false`면 사진을 묻지 않는다. 그 값이 없는 서버면 지금처럼 확인한다.
       const person = inbox ? item.sender : item.firstRecipient;
       const on = currentId === id;
       const copy = (
         <>
-          {personAvatar({ userId: person && person.userId, name: who, className: "msg-avatar" })}
+          {personAvatar({ userId: person && person.userId, name: who, className: "msg-avatar", photo: person?.hasPhoto !== false })}
           <span className="msg-copy">
             <b>{item.title}</b>
             <span className="tiny">{`${who} · ${koDateTime(item.sentAt)}`}</span>
@@ -652,7 +653,7 @@ function RecipientSearch({ courseId, chosen, onChange }: RecipientSearchOptions)
             changed();
           }}
         />
-        {personAvatar({ userId: person.userId, name: String(person.name || "?"), className: "msg-avatar" })}
+        {personAvatar({ userId: person.userId, name: String(person.name || "?"), className: "msg-avatar", photo: person.hasPhoto !== false })}
         <span><b>{person.name}</b><span className="tiny">{(person.role && ROLE_LABEL[person.role]) || "구성원"}</span></span>
       </label>
     ));
