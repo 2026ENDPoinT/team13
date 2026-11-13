@@ -55,7 +55,8 @@ export async function ask(text: string, { signal }: { signal?: AbortSignal } = {
   const cancel = () => controller.abort();
   if (signal?.aborted) cancel();
   else signal?.addEventListener("abort", cancel, { once: true });
-  const timer = setTimeout(() => controller.abort(), 8000);
+  // 서버 쪽 제한(ASSISTANT_TIMEOUT_MS, 배포값 20초)보다 길게 둔다. 서버가 먼저 끝내야 실패 이유가 화면에 남는다.
+  const timer = setTimeout(() => controller.abort(), 25000);
   try {
     const response = await fetch("/api/assistant", {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
