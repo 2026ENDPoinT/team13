@@ -27,6 +27,9 @@ import com.stackcorp.astra.learning.api.ActivityTargets;
 import com.stackcorp.astra.learning.api.ActivityTargets.Target;
 import com.stackcorp.astra.learning.api.CalendarActivities;
 import com.stackcorp.astra.learning.api.CalendarActivities.CalendarActivity;
+import com.stackcorp.astra.learning.api.SchoolCourseItems;
+import com.stackcorp.astra.learning.api.SchoolCourseItems.SchoolActivity;
+import com.stackcorp.astra.learning.api.SchoolCourseItems.SchoolNotice;
 
 /**
  * 도우미가 쓰는 로그인한 사용자 본인의 자료(ADR-0044). 화면이 보낸 과목이나 활동 목록은 쓰지 않는다. 모든 값은 이 사용자의 과목
@@ -34,7 +37,8 @@ import com.stackcorp.astra.learning.api.CalendarActivities.CalendarActivity;
  * <ul>
  * <li>기본({@link #base}): 끝나지 않은 내 과목과 할 일(서비스 활동과 학교에서 가져온 활동, 할 일 목록과 같은 계산). 규칙 답은 이것만 쓴다.</li>
  * <li>모델용({@link #extend}): 앞으로 {@value #DEADLINE_DAYS}일 안의 마감(끝낸 것 포함), 지금 과목이나 문장에 나온 과목의 이번 주와
- * 다음 주 마감 활동, 최근 공지.</li>
+ * 다음 주 마감 활동과 그 과목에서 가져온 학교 활동(영상, 자료, 과제 등, 학교 주차 기간 기준), 최근 공지(서비스 공지와 가져온 학교
+ * 공지).</li>
  * </ul>
  * 항목마다 화면이 그대로 따라갈 수 있는 주소를 함께 정한다({@link AssistantLinks}).
  */
@@ -65,14 +69,18 @@ class AssistantContext {
 
 	private final CourseNoticeDigest notices;
 
+	private final SchoolCourseItems school;
+
 	AssistantContext(HomeService home, MemberCourses courses, CalendarActivities calendar,
-			ActivityCompletions completions, ActivityTargets targets, CourseNoticeDigest notices) {
+			ActivityCompletions completions, ActivityTargets targets, CourseNoticeDigest notices,
+			SchoolCourseItems school) {
 		this.home = home;
 		this.courses = courses;
 		this.calendar = calendar;
 		this.completions = completions;
 		this.targets = targets;
 		this.notices = notices;
+		this.school = school;
 	}
 
 	/** 과목 하나. ref는 이 요청 안에서만 쓰는 이름(C1, C2 …)이다. */
@@ -164,8 +172,10 @@ class AssistantContext {
 			}
 			ItemRef item;
 			if (t.activityId() instanceof String school) {
+				long schoolId = Long.parseLong(school.substring("school-".length()));
 				item = snapshot.add(school, t.courseId(), AssistantLinks.kindOf(t.type()), t.type(), t.title(),
-						t.closeAt(), "todo", AssistantLinks.school(course.course(), t.title(), t.schoolUrl()),
+						t.closeAt(), "todo",
+						AssistantLinks.school(course.course(), t.type(), schoolId, t.title(), t.schoolUrl()),
 						Set.of(school));
 			}
 			else {
@@ -205,6 +215,12 @@ class AssistantContext {
 			week = this.calendar.closingBetween(student ? List.of() : List.of(id), student ? List.of(id) : List.of(),
 					now, from, from.plusDays(14), PER_SOURCE);
 		}
+		List<SchoolActivity> schoolWeek = List.of();
+		LocalDateTime weekStart = snapshot.today().with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY)).atStartOfDay();
+		if (focus != null && importedFor(focus.course())) {
+			schoolWeek = this.school.activities(userId, focus.course().courseId(), weekStart, weekStart.plusDays(14),
+					PER_SOURCE);
+		}
 		List<CalendarActivity> all = new ArrayList<>(deadlines);
 		all.addAll(week);
 		Set<Long> students = new HashSet<>(enrolled);
@@ -228,6 +244,15 @@ class AssistantContext {
 					a.closeAt(), status, AssistantLinks.activity(course.course(), a.type(), a.activityId(), targetId, a.title()),
 					nativeKeys(a.activityId(), targetId));
 		}
+		for (SchoolActivity a : schoolWeek) {
+			CourseRef course = snapshot.byId.get(a.courseId());
+			String ref = "school-" + a.schoolActivityId();
+			snapshot.add(ref, a.courseId(), AssistantLinks.kindOf(a.schoolType()), a.schoolType(), a.title(),
+					a.closeAt(), a.done() ? "done" : a.closed() ? "closed" : "todo",
+					AssistantLinks.school(course.course(), a.schoolType(), a.schoolActivityId(), a.title(),
+							a.schoolUrl()),
+					Set.of(ref));
+		}
 		List<NoticeHeadline> headlines = new ArrayList<>(
 				this.notices.latest(userId, snapshot.byId.keySet(), now, NOTICES));
 		if (focus != null) {
@@ -237,9 +262,24 @@ class AssistantContext {
 			CourseRef course = snapshot.byId.get(n.courseId());
 			if (course != null) {
 				snapshot.add("notice" + n.noticeId(), n.courseId(), "notice", "notice", n.title(), null, "notice",
-						AssistantLinks.notice(course.course(), n.noticeId(), n.title()), Set.of());
+						AssistantLinks.notice(course.course(), n.noticeId(), false, n.title()), Set.of());
 			}
 		}
+		// 학교 공지는 학교 과목 키가 있는 수강 과목의 학생에게만 보인다(SchoolNotices와 같은 조건).
+		List<Long> imported = snapshot.courses.stream()
+			.filter((c) -> importedFor(c.course()))
+			.map((c) -> c.course().courseId())
+			.toList();
+		for (SchoolNotice n : this.school.notices(imported, NOTICES)) {
+			CourseRef course = snapshot.byId.get(n.courseId());
+			snapshot.add("school-notice" + n.schoolNoticeId(), n.courseId(), "notice", "notice", n.title(), null,
+					"notice", AssistantLinks.notice(course.course(), n.schoolNoticeId(), true, n.title()), Set.of());
+		}
+	}
+
+	// 학교에서 가져온 행은 학교 과목 키가 있는 과목의 학생에게만 있다(learning SchoolContent.courseKey와 같은 조건).
+	private static boolean importedFor(MemberCourse course) {
+		return course.role() == CourseRole.STUDENT && course.key() != null;
 	}
 
 	/** 지금 과목: 화면이 보낸 과목이 내 과목이면 그것, 아니면 문장에 이름이나 코드가 나온 과목 하나. */

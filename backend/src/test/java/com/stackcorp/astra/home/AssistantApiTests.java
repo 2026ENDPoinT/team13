@@ -102,19 +102,63 @@ class AssistantApiTests extends IntegrationTest {
 		long video = activity(this.course, "lecture_weeks", "3주차 강의", "CURRENT_TIMESTAMP(3) + INTERVAL 2 DAY");
 		long quizActivity = activity(this.course, "test", "중간 퀴즈", "CURRENT_TIMESTAMP(3) + INTERVAL 3 DAY");
 		long quiz = this.data.insert("INSERT INTO quizzes (activity_id) VALUES (:a)", Map.of("a", quizActivity));
-		school(this.course, "77", "학교 시험", "CURRENT_TIMESTAMP(3) + INTERVAL 4 DAY");
+		school(this.course, "test", "77", "학교 시험", "CURRENT_TIMESTAMP(3) + INTERVAL 4 DAY");
+		long schoolReport = school(this.course, "report", "78", "학교 과제", "CURRENT_TIMESTAMP(3) + INTERVAL 5 DAY");
 
 		JsonNode body = json(ask("할 일 목록 보여줘").andExpect(status().isOk()));
 
 		assertThat(body.path("source").stringValue()).isEqualTo("rule");
+		// 가져온 시험은 STack 화면이 없어 학교 주소(새 창), 가져온 과제는 STack 상세(같은 창)다.
 		assertThat(hrefs(body)).containsExactly(
 				"/ilos/cls/st/activity/activity_form.acl?m=report&act=" + report + "&kj=c" + this.course,
 				"/ilos/cls/st/activity/activity_form.acl?m=lecture_weeks&n=srv-" + video + "&kj=c" + this.course,
-				"/ilos/cls/st/activity/activity_form.acl?m=test&n=srv-" + quiz + "&kj=c" + this.course, SCHOOL_URL);
-		assertThat(body.path("actions").path(3).path("external").booleanValue()).isTrue();
-		assertThat(body.path("actions").path(0).path("external").booleanValue()).isFalse();
+				"/ilos/cls/st/activity/activity_form.acl?m=test&n=srv-" + quiz + "&kj=c" + this.course, SCHOOL_URL,
+				"/ilos/cls/st/activity/activity_form.acl?m=report&n=school-" + schoolReport + "&kj=c" + this.course);
+		assertThat(externals(body)).containsExactly(false, false, false, true, false);
 		assertThat(body.path("actions").path(0).path("label").stringValue()).isEqualTo("데이터베이스 · 과제 1");
 		assertThat(this.llm.log).isEmpty();
+	}
+
+	// 가져온 학교 영상·자료·과제·공지는 STack 화면(같은 창), 설문·시험과 그 밖의 유형은 학교 주소(새 창)다. 학교 행은 학교 과목 키가 있는
+	// 과목의 학생에게만 모델 입력에 들어간다.
+	@Test
+	void importedSchoolItemsOpenStackScreensAndOnlyWhatStackCannotOpenLeaves() throws Exception {
+		this.jdbc.sql("UPDATE courses SET legacy_kjkey = :key WHERE course_id = :c")
+			.param("key", "A" + this.course)
+			.param("c", this.course)
+			.update();
+		this.data.insert("""
+				INSERT INTO school_course_weeks (course_id, week_no, starts_on, ends_on, synced_at)
+				VALUES (:c, 1, CURRENT_DATE - INTERVAL 1 DAY, CURRENT_DATE + INTERVAL 5 DAY, CURRENT_TIMESTAMP(3))
+				""", Map.of("c", this.course));
+		long video = school(this.course, "lecture_weeks", "10", "학교 영상", "NULL");
+		long material = school(this.course, "lecture_material", "11", "학교 자료", "NULL");
+		long report = school(this.course, "report", "12", "학교 과제", "CURRENT_TIMESTAMP(3) + INTERVAL 2 DAY");
+		school(this.course, "survey", "13", "학교 설문", "CURRENT_TIMESTAMP(3) + INTERVAL 3 DAY");
+		long notice = this.data.insert("""
+				INSERT INTO school_notices (course_id, school_item_id, title, posted_at, sort_order, school_url, listed_at)
+				VALUES (:c, '90', '학교 공지', CURRENT_TIMESTAMP(3), 0, :url, CURRENT_TIMESTAMP(3))
+				""", Map.of("c", this.course, "url", SCHOOL_URL));
+		// 모델은 제목이 "학교 "로 시작하는 항목을 모두 고른다.
+		this.llm.reset((r) -> {
+			JsonNode input = JSON.readTree(FakeLlm.transcript(r).split("input:\n", 2)[1]);
+			List<String> picked = input.path("items")
+				.valueStream()
+				.filter((row) -> row.path(3).stringValue().startsWith("학교 "))
+				.map((row) -> row.path(0).stringValue())
+				.toList();
+			return reply(JSON.writeValueAsString(Map.of("intent", "choose", "targets", picked, "say", "골라 주세요")));
+		});
+
+		JsonNode body = json(ask("학교에서 가져온 거 찾아줘", Map.of("courseId", this.course)).andExpect(status().isOk()));
+
+		String act = "/ilos/cls/st/activity/activity_form.acl?";
+		String kj = "&kj=c" + this.course;
+		assertThat(body.path("source").stringValue()).isEqualTo("model");
+		assertThat(hrefs(body)).containsExactly(act + "m=report&n=school-" + report + kj, SCHOOL_URL,
+				act + "m=lecture_weeks&n=school-" + video + kj, act + "m=lecture_material&n=school-" + material + kj,
+				"/ilos/cls/st/notice/notice_list_form.acl?pop=notice&kj=c" + this.course + "&id=school-" + notice);
+		assertThat(externals(body)).containsExactly(false, true, false, false, false);
 	}
 
 	@Test
@@ -271,12 +315,16 @@ class AssistantApiTests extends IntegrationTest {
 				""".formatted(closeAt), Map.of("c", courseId, "w", week, "type", type, "title", title));
 	}
 
-	private void school(long courseId, String item, String title, String closeAt) {
-		this.data.insert("""
+	private long school(long courseId, String type, String item, String title, String closeAt) {
+		return this.data.insert("""
 				INSERT INTO school_activities (course_id, school_type, school_item_id, week_no, sort_order, title, close_at,
 				                               school_url, synced_at)
-				VALUES (:c, 'test', :item, 1, 0, :title, %s, :url, CURRENT_TIMESTAMP(3))
-				""".formatted(closeAt), Map.of("c", courseId, "item", item, "title", title, "url", SCHOOL_URL));
+				VALUES (:c, :type, :item, 1, 0, :title, %s, :url, CURRENT_TIMESTAMP(3))
+				""".formatted(closeAt), Map.of("c", courseId, "type", type, "item", item, "title", title, "url", SCHOOL_URL));
+	}
+
+	private static List<Boolean> externals(JsonNode body) {
+		return body.path("actions").valueStream().map((a) -> a.path("external").booleanValue()).toList();
 	}
 
 	private static LlmResponse reply(String text) {
