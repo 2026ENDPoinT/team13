@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,8 +31,9 @@ import com.stackcorp.astra.summary.policy.UsageLedger.Total;
 
 /**
  * 외부 LLM 처리 조건, 교수자 동의, 과목 사용량(ADR-0032). 처리 조건은 로그인한 누구나 본다. 사용량, 내 동의 목록, 철회는 그 과목
- * 담당자가 하고, 동의는 과목의 결정권자(담당자 명단의 교수와 비정규 담당자)만 한다. 해당하지 않으면 404다. 동의는 본인의 것만
- * 기록하고 철회한다. 철회는 처리를 좁히기만 하므로 조교도 예전에 남긴 자기 동의를 거둘 수 있다.
+ * 담당자가 하고, 담당이 아니면 404다. 동의는 과목의 결정권자(담당자 명단의 교수와 비정규 담당자)만 하고, 결정권자가 아닌 담당자(조교
+ * 등)는 403 {@code llm_decider_required}다. 요약 생성·재시도와 같은 거절이다. 동의는 본인의 것만 기록하고 철회한다. 철회는 처리를
+ * 좁히기만 하므로 조교도 예전에 남긴 자기 동의를 거둘 수 있다.
  */
 @RestController
 class LlmPolicyController {
@@ -67,8 +69,8 @@ class LlmPolicyController {
 	}
 
 	/**
-	 * 내가 이 과목에 남긴 동의. 범위마다 하나이고, 동의하지 않은 범위는 granted=false다. 결정권자가 아닌 사람(조교 등)의 동의 행은
-	 * granted=true, current=false로 보인다. 문을 열지 않으므로 효력은 없고, 철회는 할 수 있다.
+	 * 내가 이 과목에 남긴 동의. 범위마다 하나이고, 동의하지 않은 범위는 granted=false다. canGrant는 내가 이 과목에서 동의할 수
+	 * 있는지(결정권자인지)다. 결정권자가 아닌 사람(조교 등)의 남은 동의 행은 문을 열지 않으므로 효력이 없고, 철회는 할 수 있다.
 	 */
 	@GetMapping("/api/courses/{courseId}/llm-consents")
 	ResponseEntity<List<ConsentView>> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
@@ -77,7 +79,7 @@ class LlmPolicyController {
 		Map<ProcessingScope, Consent> active = new EnumMap<>(ProcessingScope.class);
 		this.consents.active(courseId, actor.userId()).forEach((c) -> active.put(c.scope(), c));
 		List<ConsentView> views = Arrays.stream(ProcessingScope.values())
-			.map((s) -> active.containsKey(s) ? ConsentView.of(active.get(s), decider) : ConsentView.none(s))
+			.map((s) -> active.containsKey(s) ? ConsentView.of(active.get(s), decider) : ConsentView.none(s, decider))
 			.toList();
 		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(views);
 	}
@@ -128,10 +130,12 @@ class LlmPolicyController {
 		}
 	}
 
-	/** 수강 신청 처리처럼 조교는 하지 않는다. 거부는 담당이 아닐 때와 같은 404다. */
+	/** 수강 신청 처리처럼 조교는 하지 않는다. 담당이 아니면 404, 담당이지만 결정권자가 아니면 403이다. */
 	private void requireDecider(Actor actor, long courseId) {
+		requireInstructor(actor, courseId);
 		if (!this.staff.isDecider(actor.userId(), courseId)) {
-			throw ApiException.notFound();
+			throw new ApiException(HttpStatus.FORBIDDEN, "llm_decider_required",
+					"외부 AI 처리 동의는 담당자 명단의 과목 교수나 비정규 담당자만 할 수 있습니다. 조교 계정으로는 동의할 수 없습니다.");
 		}
 	}
 
@@ -155,20 +159,21 @@ class LlmPolicyController {
 	}
 
 	/**
-	 * @param current 이 동의가 지금 문을 여는지. 동의한 profile이 지금 배포의 profile과 같고, 동의한 사람이 지금도 과목의
-	 * 결정권자여야 한다. false면 효력이 없다. 결정권자는 다시 동의하고, 결정권자가 아닌 사람은 철회만 할 수 있다
+	 * @param current 동의한 profile이 지금 배포의 profile과 같은지. false면 효력이 없어 다시 동의해야 한다
+	 * @param canGrant 요청한 사람이 이 과목에서 동의할 수 있는지(결정권자인지). false면 동의 요청은 403
+	 * {@code llm_decider_required}이고, 남은 동의 행이 있어도 문을 열지 않는다
 	 */
 	record ConsentView(String scope, boolean granted, boolean current, String noticeVersion, String profileDigest,
-			boolean acknowledged, Instant grantedAt) {
+			boolean acknowledged, Instant grantedAt, boolean canGrant) {
 
-		/** @param decider 동의한 사람이 지금 과목의 결정권자인지 */
-		static ConsentView of(Consent c, boolean decider) {
-			return new ConsentView(c.scope().value(), true, decider && c.current(), c.noticeVersion(),
-					c.profileSha256(), c.riskAcknowledged(), c.grantedAt());
+		/** @param canGrant 요청한 사람이 지금 과목의 결정권자인지 */
+		static ConsentView of(Consent c, boolean canGrant) {
+			return new ConsentView(c.scope().value(), true, c.current(), c.noticeVersion(), c.profileSha256(),
+					c.riskAcknowledged(), c.grantedAt(), canGrant);
 		}
 
-		static ConsentView none(ProcessingScope scope) {
-			return new ConsentView(scope.value(), false, false, null, null, false, null);
+		static ConsentView none(ProcessingScope scope, boolean canGrant) {
+			return new ConsentView(scope.value(), false, false, null, null, false, null, canGrant);
 		}
 
 	}

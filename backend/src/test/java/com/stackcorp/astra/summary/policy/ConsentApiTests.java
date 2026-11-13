@@ -195,18 +195,24 @@ class ConsentApiTests extends IntegrationTest {
 		LlmGate gate = this.context.getBean(LlmGate.class);
 		for (long staff : new long[] { listedTa, enrolledTa, enrolledProfessor }) {
 			ApiClient client = new ApiClient(this.mvc, this.data.session(staff));
-			grant(client, "page_summary").andExpect(status().isNotFound());
-			// 동의는 결정권자의 것이다. 조교도 과목 담당이라 자기 동의 목록과 사용량은 본다.
-			client.get(consents()).andExpect(status().isOk()).andExpect(jsonPath("$[0].granted").value(false));
+			grant(client, "page_summary").andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.code").value("llm_decider_required"));
+			// 동의는 결정권자의 것이다. 조교도 과목 담당이라 자기 동의 목록과 사용량은 보고, 동의할 수 없다는 것도 목록에서 안다.
+			client.get(consents()).andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].granted").value(false))
+				.andExpect(jsonPath("$[0].canGrant").value(false))
+				.andExpect(jsonPath("$[1].canGrant").value(false));
 			client.get("/api/courses/" + this.course + "/llm-usage").andExpect(status().isOk());
-			// 예전에 남은 동의 행이 있어도 문은 열리지 않고, 목록은 효력이 없다고(current=false) 보여 준다.
+			// 예전에 남은 동의 행이 있어도 문은 열리지 않는다. current는 처리 조건이 같은지만 말하므로 true이고, 효력이 없다는 것은
+			// canGrant=false가 말한다.
 			LlmConsents.grant(this.context, this.course, staff, ProcessingScope.PAGE_SUMMARY);
 			assertThat(gate.closed(this.course, staff, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
 			client.get(consents())
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$[0].scope").value("page_summary"))
 				.andExpect(jsonPath("$[0].granted").value(true))
-				.andExpect(jsonPath("$[0].current").value(false));
+				.andExpect(jsonPath("$[0].current").value(true))
+				.andExpect(jsonPath("$[0].canGrant").value(false));
 			client.post("/api/courses/" + this.course + "/files/" + this.fileId + "/summary-jobs")
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.code").value("llm_decider_required"));
@@ -222,7 +228,11 @@ class ConsentApiTests extends IntegrationTest {
 
 		grant(this.professor, "page_summary").andExpect(status().isOk()).andExpect(jsonPath("$.granted").value(true));
 		assertThat(gate.closed(this.course, this.professorId, ProcessingScope.PAGE_SUMMARY)).isEmpty();
-		this.professor.get(consents()).andExpect(jsonPath("$[0].current").value(true));
+		this.professor.get(consents())
+			.andExpect(jsonPath("$[0].current").value(true))
+			.andExpect(jsonPath("$[0].canGrant").value(true))
+			.andExpect(jsonPath("$[1].granted").value(false))
+			.andExpect(jsonPath("$[1].canGrant").value(true));
 		this.professor.delete(consents() + "/page_summary").andExpect(status().isNoContent());
 		assertThat(gate.closed(this.course, this.professorId, ProcessingScope.PAGE_SUMMARY)).contains(LlmGate.CONSENT);
 	}
@@ -237,14 +247,47 @@ class ConsentApiTests extends IntegrationTest {
 		this.professor.post("/api/courses/" + this.course + "/summary-jobs/" + cancelled + "/cancel")
 			.andExpect(status().isOk());
 
-		// 동의가 아니라 요청한 사람이 문제다. 조교가 할 수 없는 동의를 안내하지 않는다.
+		// 동의가 아니라 요청한 사람이 문제다. 조교가 할 수 없는 동의를 안내하지 않는다. 동의, 생성, 재시도 모두 같은 거절이다.
+		grant(ta, "page_summary").andExpect(status().isForbidden())
+			.andExpect(jsonPath("$.code").value("llm_decider_required"));
 		ta.post("/api/courses/" + this.course + "/files/" + this.fileId + "/summary-jobs")
 			.andExpect(status().isForbidden())
 			.andExpect(jsonPath("$.code").value("llm_decider_required"));
 		ta.post("/api/courses/" + this.course + "/summary-jobs/" + cancelled + "/retry")
 			.andExpect(status().isForbidden())
 			.andExpect(jsonPath("$.code").value("llm_decider_required"));
+		ta.get(consents()).andExpect(jsonPath("$[0].canGrant").value(false));
+		long running = ApiClient.json(requestJob().andExpect(status().isAccepted())).get("id").asLong();
+		// 재시도할 수 없는 상태의 작업이어도 조교에게는 역할 거절이 먼저다.
+		ta.post("/api/courses/" + this.course + "/summary-jobs/" + running + "/retry")
+			.andExpect(status().isForbidden())
+			.andExpect(jsonPath("$.code").value("llm_decider_required"));
+		this.professor.post("/api/courses/" + this.course + "/summary-jobs/" + running + "/cancel")
+			.andExpect(status().isOk());
 		assertThat(SummaryRunnerDriver.runOnce(this.context)).isFalse();
+		assertThat(this.llm.log).isEmpty();
+		assertThat(audits("llm_consent.grant")).isEqualTo(1);
+	}
+
+	@Test
+	void theListedProfessorAndManagerGrantStartAndRetry() throws Exception {
+		long managerId = this.data.user("STAFF");
+		listAs(this.course, managerId, "MANAGER");
+		ApiClient manager = new ApiClient(this.mvc, this.data.session(managerId));
+		for (ApiClient decider : new ApiClient[] { this.professor, manager }) {
+			decider.get(consents()).andExpect(jsonPath("$[0].granted").value(false))
+				.andExpect(jsonPath("$[0].canGrant").value(true));
+			grant(decider, "page_summary").andExpect(status().isOk())
+				.andExpect(jsonPath("$.current").value(true))
+				.andExpect(jsonPath("$.canGrant").value(true));
+			long job = ApiClient.json(decider.post("/api/courses/" + this.course + "/files/" + this.fileId + "/summary-jobs")
+				.andExpect(status().isAccepted())).get("id").asLong();
+			decider.post("/api/courses/" + this.course + "/summary-jobs/" + job + "/cancel").andExpect(status().isOk());
+			long retried = ApiClient.json(decider.post("/api/courses/" + this.course + "/summary-jobs/" + job + "/retry")
+				.andExpect(status().isAccepted())).get("id").asLong();
+			decider.post("/api/courses/" + this.course + "/summary-jobs/" + retried + "/cancel")
+				.andExpect(status().isOk());
+		}
 		assertThat(this.llm.log).isEmpty();
 	}
 

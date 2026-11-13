@@ -49,33 +49,34 @@ public class SummaryJobService {
 	 * @throws SummaryJobException {@link Code#LLM_DECIDER_REQUIRED} 요청한 사람이 결정권자가 아니다
 	 */
 	public SummaryJob request(long courseId, long fileId, long actorUserId) {
-		requireLlmFor(courseId, actorUserId);
+		requireDecider(courseId, actorUserId);
+		this.gate.require(courseId, actorUserId, ProcessingScope.PAGE_SUMMARY);
 		StoredFile file = summarizable(fileId);
 		return insert(file, courseId, actorUserId, null);
 	}
 
-	/** 실패하거나 취소된 작업을 새 작업으로 다시 실행한다. 끝난 쪽의 중간 결과는 이어받는다. */
+	/** 실패하거나 취소된 작업을 새 작업으로 다시 실행한다. 끝난 쪽의 중간 결과는 이어받는다. 거절은 {@link #request}와 같다. */
 	public SummaryJob retry(long courseId, long jobId, long actorUserId) {
 		SummaryJob job = get(jobId);
+		requireDecider(courseId, actorUserId);
 		if (job.state() != JobState.FAILED && job.state() != JobState.CANCELLED) {
 			throw new SummaryJobException(Code.INVALID_STATE, "실패하거나 취소된 작업만 다시 실행할 수 있습니다.");
 		}
-		requireLlmFor(courseId, actorUserId);
+		this.gate.require(courseId, actorUserId, ProcessingScope.PAGE_SUMMARY);
 		return insert(summarizable(job.fileId()), courseId, actorUserId, jobId);
 	}
 
 	/**
-	 * 요청한 사람이 책임 교수자다. 조교의 요청은 동의를 보기 전에 따로 거절한다. 문으로 보내면 교수가 동의했어도
+	 * 요청한 사람이 책임 교수자다. 조교의 요청은 배포 스위치, 작업 상태, 동의를 보기 전에 따로 거절한다. 동의 요청
+	 * ({@code PUT …/llm-consents/{scope}})의 거절과 같은 403 {@code llm_decider_required}다. 문으로 보내면 교수가 동의했어도
 	 * {@code llm_consent_required}가 되어 조교가 할 수 없는 동의를 안내하기 때문이다. 학생도 지나는 {@link LlmGate#require}에는
 	 * 넣지 않는다.
 	 */
-	private void requireLlmFor(long courseId, long actorUserId) {
-		this.gate.requireEnabled();
+	private void requireDecider(long courseId, long actorUserId) {
 		if (!this.staff.isDecider(actorUserId, courseId)) {
 			throw new SummaryJobException(Code.LLM_DECIDER_REQUIRED,
 					"외부 AI 처리는 과목 담당 교수나 비정규 담당자가 요청합니다. 조교 계정으로는 쪽별 요약을 만들거나 다시 실행할 수 없습니다.");
 		}
-		this.gate.require(courseId, actorUserId, ProcessingScope.PAGE_SUMMARY);
 	}
 
 	/** 쪽별 요약 동의를 철회하면 그 교수자가 그 과목에 요청한 대기 작업을 취소하고, 실행 중인 작업에는 취소를 요청한다. */
