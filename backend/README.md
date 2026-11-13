@@ -5,16 +5,16 @@
   </picture>
 </p>
 
-# STack-eclass-Backend
+# STack-Backend
 
 서울과학기술대학교 e-Class(ILOS LMS, 원본 서비스명 `ASTRA`) 재구현의 백엔드 레포다. e-class는 캠퍼스 온과 **별개 서비스**이며 백엔드·DB·ERD를 따로 둔다. 두 서비스는 API로 연결한다([서비스 경계 초안](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/05_service_boundary.md)).
 
 | 서비스 | 프론트엔드 | 백엔드 | ERD |
 |---|---|---|---|
-| e-class | [STack-eclass-Frontend](https://github.com/STack-Corp/STack-eclass-Frontend) | 이 레포 (MySQL 8.4) | [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka) |
-| 캠퍼스 온 | [STack-Frontend](https://github.com/STack-Corp/STack-Frontend) | [STack-Backend](https://github.com/STack-Corp/STack-Backend) (PostgreSQL 17) | [ERD B](https://www.erdcloud.com/d/G75sZP24bZNHuezyy) |
+| e-class | [STack-Frontend](https://github.com/STack-Corp/STack-Frontend) | 이 레포 (MySQL 8.4) | [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka) |
+| 캠퍼스 온 | STack-Frontend `archive/campus-on` 브랜치 | 이 레포 `archive/campus-on` 브랜치 (PostgreSQL 17) | [ERD B](https://www.erdcloud.com/d/G75sZP24bZNHuezyy) |
 
-2026-11-10 STack-Backend에서 루트 `src/`·MySQL 마이그레이션·`db/`·`docs/`를 커밋 이력과 함께 옮겼다(STAC-90).
+2026-11-10 STack-Backend에서 루트 `src/`·MySQL 마이그레이션·`db/`·`docs/`를 커밋 이력과 함께 STack-eclass-Backend로 옮겼다(STAC-90). 2026-11-13 STack-eclass-Backend를 커밋 이력과 함께 다시 STack-Backend로 옮겼고, 이때 캠퍼스 온 백엔드(`backend/`)는 main에서 지웠다. 캠퍼스 온의 마지막 상태는 `archive/campus-on` 브랜치에 있다.
 
 ## 폴더 구성
 
@@ -29,7 +29,7 @@
 처음 받을 때는 서브모듈까지 함께 받는다.
 
 ```sh
-git clone --recurse-submodules https://github.com/STack-Corp/STack-eclass-Backend.git
+git clone --recurse-submodules https://github.com/STack-Corp/STack-Backend.git
 # 이미 받았다면
 git submodule update --init
 ```
@@ -51,7 +51,7 @@ git submodule update --init
 
 ## 두 레포의 역할
 
-| | ASTRA-Reference | STack-eclass-Backend |
+| | ASTRA-Reference | STack-Backend |
 |---|---|---|
 | 담는 것 | 화면 명세, 엔드포인트 계약, DB 설계 근거 | 서버 코드, 정본 DB 스키마, ERD A 도구·스냅샷, 테스트 |
 | 변경 기준 | 근거와 근거 수준을 함께 기록 | 계약을 지키는지 테스트로 확인 |
@@ -120,10 +120,10 @@ git commit -m "Update reference to <변경 요약>"
 
 표본의 온라인 강의에는 영상 바이트가 없다. 지금 기간의 강의는 콘텐츠가 변환 중(API `state` `processing`)이고, 지난 강의는 학생들이 본 뒤 원본이 내려간 상태(`video_state` `removed`, API `state` `failed`)다. 재생되는 강의는 교수 박은주로 로그인해 강의 화면에서 영상 파일을 올려 만든다. 로컬 실행은 transcoder를 같은 process에서 띄우므로 PATH에 `ffmpeg`가 있으면 곧 `ready`가 된다. 외부 LLM 처리 동의는 넣지 않는다. 쪽별 요약이나 학습 대화를 쓰려면 교수 화면에서 직접 동의한다.
 
-프론트엔드([STack-eclass-Frontend](https://github.com/STack-Corp/STack-eclass-Frontend))는 개발 서버가 `/api`, `/doc`, `/vod`를 이 서버로 넘긴다. 브라우저는 프론트엔드 주소만 쓴다. 백엔드는 CORS를 열지 않는다.
+프론트엔드([STack-Frontend](https://github.com/STack-Corp/STack-Frontend))는 개발 서버가 `/api`, `/doc`, `/vod`를 이 서버로 넘긴다. 브라우저는 프론트엔드 주소만 쓴다. 백엔드는 CORS를 열지 않는다.
 
 ```sh
-ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-eclass-Frontend에서
+ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-Frontend에서
 ```
 
 8080 포트를 다른 프로그램이 쓰고 있으면 `Port 8080 was already in use`로 실패한다. Docker로 띄운 다른 앱이 8080을 쓰는 경우가 많다. 이때는 포트를 바꿔 실행한다.
@@ -498,9 +498,9 @@ workflow의 action은 commit SHA로, `docker run`하는 이미지는 digest로 �
 | STAC-68 | 기존 클라이언트 결함 수정(SEC-01~07) |
 | STAC-76 미결 설계 결정 | [db/README.md](db/README.md) 7절의 결정 10개 |
 | STAC-88 발표 데모 | 1차 데모는 프론트엔드에 목업 데이터를 넣어 동작을 보여준다(팀 합의 2026-11-08) |
-| STAC-89 캠퍼스 온 정리 | 학교 정책 확인, Spring Boot 4.x 업그레이드, 스키마 COMMENT·ERD B 이름 검토 (STack-Backend) |
+| STAC-89 캠퍼스 온 정리 | 학교 정책 확인, Spring Boot 4.x 업그레이드, 스키마 COMMENT·ERD B 이름 검토 (`archive/campus-on` 브랜치의 캠퍼스 온 백엔드) |
 
-후속 결정·작업 일감(STAC-90~100)은 STack-Backend의 GitHub 이슈 #5~#15와 서로 연결돼 있다. 진행 상태는 Jira를 기준으로 본다.
+후속 결정·작업 일감(STAC-90~100)은 이 레포의 GitHub 이슈 #5~#15와 서로 연결돼 있다. 진행 상태는 Jira를 기준으로 본다.
 
 모든 일감에는 우선순위 라벨(`P0`/`P1`/`P2`)이, CHG 일감에는 `CHG-xx` 라벨이 붙어 있다. 영역 라벨 `area-identity`, `area-catalog`, `area-learning`, `area-assessment`, `area-communication`, `area-files`와 여러 영역에 걸친 `area-common`, 클라이언트 결함용 `area-client`로 영역별로 거를 수 있다. 개발 기반 준비(STAC-1~5)와 여러 영역을 묶는 STAC-76 에픽 자체에는 영역 라벨이 없다(STAC-76의 하위 결정 일감에는 있다). 보드 열은 To Do → In Progress → In Review(PR 리뷰 중) → Done이다.
 

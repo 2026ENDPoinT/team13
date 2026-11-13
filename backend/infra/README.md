@@ -67,7 +67,7 @@ infra/terraform/
 | `app_instance_type` | `t3.large` | ECR image의 CPU 구조와 맞아야 한다. `scan_uploads`이면 메모리 8 GiB 이상이어야 한다(plan이 검사한다). clamd가 서명만으로 약 1.2 GiB를 쓰고, 컨테이너 메모리 상한의 합(api 1.25, worker 1, converter 2, transcoder 2, clamav 3, freshclam 1 GiB)은 8 GiB를 넘는다. 변환, 영상 변환, 검사가 한꺼번에 상한까지 쓰면 host가 메모리 부족으로 process를 끝낼 수 있다. 그런 부하가 보이면 `t3.xlarge`로 올린다 |
 | `db_instance_class` | `db.t4g.small` | |
 | `institution_time_zone` | `Asia/Seoul` | 기관 시간대(IANA 이름, 서머타임 없는 것). 앱의 `ASTRA_TIME_ZONE`과 RDS parameter group의 `time_zone`을 함께 정한다. 앱은 연결마다 session offset을 스스로 정하고 다르면 뜨지 않는다(ADR-0039). `app_environment`로는 넣지 않는다 |
-| `github_repository`, `github_refs`, `github_environment` | `STack-Corp/STack-eclass-Backend`, `["refs/heads/main"]`, 없음 | deploy role을 받을 수 있는 workflow |
+| `github_repository`, `github_refs`, `github_environment` | `STack-Corp/STack-Backend`, `["refs/heads/main"]`, 없음 | deploy role을 받을 수 있는 workflow |
 | `create_github_oidc_provider` | `true` | 계정에 이미 GitHub OIDC provider가 있으면 `false` |
 | `vpc_cidr`, `availability_zones` | `10.40.0.0/16`, `ap-northeast-2a`·`2c` | |
 | `waf_large_body_path_prefixes`, `waf_body_size_limit_bytes` | `["/api/uploads", "/api/filebox/files", "/api/me/profile/image"]`, `16384` | 본문 크기 규칙에서 뺄 경로(모든 업로드 endpoint)와 그 밖의 상한 |

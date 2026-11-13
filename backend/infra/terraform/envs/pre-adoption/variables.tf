@@ -478,7 +478,7 @@ variable "waf_large_body_path_prefixes" {
 variable "github_repository" {
   description = "Repository whose GitHub Actions may push images and deploy."
   type        = string
-  default     = "STack-Corp/STack-eclass-Backend"
+  default     = "STack-Corp/STack-Backend"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))

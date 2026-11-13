@@ -184,7 +184,7 @@ run "deploy_document" {
     name                        = "astra-pre"
     ecr_repository_name         = "astra-backend"
     ecr_keep_images             = 30
-    github_repository           = "STack-Corp/STack-eclass-Backend"
+    github_repository           = "STack-Corp/STack-Backend"
     github_refs                 = ["refs/heads/main"]
     create_github_oidc_provider = true
     deploy_target_tag           = { key = "DeployTarget", value = "astra-pre" }
