@@ -28,7 +28,7 @@ infra/terraform/
 | S3 | `frontend`(SSE-S3, versioning), `content`(SSE-KMS, versioning), `delivery`(SSE-KMS). 셋 다 public access 차단, BucketOwnerEnforced, TLS가 아닌 요청 거부, 미완료 multipart upload 7일 뒤 정리, 이전 version 30일 뒤 삭제. `content`·`delivery`는 자기 KMS key가 아닌 암호화로 쓰는 요청을 거부한다 |
 | KMS | `content`, `delivery` key를 따로 두고 자동 회전한다. CloudFront service principal은 이 distribution에 한해 `delivery` key의 `kms:Decrypt`만 쓸 수 있다 |
 | CloudFront | 도메인 하나. `/*` → S3 frontend(OAC), `/vod/*`·`/doc/*` → S3 delivery(OAC, signed cookie key group), `/api/*`·`/ws`·`/ws/*` → VPC origin(EC2, 캐시 안 함). `/actuator`는 라우팅하지 않는다(정적 사이트로 떨어진다). viewer TLS 1.2 이상, HTTP는 HTTPS로 돌린다. 정적 사이트에는 HSTS, `nosniff`, `X-Frame-Options: DENY`, Referrer-Policy를, API와 전달 경로에는 HSTS와 `nosniff`만 붙인다. 정적 사이트 경로는 CloudFront Function이 `index.html`로 바꾼다(`frontend_routing`) |
-| API 요청 전달 | viewer의 모든 header·cookie·query string과 `CloudFront-Viewer-Address`, `CloudFront-Forwarded-Proto`를 넘긴다. `Host`, `Origin`, `Cookie`, `X-XSRF-TOKEN`, `Sec-Fetch-*`, `Sec-WebSocket-*`, `Idempotency-Key`가 여기에 들어간다 |
+| API 요청 전달 | viewer의 모든 header·cookie·query string과 `CloudFront-Forwarded-Proto`를 넘긴다. `Host`, `Origin`, `Cookie`, `X-XSRF-TOKEN`, `Sec-Fetch-*`, `Sec-WebSocket-*`, `Idempotency-Key`가 여기에 들어간다. CloudFront는 `X-Forwarded-For` 뒤에 viewer 주소를 덧붙여 넘긴다 |
 | WAF | Core, SQL database, Known bad inputs managed rule group. Core의 `SizeRestrictions_BODY`는 Count다. 대신 업로드 경로(`/api/uploads`, `/api/filebox/files`, `/api/me/profile/image`) 밖에서 본문이 16 KB를 넘으면 413으로 막는 규칙을 둔다. IP 기준 rate rule은 없다(3.3절) |
 | 인증서·DNS | us-east-1 ACM 인증서(DNS 검증), 서비스 도메인의 A·AAAA alias |
 | signed cookie | public key만 변수로 받아 key group을 만든다. 개인 key는 Terraform에 들어오지 않는다 |
@@ -136,7 +136,7 @@ Terraform이 넣는 설정: `ASTRA_API_BIND=0.0.0.0`, `ASTRA_API_PORT`, `DB_URL`
 
 앱이 지켜야 하는 것:
 
-- `X-Forwarded-For`의 앞쪽 값은 사용자가 보낸 값이다. CloudFront는 이 header에 덧붙이기만 한다. 사용자 IP가 필요하면 `CloudFront-Viewer-Address`를 쓴다. 앱 포트는 CloudFront에서만 열려 있다.
+- `X-Forwarded-For`의 앞쪽 값은 사용자가 보낸 값이다. CloudFront는 이 header에 viewer 주소를 덧붙이기만 한다. 앱은 연결한 쪽이 `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES`(app subnet) 안일 때만 이 header를 오른쪽부터 읽어 그 범위 밖의 첫 주소를 사용자 IP로 쓴다. 앱 포트는 CloudFront에서만 열려 있다.
 - S3에 쓸 때 SSE header를 보내지 않는다. bucket 기본 암호화가 key를 정한다. 다른 KMS key나 SSE-S3를 지정한 요청은 bucket policy가 거부한다.
 - api와 worker 말고는 instance role을 받으면 안 된다(SC-08). hop limit 2라서 bridge network의 컨테이너는 그대로면 IMDS에 닿는다. converter, transcoder, clamav, mysql은 `internal: true` network에만 두고, 외부로 나가야 하는 freshclam은 자기 network(`signatures`)에 둔다. host firewall은 `egress` bridge 밖에서 온 instance metadata 트래픽을 모두 버리므로 새 network를 더해도 기본으로 막힌다. `egress`에는 instance role이 필요한 컨테이너만 붙인다.
 

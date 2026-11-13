@@ -14,7 +14,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * 사용자와 연산 단위의 요청 제한(SC-09). IP로 제한하지 않는다. 교내 NAT 하나가 학교 전체를 막기 때문이다. 로그인 전이라 사용자가
- * 없는 break-glass 로그인만 예외로 브라우저 주소 단위 제한({@link #checkAddress})을 쓴다.
+ * 없는 로그인만 예외로 브라우저 주소 단위 제한을 쓴다: break-glass 로그인({@link #checkAddress}), 학교 비밀번호 로그인의 실패
+ * ({@link #checkFailures}, 학번 단위 한도와 함께). 주소는 identity의 ClientAddresses가 정한다.
  * 고정 구간 counter를 이 process의 메모리에 둔다. api 인스턴스가 2대가 되면 저장소를 Valkey로 바꾼다(architecture.md 8절).
  * 거부한 요청 수를 연산별로 센다(astra.ratelimit.rejections). 사용자는 tag에 넣지 않는다.
  */

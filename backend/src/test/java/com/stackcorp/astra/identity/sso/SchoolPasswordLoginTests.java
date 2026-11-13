@@ -27,6 +27,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
@@ -203,6 +204,37 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 		this.mvc.perform(login(studentId(), PASSWORD)).andExpect(status().isNoContent());
 	}
 
+	/**
+	 * 앞단 proxy 뒤에서는 모든 연결이 proxy 주소에서 온다. 주소 단위 실패 한도가 proxy 주소로 세면 한 사람의 실패가 모두의 학교
+	 * 로그인을 막는다. 믿는 proxy에서 온 요청은 X-Forwarded-For의 브라우저 주소마다 센다.
+	 */
+	@Test
+	void failureLimitCountsEachClientBehindTheTrustedProxy() throws Exception {
+		String proxy = "10.40.2.31";
+		String attacker = "2001:db8:5c::" + Integer.toHexString(ThreadLocalRandom.current().nextInt(1, 0xffff));
+		String neighbour = "2001:db8:5d::" + Integer.toHexString(ThreadLocalRandom.current().nextInt(1, 0xffff));
+		for (int i = 0; i < SchoolPasswordController.ADDRESS_FAILURES; i++) {
+			this.mvc.perform(behind(proxy, attacker, login(studentId(), "wrong"))).andExpect(status().isUnauthorized());
+		}
+		int before = SCHOOL.logins;
+
+		this.mvc.perform(behind(proxy, attacker, login(studentId(), PASSWORD))).andExpect(status().isTooManyRequests());
+		assertThat(SCHOOL.logins).isEqualTo(before);
+
+		// 같은 proxy를 거친 다른 사람, 그리고 왼쪽에 공격자 주소를 넣어 보낸 다른 사람은 막히지 않는다.
+		this.mvc.perform(behind(proxy, neighbour, login(studentId(), PASSWORD))).andExpect(status().isNoContent());
+		this.mvc.perform(behind(proxy, attacker + ", " + neighbour, login(studentId(), PASSWORD)))
+			.andExpect(status().isNoContent());
+	}
+
+	private static MockHttpServletRequestBuilder behind(String proxy, String forwardedFor,
+			MockHttpServletRequestBuilder request) {
+		return request.header("X-Forwarded-For", forwardedFor).with((r) -> {
+			r.setRemoteAddr(proxy);
+			return r;
+		});
+	}
+
 	@Test
 	void malformedStudentIdNeverReachesTheSchool() throws Exception {
 		int before = SCHOOL.logins;
@@ -219,8 +251,7 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 			.contains("eclassPassword");
 	}
 
-	private org.springframework.test.web.servlet.RequestBuilder login(String studentId, String password)
-			throws Exception {
+	private MockHttpServletRequestBuilder login(String studentId, String password) throws Exception {
 		Cookie csrf = this.mvc.perform(get("/api/auth/csrf")).andReturn().getResponse().getCookie("XSRF-TOKEN");
 		return post(SchoolPasswordController.PATH).cookie(csrf)
 			.header("X-XSRF-TOKEN", csrf.getValue())

@@ -1,6 +1,7 @@
 package com.stackcorp.astra.identity.session;
 
 import java.net.InetAddress;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -11,24 +12,24 @@ import org.springframework.stereotype.Component;
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
- * 로그인 기록, session, 등록 기기, 요청 제한에 쓰는 브라우저 주소.
+ * 로그인 기록, session, 로그인 요청 제한에 쓰는 브라우저 주소. 이 값을 쓰는 곳은 모두 이 class를 거친다.
  * <ul>
- * <li>CloudFront는 VPC origin으로 앱에 HTTP로 연결하므로 연결한 쪽 주소는 CloudFront ENI다. X-Forwarded-For는 CloudFront가 뒤에
- * 붙이기만 해서 왼쪽 값을 브라우저가 정할 수 있으므로 쓰지 않는다. CloudFront가 만들어 넘기는 {@value #VIEWER_ADDRESS}만
- * 쓴다(infra/terraform/modules/edge).</li>
- * <li>연결한 쪽 주소가 {@code astra.client-address.trusted-proxies} 범위일 때만 그 header를 믿는다. app port는 security group이
- * CloudFront VPC origin에만 열어 두므로 그 범위에서 온 연결은 CloudFront를 거친 요청이다. 다른 곳(같은 host의 container, 로컬
- * 실행)에서 온 연결의 header는 무시한다. 범위를 비우면(기본) 언제나 연결한 쪽 주소다.</li>
- * <li>header가 없거나, 둘 이상이거나, {@code IP:port} 형식이 아니면 연결한 쪽 주소를 쓴다. 주소는 IP literal로만 읽고 이름을
- * 찾지 않는다.</li>
+ * <li>연결한 쪽 주소가 {@code astra.client-address.trusted-proxies}(주소 또는 CIDR) 안일 때만 {@value #FORWARDED_FOR}를 읽는다.
+ * 범위를 비우면(기본) 언제나 연결한 쪽 주소다.</li>
+ * <li>header를 오른쪽부터 읽으며 믿는 proxy 주소는 건너뛰고, 처음 나오는 믿지 않는 주소를 브라우저 주소로 쓴다. 앞단(CloudFront,
+ * Cloudflare, 프론트엔드 서버 server.mjs)은 받은 header 뒤에 자기가 본 주소를 덧붙이므로, 그 왼쪽 값은 브라우저가 마음대로 넣을 수
+ * 있어 읽지 않는다. 모두 믿는 주소면 가장 왼쪽 값이다.</li>
+ * <li>값이 IP literal이 아니면(이름, {@code unknown}, 빈 칸, zone이 붙은 IPv6) 거기서 멈추고 그 값을 넘긴 가장 가까운 proxy 주소를
+ * 쓴다. 주소는 IP literal로만 읽고 이름을 찾지 않는다. {@code [IPv6]}, {@code [IPv6]:port}, {@code IPv4:port}도 받는다.</li>
  * </ul>
- * 로컬 실행의 개발용 로그인이 보는 "이 컴퓨터에서 온 요청" 판정은 이 값이 아니라 연결한 쪽 주소로 한다.
+ * Spring과 Tomcat의 forwarded header 처리(server.forward-headers-strategy)는 켜지 않는다. 켜면 Origin 검사가 보는 Host와 scheme까지
+ * header로 바뀐다(ADR-0004 4번). 로컬 실행의 개발용 로그인이 보는 "이 컴퓨터에서 온 요청" 판정은 이 값이 아니라 연결한 쪽 주소로 한다.
  */
 @Component
 @EnableConfigurationProperties(ClientAddressProperties.class)
 public class ClientAddresses {
 
-	static final String VIEWER_ADDRESS = "CloudFront-Viewer-Address";
+	static final String FORWARDED_FOR = "X-Forwarded-For";
 
 	private final List<Cidr> trusted;
 
@@ -42,31 +43,61 @@ public class ClientAddresses {
 		if (this.trusted.isEmpty() || literal(peer).filter(this::trusted).isEmpty()) {
 			return peer;
 		}
-		List<String> values = Collections.list(request.getHeaders(VIEWER_ADDRESS));
-		if (values.size() != 1) {
-			return peer;
+		List<String> hops = hops(request);
+		String client = peer;
+		for (int i = hops.size() - 1; i >= 0; i--) {
+			Optional<InetAddress> hop = hop(hops.get(i));
+			if (hop.isEmpty()) {
+				return client;
+			}
+			client = hop.get().getHostAddress();
+			if (!trusted(hop.get())) {
+				return client;
+			}
 		}
-		return viewer(values.get(0)).map(InetAddress::getHostAddress).orElse(peer);
+		return client;
 	}
 
 	private boolean trusted(InetAddress address) {
 		return this.trusted.stream().anyMatch((cidr) -> cidr.contains(address));
 	}
 
-	// CloudFront 형식은 "198.51.100.10:46532"이고 IPv6도 괄호 없이 주소 뒤에 ":port"를 붙인다.
-	private static Optional<InetAddress> viewer(String value) {
-		int colon = value.lastIndexOf(':');
-		if (colon <= 0 || colon == value.length() - 1 || value.length() - colon - 1 > 5) {
-			return Optional.empty();
+	// header가 여러 줄이면 받은 순서대로 이어 붙인 하나의 목록이다. 빈 칸도 항목으로 남겨 형식 오류로 본다.
+	private static List<String> hops(HttpServletRequest request) {
+		List<String> hops = new ArrayList<>();
+		for (String value : Collections.list(request.getHeaders(FORWARDED_FOR))) {
+			Collections.addAll(hops, value.split(",", -1));
 		}
-		if (!value.substring(colon + 1).chars().allMatch((c) -> c >= '0' && c <= '9')) {
-			return Optional.empty();
+		return hops;
+	}
+
+	private static Optional<InetAddress> hop(String value) {
+		String host = value.strip();
+		if (host.startsWith("[")) {
+			int close = host.indexOf(']');
+			if (close < 0 || !port(host.substring(close + 1), true)) {
+				return Optional.empty();
+			}
+			return literal(host.substring(1, close));
 		}
-		String host = value.substring(0, colon);
-		if (host.startsWith("[") && host.endsWith("]")) {
-			host = host.substring(1, host.length() - 1);
+		int colon = host.indexOf(':');
+		if (colon >= 0 && colon == host.lastIndexOf(':')) {
+			if (!port(host.substring(colon), false)) {
+				return Optional.empty();
+			}
+			host = host.substring(0, colon);
 		}
 		return literal(host);
+	}
+
+	// ":0"~":65535" 또는(괄호 뒤에서만) 빈 값.
+	private static boolean port(String value, boolean optional) {
+		if (value.isEmpty()) {
+			return optional;
+		}
+		return value.length() >= 2 && value.length() <= 6 && value.charAt(0) == ':'
+				&& value.substring(1).chars().allMatch((c) -> c >= '0' && c <= '9')
+				&& Integer.parseInt(value.substring(1)) <= 65535;
 	}
 
 	private static Optional<InetAddress> literal(String value) {
