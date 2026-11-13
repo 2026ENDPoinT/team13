@@ -17,9 +17,10 @@ public interface MemberCourses {
 	 * @param key 과목 키(KJKEY). 없으면 null
 	 * @param startDate 수업 기간 시작일. 정규 과목은 학기 시작일, 비정규 과정은 학습기간 시작일이다. 없으면 null
 	 * @param endDate 수업 기간 종료일(포함). 시작일과 같은 출처다. 없으면 null
+	 * @param nonRegular 비정규 과정(비정규 과정 행이 있는 과목)인지. 화면은 비정규 강의실을 다른 주소로 연다
 	 */
 	record MemberCourse(long courseId, String key, String name, String code, String section, CourseRole role,
-			LocalDate startDate, LocalDate endDate) {
+			LocalDate startDate, LocalDate endDate, boolean nonRegular) {
 	}
 
 }

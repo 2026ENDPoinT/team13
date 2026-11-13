@@ -294,6 +294,18 @@ Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://gen
 | `ASTRA_STUDYCHAT_LEASE` | `10m` | 질문 하나의 실행 lease. `ASTRA_LLM_TIMEOUT`보다 길게 둔다 |
 | `ASTRA_STUDYCHAT_RETENTION` | 없음 | 마지막 질문 뒤 대화를 지우기까지의 기간(예: `365d`). 비우면 소유자 삭제와 파일 삭제로만 지운다 |
 
+화면 AI 도우미(`POST /api/assistant`, [ADR-0044](docs/adr/0044-screen-assistant.md))는 api가 처리한다. 분명한 명령은 규칙으로 답하고, 나머지는 위 LLM 설정의 모델에 한 번 묻는다. `ASTRA_LLM_ENABLED=false`이거나 key가 없으면 규칙 답만 하고 모델이 필요한 요청은 503 `llm_disabled`다. 같은 host의 LLM gateway를 쓰는 배포에서는 `ASTRA_LLM_API_KEY`가 gateway의 `GATEWAY_TOKEN`과 같아야 한다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_ASSISTANT_ENABLED` | `true` | `false`면 규칙 답까지 모두 503 `llm_disabled` |
+| `ASTRA_ASSISTANT_TIMEOUT` | `20s` | 모델 답을 기다리는 시간(동시 요청 자리를 기다리는 시간 포함). 넘으면 504 `assistant_timeout` |
+| `ASTRA_ASSISTANT_REQUEST_RATE_LIMIT` | `30` | 한 사용자가 `ASTRA_ASSISTANT_RATE_WINDOW` 안에 보낼 수 있는 요청 수(규칙 답 포함) |
+| `ASTRA_ASSISTANT_RATE_LIMIT` · `ASTRA_ASSISTANT_TOTAL_RATE_LIMIT` | `10` · `60` | 구간 안에 모델을 부를 수 있는 수. 사용자별, 모든 사용자 합계 |
+| `ASTRA_ASSISTANT_RATE_WINDOW` | `1m` | 위 한도의 구간 |
+| `ASTRA_ASSISTANT_MAX_OUTPUT_TOKENS` | `600` | 모델 호출 하나의 출력 token 상한 |
+| `ASTRA_ASSISTANT_REASONING_EFFORT` | `none` | 요청의 `reasoning_effort`. 추론하는 모델(DeepSeek v4.x)이 추론 token으로 출력 상한을 다 써 답이 잘리지 않게 한다. 이 값을 받지 않는 제공자면 비운다 |
+
 ### 저장소와 문서 변환 설정
 
 파일 원본과 파생물은 S3 API로 읽고 쓴다([ADR-0007](docs/adr/0007-confidential-content-placement.md)). 운영에서는 bucket 이름만 넣고 credential은 EC2 instance role로 받는다. 로컬 실행과 테스트는 Testcontainers가 띄운 S3 호환 저장소(`adobe/s3mock`)와 같은 process의 converter를 쓴다.

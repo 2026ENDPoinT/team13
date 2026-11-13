@@ -221,6 +221,42 @@ class OpenAiCompatibleLlmClientTests {
 	}
 
 	@Test
+	void asksForAJsonObjectWithTheRequestsTemperatureAndReasoningEffort() {
+		LlmRequest request = new LlmRequest(Purpose.ASSISTANT, "system", REQUEST.messages(), 600, List.of(), true,
+				Duration.ofSeconds(20), 0.0, "none");
+
+		Map<String, Object> body = client(properties("", Map.of())).body(request);
+
+		assertThat(body).containsEntry("response_format", Map.of("type", "json_object"))
+			.containsEntry("temperature", 0.0)
+			.containsEntry("reasoning_effort", "none")
+			.containsEntry("max_tokens", 600);
+		assertThat(client(properties("", Map.of())).body(REQUEST)).doesNotContainKeys("response_format", "reasoning_effort")
+			.containsEntry("temperature", 0.3);
+	}
+
+	@Test
+	void aRequestTimeoutShorterThanTheSettingIsReportedAsTimedOut() {
+		handle("/chat/completions", (exchange) -> {
+			try {
+				Thread.sleep(1000);
+			}
+			catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+			}
+			respond(exchange, 200, COMPLETION);
+		});
+		LlmRequest request = new LlmRequest(Purpose.ASSISTANT, "system", REQUEST.messages(), 600, List.of(), true,
+				Duration.ofMillis(200), null, null);
+
+		LlmException ex = catchThrowableOfType(LlmException.class,
+				() -> client(properties("", Map.of())).complete(request));
+
+		assertThat(ex.code()).isEqualTo(Code.NETWORK);
+		assertThat(ex.timedOut()).isTrue();
+	}
+
+	@Test
 	void usesMaxCompletionTokensForOpenAi() {
 		OpenAiCompatibleLlmClient client = client(new LlmProperties(URI.create("https://api.openai.com/v1"), "gpt",
 				KEY, true, Duration.ofSeconds(5), 1, DataSize.ofMegabytes(1), Map.of()));

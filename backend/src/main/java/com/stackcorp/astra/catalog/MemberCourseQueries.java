@@ -18,6 +18,7 @@ class MemberCourseQueries implements MemberCourses {
 
 	private static final String COURSES = """
 			SELECT c.course_id, c.legacy_kjkey, c.course_name, c.course_code, c.section_no,
+			       o.offering_id IS NOT NULL AS non_regular,
 			       CASE WHEN o.offering_id IS NULL THEN t.start_date ELSE o.learning_start_date END AS start_date,
 			       CASE WHEN o.offering_id IS NULL THEN t.end_date ELSE o.learning_end_date END AS end_date,
 			""" + MembershipRule.instructorOf("c.course_id", ":user") + """
@@ -42,7 +43,8 @@ class MemberCourseQueries implements MemberCourses {
 			.query((rs, n) -> new MemberCourse(rs.getLong("course_id"), rs.getString("legacy_kjkey"),
 					rs.getString("course_name"), rs.getString("course_code"), rs.getString("section_no"),
 					rs.getBoolean("instructor") ? CourseRole.INSTRUCTOR : CourseRole.STUDENT,
-					rs.getObject("start_date", LocalDate.class), rs.getObject("end_date", LocalDate.class)))
+					rs.getObject("start_date", LocalDate.class), rs.getObject("end_date", LocalDate.class),
+					rs.getBoolean("non_regular")))
 			.list();
 	}
 

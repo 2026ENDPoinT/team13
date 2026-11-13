@@ -110,4 +110,16 @@ class LlmNotConfiguredTests extends IntegrationTest {
 		professor.get("/api/courses/" + course + "/llm-usage").andExpect(status().isOk());
 	}
 
+	// 화면 AI 도우미(ADR-0044): 제공자가 없으면 모델이 필요한 문장은 503 llm_disabled다. 규칙 답은 그대로다.
+	@Test
+	void theAssistantNeedsAProviderOnlyForModelAnswers() throws Exception {
+		ApiClient student = new ApiClient(this.mvc, this.data.session(this.data.user("STUDENT")));
+		student.postJson("/api/assistant", "{\"text\":\"할 일 목록 보여줘\"}")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.source").value("rule"));
+		student.postJson("/api/assistant", "{\"text\":\"아무거나 찾아줘\"}")
+			.andExpect(status().isServiceUnavailable())
+			.andExpect(jsonPath("$.code").value("llm_disabled"));
+	}
+
 }

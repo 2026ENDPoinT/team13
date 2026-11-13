@@ -99,4 +99,18 @@ class LlmDisabledTests extends IntegrationTest {
 				""").param("id", exchange).query(String.class).single()).isEqualTo("cancelled:disabled");
 	}
 
+	// 화면 AI 도우미(ADR-0044): 규칙으로 답할 수 있는 명령은 답하고, 모델이 필요한 문장은 503 llm_disabled다.
+	@Test
+	void theAssistantAnswersRulesButNotTheModelWhenTheDeploymentDisablesIt() throws Exception {
+		this.llm.reset(FakeLlm::honest);
+		ApiClient student = new ApiClient(this.mvc, this.data.session(this.data.user("STUDENT")));
+		student.postJson("/api/assistant", "{\"text\":\"할 일 목록 보여줘\"}")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.source").value("rule"));
+		student.postJson("/api/assistant", "{\"text\":\"아무거나 찾아줘\"}")
+			.andExpect(status().isServiceUnavailable())
+			.andExpect(jsonPath("$.code").value("llm_disabled"));
+		assertThat(this.llm.log).isEmpty();
+	}
+
 }
