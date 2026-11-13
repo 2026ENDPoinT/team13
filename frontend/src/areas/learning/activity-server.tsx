@@ -166,7 +166,7 @@ function SchoolMaterialBody({ data, kj, courseId, parts }: { data: SchoolMateria
       ])}
       <Prose text={data.description} />
       <h2>첨부파일</h2>
-      {files.length ? files.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={data.schoolUrl} />) : <p className="tiny">첨부 파일이 없습니다.</p>}
+      {files.length ? files.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={data.schoolUrl} materialId={data.activityId} />) : <p className="tiny">첨부 파일이 없습니다.</p>}
       <div className="btn-row">
         <SchoolLink url={data.schoolUrl} />
         <Link href={hrefFor(find("46_room_files_list"), { kj })} className="btn btn-secondary">파일모음</Link>

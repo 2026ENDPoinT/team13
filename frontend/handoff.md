@@ -963,3 +963,10 @@
 - 변경 파일: `src/shared/attachment-row.tsx`·`attachment-row.css`(새), `src/app.css`, `src/shared/save-to-study.tsx`(`SaveTrigger`, `variant`), `src/shared/uploads-remote.tsx`(`downloadControl` 세 번째 인자 `"icon"`), `src/shared/school-files.tsx`, `src/areas/learning/activity-server.tsx`(`FileRow`), `src/areas/learning/learning.tsx`(샘플 `fileRow`).
 - 검증: `npx tsc` 오류 없음, `npx vitest run` 33파일 1452개 통과, 샘플 모드 `m=lecture_material&n=m-1&kj=bi`에서 행 표시와 학습실 저장 창 열림 확인. 백엔드 연결 모드의 실제 화면은 확인하지 못했다.
 - 남은 작업: 학교 파일의 학습실 저장(백엔드 계약 필요), 파일모음(`crs-file`) 행을 같은 아이콘 버튼으로 맞출지 결정. 커밋·푸시는 하지 않았다.
+
+## 홈 명령창 안내 문장 자동 사라짐
+- 홈 히어로·챗봇 도크 명령창의 안내 문장("서버 할 일 목록에서 활동을 선택해 주세요. …" 등 `command-bar.tsx`의 `sayText`)이 5초(`SAY_MS`) 뒤 저절로 지워진다. 그릴 때(`currentSay()`) 새 문장이 보이기 시작하면 타이머를 걸고, 같은 문장은 한 번만 건다. 문장만 지우고 입력값·할 일 목록·계획 미리보기는 그대로 둔다. 그 사이 다른 문장으로 바뀌면 새 문장이 자기 타이머를 가진다.
+- 다른 화면(계정·알림·커뮤니티 등)의 별도 `say` 함수는 바꾸지 않았다.
+- 변경 파일: `src/areas/home/command-bar.tsx`, `tests/integration/server-hero-commands.test.ts`(새 테스트 1개: 5초 직전엔 보이고 5초에 지워지며 목록은 유지).
+- 검증: `npx tsc` 오류 없음, `npx vitest run` 33파일 1453개 통과. 브라우저로는 확인하지 않았다.
+- 남은 작업: 없음. 커밋·푸시는 하지 않았다.

@@ -58,7 +58,7 @@ vi.mock("../../src/shared/assistant/plan.ts", () => ({
 }));
 vi.mock("../../src/shared/assistant-tray.tsx", () => ({ foldTray: vi.fn(), focusTray: vi.fn(), openTray: vi.fn(), refreshTray: vi.fn() }));
 
-import { commandBar, dockStatus, planPreview } from "../../src/areas/home/command-bar.tsx";
+import { commandBar, dockStatus, planPreview, SAY_MS } from "../../src/areas/home/command-bar.tsx";
 
 const reactGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 reactGlobal.IS_REACT_ACT_ENVIRONMENT = true;
@@ -174,6 +174,21 @@ describe("로그인 서버 히어로 명령", () => {
     expect(control.loadMore).toHaveBeenCalledOnce();
     act(() => preview.querySelector<HTMLAnchorElement>(".hero-action")!.click());
     expect(control.navigate).toHaveBeenCalledWith("/ilos/cls/st/activity/activity_form.acl?m=report&n=srv-8401&kj=c731");
+  });
+
+  it("안내 문장은 잠시 보인 뒤 사라지고 목록은 그대로 둔다", () => {
+    vi.useFakeTimers();
+    try {
+      clickText("할 일 목록 보여줘");
+      expect(host.querySelector("#assistant-say")?.textContent).toContain("서버 할 일 목록에서 활동을 선택해 주세요");
+      act(() => { vi.advanceTimersByTime(SAY_MS - 1); });
+      expect(host.querySelector("#assistant-say")?.textContent).not.toBe("");
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(host.querySelector("#assistant-say")?.textContent).toBe("");
+      expect(host.querySelector(".hero-plan")?.hasAttribute("hidden")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("미수신·오류·열 수 없는 활동은 샘플이나 가짜 행동으로 대체하지 않는다", () => {

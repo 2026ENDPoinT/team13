@@ -26,6 +26,28 @@ let inputRevision = 0;
 let pendingController: AbortController | null = null;
 let sayText = "";
 
+/** 안내 문장이 보이는 시간. 지나면 문장만 지우고 입력과 목록은 그대로 둔다. */
+export const SAY_MS = 5000;
+let sayWatched = "";
+let sayTimer = 0;
+
+/** 그릴 때마다 부른다: 새 안내 문장이 보이기 시작하면 `SAY_MS` 뒤 지우는 타이머를 건다(같은 문장은 한 번만). */
+function currentSay(): string {
+  if (sayText === sayWatched) return sayText;
+  clearTimeout(sayTimer);
+  sayWatched = sayText;
+  if (sayText) {
+    const shown = sayText;
+    sayTimer = window.setTimeout(() => {
+      if (sayText !== shown) return;
+      sayText = "";
+      sayWatched = "";
+      render();
+    }, SAY_MS);
+  }
+  return sayText;
+}
+
 /** The mounted command input: its current text and how to change or focus it. */
 export interface CommandInput {
   value(): string;
@@ -57,7 +79,7 @@ export function bindDock(handle: CommandInput | null): void {
 
 /** 도크가 그릴 값: 처리 중 여부와 마지막 안내 문장. */
 export function dockStatus(): { busy: boolean; say: string } {
-  return { busy, say: sayText };
+  return { busy, say: currentSay() };
 }
 
 /** 입력이 바뀌거나 Esc로 비울 때: 진행 중인 요청을 버리고 안내 문장을 지운다. */
@@ -390,7 +412,7 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
             ))}
           </ul>
         )}
-      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{sayText || (server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "")}</p>
+      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{currentSay() || (server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "")}</p>
       <div className="cmd" role="search" ref={cmdRef}>
         <div
           className={["cmd-box", listShown ? "has-list" : "", ghost ? "has-ghost" : "", busy ? "is-busy" : ""].filter(Boolean).join(" ")}
