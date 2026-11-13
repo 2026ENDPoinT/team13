@@ -645,6 +645,25 @@
 - 별도 녹음 화면·요약 PDF 구현 및 해당 테스트 파일은 이번 커밋에서 제외하고 작업 트리에 유지한다. 공용 README/handoff에는 기존 다른 작업 기록도 보존되어 있다.
 - 앞 절의 타입·회귀·브라우저 검증 결과를 사용하며 커밋 요청으로 동일 검사를 반복하지 않는다.
 
+## 수강과목 카드의 안 읽은 공지 표시 제거
+- 사용자 스크린샷의 빨간 `안 읽은 공지 N` 표시를 수강과목 카드에서 제거했다. 전용 옵션·공지 맵 생성·미사용 CSS도 삭제했다.
+- 변경 파일: `src/areas/home/course-cards.tsx`, `src/areas/home/home-server.tsx`, `src/areas/home/home.css`, `handoff.md`.
+- 서버 미확인 공지 데이터와 강의실 메뉴의 공지 개수는 변경하지 않았다. 진도·출석·학습실 링크는 유지한다.
+- 검증: `npm run typecheck` 및 홈 회귀 테스트 4개 통과. 가상 로그인 브라우저에서 서버 응답의 과목별 미확인 공지 3건은 유지되지만 6개 카드의 공지 표시가 모두 사라졌고 진도·출석·과목별 학습실 링크가 유지됨을 확인했다.
+- 남은 작업: 없음. 이번 추가 변경은 아직 커밋·푸시하지 않았다.
+
+## 2026-11-14 강의실의 빈 활동 화면 원인 분석
+- 요청: 첨부한 `등록된 활동이 없습니다` 화면을 프런트엔드와 `STack-Corp/STack-Backend` 코드까지 대조해 설명한다. 기능 수정 요청은 없어 앱 코드는 변경하지 않았다.
+- 분석한 백엔드: `main` 커밋 `36261894b2dd86e161f393b7015652f343cc352f`. 공개 URL 읽기는 404였지만 인증된 GitHub CLI로 접근해 임시 디렉터리에 소스를 확보했다.
+- 프런트 `src/areas/course/activities-server.tsx:214-255`: 주차·자료·과제·시험·설문·본인 영상 진도를 모은 결과의 활동 행이 0개이고 로딩 중이 아니면 해당 문구를 표시한다. 필터로만 항목이 사라진 경우에는 별도의 `해당하는 활동이 없습니다` 문구를 쓴다. 일부 API 실패는 별도 오류 안내를 함께 표시할 수 있으므로 이 문구 자체가 정상 빈 응답을 증명하지는 않는다.
+- 백엔드 `integration/eclass/EclassPasswordVerifier.java:93-147`: 학교 로그인 후 메인 화면의 프로필·수강과목과 개인정보 화면만 읽는다. 학교 세션은 확인 요청 범위에서만 사용하고 보관하지 않는다. 과목별 강의실 활동 수집은 이 흐름에 없다.
+- 백엔드 `catalog/SchoolCourseSync.java:60-157`: 과목·학기·시간표·수강 관계만 저장한다. `course_weeks`와 `learning_activities`는 생성하지 않는다. `learning/CourseWeeks.java:23-34`는 자체 활동 등록 시 필요한 주차를 생성하는 구성이다.
+- 백엔드 `learning/LearningController.java:102-142`: `/api/courses/{courseId}/weeks`는 자체 DB의 `course_weeks LEFT JOIN learning_activities`만 조회한다. 학교 e-Class를 호출하지 않는다. 학생 활동은 `LearningAccess.open`에 따라 공개 상태이고 시작 시각이 없거나 현재 이하인 경우만 포함하며 삭제된 활동은 제외한다.
+- 결론: 학교 수강과목이 보이는 것과 학교 활동이 동기화되는 것은 별개다. 현재 학교 연동에는 활동 동기화가 없어, 자체 등록 활동이 없는 동기화 과목은 이 빈 화면으로 이어질 수 있다. `교수님이 활동을 공개하면`은 프런트의 고정 안내문이지 교수의 학교 활동 미공개를 확인한 결과가 아니다. 다시 불러오기는 같은 자체 DB API를 재조회할 뿐 학교 활동을 가져오지 않는다.
+- 검증: 양쪽 구현과 SQL·분기를 직접 대조했다. 분석 작업이며 동작 변경이 없어 빌드·테스트·UI 실행은 하지 않았다.
+- 변경 파일: `handoff.md`만.
+- 남은 확인/작업: 해당 사용자의 실제 네트워크 응답·운영 DB·배포 커밋은 확인하지 않았으므로 이 과목의 정확한 저장 상태는 단정하지 않는다. 학교의 실제 활동 표시가 목표라면 백엔드에서 학교 인증 세션 사용 범위·권한·첨부 접근을 설계하고 과목별 주차·활동을 수집해 기존 활동 API와 연결하는 구현이 필요하다.
+
 ## 2026-11-14 최초 방문 로그인 모달
 - 서버 익명 세션 확인 후 탭당 한 번 `STack 로그인` 모달을 자동으로 연다. ID(학번)·PW 입력과 실제 요청은 기존 e-Class 로그인 폼/API를 재사용한다.
 - 표시 여부만 `sessionStorage`에 저장한다. 새로고침·화면 이동에는 재표시하지 않고 로그인 복원 세션과 백엔드 없는 샘플 모드에서는 생략한다. 닫기·배경 클릭·Escape를 지원하고 기존 경로의 팝업 주소는 변경하지 않는다.
@@ -668,3 +687,9 @@
 - 포함 파일: `README.md`, `src/App.tsx`, `src/shared/entry-login.tsx`, `src/shared/backend-prompt.tsx`, `src/shared/backend-ui.css`, `src/areas/home/command-bar.tsx`, `tests/integration/entry-login.test.ts`, `tests/integration/server-hero-commands.test.ts`, 해당 작업의 `handoff.md` 기록.
 - 별도 과목 카드·녹음·요약 PDF 변경과 다른 작업의 handoff 기록은 작업 트리에 그대로 남기고 이번 커밋에서는 제외한다.
 - 검증은 앞선 타입 검사·통합 테스트·브라우저 확인 결과를 사용하며, 커밋 요청으로 동일 검사를 반복하지 않는다.
+
+## 남은 변경 전체 커밋
+- 사용자 요청에 따라 앞서 제외했던 과목 카드 공지 표시 제거·녹음 화면 주황 포인트·요약 PDF 다운로드 및 관련 테스트·기록을 모두 커밋한다.
+- 변경 파일: `src/areas/home/course-cards.tsx`, `src/areas/home/home-server.tsx`, `src/areas/home/home.css`, `src/areas/home/recording-study.css`, `src/areas/home/recording.tsx`, `src/areas/home/recording-summary-pdf.ts`, `tests/integration/recording-study.test.ts`, `tests/unit/recording-summary-pdf.test.ts`, `handoff.md`.
+- 이번 요청은 기존 변경의 커밋만 수행하며 기능을 추가 수정하거나 검사를 반복하지 않는다. 각 작업의 검증·한계는 앞선 기록을 따른다.
+- 남은 작업: 이번 요청에는 푸시가 포함되지 않아 원격 푸시는 수행하지 않는다.

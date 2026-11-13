@@ -111,7 +111,7 @@ describe("백엔드가 생성한 녹음 전사·요약", () => {
     expect(host.textContent).toContain("아직 전사 결과가 없습니다");
     expect(host.textContent).not.toContain("파이프라인");
     menu();
-    expect(host.querySelector('[aria-disabled="true"]')?.textContent).toBe("전사문 TXT");
+    expect([...host.querySelectorAll('[aria-disabled="true"]')].map((node) => node.textContent)).toEqual(["전사문 TXT", "요약 PDF"]);
     const calls = read.mock.calls.length;
     await tick();
     expect(read).toHaveBeenCalledTimes(calls);
@@ -129,7 +129,7 @@ describe("백엔드가 생성한 녹음 전사·요약", () => {
     expect(host.textContent).toContain("악성 코드");
     expect(host.textContent).not.toContain(transcript.segments[0].text);
     menu();
-    expect(host.querySelectorAll('[aria-disabled="true"]')).toHaveLength(2);
+    expect(host.querySelectorAll('[aria-disabled="true"]')).toHaveLength(3);
     const calls = read.mock.calls.length;
     await tick();
     expect(read).toHaveBeenCalledTimes(calls);

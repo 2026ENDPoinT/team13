@@ -107,8 +107,6 @@ function serverFace(stats: CourseStats | undefined): ReactNode[] {
 }
 
 export interface CourseCardsOptions {
-  /** Course id -> unread server notices (backend mode). */
-  unread?: Map<string, number>;
   /** Course id -> its `/api/me/home` course record (backend mode). */
   stats?: Map<string, CourseStats>;
 }
@@ -142,8 +140,6 @@ function CourseCard({ course, mode, options }: { course: Course; mode: CardMode;
     );
   }
   if (mode === "enrolled") body.push(<span key="room" className="act-pill room">강의실</span>);
-  const unread = options.unread ? options.unread.get(course.id) || 0 : 0;
-  if (unread) body.push(<span key="unread" className="act-pill unread">{`안 읽은 공지 ${unread}`}</span>);
   return (
     <article className="course-card">
       <Link className="course-card-main" href={href}>
@@ -161,8 +157,8 @@ function CourseCard({ course, mode, options }: { course: Course; mode: CardMode;
 }
 
 /**
- * `options.unread`: Map of course id -> unread server notices; `options.stats`: Map of course id -> its `/api/me/home`
- * course record (backend mode only). Server courses (`course.server`) show only server facts.
+ * `options.stats`: Map of course id -> its `/api/me/home` course record (backend mode only).
+ * Server courses (`course.server`) show only server facts.
  */
 export function courseCards(list: Course[], mode: CardMode = "home", options: CourseCardsOptions = {}): ReactNode {
   return (

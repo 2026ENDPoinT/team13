@@ -148,14 +148,13 @@ function ServerHomeCourses() {
   }
   const { matched } = memberCourses(data);
   const stats = new Map<string, CourseStats>(matched.map(({ local, remote }) => [local.id, remote]));
-  const unread = new Map([...stats].map(([id, remote]) => [id, Number(remote.unreadNotices) || 0]));
   return (
     <div ref={slot} className="home-server">
       {groups.size
         ? [...groups].map(([key, group]) => (
           <Fragment key={key}>
             <p className="term">{group.label}</p>
-            {courseCards(group.courses, "home", { unread, stats })}
+            {courseCards(group.courses, "home", { stats })}
           </Fragment>
         ))
         : <EmptyState title="수강 중인 과목이 없습니다" body="ASTRA 서버에 이 계정의 과목이 없습니다." />}

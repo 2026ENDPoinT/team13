@@ -21,6 +21,7 @@ import { serverStudyCourse, studyRoomOnServer, peekCourseView, studyRoomMessage,
 import { folderHref, recordingHref } from "./study-files.tsx";
 import { serverStudyLecture } from "./study-server.tsx";
 import { RecordingStudyView, demoRecordingStudy } from "./recording-study.tsx";
+import { printSummaryPdf } from "./recording-summary-pdf.ts";
 import { recordingJobPending } from "../../shared/recording-study.ts";
 
 const SOURCES: { id: RecordingSource; label: string; hint: string }[] = [
@@ -230,6 +231,7 @@ function DownloadMenu({ record, course, url, fileName, onStale }: { record: Reco
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const transcription = record.remote && record.state === "ready" && record.transcription?.status === "ready" ? record.transcription.result : null;
+  const summary = record.remote && record.state === "ready" && record.summary?.status === "ready" ? record.summary.result : null;
   useEffect(() => {
     if (!open) return;
     wrap.current?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
@@ -297,6 +299,18 @@ function DownloadMenu({ record, course, url, fileName, onStale }: { record: Reco
           ) : (
             <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled" title="서버에서 전사가 완료되면 내려받을 수 있습니다.">
               <Icon name="file" /><span>전사문 TXT</span>
+            </span>
+          )}
+          {summary ? (
+            <button type="button" role="menuitem" className="study-new-item" onClick={() => {
+              printSummaryPdf(record.title, summary);
+              setOpen(false);
+            }}>
+              <Icon name="file" /><span>요약 PDF</span>
+            </button>
+          ) : (
+            <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled" title="서버에서 요약이 완료되면 내려받을 수 있습니다.">
+              <Icon name="file" /><span>요약 PDF</span>
             </span>
           )}
           <div className="study-new-sep" role="separator" />

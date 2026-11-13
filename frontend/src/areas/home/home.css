@@ -811,7 +811,6 @@ a.ntf-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 
 }
 
 /* Backend mode (areas/home/home-server.js) */
-.act-pill.unread { background: var(--danger-soft); color: var(--danger); }
 .home-server-note { margin: var(--space-3) 0 0; overflow-wrap: anywhere; }
 .home-notices .ntf-list {
   margin: 0; border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
