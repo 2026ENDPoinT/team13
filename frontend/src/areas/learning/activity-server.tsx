@@ -17,6 +17,7 @@ import { materialMessage } from "../../shared/materials-remote.ts";
 import { rememberMaterials } from "../../shared/course-pdfs-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
 import { SaveToStudy } from "../../shared/save-to-study.tsx";
+import { AttachmentRow } from "../../shared/attachment-row.tsx";
 import {
   schoolMaterialDetails, schoolDetailKey, schoolFilesOf, schoolProblemOf, SchoolLink, SchoolProblemNote, type SchoolMaterialDetail,
 } from "../../shared/school-content.tsx";
@@ -88,20 +89,15 @@ function Prose({ text }: { text: string | null | undefined }) {
 function FileRow({ kj, courseId, file }: { kj: string; courseId: number | string; file: ActivityFile }) {
   const preview = hrefFor(find("65_file_preview"), { n: `srv-${file.fileId}`, kj });
   return (
-    <article className="file-row srv-material-file" data-file={String(file.fileId)}>
-      <div>
-        <b>{file.name}</b>
-        <p className="tiny">{[String(file.extension || "").toUpperCase(), sizeText(file.sizeBytes)].filter(Boolean).join(" · ")}</p>
-      </div>
-      <div className="btn-row">
-        <Link href={preview} className="btn btn-secondary">미리보기</Link>
-        {downloadControl(courseId, { fileId: file.fileId, name: file.name })}
-        {file.pdf ? <SaveToStudy kj={kj} file={{ fileId: file.fileId, name: file.name }} /> : null}
-        {/* 요약 보기는 학생에게 보이는 요약 게시본이 있을 때(`summaryPublished`)만 둔다. */}
-        {file.pdf && file.summaryPublished ? <Link href={hrefFor(find("study_summary"), { kj, doc: `srv-${file.fileId}` })} className="btn btn-ghost">요약 보기</Link> : null}
-        {file.pdf ? <Link href={hrefFor(find("study_home"), { kj, doc: `srv-${file.fileId}` })} className="btn btn-ghost">학습실에서 열기</Link> : null}
-      </div>
-    </article>
+    <AttachmentRow
+      fileKey={String(file.fileId)}
+      name={file.name}
+      extension={file.extension}
+      meta={sizeText(file.sizeBytes)}
+      preview={preview}
+      download={downloadControl(courseId, { fileId: file.fileId, name: file.name }, "icon")}
+      study={file.pdf ? <SaveToStudy variant="icon" kj={kj} file={{ fileId: file.fileId, name: file.name }} /> : null}
+    />
   );
 }
 

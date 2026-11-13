@@ -1,6 +1,7 @@
 import { Fragment, cloneElement, isValidElement, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon } from "../../ui/icon.tsx";
 import { SaveToStudy } from "../../shared/save-to-study.tsx";
+import { AttachmentRow } from "../../shared/attachment-row.tsx";
 import { Badge, Button, EmptyState, Field, Tabs } from "../../ui/kit.tsx";
 import { Link, GoButton, navigate } from "../../router.tsx";
 import { activities, events, courseById, courses, people, files, surveyQuestions } from "../../data.ts";
@@ -131,9 +132,14 @@ function typeLine(type: string, titleTag?: ReactNode, iconName?: string): ReactN
   return <div className="type-line"><span className={`type-ico ${type}`} aria-hidden="true"><Icon name={iconName || TYPE_ICON[type] || "file"} /></span>{titleTag || <span>{typeLabel(type)}</span>}</div>;
 }
 function fileRow(name: string, meta?: string, href?: string, save?: { kj: string; fileId: string }): ReactNode {
-  return <div className="file-row" key={name}><Icon name="file" /><span><b>{name}</b><span className="tiny">{meta}</span></span>{save
-    ? <div className="btn-row file-row-actions">{href ? <Link className="btn btn-secondary" href={href}>미리보기</Link> : null}<SaveToStudy kj={save.kj} file={{ fileId: save.fileId, name }} /></div>
-    : href ? <Link className="btn btn-secondary" href={href}>미리보기</Link> : null}</div>;
+  return <AttachmentRow
+    key={name}
+    name={name}
+    meta={meta}
+    preview={href}
+    download={save ? <button type="button" className="icon-btn" aria-label={`${name} 내려받기`} title="내려받기" onClick={() => toast("샘플 파일은 이 브라우저 밖으로 내려받지 않습니다")}><Icon name="download" /></button> : null}
+    study={save ? <SaveToStudy variant="icon" kj={save.kj} file={{ fileId: save.fileId, name }} /> : null}
+  />;
 }
 function seedMail(state: AppState): void {
   if (state.draft.mailSeeded) return;

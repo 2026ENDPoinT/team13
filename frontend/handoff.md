@@ -933,3 +933,12 @@
 - 브라우저: 관리형 Chromium 탭 `mock`(1440x900, `persist`). 앱 상태가 `localStorage`에 복원되어 처음엔 마지막 화면(자료 요약)이 열려 홈으로 이동시켰다.
 - 변경 파일: `handoff.md`만. 코드 변경 없음.
 - 남은 작업: 없음.
+
+## 첨부파일 행 개편: 왼쪽 파일 형식 아이콘, 오른쪽 아이콘 버튼 3개
+- 자료 상세의 첨부파일을 한 줄 행으로 바꿨다. 왼쪽에 파일 형식 아이콘(PDF는 빨강 띠)·이름·크기, 오른쪽에 미리보기(돋보기)·내려받기(다운로드)·학습실 저장(파란 업로드 아이콘) 아이콘 버튼만 둔다. 종류·"PDF ·" 접두어는 아이콘으로 옮겼다.
+- 학습실 버튼은 기존 `SaveToStudy`의 `variant="icon"`이다. 누르면 기존 폴더 고르는 창이 열리고 서버 학습실이면 `PUT …/placements/course-files/{fileId}`, 샘플이면 목업 저장이다. 저장되면 아이콘이 체크로 바뀐다.
+- `FileRow`에서 "요약 보기"·"학습실에서 열기" 버튼을 뺐다(요청: 세 버튼만). 아래 "e-Class에서 열기 / 파일모음 / 학습활동 목록" 이동 줄은 그대로 둔다.
+- 학교 e-Class 파일(`SchoolFileRow`)은 미리보기·내려받기 아이콘만 있다. 학습실 버튼은 두지 않았다: 복사 전 ID가 문자열(`school-file-<n>`)이라 학습실 배치 API(숫자 파일 ID, 과목 학습실 view에 있는 PDF만)가 받지 못하고, 학습실에 임의 문서를 올리는 API는 녹음(`…/recordings`)뿐이다. 이 부분은 백엔드 계약이 필요하다.
+- 변경 파일: `src/shared/attachment-row.tsx`·`attachment-row.css`(새), `src/app.css`, `src/shared/save-to-study.tsx`(`SaveTrigger`, `variant`), `src/shared/uploads-remote.tsx`(`downloadControl` 세 번째 인자 `"icon"`), `src/shared/school-files.tsx`, `src/areas/learning/activity-server.tsx`(`FileRow`), `src/areas/learning/learning.tsx`(샘플 `fileRow`).
+- 검증: `npx tsc` 오류 없음, `npx vitest run` 33파일 1452개 통과, 샘플 모드 `m=lecture_material&n=m-1&kj=bi`에서 행 표시와 학습실 저장 창 열림 확인. 백엔드 연결 모드의 실제 화면은 확인하지 못했다.
+- 남은 작업: 학교 파일의 학습실 저장(백엔드 계약 필요), 파일모음(`crs-file`) 행을 같은 아이콘 버튼으로 맞출지 결정. 커밋·푸시는 하지 않았다.
