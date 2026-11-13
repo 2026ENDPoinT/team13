@@ -3,7 +3,7 @@
 // by `kj` (`c<courseId>` or a sample-id key, shared/backend.js `kjOf`).
 import { apiGet, ApiError } from "./api.ts";
 import { useEffect } from "react";
-import { backendState, backendStatus, institutionZone, kjOf } from "./backend.ts";
+import { backendState, backendStatus, institutionZone, kjOf, refreshCourses } from "./backend.ts";
 import { createResource, freshVisit, retryLater, useResource } from "./remote-cache.ts";
 import { noteUnread } from "./unread-badges.tsx";
 import { serverActivityHref } from "./activity-links.ts";
@@ -51,6 +51,8 @@ export interface HomeCourse {
   role: string;
   name?: string;
   code?: string;
+  /** Published notices of this course the caller has not marked read. */
+  unreadNotices?: number;
 }
 
 /** A course notice of the home aggregate. */
@@ -163,6 +165,29 @@ export function reloadHome(): void {
 /** Changes the cached home aggregate in place (e.g. a 알림마당 notice read) and repaints its watchers. */
 export function patchHome(change: (data: HomeData) => void): void {
   home.patch((key) => key === HOME, change);
+}
+
+/** Copies each course's `unreadNotices` from fresh `/api/me/courses` records onto the home aggregate's same courses. */
+export function applyCourseCounts(data: HomeData, courses: readonly { courseId: number | string; unreadNotices?: number | null }[]): void {
+  if (!Array.isArray(data.courses)) return;
+  const fresh = new Map(courses.map((course) => [String(course.courseId), course.unreadNotices]));
+  for (const course of data.courses) {
+    const count = fresh.get(String(course.courseId));
+    if (typeof count === "number") course.unreadNotices = count;
+  }
+}
+
+/**
+ * After a course notice was marked read: marks it read in the cached home aggregate, then re-reads the course records
+ * (`refreshCourses`) so the unread counts of the left menu, the course cards and the home aggregate follow without a
+ * reload. A failed re-read leaves the old counts (the next page load corrects them).
+ */
+export async function followNoticeRead(noticeId: number): Promise<void> {
+  patchHome((data) => {
+    for (const notice of Array.isArray(data.notices) ? data.notices : []) if (notice.noticeId === noticeId) notice.read = true;
+  });
+  const courses = await refreshCourses().catch(() => null);
+  if (courses) patchHome((data) => applyCourseCounts(data, courses));
 }
 
 export function todoEntry(): Entry<TodoList> | null {

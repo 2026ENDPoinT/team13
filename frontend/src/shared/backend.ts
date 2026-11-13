@@ -361,6 +361,20 @@ export function connect(): Promise<BackendSnapshot> {
   return connecting;
 }
 
+/**
+ * Re-reads `GET /api/me/courses` so its per-course counts (`unreadNotices`) follow a change made on this page, such as
+ * a notice marked read, and repaints every reader of the course records (left menu, course cards). `ready` only; the
+ * answer is dropped when the session changed meanwhile. Resolves to the new records, or null when nothing was applied.
+ */
+export async function refreshCourses(): Promise<MyCourse[] | null> {
+  if (state.status !== "ready") return null;
+  const me = state.me;
+  const courses = await apiGet<unknown>("/api/me/courses");
+  if (state.status !== "ready" || state.me !== me || !Array.isArray(courses)) return null;
+  update({ courses: courses as MyCourse[] });
+  return state.courses;
+}
+
 function retryMessage(error: ApiError): string {
   return `로그인 요청이 많습니다. ${error.retryAfter ? `${error.retryAfter}초 뒤` : "잠시 후"} 다시 시도하세요.`;
 }
