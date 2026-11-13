@@ -1,0 +1,647 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<link type="text/css" rel="stylesheet" href="/ilos/css/group.css?v=20261001">
+
+
+<link href="/ilos/js/c3/c3.css?v=20261001" rel="stylesheet">
+<link href="/ilos/js/c3/c3-astra.css?v=20261001" rel="stylesheet">
+<script src="/ilos/js/c3/d3.js?v=20261001" ></script>
+<script src="/ilos/js/c3/c3.js?v=20261001"></script>
+<script>
+$(function() {
+  setSelectActivity("report", "1000011");
+  
+  $.fx.speeds._default = 500;
+  $("#report_submit_pop").dialog({
+    autoOpen: false,
+    modal: true,
+    closeOnClick: false,
+    resizable: false,
+    draggable: false,
+    width: 1004,
+    closeText: "문구",
+    dialogClass: "no-titlebar no-padding",
+    open: function(ev, ui) {
+      $(this).parents(".ui-dialog").find("button").eq(0).focus();
+      $(this).dialog("moveToTop");
+      initSwitch();
+    },
+    beforeClose : function(ev,ui) {
+      $(".ui-dialog.close-release").clearDialog();
+    },    
+    close: function(ev, ui) { 
+      $(this).empty();
+      if (typeof asUtil === 'object') {
+        asUtil.reset();
+      }
+    }
+  });
+  $(".ui-dialog").each(function(){
+    dialogList.push($(this).attr("aria-describedby"));
+  });
+  
+  $.ajax({
+    url: "/ilos/cls/st/co/efile_list.acl",
+    type: "POST",
+    data: { 
+      ud : "20269999",
+      ky : "A202639999900004",
+      pf_st_flag : "2",
+      CONTENT_SEQ : "SYNKEY0000014",
+      encoding : "utf-8"
+    },
+    async: false,
+    success: function(html){
+      $("#tbody_file").append(html);
+      if($("#tbody_file").find("a").length > 0){
+        $("#tbody_file").show();
+      }
+    },
+    error : ajaxErrorMsg
+  });
+  
+  
+
+  
+  
+  
+  
+  
+  var content_seq = "";
+  
+  content_seq = "SYNKEY0000013";
+  
+  
+  
+  $.ajax({
+    url: "/ilos/cls/st/co/efile_list.acl",
+    type: "POST",
+    data: { 
+      ud : "20269999",
+      ky : "A202639999900004",
+      pf_st_flag : "2",
+      CONTENT_SEQ : content_seq,
+      TURNITIN_SEQ : "",
+      encoding : "utf-8"
+    },
+    async: false,
+    success: function(html){
+      $("#tbody_submit_file").append(html);
+    },
+    error : ajaxErrorMsg
+  });  
+  
+  $(".editor_content").setEditorView();
+  
+  
+  
+  
+  $("#subt_format_open_btn").click(function(){
+    $("#report_subt_format_zone").addClass("expanded");
+    $("#subt_format_open_btn").hide();
+    $("#subt_format_close_btn").show();
+  });
+  
+  $("#subt_format_close_btn").click(function(){
+    $("#report_subt_format_zone").removeClass("expanded");
+    $("#subt_format_open_btn").show();
+    $("#subt_format_close_btn").hide();
+  });
+  
+  
+  
+    
+   
+  
+  $(".editor_content").setEditorView();
+});
+
+function openReportSubmitPop(url){
+  
+  
+  if(url){
+    $.ajax({
+      url: url,
+      type: "GET",
+      data: {
+        encoding : "utf-8"
+      },
+      async: false,
+      success: function(data){
+        $("#report_submit_pop").dialog("close");   
+        $("#report_submit_pop").html(data);
+        $("#report_submit_pop").dialog("open");
+      },
+      error : ajaxErrorMsg
+    });
+  }
+}
+
+function getEvalList(div){
+  var url = '';
+  if(div == 1){
+    url = '/ilos/cls/st/report/report_mark_eval_list_view.acl';
+  }else{
+    url = '/ilos/cls/st/report/report_mark_eval_list2_view.acl';
+  }
+  $.ajax({
+    url: url,
+    type: "POST",
+    data: { 
+      KJKEY   : "A202639999900004",
+      RT_SEQ  : "1000011",
+      USER_ID : "20269999",
+      EVAL_DIV : "",
+      OPEN_GRADE_YN : "",
+      OPEN_YN       : "N",
+      IS_OPEN_SCORE : "N",
+      encoding  : "utf-8"
+          },
+    async: false,
+    success: function(html){
+        $("#viewWrtEvalList").html(html);
+        var txt = '';
+
+        $("#reportScoreTrView").after(txt);
+      },
+    error : ajaxErrorMsg
+  });
+}
+
+function showGroupTeam(){
+  $.ajax({
+    url: '/ilos/cls/st/report/report_group_team_view.acl',
+    type: "POST",
+    data: { 
+      GROUP_SEQ  : "",
+      RT_SEQ     : "1000011",
+      encoding  : "utf-8"
+          },
+    async: false,
+    success: function(html){
+        $("#reportGroupTeam").html(html);
+      },
+    error : ajaxErrorMsg
+  });
+}
+
+function mutualList(start) {
+  circleLoaderPrepend("mutuForm",start);
+  $.ajax({
+    url: "/ilos/cls/st/report/report_mutual_list.acl",
+    type: "POST",
+    data: { 
+      ud : "20269999",
+      ky : "A202639999900004",
+      RT_SEQ : "1000011",
+      NOT_EVAL_YN : $("#eval_yn").is(":checked") ? "Y" : "N",
+      start : start,
+      encoding : "utf-8"
+          },
+    async: true,
+    success: function(html){
+            $("#mutuForm").html(html);
+            circleLoaderRemove("mutuForm");
+      },
+    error : ajaxErrorMsg
+  });
+}
+
+function chartView() {
+  $.ajax({
+      url: "/ilos/cls/st/report/report_mark_chart_form.acl",
+      type: "POST",
+      data: {
+          RT_SEQ : "1000011",
+          RT_JUMSU_WT : "100",
+          EVAL_DIV   : "",
+          reportType : "ON",
+          SUBJT_YN: 'Y',
+          encoding : "utf-8"
+            },
+      async: false,
+      success: function(data){
+              $( "#chartWrap" ).html(data);
+        },
+      error : ajaxErrorMsg
+ });
+}
+//중앙값 계산 함수
+//크기 순으로 이미 정렬된 배열을 입력해야만 합니다
+//범용성을 위해서 이 함수 자체에는 정렬 기능 미포함
+function getMedian(array) {
+  if (array.length == 0) return NaN; // 빈 배열은 에러 반환(NaN은 숫자가 아니라는 의미임)
+  var center = parseInt(array.length / 2); // 요소 개수의 절반값 구하기
+  if (array.length % 2 == 1) { // 요소 개수가 홀수면
+    return array[center]; // 홀수 개수인 배열에서는 중간 요소를 그대로 반환
+  } else {
+    return (array[center - 1] + array[center]) / 2.0; // 짝수 개 요소는, 중간 두 수의 평균 반환
+  }
+}
+function foo(arr) {
+  var a = [], b = [], prev;
+  arr.sort(function(a,b){
+    return b - a;
+  });
+  for ( var i = 0; i < arr.length; i++ ) {
+    if ( arr[i] !== prev ) {
+      a.push(arr[i]);
+      b.push(1);
+    } else {
+      b[b.length-1]++;
+    }
+    prev = arr[i];
+  }
+  return [a, b];
+}
+function Floor(n, pos) { 
+  if (isNaN(n)) {
+    return 0;
+  }else{
+    var digits = Math.pow(10, pos); 
+    var num = Math.floor(n * digits) / digits; 
+    return num.toFixed(pos);  
+  }
+}
+function loadChart1() {
+  circleLoaderAppend3("chart1");
+  $.ajax({
+      url: "/ilos/cls/st/report/report_mark_chart.acl",
+      type: "POST",
+      data: {
+        RT_SEQ : "1000011",
+        reportType : "ON",
+        encoding : "utf-8"
+      },
+      async: false,
+      success: function(data){
+          $("#chart1").html(data);
+      },
+      complete: function(){
+        circleLoaderRemove3("chart1");
+        drawBarChart("chart1");
+      },      
+      error : ajaxErrorMsg
+  });  
+}
+//평가방법 : 평가요소 
+function loadChart2(seq) {
+  $.ajax({
+      url: "/ilos/cls/st/report/report_mark_chart2.acl",
+      type: "POST",
+      data: {
+        RT_SEQ   : "1000011",
+        EVAL_SEQ   : seq,
+        reportType : "ON",
+        encoding   : "utf-8"
+      },
+      async: false,
+      success: function(data){
+        $("#chart1").html(data);
+    },
+    error : ajaxErrorMsg
+  });  
+}
+
+
+
+
+
+ function deleteReport(){
+   
+   
+   $.ajax({
+     url: "/ilos/cls/st/report/report_submit_check.acl",
+     type: "POST",
+     data: {
+       ud : "20269999",
+       ky : "A202639999900004",
+       returnData : "json",
+       RT_SEQ : "1000011",
+       SUBMIT_CHECK_DIV : "2",
+       encoding : "utf-8"
+           },
+     async: false,
+     success: function(data){
+       if (data.isError) {
+         alert(data.message);
+         stRoomAuthCheck(data);         
+       }else{
+         if(confirm(data.confirmMsg)){
+           $.ajax({
+             url: "/ilos/cls/st/report/report_delete.acl",
+             type: "POST",
+             data: {
+               ud : "20269999",
+               ky : "A202639999900004",
+               RT_SEQ : "1000011",
+               CONTENT_SEQ : "1000012",
+               returnData : "json",
+               encoding : "utf-8"
+                   },
+             async: false,
+             success: function(data){
+                 if(data.isError) {
+                   alert(data.message);
+                   stRoomAuthCheck(data);
+                 }else{
+                   if(data.isKjkey){
+                     viewActivityPage("/ilos/cls/st/report/report_view_form.acl", "report", "1000011");
+                     setMenuSubmit("report", "1000011", false);
+                  }else{
+                    alert(data.chSubjtMessage);
+                    document.location.href="/ilos/cls/st/submain/submain_form.acl";
+                  }
+                 }
+               },
+             error : ajaxErrorMsg
+           });
+           
+         }
+         
+       }
+     }
+   });
+   
+   
+ }
+
+ function openStFormatSubt(seq, user_id){
+   if(!seq){
+     return;
+   }
+   
+   circleLoaderPrepend3("report_subt_format_zone");
+   $.ajax({
+     url: "/ilos/cls/st/report/report_subt_view_form.acl",
+     type: "POST",
+     data: { 
+       RT_SEQ : "1000011",
+       FORMATBANK_SEQ : seq,
+       USER_ID : user_id || '',
+       encoding : "utf-8"
+     },
+     async: true,
+     success: function(data){
+       $("#report_subt_format_zone").html(data);
+     },
+     error : ajaxErrorMsg,
+     complete : function() {
+       circleLoaderRemove3("report_subt_format_zone");
+     }
+   });       
+ }
+</script>
+<style>
+  :root { --fixed_bottom_btn_height: 0px; }
+  /*오프라인 과제, 미공개, 의견없음*/
+     
+</style>
+    <section class="container">
+      <article class="article">
+        <div class="view_header">
+          <div class="view_menu">
+            <a class="font_subtitle3 menu_icon report1" href="#" onclick="viewActivityPage('/ilos/cls/st/report/report_view_form.acl', 'report', '1000011', event);" target="_self">과제</a>
+          </div>
+          <div class="view_title_wrap">
+            <div class="view_title">
+              <span class="font_headline2">텍스트1</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="view_body">
+          <table class="bbsview">
+            <caption>과제 상세보기</caption>
+            <colgroup>
+              <col style="width:160px;">
+              <col>
+            </colgroup>
+            <tbody>
+            
+              <tr>
+                <th scope="row">제출방식</th>
+                <td class="font_body2">온라인</td>
+              </tr>
+              
+              <tr>
+                <th scope="row">제출형태</th>
+                <td class="font_body2">
+                
+                  글 입력 / 파일첨부
+                   
+                </td>
+              </tr>
+                            
+              <tr>
+                <th scope="row">공개일</th>
+                <td class="font_body2">2026.11.10 (화) 오전 11:39</td>
+              </tr>
+              <tr>
+                <th scope="row">마감일</th>
+                <td class="badge_wrap font_body2">
+                  2026.11.17 (화) 오후 11:59
+                  
+                  <div class="small_badge1 font_profile4">텍스트2</div>
+                  
+                </td>
+              </tr>
+              
+
+              
+              <tr id="reportScoreTrView">
+                <th scope="row">배점</th>
+                <td class="font_body2">100점</td>
+              </tr>
+              <tr>
+                <th scope="row">점수공개</th>
+                <td>
+                  
+                    <div class="font_body2 subtext_wrap">
+                      비공개
+                    </div>
+                  
+                </td>
+              </tr>
+                                 
+
+              <tr id="wrtEvalRowView" style="display: none;">
+                <td colspan="2" class="eval_dv_wrap" style="border-bottom: none;">
+                  <div class="grade_box">
+                    <div class="grade_box_header">
+                      <div class="eval_section_title font_subtitle1" style="margin-bottom: 0;">
+                        
+                      </div>
+                    </div>
+                    <div class="grade_box_body view_eval_list" id="viewWrtEvalList"></div>
+                  </div>
+                </td>
+              </tr>
+              
+             <tr>
+               <td class="textviewer font_body1" colspan="2">
+                 <div class="editor_content"><p>텍스트3</p><p>텍스트4</p><p>텍스트5</p><p>텍스트6</p><p>텍스트7</p><p>텍스트8</p><p>텍스트9</p><p>텍스트10</p><p>텍스트11</p><p>텍스트12</p><p>텍스트13</p></div>
+                 
+                 <div id="tbody_file" class="attach_container"></div>
+                                  
+               </td>
+             </tr>
+            </tbody>
+          </table>
+          
+          
+          
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+$(function(){
+  qnaListForm();
+});
+function qnaListForm(){
+  $.ajax({
+    url: "/ilos/cls/st/qna/activity_qna_list_form.acl",
+    type: "POST",
+    data: {
+      T_MENU_ID : "report",
+      T_ARTL_NUM : "1000011",
+      T_SUB_ARTL_NUM : "",
+      encoding : "utf-8"
+    },
+    async: true,
+    success: function(data) {
+      $("#qna_list_form").html(data);
+    },
+    error: ajaxErrorMsg
+  });
+  
+}
+</script>
+
+<div id="qna_list_form" class="qna_list_form"></div>
+        </div>
+
+        
+        
+        
+        
+        
+        <div class="view_body" id="submit_form">
+          <div class="view_inner_form">
+        
+          
+          
+            
+            <div class="inner_title_wrap">
+              <div class="inner_title_box">
+                <div class="inner_title exam_info font_headline3">제출정보</div>
+                <div class="submit_info_box">
+                  
+                  <div class="font_subtitle3 txt">정상제출</div>
+                  
+                  <div class="font_caption1 date">2026.11.10 (화) 오후 12:01</div>
+                </div>
+              </div>
+              
+            
+              <div class="more_menu_wrap">
+                <button type="button" class="icon_btn xxsmall tertiary_gray">
+                  <svg></svg>
+                </button>
+                <div class="more_menu_list">
+                  <ul>
+                    <li>  
+                      
+                      <button id="updateBtn" class="font_btn2 icon update" type="button" onkeypress="this.onclick;" onclick="openReportSubmitPop('/ilos/cls/st/report/report_update_pop.acl?RT_SEQ=1000011&USER_ID=20269999');">텍스트14</button>
+                                           
+                    </li>
+                    <li>  
+                      <button id="delBtn" class="font_btn2 icon delete" type="button" onkeypress="this.onclick;" onclick="deleteReport()">텍스트15</button>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+              
+            </div>
+            <div class="inner_content_wrap"> 
+              
+                
+                
+                 
+                <div id="tbody_submit_file" class="attach_container"></div>
+                  
+                
+              
+            </div>
+            
+          
+          
+        
+            
+              
+            
+              
+            
+            
+          </div>
+        </div> 
+        
+        
+          
+        
+      </article>
+      
+      <div class="top_btn_wrap">
+        <button class="scroll_top_btn" type="button" title="" onkeypress="this.onclick;"></button>
+      </div>
+    </section>
+
+<div id="report_submit_pop"></div>

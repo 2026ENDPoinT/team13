@@ -41,6 +41,8 @@ import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.SchoolCourse;
  * <li>같은 학생이 {@code interval} 안에 다시 로그인하면 학교 강의실을 읽지 않는다. 동시에 도는 가져오기가 {@code concurrency}를 넘으면 그
  * 로그인은 가져오지 않는다.</li>
  * <li>학생으로 수강 중인 과목 가운데 학교 메인 화면에 있던 과목만 읽는다. 담당 과목, 학교 화면에 없는 과목은 읽지 않는다.</li>
+ * <li>과목마다 강의실 화면 다음에 공지 목록(학교 쪽 읽음을 바꾸지 않는 목록 화면)을 읽어 둔다(ADR-0043). 안 읽은 공지 수가 이것으로
+ * 정해진다. 공지 목록을 읽지 못해도 그 과목의 가져오기는 실패로 세지 않는다.</li>
  * </ul>
  */
 @Component
@@ -56,10 +58,14 @@ class SchoolActivityImport implements DisposableBean {
 
 	private final ThreadPoolExecutor executor;
 
-	SchoolActivityImport(SchoolActivityProperties properties, SchoolActivities store, MemberCourses memberCourses) {
+	private final SchoolNotices notices;
+
+	SchoolActivityImport(SchoolActivityProperties properties, SchoolActivities store, MemberCourses memberCourses,
+			SchoolNotices notices) {
 		this.properties = properties;
 		this.store = store;
 		this.memberCourses = memberCourses;
+		this.notices = notices;
 		this.executor = new ThreadPoolExecutor(properties.concurrency(), properties.concurrency(), 30, TimeUnit.SECONDS,
 				new ArrayBlockingQueue<>(properties.concurrency()),
 				Thread.ofPlatform().daemon().name("school-activity-import-", 1).factory(),
@@ -153,6 +159,7 @@ class SchoolActivityImport implements DisposableBean {
 					failed++;
 					log.warn("School course room save failed: course={} type={}", courseId, ex.getClass().getSimpleName());
 				}
+				readNotices(rooms, keys.get(courseId), courseId, userId, deadline);
 			}
 			log.info("School activity import finished: user={} read={} failed={} ms={}", userId, read, failed,
 					(System.nanoTime() - started) / 1_000_000);
@@ -170,6 +177,24 @@ class SchoolActivityImport implements DisposableBean {
 					log.warn("School activity import record failed: type={}", ex.getClass().getSimpleName());
 				}
 			}
+		}
+	}
+
+	/** 과목의 학교 공지 목록(목록 화면)을 읽어 둔다. 실패는 로그만 남긴다. */
+	private void readNotices(SchoolCourseRooms rooms, String courseKey, long courseId, long userId, long deadline) {
+		long remaining = deadline - System.nanoTime();
+		if (remaining <= 0) {
+			return;
+		}
+		try {
+			this.notices.save(courseId, userId,
+					rooms.notices(courseKey, this.properties.requestTimeout(), Duration.ofNanos(remaining)));
+		}
+		catch (SchoolLoginException ex) {
+			log.warn("School notice list read failed: course={} reason={}", courseId, ex.getMessage());
+		}
+		catch (RuntimeException ex) {
+			log.warn("School notice list read failed: course={} type={}", courseId, ex.getClass().getSimpleName());
 		}
 	}
 

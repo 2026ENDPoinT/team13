@@ -2,10 +2,13 @@ package com.stackcorp.astra.communication;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
+import com.stackcorp.astra.catalog.api.SchoolCourseNotices;
 import com.stackcorp.astra.communication.Authors.Author;
 import com.stackcorp.astra.communication.NoticeRepository.NoticeInput;
 import com.stackcorp.astra.communication.NoticeRepository.NoticeItemRow;
@@ -59,9 +62,11 @@ class NoticeService {
 
 	private final AuditLog audit;
 
+	private final SchoolCourseNotices schoolNotices;
+
 	NoticeService(NoticeRepository notices, CourseBoards boards, PostReactions reactions, CourseMemberships memberships,
 			Authors authors, RateLimiter rateLimiter, TransactionTemplate transaction, NoticeNotifications alerts,
-			Idempotency idempotency, AuditLog audit) {
+			Idempotency idempotency, AuditLog audit, SchoolCourseNotices schoolNotices) {
 		this.notices = notices;
 		this.boards = boards;
 		this.reactions = reactions;
@@ -72,24 +77,39 @@ class NoticeService {
 		this.alerts = alerts;
 		this.idempotency = idempotency;
 		this.audit = audit;
+		this.schoolNotices = schoolNotices;
 	}
 
-	@Transactional(readOnly = true)
-	NoticePage list(long userId, long courseId, String query, int page, int size) {
+	/**
+	 * 학생에게는 학교 강의실 공지({@link SchoolCourseNotices}, ADR-0043)를 서비스 공지 뒤에 학교 목록 순서로 붙인다. 쪽은 두 목록을 이은
+	 * 순서로 자르고 total은 둘의 합이다. 학교 목록을 읽을 수 있어 transaction 밖에서 돈다(학교 요청 동안 DB 연결을 잡지 않는다).
+	 */
+	NoticePage list(Actor actor, long courseId, String query, int page, int size) {
+		long userId = actor.userId();
 		boolean manager = role(userId, courseId) == CourseRole.INSTRUCTOR;
 		String titleQuery = PlainText.query(query);
 		if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) {
 			throw ApiException.invalid("page는 1 이상, size는 1 이상 " + MAX_PAGE_SIZE + " 이하여야 합니다.");
 		}
+		List<SchoolCourseNotices.SchoolNoticeItem> school = manager ? List.of()
+				: this.schoolNotices.list(actor, courseId)
+					.stream()
+					.filter((n) -> titleQuery == null
+							|| n.title().toLowerCase(Locale.ROOT).contains(titleQuery.toLowerCase(Locale.ROOT)))
+					.toList();
 		LocalDateTime now = this.notices.now();
-		long total = this.notices.count(courseId, manager, now, titleQuery);
-		List<NoticeItem> items = this.notices
-			.page(courseId, userId, manager, now, titleQuery, (int) Math.min((long) (page - 1) * size, Integer.MAX_VALUE),
-					size)
+		long nativeTotal = this.notices.count(courseId, manager, now, titleQuery);
+		long offset = (long) (page - 1) * size;
+		List<NoticeListItem> items = new ArrayList<>(this.notices
+			.page(courseId, userId, manager, now, titleQuery, (int) Math.min(offset, Integer.MAX_VALUE), size)
 			.stream()
 			.map((row) -> NoticeItem.of(row, now))
-			.toList();
-		return new NoticePage(items, total, page, size);
+			.toList());
+		long schoolFrom = Math.max(0, offset - nativeTotal);
+		for (long i = schoolFrom; i < school.size() && items.size() < size; i++) {
+			items.add(SchoolNoticeItem.of(school.get((int) i)));
+		}
+		return new NoticePage(items, nativeTotal + school.size(), page, size);
 	}
 
 	@Transactional(readOnly = true)
@@ -237,8 +257,13 @@ class NoticeService {
 
 	}
 
+	/** 공지 목록의 항목. 서비스 공지와 학교 공지(학생에게만, 서비스 공지 뒤)다. */
+	sealed interface NoticeListItem permits NoticeItem, SchoolNoticeItem {
+	}
+
 	record NoticeItem(long noticeId, String title, String excerpt, boolean pinned, LocalDateTime publishedAt,
-			boolean published, int viewCount, boolean read, boolean confirmed, Integer readCount, Integer confirmCount) {
+			boolean published, int viewCount, boolean read, boolean confirmed, Integer readCount,
+			Integer confirmCount) implements NoticeListItem {
 
 		static NoticeItem of(NoticeItemRow row, LocalDateTime now) {
 			return new NoticeItem(row.noticeId(), row.title(), row.excerpt(), row.pinned(), row.publishedAt(),
@@ -248,7 +273,27 @@ class NoticeService {
 
 	}
 
-	record NoticePage(List<NoticeItem> items, long total, int page, int size) {
+	/**
+	 * 학교 강의실 공지(ADR-0043). 서비스 공지({@link NoticeItem})와 같은 이름의 값에 {@code origin}, {@code expired},
+	 * {@code schoolUrl}을 더한다. 상세는 {@code GET /api/courses/{courseId}/notices/school-<id>}이고 읽음·확인 명령은 없다.
+	 * @param noticeId {@code "school-<id>"}
+	 * @param read 이 학생이 학교에서 읽었는지(학교 목록의 안 읽음 표시. 이 학생의 학교 목록을 읽은 적이 없으면 true)
+	 * @param viewCount 학교 목록의 조회수. 모르면 0
+	 */
+	record SchoolNoticeItem(String noticeId, String origin, String title, String excerpt, boolean pinned,
+			LocalDateTime publishedAt, boolean published, int viewCount, boolean read, boolean confirmed,
+			Integer readCount, Integer confirmCount, boolean expired, String schoolUrl) implements NoticeListItem {
+
+		static SchoolNoticeItem of(SchoolCourseNotices.SchoolNoticeItem notice) {
+			return new SchoolNoticeItem("school-" + notice.schoolNoticeId(), "school", notice.title(),
+					notice.excerpt(), false, notice.postedAt(), true,
+					notice.viewCount() == null ? 0 : notice.viewCount(), notice.read(), false, null, null,
+					notice.expired(), notice.schoolUrl());
+		}
+
+	}
+
+	record NoticePage(List<NoticeListItem> items, long total, int page, int size) {
 	}
 
 	record NoticeState(long noticeId, boolean read, boolean confirmed) {

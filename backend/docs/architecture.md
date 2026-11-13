@@ -54,7 +54,7 @@
 | [ADR-0039](adr/0039-institution-wall-clock-time.md) | 일시는 기관 시간대(기본 `Asia/Seoul`)의 벽시계로 두고, DB session과 JVM을 그 시간대에 고정한 뒤 시작할 때 세 값이 같은지 확인한다. `Instant`는 절대 시각이고 기관 시간대는 `GET /api/auth/methods`가 알린다 |
 | [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음은 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 녹음 바이트는 업로드 흐름(용도 `study_recording`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 구간 응답으로 내보낸다 |
 | [ADR-0042](adr/0042-school-activity-import.md) | 학번·학교 비밀번호 로그인 때 그 학생의 학교 session으로 과목마다 학교 강의실 첫 화면을 차례로 읽어 주차·학습활동 목록과 본인 완료 표시를 두고, 학생의 강의실 주차 목록에 `origin: "school"` 행으로 붙인다. 로그인은 짧게만 기다리고 나머지는 뒤에서 이어 가며, 학교 session은 그 작업이 끝나면 버린다. 내용(파일, 영상, 제출물)은 가져오지 않고 학교 e-Class에서 연다 |
-| [ADR-0043](adr/0043-school-content.md) | 학교 로그인으로 열린 학교 session(쿠키)을 STack session에 붙여 메모리에 두고(로그아웃·만료 때 닫는다), 학생이 STack에서 학교 자료를 열 때 그 학생의 학교 session으로 학교 상세를 읽어 서비스 자료 모양으로 준다. 학교 파일은 학생이 열 때 받아 과목 파일(용도 `school_file`)로 저장해 같은 과목 구성원이 서비스 파일 경로로 함께 연다. 목록은 학교 쪽 상태를 바꾸지 않는 화면만 읽고, 영상 학습창·2차 인증·출석 요청은 부르지 않는다 |
+| [ADR-0043](adr/0043-school-content.md) | 학교 로그인으로 열린 학교 session(쿠키)을 STack session에 붙여 메모리에 두고(로그아웃·만료 때 닫는다), 학생이 STack에서 학교 자료·공지를 열 때 그 학생의 학교 session으로 학교 상세를 읽어 서비스 자료·공지 모양으로 준다. 학교 파일(자료·공지 첨부)은 학생이 열 때 받아 과목 파일(용도 `school_file`)로 저장해 같은 과목 구성원이 서비스 파일 경로로 함께 연다. 목록은 학교 쪽 상태를 바꾸지 않는 화면만 읽고(공지의 안 읽은 수도 그 목록에서 센다), 영상 학습창·2차 인증·출석 요청과 공지 확인은 부르지 않는다 |
 
 ## 2. 부하 가정
 
@@ -165,6 +165,7 @@ flowchart LR
 - 요약 게시 여부: `learning`과 `summary`는 서로 의존하지 않으므로 자료 목록과 파일모음이 묻는 `learning.api.FileSummaries` port를 `integration`이 `summary.api.PublishedSummaries`로 구현한다(`summary.api.CourseStaff`와 같은 방향). 파일 ID를 모아 쿼리 한 번으로 묻는다.
 - 수강생 화면의 학습 열: 최근 학습과 진도율은 `learning`의 기록이고 `catalog`는 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.RosterLearning` port를 정의하고 `learning`이 구현한다. 한 쪽의 사용자 ID를 모아 사용자 수와 관계없이 같은 수의 쿼리로 묻는다.
 - 내 과목의 안 읽은 공지 수: 공지와 읽음 기록은 `communication`의 것이고 `catalog`는 `communication`에 의존하지 않으므로 `catalog`가 `catalog.api.UnreadCourseNotices` port를 정의하고 `communication`이 메인 화면의 `CourseNoticeDigest.unreadCounts`와 같은 집계로 구현한다. 목록의 과목 ID를 모아 과목 수와 관계없이 쿼리 한 번으로 묻는다.
+- 학교 강의실 공지: 학교 공지와 학생의 학교 읽음 표시는 학교 session을 쓰는 `learning`이 두고(ADR-0043), 공지 목록과 안 읽은 공지 수는 `communication`이 낸다. `communication`은 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.SchoolCourseNotices` port를 정의하고 `learning`이 구현한다. 안 읽은 수는 과목 수와 관계없이 쿼리 한 번이다. 학교 공지 상세(`/notices/school-{id}`)는 `learning`의 controller다.
 - 아바타 사진 유무: 이름 옆에 아바타를 그리는 `communication`·`learning` 응답은 사용자 ID 옆에 사진 유무를 준다. 판정은 `files`가 `files.api.AvatarPhotos`로 내보내고 `files/avatar/AvatarImages`가 아바타 경로와 같은 규칙으로 구현한다. 현재 사진은 `identity.api.ProfileImages.withCurrent`로, 공통 과목은 `catalog.api.CourseMates`로 사람 수와 관계없이 쿼리 두 번 이하에 묻는다.
 
 ### 4.2 모듈 규칙
@@ -422,7 +423,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 모든 과목에 역할·학기와 관계없이 안 읽은 공지 수(`unreadNotices`: 메인 화면 과목의 같은 필드와 같은 집계, 강의실 왼쪽 메뉴의 공지 배지)가 있다. 역할은 과목 행과 같은 문장에서 정하고 수강생 수와 안 읽은 공지 수는 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
+| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 모든 과목에 역할·학기와 관계없이 안 읽은 공지 수(`unreadNotices`: 메인 화면 과목의 같은 필드와 같은 집계, 강의실 왼쪽 메뉴의 공지 배지)가 있다. 학교 로그인 학생에게는 학교 공지 가운데 그 학생의 학교 공지 목록(로그인 때와 공지 목록을 열 때 읽는 목록 화면)에 안 읽음으로 나오고 STack에서 열지 않은 수를 더한다. 이 수를 위해 학교 공지를 열지 않는다([ADR-0043](adr/0043-school-content.md)). 역할은 과목 행과 같은 문장에서 정하고 수강생 수와 안 읽은 공지 수는 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
 | `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나. 항목은 `/api/me/courses`와 같다(`learners`는 담당자에게만) |
 | `GET /api/courses/{courseId}/weeks` | 과목 구성원 | `{serverTime, weeks}`. 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 활동마다 DB 시계로 정한 `phase`(`not_open`·`open`·`late`·`closed`, 과제·퀴즈·설문 화면과 같은 경계)와, 평가 활동이면 `assignmentId`·`quizId`·`surveyId` 중 하나. 자료·영상 활동은 `activityId`가 그 화면의 ID다. 학생에게는 학교 강의실에서 가져온 행(`activityId: "school-<번호>"`, `origin: "school"`, 화면 유형 `type`, `schoolType`, `schoolKind`, `phase`, 본인 `done`(모르면 null), `attendance`, `learningTimeSec`, `offline`, 학교에서 여는 `schoolUrl`)과 학교에만 있는 주차를 같은 목록에 붙인다. 담당자에게는 붙이지 않는다([ADR-0042](adr/0042-school-activity-import.md)). 쿼리는 권한 판정 뒤 학생 5번, 담당자 3번 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부(파일마다 `summaryPublished`), 강의 영상 항목, `phase`, `serverTime`, 평가 활동이면 그 유형의 ID |
@@ -439,14 +440,15 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/courses/{courseId}/notices?q=&page=&size=` | 과목 구성원 | 공지 목록. 고정 공지, 게시 일시 역순. `q`는 제목 검색. 항목마다 요청한 사람의 `read`, 담당자에게만 열람·확인 수 |
+| `GET /api/courses/{courseId}/notices?q=&page=&size=` | 과목 구성원 | 공지 목록. 고정 공지, 게시 일시 역순. `q`는 제목 검색. 항목마다 요청한 사람의 `read`, 담당자에게만 열람·확인 수. 학생에게는 그 뒤에 학교 강의실 공지(`noticeId: "school-<번호>"`, `origin: "school"`, `expired`, `schoolUrl`, 학교 목록 순서)가 붙고 `total`과 쪽은 두 목록을 이은 것이다. 학교 공지 목록은 그 학생의 학교 공지 목록 화면(읽음을 바꾸지 않는다)을 `astra.school-content.list-interval`에 한 번 읽어 둔 것이고 `read`는 그 화면의 안 읽음 표시다([ADR-0043](adr/0043-school-content.md)) |
 | `GET /api/courses/{courseId}/notices/{noticeId}` | 그 공지를 볼 수 있는 사람 | 공지 상세와 작성자(`authorId`, `authorName`, `authorHasPhoto`). 읽음을 남기지 않는다 |
+| `GET /api/courses/{courseId}/notices/school-{id}` | 학교 로그인한 그 과목 학생 | 학교 공지 상세. 그 학생의 학교 session으로 학교 상세와 첨부 목록을 읽는다(학교에서 그 학생이 읽은 것으로 바뀐다. "공지를 확인했습니다"는 보내지 않는다). 서비스 공지 상세와 같은 이름의 값(`authorId`·`version` 등은 null)에 `origin`, `expired`, `files`(자료 파일과 같은 모양, 받기 전 `fileId: "school-file-<번호>"`), `schoolUrl`. 본문은 글자이고 저장하지 않는다. 학교 session이 없거나 끝났으면 409 `school_signin_required`. 학교 공지에는 `read`·`confirm` 명령이 없다 |
 | `POST /api/courses/{courseId}/notices` | 담당자 | 공지 작성. 201. 게시 일시를 비우면 지금, 미래면 예약, `published:false`면 임시. `Idempotency-Key` 지원(공용 원장). 같은 key의 같은 요청은 처음 응답(201), 다른 본문·과목은 409 `idempotency_conflict` |
 | `PUT /api/courses/{courseId}/notices/{noticeId}` | 담당자 | 공지 전체 수정. 본문의 `version`이 다르면 409 `version_conflict` |
 | `DELETE /api/courses/{courseId}/notices/{noticeId}` | 담당자 | 소프트 삭제. 204 |
 | `POST /api/courses/{courseId}/notices/{noticeId}/read` · `/confirm` | 그 공지를 볼 수 있는 사람 | 읽음, 확인 표시. 몇 번 보내도 결과가 같다. 조회수는 처음 읽을 때만 오른다 |
 
-제목과 본문은 일반 텍스트로만 받고 내보낸다. 첨부는 아직 받지 않는다.
+제목과 본문은 일반 텍스트로만 받고 내보낸다. 서비스 공지는 첨부를 아직 받지 않는다(학교 공지의 첨부는 학교 파일이다).
 
 ### 7.7 강의실 질의응답과 열린게시판
 

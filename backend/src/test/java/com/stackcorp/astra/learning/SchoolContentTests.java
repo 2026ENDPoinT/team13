@@ -26,7 +26,8 @@ import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
-import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolMaterial;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolPost;
 import com.stackcorp.astra.identity.api.SchoolCourseRooms;
 import com.stackcorp.astra.identity.api.SchoolCourseRooms.SchoolActivity;
 import com.stackcorp.astra.identity.api.SchoolCourseRooms.SchoolCourseRoom;
@@ -215,7 +216,7 @@ class SchoolContentTests extends IntegrationTest {
 			.path("items");
 	}
 
-	/** 학교 강의실 대역. 자료 하나에 PDF 하나. */
+	/** 학교 강의실 대역. 자료 하나에 PDF 하나, 공지 둘(하나는 안 읽음, PDF 하나 첨부). */
 	static final class FakeSchool implements SchoolCourseRooms {
 
 		final String key;
@@ -229,6 +230,19 @@ class SchoolContentTests extends IntegrationTest {
 		final SchoolFile file = new SchoolFile("SYNFILE000001", "31", "슬라이드.pdf", 2048L, "lecture_material", "31");
 
 		volatile List<SchoolFile> listed = List.of(this.file);
+
+		final AtomicInteger noticeLists = new AtomicInteger();
+
+		final AtomicInteger noticeDetails = new AtomicInteger();
+
+		final SchoolFile noticeFile = new SchoolFile("SYNFILE000002", "SYNCONTENT0002", "안내.pdf", 1024L, "notice",
+				"71");
+
+		volatile List<SchoolNotice> notices = List.of(
+				new SchoolNotice("71", "시험 안내", "다음 주", LocalDateTime.of(2026, 11, 5, 21, 0), 12, false, false,
+						"https://eclass.example.ac.kr/connect?SEQ=71"),
+				new SchoolNotice("70", "Midterm", null, LocalDateTime.of(2026, 10, 1, 9, 0), 40, true, true,
+						"https://eclass.example.ac.kr/connect?SEQ=70"));
 
 		volatile boolean expired;
 
@@ -258,11 +272,29 @@ class SchoolContentTests extends IntegrationTest {
 		}
 
 		@Override
-		public SchoolMaterial material(String courseKey, String itemId, Duration requestTimeout, Duration remaining) {
+		public SchoolPost material(String courseKey, String itemId, Duration requestTimeout, Duration remaining) {
 			check(courseKey);
 			this.details.incrementAndGet();
-			return new SchoolMaterial("학교 자료", LocalDateTime.of(2026, 9, 15, 9, 0), "담당 교수", "첫 줄\n둘째 줄",
+			return new SchoolPost("학교 자료", LocalDateTime.of(2026, 9, 15, 9, 0), "담당 교수", "첫 줄\n둘째 줄",
 					List.of(this.file));
+		}
+
+		@Override
+		public List<SchoolNotice> notices(String courseKey, Duration requestTimeout, Duration remaining) {
+			check(courseKey);
+			this.noticeLists.incrementAndGet();
+			return this.notices;
+		}
+
+		@Override
+		public SchoolPost notice(String courseKey, String itemId, Duration requestTimeout, Duration remaining) {
+			check(courseKey);
+			this.noticeDetails.incrementAndGet();
+			if (this.notices.stream().noneMatch((n) -> n.itemId().equals(itemId))) {
+				throw new SchoolLoginException(SchoolLoginException.Kind.NOT_FOUND, "post_unrecognized");
+			}
+			return new SchoolPost("시험 안내", LocalDateTime.of(2026, 11, 5, 21, 0), "담당 교수", "본문",
+					"71".equals(itemId) ? List.of(this.noticeFile) : List.of());
 		}
 
 		@Override

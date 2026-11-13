@@ -1,0 +1,601 @@
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+$(function() {
+  
+  $.ajax({
+    url: "/ilos/cls/st/co/efile_list.acl",
+    type: "POST",
+    data: { 
+      ud : "20269999",
+      ky : "A202639999900002",
+      pf_st_flag : "2",
+      CONTENT_SEQ : "SYNKEY0000010",
+      encoding : "utf-8"
+          },
+    async: true,
+    success: function(html){
+      $("#tbody_file").append(html);
+      if($("#tbody_file").find("a").length > 0){
+        $("#tbody_file").show();
+      }
+    },
+    error : ajaxErrorMsg
+  });
+  
+  $("#SCH_VALUE2").keypress(function(event) {
+    if(event.which == 13) {
+      searchMnu();
+    }
+  });
+  
+  $("#tab_content1").show();
+
+  $("#cmmt_btn1000003").click( function() {
+    $(this).toggleClass('selected'); 
+    $('#comment_form_1000003').stop().slideToggle(200);
+    if($(this).hasClass('selected')){
+      cmmtList("1000003","K001","KC01","st","");
+    }else{
+      setTimeout(function(){
+	      $("#comment_form_1000003").html('');
+      }, 200);
+    }
+  });
+  
+  
+  
+  $(".editor_content").setEditorView();
+});
+
+function searchMnu() {
+  var sch_case      = "";
+  var chk_reader    = $("#CHK_READER").hasClass("selected") ? "Y" : "N";
+  var chk_nonreader = $("#CHK_NONREADER").hasClass("selected") ? "Y" : "N";
+  var sch_nm        = $("#SCH_NM").val() == "SCH_DEPT_NM" ? "SCH_DEPT_NM" : "SCH_USER_NM";
+  
+  if(chk_reader != chk_nonreader) {
+    if(chk_reader == "Y") {
+      sch_case = "R";
+    } else if(chk_nonreader == 'Y') {
+      sch_case = "N";
+    }
+  }
+  
+  if(pfSessionRoomCheck("20269999","A202639999900002")){
+    return;
+  }
+  $("#allchk").prop("checked", false);
+  $(window).off("scroll.list");
+  circleLoaderPrepend3("list_zone1");
+  $.ajax({
+    url: "/ilos/cls/pf/notice/notice_reader_list.acl",
+    type: "POST",
+    data: {
+      ARTL_NUM      : '1000003',
+      SCH_VALUE2    : $("#SCH_VALUE2").val(),
+      SCH_STU_GUBUN : $("#SCH_STU_GUBUN").val(),
+      SCH_CASE      : sch_case,
+      SCH_NM        : sch_nm,
+      ODR           : getNewSortString("sortable"),
+      PAGING_YN     : "Y",
+      start         : "1",
+      display       : "50",
+      encoding      : "utf-8"
+    },
+    async: true,
+    success: function(data) {
+      $("#list_zone1").html(data);
+      circleLoaderRemove3("list_zone1");
+      updateBottomWrap();
+    },
+    error : ajaxErrorMsg
+  });
+}
+
+function closeNoticePopup() {
+  $("#notice_view_pop, #view_pop").closest(".ui-dialog-content").dialog("close");
+}
+
+$("#btnArtlConfirm").click(function() {
+  var $btn = $(this);
+  $btn.prop("disabled", true); // 중복 클릭 방지
+  
+  $.ajax({
+    url: "/ilos/cls/st/notice/notice_confirm.acl",
+    type: "POST",
+    data: {
+      BRD_ID   : "K001",
+      ARTL_NUM : "1000003",
+      encoding : "utf-8"
+    },
+    success: function(res) {
+      if(res.messageCode === "S_INSERT" || res.messageCode === "S_DELETE") {
+        var artlNum = "1000003";
+        closeNoticePopup();
+        
+        // 공지사항 페이지 목록 새로고침
+        if(typeof noticeListPage === "function") {
+          noticeListPage();
+        }
+        
+        // 홈화면 상단 공지 목록에서 해당 글 제거 (S_INSERT일 때만)
+        if(res.messageCode === "S_INSERT") {
+          $(".notice_list[onclick*='" + artlNum + "']").fadeOut(300, function() {
+            $(this).remove();
+            // 남은 공지가 없으면 컨테이너도 숨김
+            if($(".top_notice_container .notice_list").length === 0) {
+              $(".top_notice_container").hide();
+            }
+          });
+        } else {
+          // S_DELETE면 홈 목록 다시 표시 (topNoticeList 함수로 새로고침)
+          if(typeof topNoticeList === "function") {
+            topNoticeList();
+          }
+        }
+      } else {
+        $btn.prop("disabled", false);
+        alert("문구");
+      }
+    },
+    error: function() {
+      $btn.prop("disabled", false);
+      ajaxErrorMsg();
+    }
+  });
+});
+</script>
+
+<header class="dialog_header">
+  <div class="view_header">
+    <div class="view_menu">
+      <div class="font_subtitle3 menu_icon notice">Announcement</div>
+    </div>
+    <div class="view_title_wrap">
+      <div class="view_title">
+        <span class="font_headline2">텍스트1</span>
+      </div>
+    </div>
+  </div>
+</header>
+<article class="dialog_contents">
+  <section id="tab_content1" class="notice_tab_content">
+    <div class="notice_table">
+      <table class="bbsview">
+        <caption>과제물 게시판 내용 상세보기</caption>
+        <colgroup>
+          <col style="width:140px;">
+          <col>
+        </colgroup>
+        <tbody>
+          <tr>
+           <th scope="row">Writer</th>
+           <td>텍스트2</td>
+          </tr>
+          <tr>
+           <th scope="row">Publishing Date</th>
+           <td>Thu, November 5 9:00 PM</td>
+          </tr>
+          <tr>
+            <th scope="row">Announcement expiration date</th>
+            <td>
+            
+              <div>텍스트3</div>
+            
+            </td>
+          </tr>
+          <tr>                
+            <th scope="row">Hits</th>
+            <td class="count">
+              <span class="view">54</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="textviewer font_body2" colspan="2">
+              <div class="editor_content"><p data-pm-slice="1 1 []">텍스트4</p><p>텍스트5</p><p>텍스트6</p><p>텍스트7</p><p>텍스트8</p><p>텍스트9</p></div>
+              
+              <div id="tbody_file" class="attach_container"></div>
+                                 
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+    </div>
+    <div class="comment_zone">
+      <div class="comment_btn_wrap">
+        <button id="cmmt_btn1000003" type="button" class="comment_btn" onclick="" onkeypress="this.onclick;">
+          <svg></svg>
+          <span id="cmmt_cnt_1000003">0</span>
+        </button>      
+        
+        
+          
+          <button type="button" id="btnArtlConfirm" class="notice_confirm_btn" onkeypress="this.onclick;">
+            <div class="notice_confirm">텍스트10
+              <svg></svg>
+            </div>
+          </button>
+        
+      </div>
+      
+            
+      
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+  const open_cmmt_reply_arr = [];
+  
+  $(function() {  
+    cmmtList("1000003","K001","KC01","st","");
+  });
+  
+  function cmmtList(menu_seq,brd_id,cmmt_brd_id,auth,menu_seq2, target_cmmt) {
+    $.ajax({
+      url: "/ilos/cls/st/co/cmmt_list.acl",
+      type: "POST",
+      data: { 
+        KJKEY    : "A202639999900002",
+        MENU_SEQ : menu_seq,
+        MENU_SEQ2 : menu_seq2,
+        BRD_ID : brd_id,
+        CMMT_BRD_ID : cmmt_brd_id,
+        auth : auth,
+        encoding : "utf-8"
+      },
+      async: false,
+      success: function(data){
+        $("#comment_form_"+menu_seq).html(data);
+        
+        if(open_cmmt_reply_arr.length > 0){
+          for(let i = 0; i < open_cmmt_reply_arr.length; i++){
+            $('#cmmt_reply_wrap_btn_'+ open_cmmt_reply_arr[i]).addClass('active');
+            $('#cmmt_reply_wrap_btn_'+ open_cmmt_reply_arr[i]).parent().addClass('active');
+            $('#comment_reply_list_wrap_'+open_cmmt_reply_arr[i]).css('display', 'flex');
+          }
+        }
+        
+        if(target_cmmt){
+          setTimeout(function(){
+            if($('#comment_'+target_cmmt).parent().hasClass('comment_reply_list_wrap')){
+              const cmmt_wrap = $("#comment_"+target_cmmt).closest(".comment_list_wrap").find("button.cmmt_reply_wrap_header");
+              const parent_cmmt_num = cmmt_wrap.data('num');
+              
+              cmmt_wrap.addClass('active');
+              $('#comment_reply_list_wrap_'+parent_cmmt_num).css('display', 'flex');    
+              checkOpenCmmtReplyWrap(parent_cmmt_num, 1);
+              
+              open_cmmt_reply_arr.push(parent_cmmt_num);
+            }
+            
+            const window_offsetTop = document.querySelector('html').scrollTop;
+            const offset = $('#comment_'+target_cmmt).offset();
+            $('#comment_'+target_cmmt).closest('.ui-dialog-form').animate({scrollTop: offset.top - window_offsetTop - 100}, 500);
+            showTatgetContent($('#comment_'+target_cmmt));
+          }, 100);
+        }
+        
+      },
+      error : function(jqXHR, exception){
+        ajaxErrorMsg(jqXHR, exception);
+        return false;
+      }
+    });
+  }
+  function insertCmmt(obj,menu_seq,brd_id,cmmt_brd_id,auth,menu_seq2) {
+    if(obj.hasClass('disabled')){
+      return false;
+    }
+    
+    var cm = trim($("#wrtExplain_"+menu_seq).val());
+    if(cm.length == 0){
+      alert("Please enter comments");
+      $("#wrtExplain_"+menu_seq).focus();
+      return;
+    }    
+  
+    if(getLength(cm)  > 1800 ) {
+      alert(imaxsoft.i18n.Resource.getString('err.cmmtLimitSize',{'$size':getLength(cm)+'byte'}));
+      $("#wrtExplain_"+menu_seq).focus();
+      return;
+    }
+    
+    $.ajax({
+      url: "/ilos/cls/st/co/cmmt_insert.acl",
+      type: "POST",
+      data: { 
+        BRD_ID : brd_id,
+        auth : auth,
+        MENU_SEQ : menu_seq,
+        MENU_SEQ2 : menu_seq2,
+        OPEN_YN : $("input:checkbox[id='OPEN_YN"+menu_seq+"']").is(":checked") ? "N" : "Y",
+        CMT : cm,
+        ky  : "A202639999900002",
+        ud  : "20269999",
+        encoding : "utf-8"
+      },
+      async: false,
+      success: function(data){
+        if(data.isError){
+          alert(data.message);
+        }
+        cmmtList(menu_seq,brd_id,cmmt_brd_id,auth,menu_seq2);
+        
+        if(brd_id == 'K009'){
+          showDetailUserList();
+        }
+        if(brd_id == 'K001'){
+          
+          noticeListPage();
+          
+        }
+        if(brd_id == 'K004'){
+          listPage();
+        }
+      },
+      error : function(jqXHR, exception){
+        ajaxErrorMsg(jqXHR, exception);
+        return false;
+      }
+    });
+  }
+  
+  function updateCmmt(obj,num,menu_seq,brd_id,cmmt_brd_id,auth,content_seq,menu_seq2) {
+    if(obj.hasClass('disabled')){
+      return false;
+    }
+    
+    var _textarea = $("#wrtExplain_"+menu_seq+num);
+    var cm = trim(_textarea.val());
+    
+    if(cm.length == 0){
+      alert("Please enter comments");
+      _textarea.focus();
+      return;
+    }
+  
+    if(getLength(cm)  > 1800 ) {
+      alert(imaxsoft.i18n.Resource.getString('err.cmmtLimitSize',{'$size':getLength(cm)}));
+      _textarea.focus();
+      return;
+    }
+    
+    const open_yn = obj.closest('.comment_body.edit').find('input:checkbox[name=OPEN_YN]').is(':checked') ? "N" : "Y";
+  
+    $.ajax({
+      url: "/ilos/cls/st/co/cmmt_update.acl",
+      type: "POST",
+      data: {
+        BRD_ID : brd_id,
+        auth : auth,
+        CMMT_NUM : num,
+        MENU_SEQ : menu_seq,
+        MENU_SEQ2 : menu_seq2,
+        CONTENT_SEQ : content_seq,
+        OPEN_YN : open_yn,
+        CMT : cm,
+        ky  : "A202639999900002",
+        ud  : "20269999",
+        encoding : "utf-8"
+      },
+      async: false,
+      success: function(data){
+        if(data.isError){
+          alert(data.message);
+        }
+        cmmtList(menu_seq,brd_id,cmmt_brd_id,auth,menu_seq2);
+        
+        if(brd_id == 'K009'){
+          showDetailUserList();
+        }        
+      },
+      error : function(jqXHR, exception){
+        ajaxErrorMsg(jqXHR, exception);
+        return false;
+      }
+    });
+  }
+  
+  function deleteCmmt(num,menu_seq,brd_id,cmmt_brd_id,auth,content_seq,menu_seq2) {
+    if(!confirm("Are you sure to delete?")){
+      return false;
+    }
+    $.ajax({
+      url: "/ilos/cls/st/co/cmmt_delete.acl",
+      type: "POST",
+      data: { 
+        BRD_ID : "K001",
+        auth : "st",
+        CMMT_NUM : num,
+        MENU_SEQ : menu_seq,
+        MENU_SEQ2 : menu_seq2,
+        CONTENT_SEQ : content_seq,
+        ky  : "A202639999900002",
+        ud  : "20269999",
+        encoding : "utf-8"
+      },
+      async: false,
+      success: function(data){
+        if(data.isError){
+          alert(data.message);
+        }
+        cmmtList(menu_seq,brd_id,cmmt_brd_id,auth,menu_seq2);
+        
+        if(brd_id == 'K009'){
+          showDetailUserList();
+        }  
+        if(brd_id == 'K001'){
+          
+          noticeListPage();
+          
+        }
+        if(brd_id == 'K004'){
+          listPage();
+        }
+      },
+      error : function(jqXHR, exception){
+        ajaxErrorMsg(jqXHR, exception);
+        return false;
+      }
+    });
+  }
+  
+  function resetEditCmmt(num,menu_seq) {
+    $(".comment_body").show();
+    $(".comment_body.edit").hide();
+    $("#comment_body_edit"+menu_seq+num).hide();
+  }
+  function editCmmt(num,menu_seq,open_yn) {
+    var _txt_val = $('#cmt_txt_val_'+num).val();
+    var _editor = $('#wrtExplain_'+menu_seq+num);
+    $('#wrtExplain_'+menu_seq).val("");
+    resetEditCmmt(num,menu_seq);
+    $("#comment_body"+menu_seq+num).hide();
+    $("#comment_body_edit"+menu_seq+num).show();
+    _editor.val(_txt_val);
+    _lec(_editor);
+    _editor.focus();
+    textareaAutoResize(_editor);
+    if("N" == open_yn){
+      $("#reg_nm"+menu_seq+num).removeClass("regnm_hide");
+      $("#reg_nm"+menu_seq+num).addClass("regnm_hide");
+      $('input:checkbox[id="OPEN_YN'+menu_seq+num+'"]').prop("checked",true);
+    }else{
+      $("#reg_nm"+menu_seq+num).removeClass("regnm_hide");
+      $('input:checkbox[id="OPEN_YN'+menu_seq+num+'"]').prop("checked",false);
+    }
+  }
+  function _lec(obj){
+    obj.parent().find(".ext_len").html(getLength(trim(obj.val())));
+    if(getLength(trim(obj.val())) > 0){
+      obj.closest('.comment_textarea_wrap').find('button.cmmt_save').removeClass('disabled');
+    }else{
+      obj.closest('.comment_textarea_wrap').find('button.cmmt_save').addClass('disabled');
+    }
+  }
+  
+  function cancelCmmtReply(cmmt_num){
+    var isClose = true;
+    if($('#wrtExplain2_'+cmmt_num).val() != ''){
+      if(!confirm("Do you want to cancel writing the reply?")){
+        isClose = false;
+      }
+    }
+    if(isClose){
+      $('#comment_reply_body_'+cmmt_num).hide();
+      $('#wrtExplain2_'+cmmt_num).val('');
+      $('#cmmt_reply_btn_'+cmmt_num).removeClass('active');
+      $('#reg_nm_edit'+cmmt_num).removeClass('regnm_hide');
+      $('#OPEN_YN_EDIT'+cmmt_num).prop('checked', false)
+    }
+  }
+  
+  function insertCmmtReply(obj,menu_seq,brd_id,cmmt_brd_id,auth,menu_seq2,cmmt_num) {
+    if(obj.hasClass('disabled')){
+      return false;
+    }
+    
+    const cm = trim($("#wrtExplain2_"+cmmt_num).val());
+    if(cm.length == 0){
+      alert("Please enter comments");
+      $("#wrtExplain2_"+cmmt_num).focus();
+      return;
+    }
+  
+    if(getLength(cm)  > 1800 ) {
+      alert(imaxsoft.i18n.Resource.getString('err.cmmtLimitSize',{'$size':getLength(cm)+'byte'}));
+      $("#wrtExplain2_"+cmmt_num).focus();
+      return;
+    }
+    
+    const ref_cmmt_num = obj.data('r');
+    const parent_cmmt_num = obj.data('p');
+    
+    const open_yn = obj.closest('.comment_body.edit').find('input:checkbox[name=OPEN_YN]').is(':checked') ? "N" : "Y";
+    
+    $.ajax({
+      url: "/ilos/cls/st/co/cmmt_insert.acl",
+      type: "POST",
+      data: { 
+        BRD_ID : brd_id,
+        auth : auth,
+        MENU_SEQ : menu_seq,
+        MENU_SEQ2 : menu_seq2,
+        CMT : cm,
+        REF_CMMT_NUM		: ref_cmmt_num,
+        PARENT_CMMT_NUM : parent_cmmt_num,
+        OPEN_YN : open_yn,
+        ky  : "A202639999900002",
+        ud  : "20269999",
+        encoding : "utf-8"
+      },
+      async: false,
+      success: function(data){
+        if(data.isError){
+          alert(data.message);
+        }
+        checkOpenCmmtReplyWrap(ref_cmmt_num, 2);
+        cmmtList(menu_seq,brd_id,cmmt_brd_id,auth,menu_seq2);
+        
+        if(brd_id == 'K009'){
+          showDetailUserList();
+        }        
+      },
+      error : function(jqXHR, exception){
+        ajaxErrorMsg(jqXHR, exception);
+        return false;
+      }
+    });
+  }
+  
+  
+  function checkOpenCmmtReplyWrap(cmmt_num, dv){
+    
+    cmmt_num = Number(cmmt_num);
+    if(dv == 1){
+      open_cmmt_reply_arr.includes(cmmt_num) ? open_cmmt_reply_arr.splice(open_cmmt_reply_arr.indexOf(cmmt_num), 1) 
+          																	 : open_cmmt_reply_arr.push(cmmt_num);
+    }else if(dv == 2){
+      !open_cmmt_reply_arr.includes(cmmt_num) && open_cmmt_reply_arr.push(cmmt_num);
+    }
+  }
+</script>
+<div id="comment_form_1000003" class="comment_form "></div>
+
+    </div>
+  </section>
+</article>

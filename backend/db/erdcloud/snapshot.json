@@ -13762,6 +13762,304 @@
    ]
   },
   {
+   "_id": "6rba3oBqscw9u69zx",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "school_notice_lists",
+   "name": "학교 공지 목록 읽기",
+   "position": {
+    "x": 10780,
+    "y": 50
+   },
+   "keys": {
+    "pks": [],
+    "fks": [
+     {
+      "_id": "qcuqhPan28SBDQArX",
+      "name": "과목 ID",
+      "pName": "course_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "과목 ID",
+      "relEntity": "4RHRxFgn3tkTjfqW6",
+      "relFieldId": "kkFaq35H5vzyLELFL",
+      "relType": "ZERO_OR_ONE_OR_MANY"
+     },
+     {
+      "_id": "xiA9orD9z6psxRbej",
+      "name": "학생 사용자 ID",
+      "pName": "user_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학생 사용자 ID",
+      "relEntity": "qGnfMsvCrBxdAyZWm",
+      "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+      "relType": "ZERO_OR_ONE_OR_MANY"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "AckbBvrAztxC3bY82",
+     "name": "학교 공지 목록을 마지막으로 읽은 일시",
+     "pName": "listed_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 공지 목록을 마지막으로 읽은 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "eSe38YFF2mjQG6XZC",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "school_notice_states",
+   "name": "학교 공지 학생 읽음 표시",
+   "position": {
+    "x": 10780,
+    "y": 248
+   },
+   "keys": {
+    "pks": [],
+    "fks": [
+     {
+      "_id": "ZF3mSZSYNfrvsgR2A",
+      "name": "학교 공지 ID",
+      "pName": "school_notice_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학교 공지 ID",
+      "relEntity": "qdmMWveDZ5dsEfqZn",
+      "relFieldId": "jq7rmJRLbTjm6k2uT",
+      "relType": "ZERO_OR_ONE_OR_MANY"
+     },
+     {
+      "_id": "SuHNoZCYEDztcdWhE",
+      "name": "학생 사용자 ID",
+      "pName": "user_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학생 사용자 ID",
+      "relEntity": "qGnfMsvCrBxdAyZWm",
+      "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+      "relType": "ZERO_OR_ONE_OR_MANY"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "vFmLfhGZoTebKZS8Y",
+     "name": "학교에서 읽음 여부",
+     "pName": "read_yn",
+     "domain": "",
+     "type": "TINYINT(1)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교에서 읽음 여부",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "oyKn8t6BEeYYr5DoS",
+     "name": "마지막으로 맞춘 일시",
+     "pName": "synced_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "마지막으로 맞춘 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "qdmMWveDZ5dsEfqZn",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "school_notices",
+   "name": "학교 강의실 공지",
+   "position": {
+    "x": 10780,
+    "y": 472
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "jq7rmJRLbTjm6k2uT",
+      "name": "학교 공지 ID",
+      "pName": "school_notice_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학교 공지 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "fBhx6Xd52bx9DsXt7",
+     "name": "과목 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "과목 ID",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "Cdr9f5wzJPJfjf6ea",
+     "name": "학교 공지 번호",
+     "pName": "school_item_id",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 공지 번호(ARTL_NUM)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "rLQe2nBTTs74vakKF",
+     "name": "제목",
+     "pName": "title",
+     "domain": "",
+     "type": "VARCHAR(300)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "제목",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "5WQrE6hc7PmdBY5zS",
+     "name": "목록의 본문 앞부분",
+     "pName": "excerpt",
+     "domain": "",
+     "type": "VARCHAR(300)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "목록의 본문 앞부분",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "vdGRm3urtHuHCQxmF",
+     "name": "게시 일시",
+     "pName": "posted_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "게시 일시(학교 화면, 연도는 과목 학년도)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "LwXjwoZvGCJmEaYsX",
+     "name": "학교 목록의 조회수",
+     "pName": "view_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "학교 목록의 조회수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "GNRZXWKNvCKcGFtsN",
+     "name": "공지 만료 표시 여부",
+     "pName": "expired_yn",
+     "domain": "",
+     "type": "TINYINT(1)",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "공지 만료 표시 여부",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "q3gvci4NgMZHkNmFh",
+     "name": "학교 목록 순서",
+     "pName": "sort_order",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 목록 순서(0부터)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "GgSQErWLBuCJcJZ2x",
+     "name": "학교 e-Class에서 여는 주소",
+     "pName": "school_url",
+     "domain": "",
+     "type": "VARCHAR(500)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 e-Class에서 여는 주소",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "LLhb4fJtZzcKQCRRm",
+     "name": "학교 목록에서 마지막으로 본 일시",
+     "pName": "listed_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 목록에서 마지막으로 본 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Yi9axBcNQe54SHLQG",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "FMShChi9EhL3gfTBb",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "secondary_auth_challenges",
