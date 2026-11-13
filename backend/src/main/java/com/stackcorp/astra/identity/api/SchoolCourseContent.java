@@ -25,20 +25,34 @@ public final class SchoolCourseContent {
 	}
 
 	/**
-	 * 자료 상세.
+	 * 글 상세(자료, 공지).
 	 * @param title 제목
-	 * @param postedAt 공개일. 읽지 못했으면 null
+	 * @param postedAt 공개일·게시일. 읽지 못했으면 null
 	 * @param author 작성자 표시. 없으면 null
 	 * @param body 본문을 글자로 바꾼 것(문단은 줄바꿈). 없으면 null
 	 * @param files 첨부. 화면 순서
 	 */
-	public record SchoolMaterial(String title, LocalDateTime postedAt, String author, String body,
+	public record SchoolPost(String title, LocalDateTime postedAt, String author, String body,
 			List<SchoolFile> files) {
 
-		public SchoolMaterial {
+		public SchoolPost {
 			files = List.copyOf(files);
 		}
 
+	}
+
+	/**
+	 * 강의실 공지 목록의 공지 하나. 목록 화면의 값이다(목록은 학교 쪽 읽음을 바꾸지 않는다).
+	 * @param itemId 학교 공지 번호({@code ARTL_NUM})
+	 * @param excerpt 목록의 본문 앞부분. 없으면 null
+	 * @param postedAt 게시일. 화면에 연도가 없어 과목 학년도로 정한다. 읽지 못했으면 null
+	 * @param viewCount 조회수. 없으면 null
+	 * @param read 로그인한 학생이 학교에서 읽었는지(목록의 안 읽음 표시가 없으면 true)
+	 * @param expired 공지 만료 표시
+	 * @param url 이 공지를 학교 e-Class에서 여는 주소
+	 */
+	public record SchoolNotice(String itemId, String title, String excerpt, LocalDateTime postedAt, Integer viewCount,
+			boolean read, boolean expired, String url) {
 	}
 
 	/**

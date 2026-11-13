@@ -14,7 +14,8 @@ import org.jsoup.nodes.Document;
 import org.junit.jupiter.api.Test;
 
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
-import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolMaterial;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolPost;
 import com.stackcorp.astra.identity.api.SchoolLoginException;
 
 /**
@@ -50,7 +51,7 @@ class SchoolContentPagesTests {
 		String html = text("school-material.html");
 		Document doc = Jsoup.parse(html);
 
-		SchoolMaterial material = SchoolContentPages.material(doc, List.of(), 2026);
+		SchoolPost material = SchoolContentPages.post(doc, List.of(), 2026);
 
 		assertThat(material.title()).isEqualTo("텍스트16");
 		assertThat(material.postedAt()).isEqualTo(LocalDateTime.of(2026, 9, 29, 7, 48));
@@ -63,7 +64,7 @@ class SchoolContentPagesTests {
 	void somethingElseThanAMaterialIsNotFound() {
 		Document doc = Jsoup.parse("<html><body><script>alert('권한이 없습니다.');</script></body></html>");
 
-		assertThatThrownBy(() -> SchoolContentPages.material(doc, List.of(), 2026))
+		assertThatThrownBy(() -> SchoolContentPages.post(doc, List.of(), 2026))
 			.isInstanceOfSatisfying(SchoolLoginException.class,
 					(ex) -> assertThat(ex.kind()).isEqualTo(SchoolLoginException.Kind.NOT_FOUND));
 	}
@@ -84,6 +85,85 @@ class SchoolContentPagesTests {
 		assertThat(SchoolContentPages.bytes("12 B")).isEqualTo(12L);
 		assertThat(SchoolContentPages.bytes("크기 없음")).isNull();
 		assertThat(SchoolContentPages.bytes(null)).isNull();
+	}
+
+	@Test
+	void noticeListReadsEveryNoticeWithReadMarkViewsAndDateInTheCourseYear() throws IOException {
+		String html = text("school-notice-list.html");
+
+		List<SchoolNotice> notices = SchoolContentPages.notices(Jsoup.parse(html), html, 2026, (id) -> "u" + id);
+
+		assertThat(notices).extracting(SchoolNotice::itemId).containsExactly("1000003", "1000001", "1000002");
+		SchoolNotice first = notices.get(0);
+		assertThat(first.title()).isEqualTo("텍스트1");
+		assertThat(first.postedAt()).isEqualTo(LocalDateTime.of(2026, 11, 5, 21, 0));
+		// 댓글 수 칸(.comment)은 조회수가 아니다.
+		assertThat(notices).extracting(SchoolNotice::viewCount).containsExactly(54, 155, 93);
+		assertThat(notices).allSatisfy((n) -> assertThat(n.read()).isTrue());
+		assertThat(notices).extracting(SchoolNotice::expired).containsExactly(false, false, true);
+		assertThat(first.url()).isEqualTo("u1000003");
+		assertThat(SchoolContentPages.noticeTotal(html)).isEqualTo(3);
+	}
+
+	@Test
+	void noticeListUnreadMarkAndUnexpectedRowsAreReadWithoutThrowing() throws IOException {
+		String html = text("school-notice-list-long.html")
+			.replaceFirst("class=\"is_read \"", "class=\"is_read unread\"")
+			.replace("<!-- [S]Paging -->", "<button class=\"board_list_wrap\" data-num=\"x1\"><div class=\"board_title\">"
+					+ "이상한 행</div></button><button class=\"board_list_wrap\" data-num=\"1999999\"></button>"
+					+ "<button class=\"board_list_wrap\" data-num=\"1999998\"><div class=\"board_title\">날짜 없음</div>"
+					+ "<div class=\"reg_info\">곧</div></button><!-- [S]Paging -->");
+
+		List<SchoolNotice> notices = SchoolContentPages.notices(Jsoup.parse(html), html, 2026, (id) -> id);
+
+		assertThat(notices).hasSize(7);
+		assertThat(notices.get(0).read()).isFalse();
+		assertThat(notices.subList(1, 7)).allSatisfy((n) -> assertThat(n.read()).isTrue());
+		SchoolNotice odd = notices.get(6);
+		assertThat(odd.itemId()).isEqualTo("1999998");
+		assertThat(odd.postedAt()).isNull();
+		assertThat(odd.viewCount()).isNull();
+		assertThat(notices.get(5).postedAt()).isEqualTo(LocalDateTime.of(2026, 8, 31, 15, 4));
+	}
+
+	@Test
+	void anEmptyNoticeListIsEmptyAndSomethingElseIsUnrecognized() throws IOException {
+		String empty = text("school-notice-list-empty.html");
+		assertThat(SchoolContentPages.notices(Jsoup.parse(empty), empty, 2026, (id) -> id)).isEmpty();
+
+		String other = "<html><body><script>alert('오류');</script></body></html>";
+		assertThatThrownBy(() -> SchoolContentPages.notices(Jsoup.parse(other), other, 2026, (id) -> id))
+			.isInstanceOfSatisfying(SchoolLoginException.class,
+					(ex) -> assertThat(ex.kind()).isEqualTo(SchoolLoginException.Kind.UNAVAILABLE));
+	}
+
+	@Test
+	void noticeDetailRenderedInEnglishReadsAuthorDateBodyAndAttachmentKey() throws IOException {
+		String html = text("school-notice-view-english.html");
+
+		SchoolPost notice = SchoolContentPages.post(Jsoup.parse(html), List.of(), 2026);
+
+		assertThat(notice.title()).isEqualTo("텍스트1");
+		assertThat(notice.author()).isEqualTo("텍스트2");
+		assertThat(notice.postedAt()).isEqualTo(LocalDateTime.of(2026, 11, 5, 21, 0));
+		assertThat(notice.body()).isEqualTo("텍스트4\n텍스트5\n텍스트6\n텍스트7\n텍스트8\n텍스트9");
+		assertThat(SchoolContentPages.contentSeq(html)).isEqualTo("SYNKEY0000010");
+		assertThat(SchoolContentPages.attachments(page("school-notice-attachments-empty.html"), "notice", "1"))
+			.isEmpty();
+	}
+
+	@Test
+	void noticeDetailInKoreanAndWithUnknownLabelsFindsTheAuthorByPosition() throws IOException {
+		String korean = text("school-notice-view-english.html").replace(">Writer<", ">작성자<")
+			.replace(">Publishing Date<", ">게시일<")
+			.replace("Thu, November 5 9:00 PM", "11월 5일 (목) 오후 9:00");
+		String unknown = korean.replace(">작성자<", ">글쓴이<").replace(">게시일<", ">날짜<");
+
+		for (String html : List.of(korean, unknown)) {
+			SchoolPost notice = SchoolContentPages.post(Jsoup.parse(html), List.of(), 2026);
+			assertThat(notice.author()).isEqualTo("텍스트2");
+			assertThat(notice.postedAt()).isEqualTo(LocalDateTime.of(2026, 11, 5, 21, 0));
+		}
 	}
 
 	private static Document page(String name) {

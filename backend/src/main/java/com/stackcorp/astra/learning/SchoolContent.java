@@ -22,7 +22,7 @@ import com.stackcorp.astra.files.api.ImportedFiles.ImportRejectedException;
 import com.stackcorp.astra.files.api.ImportedFiles.Imported;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
-import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolMaterial;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolPost;
 import com.stackcorp.astra.identity.api.SchoolCourseRooms;
 import com.stackcorp.astra.identity.api.SchoolLoginException;
 import com.stackcorp.astra.identity.api.SchoolSessions;
@@ -130,7 +130,7 @@ class SchoolContent {
 		String author = null;
 		LocalDateTime postedAt = null;
 		if (MATERIAL.equals(row.type())) {
-			SchoolMaterial material = read(actor, courseId,
+			SchoolPost material = read(actor, courseId,
 					(rooms, key) -> rooms.material(key, row.itemId(), this.properties.requestTimeout(),
 							this.properties.readBudget()));
 			this.files.replaceFor(courseId, MATERIAL, row.itemId(), material.files());
@@ -243,7 +243,7 @@ class SchoolContent {
 	/**
 	 * 학생의 학교 session으로 학교를 읽는다. 학교 session이 없거나 학교가 끝냈으면 409 {@code school_signin_required}다.
 	 */
-	private <T> T read(Actor actor, long courseId, SchoolRead<T> reader) {
+	<T> T read(Actor actor, long courseId, SchoolRead<T> reader) {
 		String key = courseKey(actor.userId(), courseId).orElseThrow(ApiException::notFound);
 		SchoolCourseRooms rooms = this.sessions.of(actor.sessionId()).orElseThrow(SchoolContent::signInRequired);
 		try {
@@ -274,12 +274,12 @@ class SchoolContent {
 				"학교 e-Class 연결이 끝났습니다. 학번과 학교 비밀번호로 다시 로그인해 주세요.");
 	}
 
-	private void requireMember(Actor actor, long courseId) {
+	void requireMember(Actor actor, long courseId) {
 		this.access.roleIn(actor.userId(), courseId).orElseThrow(ApiException::notFound);
 	}
 
 	/** 학생으로 수강 중인 과목의 학교 과목 키. */
-	private Optional<String> courseKey(long userId, long courseId) {
+	Optional<String> courseKey(long userId, long courseId) {
 		return this.memberCourses.of(userId)
 			.stream()
 			.filter((c) -> c.courseId() == courseId && c.role() == CourseRole.STUDENT && c.key() != null)
@@ -310,12 +310,12 @@ class SchoolContent {
 		return row.expired() ? "closed" : ActivityPhase.of(row.openAt(), row.closeAt(), null, now);
 	}
 
-	private Set<Long> summarized(List<SchoolFileStore.Row> rows) {
+	Set<Long> summarized(List<SchoolFileStore.Row> rows) {
 		List<Long> ids = rows.stream().map(SchoolFileStore.Row::fileId).filter((id) -> id != null).toList();
 		return ids.isEmpty() ? Set.of() : this.summaries.publishedAmong(ids);
 	}
 
-	private static List<SchoolFileView> fileViews(List<SchoolFileStore.Row> rows, Set<Long> summarized) {
+	static List<SchoolFileView> fileViews(List<SchoolFileStore.Row> rows, Set<Long> summarized) {
 		return rows.stream().map((row) -> {
 			String extension = extension(row.name());
 			Object id = row.fileId() != null ? row.fileId() : FILE_PREFIX + row.id();

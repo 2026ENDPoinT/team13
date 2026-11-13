@@ -35,12 +35,16 @@ class NoticeController {
 		this.notices = notices;
 	}
 
-	/** 고정 공지 먼저, 그다음 게시 일시 역순. q는 제목에 들어 있는 글자를 찾는다. */
+	/**
+	 * 고정 공지 먼저, 그다음 게시 일시 역순. q는 제목에 들어 있는 글자를 찾는다. 학생에게는 그 뒤에 학교 강의실 공지(ADR-0043,
+	 * {@code noticeId: "school-<id>"}, {@code origin: "school"})가 학교 목록 순서로 붙는다. 학교 공지 상세는
+	 * {@code GET /api/courses/{courseId}/notices/school-<id>}(learning)이다.
+	 */
 	@GetMapping("/api/courses/{courseId}/notices")
 	ResponseEntity<NoticePage> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@RequestParam(required = false) String q, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "8") int size) {
-		return ok(this.notices.list(actor.userId(), courseId, q, page, size));
+		return ok(this.notices.list(actor, courseId, q, page, size));
 	}
 
 	@GetMapping("/api/courses/{courseId}/notices/{noticeId}")

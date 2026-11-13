@@ -1,0 +1,1754 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<link type="text/css" rel="stylesheet" href="/ilos/css/online.css?v=20261001">
+<script>
+$(function() {
+  if (document.addEventListener) {
+    window.addEventListener('pageshow', function(event) {
+      if (event.persisted || window.performance && window.performance.navigation.type == 2) {
+        location.reload();
+      }
+    }, false);
+  }
+
+  setSelectActivity("lecture_weeks", "1000018");
+  
+  
+});
+
+function learningGo(item, target) {
+  document.learningForm.link_seq.value = item;
+  
+  var isOkay = false;
+  
+  if("T" == ""){
+    isOkay = true;
+  }else if(202609132359 < 202611140524 && "1" == "1") {
+    if(confirm("Attendance time is passed.  Do you still want to play?")) {
+      isOkay = true;
+    }
+  } else {
+    isOkay = true;
+  }
+  
+  if(isOkay) {
+    
+      try{
+        $.ajax({
+          url: "https://accessone.hellolms.com/accessone",
+          type: "POST",
+          data: {
+            osms : "stech",
+            ud : "SYNTHETICACCESSONEUSER0001",
+            dv : "online",
+            encoding : "utf-8"
+          },
+          async: true,
+          timeout: 500,
+          success: function(data){
+            if(data.isExists){
+              if(confirm("You are watching a lecture on another device or browser.\nDo you want to disconnect and watch?")){
+                document.learningForm.force.value = "Y";
+
+                
+                checkSecondaryAuth(function() {
+                  document.learningForm.submit();
+                });
+                
+              }
+            } else {
+              
+              checkSecondaryAuth(function() {
+                document.learningForm.submit();
+              });
+              
+            }
+          },
+          error: function(jqXHR, exception){
+            console.log(jqXHR.status);
+            console.log(exception);
+
+            
+            checkSecondaryAuth(function() {
+              document.learningForm.submit();
+            });
+            
+          }
+        });
+      } catch(e){
+        
+        checkSecondaryAuth(function() {
+          document.learningForm.submit();
+        });
+        
+      }
+    
+  }
+}
+</script>
+    <style>
+    :root { --fixed_bottom_btn_height: 0px; }
+    </style>
+    <section class="container">
+      <article class="article">
+        <div class="view_header">
+          <div class="view_menu">
+            <a class="font_subtitle3 menu_icon lecture_weeks" href="#" onclick="viewActivityPage('/ilos/cls/st/online/online_view_form.acl', 'lecture_weeks', '1000018', event);" target="_self">텍스트1</a>
+          </div>
+          <div class="view_title_wrap">
+            <div class="view_title">
+              <span class="font_headline2">1주 1차시</span>
+            </div>
+          </div>
+        </div>
+        
+        <form name="learningForm" method="post" action="/ilos/cls/st/online/online_learning_form.acl" style="display: none;">
+          <input type="hidden" id="lecture_weeks" name="lecture_weeks" value="1000018" />
+          <input type="hidden" id="_KJKEY" name="_KJKEY" value="A202639999900003" />
+          <input type="hidden" id="kj_lect_type" name="kj_lect_type" value="0" />
+          <input type="hidden" id="link_seq" name="link_seq" />
+          <input type="hidden" id="force" name="force" />
+        </form>
+        
+        <div class="view_body online_contents_container">
+          <div class="online_caution_wrap online">
+            <span class="font_subtitle2 online_caution_title">텍스트2</span>
+            <ul class="online_caution_list font_body3">
+              <li>텍스트3</li>
+              
+                
+                  
+                  <li>텍스트4</li>
+                    
+                
+                
+                
+              
+              <li>텍스트5</li>
+              <li class="color_error">텍스트6</li>            
+            </ul>
+          </div>
+          <div class="online_info_wrap">
+            <div class="online_info_left">
+              
+              <div class="online_info">
+                <div class="online_info_title font_subtitle3">텍스트7</div>
+                <div class="online_info_text font_caption1">
+                  
+                  WeekWeek 1 Session1
+                  
+                </div>
+              </div>
+              
+              <div class="online_info">
+                <div class="online_info_title font_subtitle3">텍스트8</div>
+                <div class="online_info_text font_caption1 date">
+                  <span>Tue, Sep 01, 2026 12:00 AM ~</span>
+                  <span>Sun, Sep 13, 2026 11:59 PM</span>
+                </div>
+              </div>
+            </div>
+            <div class="online_info_right">
+              <div class="legend_wrap">
+                <div class="legend"></div>
+                <div class="legend_text font_subtitle2">텍스트9</div>
+              </div>
+              <div class="legend_wrap">
+                <div class="legend ex"></div>
+                <div class="legend_text font_subtitle2">텍스트10</div>
+              </div>
+            </div>
+          </div>
+          <div class="online_contents_list_wrap">
+            
+              
+              <div class="online_contents_list">
+                <div class="attend_progress_bar" style="width: 100.0%;"></div>
+                <div class="attend_progress_bar ex" style="left: 100.0%; width: 100.0%;"></div>
+                <button class="online_contents_wrap" type="button" onclick="learningGo('1');">
+                  <div class="online_contents_left">
+                    
+                    <div class="video_thumbnail video_thumbnail_MAUHCQ6J7PVR6" style="background-image: url(/ilos/images/content/empty_thumbnail2.png);">
+                      <div class="background"></div>
+                      <div class="percent font_headline3">100%</div>
+                    </div>
+                    
+                    <div class="online_contents_info">
+                      <div class="video_title font_subtitle2">텍스트11</div>
+                      <div class="video_content_wrap">
+                        <div class="online_contents_badge_wrap">
+                          
+                          <div class="online_contents_badge font_subtitle5">
+                            <span>텍스트12</span>
+                            <span>30:19</span>
+                          </div>
+                          
+                          <div class="online_contents_badge font_subtitle5">
+                            <span>텍스트13</span>
+                            <span>28:14</span>
+                          </div>
+                        </div>
+                        <div class="online_contents_right horizon">
+                          <div class="online_info font_btn3">
+                            <div class="online_info_text qna"></div>
+                            <div class="online_info_cnt">0</div>
+                          </div>
+                          <hr>
+                          <div class="online_info font_btn3">
+                            <div class="online_info_text stamp"></div>
+                            <div class="online_info_cnt">0</div>
+                          </div>
+                        </div>                    
+                      </div>
+                      
+                    </div>
+                  </div>
+    
+                </button>
+              </div>
+              
+              <div class="online_contents_list">
+                <div class="attend_progress_bar" style="width: 100.0%;"></div>
+                <div class="attend_progress_bar ex" style="left: 100.0%; width: 100.0%;"></div>
+                <button class="online_contents_wrap" type="button" onclick="learningGo('2');">
+                  <div class="online_contents_left">
+                    
+                    <div class="video_thumbnail video_thumbnail_L5LX4DLX6KIZQ" style="background-image: url(/ilos/images/content/empty_thumbnail2.png);">
+                      <div class="background"></div>
+                      <div class="percent font_headline3">100%</div>
+                    </div>
+                    
+                    <div class="online_contents_info">
+                      <div class="video_title font_subtitle2">텍스트14</div>
+                      <div class="video_content_wrap">
+                        <div class="online_contents_badge_wrap">
+                          
+                          <div class="online_contents_badge font_subtitle5">
+                            <span>텍스트15</span>
+                            <span>38:15</span>
+                          </div>
+                          
+                          <div class="online_contents_badge font_subtitle5">
+                            <span>텍스트16</span>
+                            <span>27:09</span>
+                          </div>
+                        </div>
+                        <div class="online_contents_right horizon">
+                          <div class="online_info font_btn3">
+                            <div class="online_info_text qna"></div>
+                            <div class="online_info_cnt">0</div>
+                          </div>
+                          <hr>
+                          <div class="online_info font_btn3">
+                            <div class="online_info_text stamp"></div>
+                            <div class="online_info_cnt">0</div>
+                          </div>
+                        </div>                    
+                      </div>
+                      
+                    </div>
+                  </div>
+    
+                </button>
+              </div>
+              
+            
+          </div>
+        </div>
+        
+      </article>
+      
+      <div class="top_btn_wrap">
+        <button class="scroll_top_btn" type="button" title="" onkeypress="this.onclick;"></button>
+      </div>
+    </section>
+    
+    
+    
+
+
+
+
+
+
+
+<style>
+</style>
+<script>
+$(function() {
+  $( "#dialog_secondary_auth" ).dialog({
+    autoOpen: false,
+    resize: "auto",
+    show: "blind",
+    hide: "fade", //explode"
+    modal: true,
+    closeOnClick: false,
+    title: "The secondary self-certification",
+    close: resetSecondaryAuthForm,
+    width:550
+  });
+});
+
+var secondaryAuthCallback;
+var isSecondaryAuthLoading = false;
+function toggleSecondaryAuthLoading(isLoading) {
+  isSecondaryAuthLoading = isLoading;
+  if (isSecondaryAuthLoading) {
+    $('#secondary_auth_loading_wrap').show();
+  } else {
+    $('#secondary_auth_loading_wrap').hide();
+  }
+}
+function getIsSecondaryAuthLoading() {
+  return isSecondaryAuthLoading;
+}
+
+function checkSecondaryAuth(cb) {
+  $.ajax({
+    url: "/ilos/secondauth/session_secondary_auth_check.acl",
+    type: "POST",
+    data: {
+      returnData : "json",
+      AUTH_DIV : "1",
+      encoding : "utf-8"
+    },
+    async: false,
+    cache: false,
+    success: function(data){
+      var isReady = false;
+      try {
+        if (data) {
+          if (data.isError) {
+            if (data.messageCode == "E_CONFIRMED_SECONDARY_AUTH") {
+              initSecondaryAuth(cb);
+            } else {
+//               alert(data.message);
+              location.href = location.href; 
+            }
+          } else {
+            isReady = true;
+          }
+        } else {
+          throw "response is empty";
+        }
+      } catch (e) {
+        isReady = true;
+      }
+      if (isReady) {
+        cb();
+      }
+    },
+    error : ajaxErrorMsg
+  });
+}
+
+function initSecondaryAuth(callback) {
+  resetSecondaryAuthForm();
+  $('#dialog_secondary_auth').focus();
+  toggleSecondaryAuthLoading(true);
+  $.ajax({
+    url: "/ilos/secondauth/secondary_auth_way_info.acl",
+    type: "POST",
+    data: {
+      AUTH_DIV : 1,
+      returnData : "json",
+      encoding : "utf-8"
+    },
+    async: true,
+    cache: false,
+    success: function(data){
+      try {
+        if (data) {
+          if (data.isError) {
+            alert(data.message);
+          } else {
+            var is_enable_app = data.IS_ENABLE_APP;
+            var is_enable_app2 = data.IS_ENABLE_APP2;
+            var user_device_cnt = data.USER_DEVICE_CNT;
+            user_device_cnt = user_device_cnt && user_device_cnt > 0 ? parseInt(user_device_cnt) : 0;
+            
+            var is_enable_email = data.IS_ENABLE_EMAIL;
+            var is_enable_sms = data.IS_ENABLE_SMS;
+
+            var user_name = data.USER_NAME;
+            var is_enable_push = data.IS_ENABLE_PUSH;
+            
+//             alert(is_enable_app + " // " + is_enable_email + " // " + is_enable_sms);
+            
+            if (is_enable_app && is_enable_app == "Y") {
+//               $('#secondary_auth_way_app').addClass("enable");
+//               var _e_app = $('#secondary_auth_user_app');
+//                     console.log(_e_app);
+              if (user_device_cnt > 0) {
+                var user_device_list = data.USER_DEVICE_LIST;
+                if (user_device_list) {
+                  if (user_device_list.length > 1) { // 여러개인 경우
+                    for (var i = 0; i < user_device_list.length; i++) {
+                      var _device = user_device_list[i];
+//                       _e_app.append("<span>" + _device.DEVICE_MODEL + ", " + _device.OS_DIV + ", " + _device.LAST_DTM + "</span>");
+                      appendSecondaryAuthSubList(1, _device.DEVICE_MODEL, _device.DEVICE_ID, _device.LAST_DTM);
+                    }
+                    appendSecondaryAuthList(1, ("Registered Device : " + user_device_cnt), "", true);
+                  } else {
+                    var _device = user_device_list[0];
+                    appendSecondaryAuthList(1, _device.DEVICE_MODEL, _device.DEVICE_ID);
+                  }
+                }
+              } else {
+                //2차 본인인증 앱 인증 권고문구
+                appendSecondaryAuthList(1, "Please authenticate your device in the ASTRA app.", "", false);
+
+              }
+            }
+            
+            if (is_enable_app2 && is_enable_app2 == "Y") {
+              if (user_device_cnt > 0) {
+                var user_device_list = data.USER_DEVICE_LIST;
+                if (user_device_list) {
+                  if (user_device_list.length > 1) { // 여러개인 경우
+                    for (var i = 0; i < user_device_list.length; i++) {
+                      var _device = user_device_list[i];
+                      appendSecondaryAuthSubList2(5, _device.DEVICE_MODEL, _device.DEVICE_ID, _device.LAST_DTM);
+                    }
+                    appendSecondaryAuthList(5, ("Registered Device : " + user_device_cnt), "", true);
+                  } else {
+                    var _device = user_device_list[0];
+                    appendSecondaryAuthList(5, _device.DEVICE_MODEL, _device.DEVICE_ID);
+                  }
+                }
+              } else {
+                //2차 본인인증 앱 인증 권고문구
+                appendSecondaryAuthList(5, "Please authenticate your device in the ASTRA app.", "", false);
+
+              }
+            }
+            
+            if (is_enable_email && is_enable_email == "Y") {
+//               $('#secondary_auth_way_email').addClass("enable");
+//               var _e_email = $('#secondary_auth_user_email');
+              var user_email = data.USER_EMAIL;
+              if (user_email && user_email.length > 0) {
+                appendSecondaryAuthList(2, user_email, user_email);
+              } else {
+                appendSecondaryAuthList(2, getUserInfoUpdateGuide("There is no email information. Please use it after registering."), "", false);
+              }
+//               _e_email.html(user_email);
+            }
+            if (is_enable_sms && is_enable_sms == "Y") {
+//               $('#secondary_auth_way_sms').addClass("enable");
+//               var _e_sms = $('#secondary_auth_user_sms');
+              var user_phone = data.USER_PHONE;
+              if (user_phone && user_phone.length > 0) {
+                appendSecondaryAuthList(3, user_phone, user_phone);
+              } else {
+                appendSecondaryAuthList(3, getUserInfoUpdateGuide("There is no phone information. Please use it after registering."), "", false);
+              }
+//               _e_sms.html(user_phone);
+            }
+            if (is_enable_push && is_enable_push == "Y") {
+//               $('#secondary_auth_way_sms').addClass("enable");
+//               var _e_sms = $('#secondary_auth_user_sms');
+              var user_id = data.USER_ID;
+              var user_nm = data.USER_NAME;
+              if (user_id && user_id.length > 0) {
+                appendSecondaryAuthList(4, user_nm, user_id);
+              } else {
+                appendSecondaryAuthList(4, getUserInfoUpdateGuide("There is no user information."), "", false);
+              }
+//               _e_sms.html(user_phone);
+            }
+            
+            secondaryAuthCallback = callback;
+            showSecondaryAuthForm(1);
+            $('#dialog_secondary_auth').dialog("open");
+            $(window).focus();
+          }
+        } else {
+          alert("Server network failed");
+        }
+      } catch (e) {
+        alert("Error : " + e);
+//         console.log(e);
+      }
+    },
+    error : ajaxErrorMsg,
+    complete : function() {
+      toggleSecondaryAuthLoading(false);
+    }
+  });
+}
+
+function getUserInfoUpdateGuide(title) {
+  var txt = "<div>" + title + "</div>";
+  txt += "<div style=\"margin-top:10px; font-size:90%;\">";
+    txt += "<div><span>Enrolled Student : </span><span style=\"display:inline-block; width:85%; word-break:keep-all; vertical-align:top;\">After changing your email information in the comprehensive information system, synchronize your personal information on this site's My Page.</span><div>";
+    txt += "<div style=\"margin-top:2px;\"><span>Other Student : </span><span style=\"display:inline-block; width:85%; word-break:keep-all; vertical-align:top;\">Request modification from LMS administrator</span><div>";
+  txt += "</div>"; 
+  return txt;
+}
+
+// 1: app, 2: email, 3: sms
+function appendSecondaryAuthList(way, text, param, isParent) {
+  var _e = $('#secondary_auth_way_wrap');
+  if (!param) {
+    param = '';
+  }
+  
+  var itemTitle = "";
+  if (way == 1) {
+    itemTitle = "ASTRA App Push Authentication";
+  } else if (way == 5) {
+    itemTitle = "ASTRA App Authentication";
+  } else if (way == 2) {
+    itemTitle = "E-mail Authentication";
+  } else if (way == 3) {
+    itemTitle = "SMS Authentication";
+  } else if (way == 4) {
+    itemTitle = "PUSH Recognition";
+  }
+
+  if (_e) {
+    var action = "startSecondaryAuth('" + text +  "', " + way + ", '" + param + "');";
+//     var actionClass = "site-mouseover-border-color";
+    var actionClass = "";
+    if (isParent) {
+      action = "showSecondaryAuthForm(2, " + way + ");";
+    } else if(!param) {
+      action = "";
+      actionClass = "secondary_auth_way_disabled";      
+    }
+    
+//     var item_html = "<a href=\"javascript:void(0);\" onclick=\"" + action + "\" way=\"" + way + "\" param=\"" + param + "\">" + text + "</a>";
+    var item_html = "";
+    item_html += "<button class=\"secondary_auth_way_item " + actionClass + "\" type=\"button\" onkeypress=\"this.onclick;\" onclick=\"" + action + "\">";
+      item_html += "<div class=\"secondary_auth_way_item_inner\">";
+        item_html += "<div class=\"secondary_auth_way_inner secondary_auth_way_inner_left\">";
+          item_html += "<div class=\"font_body1\">" + itemTitle + "</div>";
+          item_html += "<div class=\"font_body3\">" + text + "</div>";
+        item_html += "</div>";
+        item_html += "<div class=\"secondary_auth_way_inner secondary_auth_way_inner_right\">";
+          item_html += "<img src=\"/ilos/images/secondauth/icon_right_arrow_gray_1x.png\" class=\"secondary_auth_way_next_btn\" width=\"15px\"/>";
+        item_html += "</div>";
+      item_html += "</div>";
+    item_html += "</button>";
+    
+    _e.append(item_html);
+  }
+}
+
+//1: app, 2: email, 3: sms
+function appendSecondaryAuthSubList(way, text, param, dtm) {
+  if (way == 1) {
+  } else if (way == 5) {
+  } else if (way == 2) {
+  } else if (way == 3) {
+  } else if (way == 4) {
+  }
+  
+  var _e = $('#secondary_auth_sub_list_wrap');
+
+  var item_html = "";
+  item_html += "<button class=\"secondary_auth_sub_item\" type=\"button\" onkeypress=\"this.onclick;\" onclick=\"chkSecondaryAuthSubItem(this);\">";
+    item_html += "<div class=\"secondary_auth_sub_item_inner\">";
+      item_html += "<div>";
+        item_html += "<div class=\"secondary_auth_sub_item_chk_display\">";
+          item_html += "<input type=\"radio\" class=\"secondary_auth_sub_item_chk\" name=\"secondary_auth_sub_item_chk\" value=\"" + param + "\" way=\"" + way + "\" tg=\"" + text + "\" />";
+        item_html += "</div>";
+        item_html += "<div class=\"secondary_auth_sub_item_title\">" + text + "</div>";
+        item_html += "<div class=\"secondary_auth_sub_item_desc\">";
+          item_html += "Last Access Date : " + dtm;
+        item_html += "</div>";
+      item_html += "</div>";
+    item_html += "</div>";
+  item_html += "</button>";
+  
+  _e.append(item_html);
+  $('#secondary_auth_sub_list_btn_wrap').show();
+}
+
+
+function chkSecondaryAuthSubItem(e) {
+  var _e_radio = $(e).find('input:radio[name="secondary_auth_sub_item_chk"]')
+  if (_e_radio) {
+    _e_radio.prop("checked", true); 
+    /*
+    $('.secondary_auth_sub_item_chk_display').removeClass("checked");
+    $('.secondary_auth_sub_item_chk_display').removeClass("site-background-color");
+    $('.secondary_auth_sub_item_chk_display').removeClass("site-border-color");
+    _e_radio.parent().addClass("checked");
+    _e_radio.parent().addClass("site-background-color");
+    _e_radio.parent().addClass("site-border-color");
+    */
+    $('.secondary_auth_sub_item').removeClass("checked");
+//     $('.secondary_auth_sub_item').removeClass("site-border-color");
+    $(e).addClass("checked");
+//     $(e).addClass("site-border-color");
+  } else {
+    return;
+  }
+  $('#secondary_auth_sub_list_form #btnConfirmSecondaryAuth').addClass("primary");
+  $('#secondary_auth_sub_list_form #btnConfirmSecondaryAuth').removeClass("disabled");
+//   $('#secondary_auth_sub_list_form #btnConfirmSecondaryAuth').addClass("ready");
+//   $('#secondary_auth_sub_list_form #btnConfirmSecondaryAuth').addClass("site-background-color");
+//   $('#secondary_auth_sub_list_form #btnConfirmSecondaryAuth').addClass("site-border-color");
+}
+
+//4: app2
+function appendSecondaryAuthSubList2(way, text, param, dtm) {
+  if (way == 1) {
+  } else if (way == 5) {
+  } else if (way == 2) {
+  } else if (way == 3) {
+  } else if (way == 4) {
+  }
+  
+  var _e = $('#secondary_auth_sub_list_wrap2');
+
+  var item_html = "";
+  item_html += "<button class=\"secondary_auth_sub_item\" type=\"button\" onkeypress=\"this.onclick;\"onclick=\"chkSecondaryAuthSubItem2(this);\">";
+    item_html += "<div class=\"secondary_auth_sub_item_inner\">";
+      item_html += "<div>";
+        item_html += "<div class=\"secondary_auth_sub_item_chk_display\">";
+          item_html += "<input type=\"radio\" class=\"secondary_auth_sub_item_chk\" name=\"secondary_auth_sub_item_chk\" value=\"" + param + "\" way=\"" + way + "\" tg=\"" + text + "\" />";
+        item_html += "</div>";
+        item_html += "<div class=\"secondary_auth_sub_item_title\">" + text + "</div>";
+        item_html += "<div class=\"secondary_auth_sub_item_desc\">";
+          item_html += "Last Access Date : " + dtm;
+        item_html += "</div>";
+      item_html += "</div>";
+    item_html += "</div>";
+  item_html += "</button>";
+  
+  _e.append(item_html);
+  $('#secondary_auth_sub_list_btn_wrap2').show();
+}
+
+
+function chkSecondaryAuthSubItem2(e) {
+  var _e_radio = $(e).find('input:radio[name="secondary_auth_sub_item_chk"]')
+  if (_e_radio) {
+    _e_radio.prop("checked", true); 
+    /*
+    $('.secondary_auth_sub_item_chk_display').removeClass("checked");
+    $('.secondary_auth_sub_item_chk_display').removeClass("site-background-color");
+    $('.secondary_auth_sub_item_chk_display').removeClass("site-border-color");
+    _e_radio.parent().addClass("checked");
+    _e_radio.parent().addClass("site-background-color");
+    _e_radio.parent().addClass("site-border-color");
+    */
+    $('.secondary_auth_sub_item').removeClass("checked");
+//     $('.secondary_auth_sub_item').removeClass("site-border-color");
+    $(e).addClass("checked");
+//     $(e).addClass("site-border-color");
+  } else {
+    return;
+  }
+  $('#secondary_auth_sub_list_form2 #btnConfirmSecondaryAuth2').addClass("primary");
+  $('#secondary_auth_sub_list_form2 #btnConfirmSecondaryAuth2').removeClass("disabled");
+//   $('#secondary_auth_sub_list_form2 #btnConfirmSecondaryAuth2').addClass("ready");
+//   $('#secondary_auth_sub_list_form2 #btnConfirmSecondaryAuth2').addClass("site-background-color");
+//   $('#secondary_auth_sub_list_form2 #btnConfirmSecondaryAuth2').addClass("site-border-color");
+}
+
+function closeSecondaryAuthForm() {
+  resetSecondaryAuthForm();
+  secondaryAuthCallback = undefined;
+  $('#dialog_secondary_auth').dialog("close");
+}
+function startSecondaryAuthUsingSelected() {
+  var _e = $('#secondary_auth_sub_list_wrap input:radio[name="secondary_auth_sub_item_chk"]:checked');
+  if (!_e) {
+    return;
+  } else {
+    if (_e.length <= 0) {
+      return;
+    }
+  }
+  var target = _e.attr("tg");
+  var way = _e.attr("way");
+  var param = _e.val();
+  startSecondaryAuth(target, way, param);
+}
+function startSecondaryAuthUsingSelected2() {
+  var _e = $('#secondary_auth_sub_list_wrap2 input:radio[name="secondary_auth_sub_item_chk"]:checked');
+  if (!_e) {
+    return;
+  } else {
+    if (_e.length <= 0) {
+      return;
+    }
+  }
+  var target = _e.attr("tg");
+  var way = _e.attr("way");
+  var param = _e.val();
+  startSecondaryAuth(target, way, param);
+}
+function startSecondaryAuth(target, way, param) {
+  if (!target || !way || !param) {
+    alert("Access Denied");
+    return;
+  }
+  if (getIsSecondaryAuthLoading()) { // 통신중인경우 리턴
+    return;
+  }
+  toggleSecondaryAuthLoading(true);
+
+  $('#secondary_auth_value_auth_way').val(way);
+  $('#secondary_auth_value_auth_param').val(param);
+
+  $.ajax({
+    url: "/ilos/secondauth/secondary_auth_start.acl",
+    type: "POST",
+    data: {
+      AUTH_DIV : 1,
+//       AUTH_WAY : auth_way,
+//       AUTH_PARAM : auth_param,
+      AUTH_WAY : way,
+      AUTH_PARAM : param,
+      returnData : "json",
+      encoding : "utf-8"
+    },
+    async: true,
+    cache: false,
+    success: function(data){
+      try {
+        if (data) {
+          if (data.isError) {
+            alert(data.message);
+            cancelSecondaryAuth();
+          } else {
+            var auth_seq = data.AUTH_SEQ;
+            auth_seq = auth_seq ? auth_seq : "";
+            $('#secondary_auth_value_auth_seq').val(auth_seq);
+            
+//             var remain_sec = data.REMAIN_SEC;
+//             remain_sec = remain_sec ? parseInt(remain_sec) : 0;
+//             startSecondaryAuthCountDown(remain_sec);
+            
+            var currentTime = data.CURRENT_TIME;
+            if (currentTime) {
+              currentTime = parseInt(currentTime);
+            }
+            var expireTime = data.EXPIRE_TIME;
+            if (expireTime) {
+              expireTime = parseInt(expireTime);
+            }
+            var sec = parseInt((expireTime - currentTime) / 1000); 
+            if (way == 5) {
+              startSecondaryAuthCountDown2(sec);
+              var auth_code_list_html = "";
+              var auth_code = data.AUTH_CODE;
+              auth_code = auth_code ? auth_code : "";
+              for (var i = 0; i < auth_code.length; i++) {
+                if (auth_code_list_html.length > 0) {
+                  auth_code_list_html += "&nbsp;";
+                }
+                auth_code_list_html += '<span class="secondary_auth_confirm_view_auth_code_word">' + auth_code.substring((0+i), (1+i)) + '</span>';
+              }
+              var requestCode = data.REQUEST_CODE;
+              $('#secondary_auth_confirm_view_request_code').html(requestCode);
+              $('#secondary_auth_confirm_view_auth_code_wrap').html(auth_code_list_html);
+              $('#secondary_auth_confirm_input_wrap').hide();
+              $('#secondary_auth_confirm_view_wrap').show();
+            } else {
+              startSecondaryAuthCountDown(sec);
+              var auth_code_input_html = "";
+              for (var i = 0; i < 4; i++) {
+                if (auth_code_input_html.length > 0) {
+                  auth_code_input_html += "&nbsp;";
+                }
+                auth_code_input_html += '<input type="number" pattern="[0-9]*" inputmode="numeric" id="secondary_auth_confirm_input_auth_code_word_' + (i+1) + '" class="secondary_auth_confirm_input_auth_code_word" value="" maxlength="1" odr="' + (i+1) + '" oninput="checkMaxLength(this);" onfocus="onFocusInputCode(this, event);" onblur="onBlurInputCode(this, event);checkConfirmCodeReady();" onkeydown="checkInputCode(this, event);" />';
+              }
+              /*
+              var requestCode = data.REQUEST_CODE;
+              $('#secondary_auth_confirm_input_request_code').html(requestCode);
+              */
+              $('#secondary_auth_confirm_input_auth_code_wrap').html(auth_code_input_html);
+              $('#secondary_auth_confirm_view_wrap').hide();
+              $('#secondary_auth_confirm_input_wrap').show();
+            }
+            showSecondaryAuthForm(3, way, target);
+          }
+        } else {
+          alert("Server network failed");
+        }
+      } catch (e) {
+        alert("Error : " + e);
+//         console.log(e);
+      }
+    },
+    error : ajaxErrorMsg,
+    complete : function() {
+      toggleSecondaryAuthLoading(false);
+    }
+  });
+}
+function checkValidCode(e, event) {
+  var key = event.keyCode || event.which;
+  if (key == 13) {
+    $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').click();
+  } else {
+    $('#secondary_auth_confirm_input_alert').hide();
+  }
+  /* 일부 모바일 키패드(특히 삼성키패드)에서 입력 안되어 주석처리함
+  if (
+      (key >= 37 && key <= 40)
+    || key == 13 // enter
+    || key == 9 // tab
+    || key == 8 // back
+    || key == 46 // del
+    || (key == 65 && event.ctrlKey) // ctrl + a
+    || (key == 88 && event.ctrlKey) // ctrl + x
+    || ((key == 67 || key == 86) && event.ctrlKey) // ctrl + c / v
+    || ((key == 90 || key == 89) && event.ctrlKey) // ctrl + z / y
+    || ((key >= 48 && key <= 57) && !event.shiftKey) // 0 : 48 // 9 : 57
+    || (key >= 96 && key <= 105) // key 0 : 96 // key 9 : 105   
+     ) 
+  {
+    if (key == 13) {
+      $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').click();
+    } else {
+      $('#secondary_auth_confirm_input_alert').hide();
+    }
+
+    return true;
+  } else {
+    event.preventDefault();
+//     event.returnValue = false;
+    return false;
+  }
+  */
+}
+function checkValidCode2(e, event) {
+  var _e = $(e);
+  var inputVal = _e.val();
+  _e.val(inputVal.replace(/[^0-9]/gi, ''));
+}
+function checkMaxLength(e) {
+  if (e.value.length > e.maxLength) {
+    e.value = e.value.slice(0, e.maxLength);
+  }
+}
+function checkInputCode(e, event) {
+  var key = event.keyCode || event.which;
+  if (key == 9 && event.shiftKey || key == 8) { // tab
+    event.preventDefault();
+    var _e = $(e);
+    /*
+    if (key == 8) {
+      _e.val("");
+      _e.attr("temp", "");
+    }
+    */
+    
+    var _odr = _e.attr("odr");
+    if (_odr) {
+      _odr = parseInt(_odr);
+      if ((_odr-1) > 0) {
+        $('#secondary_auth_confirm_input_auth_code_word_' + (_odr-1)).focus();
+      } else {
+//         _e.blur();
+      }
+    }
+  } else if (key == 9 || key == 32) { // tab
+    event.preventDefault();
+    var _e = $(e);
+    var _odr = _e.attr("odr");
+    if (_odr) {
+      _odr = parseInt(_odr);
+      if (_odr >= 4) {
+//         _e.blur();
+      } else {
+        $('#secondary_auth_confirm_input_auth_code_word_' + (_odr+1)).focus();
+      }
+    }
+  } else if (event.shiftKey || event.ctrlKey || key == 27) {
+    event.preventDefault();
+  } else {
+    setTimeout(function() {
+      var _e = $(e);
+      var inputVal = _e.val();
+      _e.val(inputVal.replace(/[^0-9]/gi, ''));
+//       _e.blur();
+      _e.attr("temp", "");
+      inputVal = _e.val();
+      if (inputVal.length > 0) { 
+        var _odr = _e.attr("odr");
+        if (_odr) {
+          _odr = parseInt(_odr);
+          if (_odr >= 4) {
+//             submitSecondaryAuth();
+            _e.blur();
+          } else {
+            $('#secondary_auth_confirm_input_auth_code_word_' + (_odr+1)).focus();
+          }
+        }
+      }
+    }, 30);
+  }
+}
+var isFocus = false;
+
+function onFocusInputCode(e, event) {
+  var _e = $(e);
+  _e.attr("temp", _e.val());
+  _e.val("");
+  isFocus = true;
+//   _e.addClass("site-border-color");
+  /*
+  var targetScroll;
+  if (isFocus) {
+//     var target = $('#secondary_auth_confirm_target');
+    var target = _e;
+    if (target && target.length > 0) {
+      targetScroll = target.offset().top;
+      targetScroll -= 16;
+      targetScroll = targetScroll < 0 ? 0 : targetScroll;
+    }
+  } else {
+    targetScroll = 0;
+  }
+  if (secondaryAuthScrollTimeout) {
+    clearTimeout(secondaryAuthScrollTimeout);
+  }
+  if (targetScroll || targetScroll === 0) {
+    secondaryAuthScrollTimeout = setTimeout(function() {
+      $('html, body').animate({scrollTop : targetScroll}, 100);
+    }, 200);
+  }
+  */
+}
+function onBlurInputCode(e, event) {
+  var _e = $(e);
+  var inputVal = _e.val();
+  if (inputVal.length == 0) {
+    var _temp = _e.attr("temp");
+    if (_temp.length > 0) {
+      _e.val(_temp);
+    }
+  }
+  isFocus = false;
+  //   _e.addClass("site-border-color");
+  /*
+  if (secondaryAuthScrollTimeout) {
+    clearTimeout(secondaryAuthScrollTimeout);
+  }
+  secondaryAuthScrollTimeout = setTimeout(function() {
+    if (!isFocus) {
+      $('html, body').scrollTop(0);      
+    }
+  }, 200);
+  */
+}
+function checkConfirmCodeReady() {
+  /*
+  var _e = $('#secondary_auth_value_auth_code');
+  var val = _e.val();
+  */
+
+  var _e_list = $('.secondary_auth_confirm_input_auth_code_word');
+  var val = "";
+  _e_list.each(function(idx, e) {
+    var _val = $(this).val();
+    if (_val != undefined) {
+      val += _val;
+    }
+  });
+  
+  if (val.length >= 4) {
+    $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("primary");
+    $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').removeClass("disabled");
+//     $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("ready");
+//     $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("site-background-color");
+//     $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("site-border-color");
+//     return true;
+    $('#secondary_auth_confirm_input_alert').hide();
+  } else {
+    $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("disabled");
+    $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').removeClass("primary");
+//     $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').removeClass("ready");
+//     $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').removeClass("site-background-color");
+//     $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').removeClass("site-border-color");
+//     return false;
+  }
+  return val;
+}
+function checkConfirmCodeValid() {
+  var code = checkConfirmCodeReady();
+//   var chkCode = isNaN(code) ? -1 : parseInt(code);
+  var isValid = (code && code.length >= 4 && !isNaN(code));
+  if (isValid) {
+    $('#secondary_auth_confirm_input_alert').hide();
+    return true;
+  } else {
+    $('#secondary_auth_confirm_input_alert').show();
+    return false;
+  }
+}
+
+function showSecondaryAuthForm(div, way, title) {
+  $('.secondary_auth_stage').hide();
+  
+  $('.secondary_auth_next_btn').addClass("disabled");
+  $('.secondary_auth_next_btn').removeClass("primary");
+//   $('.secondary_auth_btn').removeClass("ready");
+//   $('.secondary_auth_btn').removeClass("site-background-color");
+//   $('.secondary_auth_btn').removeClass("site-border-color");
+  if (div == 1) {
+    $('#secondary_auth_select_form').show();
+  } else if (div == 2) {
+    var titleHtml = "";
+    if (way == 1) {
+      titleHtml = "Select Device to be authenticated.";
+    } else if (way == 5) {
+      titleHtml = "Select Device to be authenticated.";
+    } else if (way == 2) {
+      titleHtml = "Select Email to be authenticated.";
+    } else if (way == 3) {
+      titleHtml = "Select Contact to be authenticated.";
+    }
+    
+    if (way == 5) {
+      $('#secondary_auth_sub_list_title2').html(titleHtml);
+      $('#secondary_auth_sub_list_form2').show(); 
+    } else {
+      $('#secondary_auth_sub_list_title').html(titleHtml);
+      $('#secondary_auth_sub_list_form').show();  
+    }
+    
+  } else if (div == 3) {
+    $('#secondary_auth_confirm_target').html(title);
+    var titleHtml = "";
+    if (way == 1) {
+      titleHtml = "문구";
+      titleHtml += "<br />";
+      titleHtml += "Enter the guided authentication number in the input box on the this screen.";
+    } else if (way == 5) {
+      titleHtml = "문구";
+      titleHtml += "<br />";
+      titleHtml += "After authentication is complete, click the OK button on this screen.";
+    } else if (way == 2) {
+      titleHtml = "문구";
+      titleHtml += "<br />";
+      titleHtml += "Enter the guided authentication number in the input box on the this screen.";
+      titleHtml += "<br />";
+      titleHtml += "If you have not received the email sent by the authentication number, check the spam mailbox.";
+    } else if (way == 3) {
+      titleHtml = "문구";
+      titleHtml += "<br />";
+      titleHtml += "Enter the guided authentication number in the input box on the this screen.";
+    } else if (way == 4) {
+      titleHtml = "문구";
+      titleHtml += "<br />";
+      titleHtml += "Enter the guided authentication number in the input box on the this screen.";
+    }
+    $('#secondary_auth_confirm_desc').html(titleHtml);
+    
+    if (way == 5) {
+      $('#secondary_auth_confirm_form').show();
+      
+
+      $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("primary");
+      $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').removeClass("disabled");
+//       $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("ready");
+//       $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("site-background-color");
+//       $('#secondary_auth_confirm_form #btnConfirmSecondaryAuth').addClass("site-border-color");
+    } else {
+      $('#secondary_auth_confirm_form').show();
+//       $('#secondary_auth_value_auth_code').focus();
+      $('#secondary_auth_confirm_input_auth_code_word_1').focus();
+    }
+  }
+  
+}
+var saDisplayInterval;
+var saDisplayInterval2;
+var saClientStartTime;
+var saClientExpireTime;
+function startSecondaryAuthCountDown(sec) {
+  if (saDisplayInterval) {
+    clearInterval(saDisplayInterval);
+    saDisplayInterval = undefined;
+  }
+  if (sec > 0) {
+    var maxSec = sec;
+    var d = new Date();
+    saClientStartTime = new Date().getTime();
+    saClientExpireTime = saClientStartTime + (sec * 1000);
+    var _e = $('#secondary_auth_remain_time');
+    saDisplayInterval = setInterval(function() {
+      var currTime = new Date().getTime();
+      sec = parseInt((saClientExpireTime - currTime) / 1000);
+      
+      if (sec >= 0) {
+        _e.text(getSADisplayTime(sec));
+      } else {
+        if (saDisplayInterval) {
+          clearInterval(saDisplayInterval);
+          saDisplayInterval = undefined;
+        }
+        alert("The authentication time has expired.");
+        cancelSecondaryAuth();
+      }
+    }, 1000);
+  } else {
+    if (saDisplayInterval) {
+      clearInterval(saDisplayInterval);
+      saDisplayInterval = undefined;
+    }
+    alert("The authentication time has expired.");
+    cancelSecondaryAuth();
+  }
+}
+function startSecondaryAuthCountDown2(sec) {
+  if (saDisplayInterval2) {
+    clearInterval(saDisplayInterval2);
+    saDisplayInterval2 = undefined;
+  }
+  if (sec > 0) {
+    var maxSec = sec;
+    var d = new Date();
+    saClientStartTime = new Date().getTime();
+    saClientExpireTime = saClientStartTime + (sec * 1000);
+    var _e = $('#secondary_auth_confirm_view_remain_time');
+    saDisplayInterval2 = setInterval(function() {
+      var currTime = new Date().getTime();
+      sec = parseInt((saClientExpireTime - currTime) / 1000);
+      
+      if (sec >= 0) {
+        _e.text(getSADisplayTime(sec));
+        if (sec % 5 == 0) { // 5초간격 폴링
+          confirmSecondaryAuth(true);
+        }
+      } else {
+        if (saDisplayInterval2) {
+          clearInterval(saDisplayInterval2);
+          saDisplayInterval2 = undefined;
+        }
+        alert("The authentication time has expired.");
+        cancelSecondaryAuth();
+      }
+    }, 1000);
+  } else {
+    if (saDisplayInterval2) {
+      clearInterval(saDisplayInterval2);
+      saDisplayInterval2 = undefined;
+    }
+    alert("The authentication time has expired.");
+    cancelSecondaryAuth();
+  }
+}
+function getSADisplayTime(sec) {
+  if (sec <= 0) {
+    return "-:--";
+  }
+  var _min = parseInt(sec / 60);
+  var _sec = parseInt(sec % 60);
+  if (_sec < 10) {
+    _sec = "0" + _sec;
+  }
+  var displayTime = _min + ":" + _sec;
+  return displayTime;
+}
+function confirmSecondaryAuth(isBackground) {
+  if (getIsSecondaryAuthLoading()) { // 통신중인경우 리턴
+    return;
+  }
+  
+  var _e = $('#secondary_auth_input_code');
+  var auth_seq = $('#secondary_auth_value_auth_seq').val();
+  var auth_way = $('#secondary_auth_value_auth_way').val();
+  var auth_param = $('#secondary_auth_value_auth_param').val();
+//   var auth_code = $('#secondary_auth_value_auth_code').val();
+  var auth_code = checkConfirmCodeReady();
+  if (auth_way != 5) {
+    if (!checkConfirmCodeValid()) { // 코드 입력이 제대로 안끝난경우 리턴
+      return;
+    }
+  }
+  if (!isBackground) {
+    toggleSecondaryAuthLoading(true);
+    $('#secondary_auth_confirm_check_is_finish_alert').hide();
+  }
+  $.ajax({
+    url: "/ilos/secondauth/secondary_auth_confirm.acl",
+    type: "POST",
+    data: {
+      AUTH_SEQ : auth_seq,
+      AUTH_DIV : 1,
+      AUTH_WAY : auth_way,
+      AUTH_CODE : auth_code,
+      AUTH_PARAM : auth_param,
+      returnData : "json",
+      encoding : "utf-8"
+    },
+    async: true,
+    cache: false,
+    success: function(data){
+      try {
+        if (data) {
+          if (data.isError) {
+            if (!isBackground) {
+              if (auth_way != 5) {
+                alert(data.message);
+              } else {
+                if (data.messageCode == "E_CONFIRMED_SECONDARY_AUTH") {
+                  $('#secondary_auth_confirm_check_is_finish_alert').show();
+                } else {
+                  alert(data.message);
+                }
+              }
+            }
+          } else {
+//             alert(data.message);
+            secondaryAuthCallback();
+            closeSecondaryAuthForm();
+          }
+        } else {
+          alert("Server network failed");
+        }
+      } catch (e) {
+        alert("Error : " + e);
+//         console.log(e);
+      }
+    },
+    error : ajaxErrorMsg,
+    complete : function() {
+      if (!isBackground) {
+        toggleSecondaryAuthLoading(false);
+      }
+    }
+  });
+}
+
+function resetSecondaryAuthForm() {
+  if (saDisplayInterval) {
+    clearInterval(saDisplayInterval);
+    saDisplayInterval = undefined;
+  }
+  if (saDisplayInterval2) {
+    clearInterval(saDisplayInterval2);
+    saDisplayInterval2 = undefined;
+  }
+  showSecondaryAuthForm(1);
+  $('.secondary_auth_way_wrap').removeClass("enable");
+  $('.secondary_auth_way_wrap').html("");
+  
+  $('#secondary_auth_sub_list_title').html("");
+  $('#secondary_auth_sub_list_wrap').html("");
+  $('#secondary_auth_sub_list_form').hide();
+  
+  $('#secondary_auth_sub_list_title2').html("");
+  $('#secondary_auth_sub_list_wrap2').html("");
+  $('#secondary_auth_sub_list_form2').hide();
+  
+  $('#secondary_auth_confirm_target').html("");
+  $('#secondary_auth_confirm_desc').html("");
+  
+  $('#secondary_auth_value_auth_seq').val("");
+  $('#secondary_auth_value_auth_way').val("");
+  $('#secondary_auth_value_auth_param').val("");
+  
+//   $('#secondary_auth_value_auth_code').val("");
+  $('#secondary_auth_confirm_input_auth_code_wrap').html("");
+  $('#secondary_auth_confirm_input_request_code').html("-");
+  $('#secondary_auth_remain_time').html("-:--");
+  
+  $('#secondary_auth_confirm_view_auth_code_wrap').html("");
+  $('#secondary_auth_confirm_view_request_code').html("-");
+  $('#secondary_auth_confirm_view_remain_time').html("-:--");
+  
+  $('#secondary_auth_confirm_view_wrap').hide();
+  $('#secondary_auth_confirm_input_wrap').hide();
+
+  $('.secondary_auth_next_btn').addClass("disabled");
+  $('.secondary_auth_next_btn').removeClass("primary");
+//   $('.secondary_auth_btn').removeClass("ready");
+//   $('.secondary_auth_btn').removeClass("site-background-color");
+//   $('.secondary_auth_btn').removeClass("site-border-color");
+  
+//   $('#secondary_auth_confirm_input_alert').val(""); // 메세지 유동적으로 할당시엔 필요
+  $('#secondary_auth_confirm_input_alert').hide();
+  $('#secondary_auth_confirm_check_is_finish_alert').hide();
+
+//   $('html, body').scrollTop(0);
+}
+
+function cancelSecondaryAuth() {
+  initSecondaryAuth(secondaryAuthCallback);
+}
+</script>
+<style>
+#secondary_auth_wrap {
+  padding: 0px 30px;
+}
+.secondary_auth_way_wrap, .secondary_auth_sub_list_wrap {
+  vertical-align:middle;
+}
+
+.secondary_auth_way_item, .secondary_auth_sub_item {
+  display:block;
+  position:relative;
+  width:100%;
+  border:1px solid var(--Gray-20, #E1E4E9);
+  border-radius:4px;
+  background-color:var(--Gray-0, #FFFFFF);
+  text-align:left;
+  cursor:pointer;
+}
+.secondary_auth_way_item:hover, .secondary_auth_sub_item:hover {
+  border: 1px solid var(--Blue-50, #3882FF);
+  box-shadow: 0px 0px 0px 3px rgba(56, 130, 255, 0.25);
+}
+.secondary_auth_way_item.checked, .secondary_auth_sub_item.checked {
+  border-color: var(--Primary-50, #E31B54);
+  background-color: var(--Gray-0, #FFF);
+  box-shadow: 0px 1px 2px 0px rgba(0, 0, 0, 0.05);
+  color: var(--Primary-50, #E31B54);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.secondary_auth_way_item:nth-child(n+2), .secondary_auth_sub_item:nth-child(n+2) {
+  margin-top:10px;
+}
+
+.secondary_auth_way_item:hover, .secondary_auth_sub_item:hover {
+/*   background-color:#f8f7f7; */
+/*   background-color:#ffffdc; */
+}
+.secondary_auth_way_inner, .secondary_auth_sub_inner {
+/*   display:inline-block; */
+}
+.secondary_auth_way_item_inner, .secondary_auth_sub_item_inner {
+  margin:16px;
+}
+.secondary_auth_way_item.secondary_auth_way_disabled {
+  background-color: var(--Gray-20, #E1E4E9);
+  cursor: default;
+}
+
+.secondary_auth_sub_item_title {
+  display:inline-block;
+  vertical-align:top;
+  font-size: 15px;
+  font-weight: bold;
+}
+.secondary_auth_sub_item_desc_wrap {
+  display:inline-block; vertical-align:middle; font-size:13px;
+/*   color: #969696; */
+}
+/*
+.secondary_auth_sub_item_desc_wrap > div:first-child {
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: bold;
+}
+*/
+.secondary_auth_sub_item_desc {
+/*   margin-top:4px; */
+  margin-top:6px;
+  font-size:13px;
+}
+/*
+.secondary_auth_sub_item_desc_left {
+  min-width:40px;
+  display:inline-block;
+}
+.secondary_auth_sub_item_desc_right {
+  margin-left:10px;
+}
+*/
+.secondary_auth_way_inner_left {
+  font-size: 13px;
+}
+.secondary_auth_way_inner_left > div:first-child {
+  margin-bottom: 16px;
+  font-size: 15px;
+  font-weight: bold;
+}
+.secondary_auth_way_inner_right {
+  position: absolute; right: 20px; top: calc(50% - 6px);
+}
+.secondary_auth_way_next_btn {
+  width:15px;
+}
+
+.secondary_auth_way_item.secondary_auth_way_disabled .secondary_auth_way_inner_right {
+  display: none;
+}
+
+.secondary_auth_confirm_input_box {
+  position:relative;
+  border:1px solid var(--Gray-20, #E1E4E9);
+  background-color:var(--Gray-5, #F9F9FB);
+  padding:5px;
+  margin-bottom: 8px;
+}
+#secondary_auth_value_auth_code {
+  background-color:var(--Gray-5, #F9F9FB);
+  border:none;
+  padding:0px 0px 1px 0px !important;;
+  width:80%;
+  height:auto !important;
+  font-size:13px !important;;
+}
+::-webkit-input-placeholder {
+  color: var(--Gray-40, #9BA0AA);
+}
+#secondary_auth_remain_time {
+/*   position:absolute; */
+/*   right:20; */
+}
+
+.secondary_auth_sub_item_chk {
+  display:none !important;
+  position:absolute !important;
+  top:0px !important;
+  left:-9999px !important;
+  width:1px !important;
+  height:1px !important;
+}
+/* 220215_기존 체크스타일
+.secondary_auth_sub_item_chk_display {
+  margin-left: -4px;
+  margin-right: 12px;
+  width:15px;
+  height:15px;
+  display:inline-block;
+  vertical-align: middle;
+  border:1px solid #dadada;
+  border-radius:15px;
+  display:none;
+}
+.secondary_auth_sub_item_chk_display.checked {
+  background-image:url('/ilos/images/secondauth/icon_check_white_1x.png');
+  background-size:15px 15px;
+  background-repeat:no-repeat;
+}
+*/
+/* 유형 아이콘
+.secondary_auth_sub_item_icon {
+  margin-right:10px;
+  width:15px;
+  height:24px;
+  display:inline-block;
+  vertical-align:top;
+  background-image:url('/ilos/images/secondauth/icon_smartphone.png');
+  background-size:15px 24px;
+  background-repeat:no-repeat;
+  display:none;
+}
+*/
+.secondary_auth_btn {
+  margin: 20px auto;
+  padding: 6px 12px;
+}
+/*
+.secondary_auth_btn {
+  margin: 20px auto;
+  border:1px solid #ccc;
+  border-radius: 3px;
+  cursor:pointer;
+  padding: 6px 12px;
+  font-family: 'Malgun Gothic';
+  font-size: 12px;
+  font-weight:bold;
+  text-align: center;
+  min-width: 31px;
+}
+.secondary_auth_next_btn {
+  color:white;
+  background-color:#bbbdc4;
+}
+
+.secondary_auth_btn.ready {
+  color:white;
+}
+*/
+#secondary_auth_confirm_input_alert {
+  float: left;
+  width: 100%;
+  font-size: 13px;
+  color: var(--Error, #FF444E);
+}
+.secondary_auth_loader {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  margin:0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--Gray-40, #9BA0AA);
+  border-top: 1px solid var(--Gray-20, #E1E4E9);
+  -webkit-animation: spin 1s linear infinite;
+  animation: spin 1s linear infinite;
+}
+
+#secondary_auth_loading_wrap {
+  display:none;
+  position:static;
+  z-index:999;
+  width:100%;
+  margin:0 auto;
+  text-align:center;
+}
+#secondary_auth_loading_bg {
+  position:absolute; left:0; top:0; width:100%; height:100%;
+/*   background-color:#fefefe; */
+  opacity:0.6;
+  z-index:999;
+}
+#secondary_auth_loading_top {
+  position:absolute;
+  width:100%;
+  top:45%;
+  z-index:999;
+}
+.secondary_auth_stage {
+  padding: 20px 0px 48px 0px;
+/*   font-family: 'sans-serif','맑은 고딕','Malgun Gothic';   */
+/*   font-size: 13px; */
+}
+.secondary_auth_stage > div > p {
+  margin-bottom: 16px;
+}
+.secondary_auth_confirm_title_wrap {
+  margin: 8px auto 14px auto;
+/*   font-size: 15px; */
+  font-weight: bold;
+}
+.secondary_auth_confirm_desc_wrap {
+/*   font-size: 13px; */
+  line-height: 23px;
+  /* 유저이름 bold 처리해야함 */
+}
+.secondary_auth_confirm_input_wrap {
+/*   margin: 40px auto 20px auto; */
+  margin-top: 20px;
+}
+.secondary_auth_confirm_view_wrap {
+/*   margin: 40px auto 20px auto; */
+  margin-top:20px;
+  background-color:var(--Gray-5, #F9F9FB);
+  border:1px solid var(--Gray-20, #E1E4E9);
+}
+.secondary_auth_confirm_view_inner_wrap, .secondary_auth_confirm_input_inner_wrap {
+  text-align:center;
+  margin:20px auto;
+}
+.secondary_auth_confirm_view_auth_code_wrap, .secondary_auth_confirm_input_auth_code_wrap {
+  margin-top: 10px;
+}
+#secondary_auth_confirm_check_is_finish_alert {
+  margin:15px;
+  text-align:center;
+  font-size: 13px;
+  color: var(--Error, #FF444E);
+}
+.secondary_auth_confirm_view_auth_code_title {
+  font-size: 12px;
+}
+.secondary_auth_confirm_view_auth_code_word {
+  display:inline-block;
+  border:1px solid var(--Gray-20, #E1E4E9);
+  border-radius:5px;
+  background-color:var(--Gray-0, #FFFFFF);
+  padding:11px 14px 14px 14px;
+  font-size:20px;
+  font-weight:bold;
+}
+.secondary_auth_confirm_input_auth_code_word {
+  display:inline-block;
+  width:20px;
+  border:1px solid var(--Gray-20, #E1E4E9);
+  border-radius:5px;
+  background-color:var(--Gray-0, #FFFFFF);
+  padding:6px 9px 9px 8px;
+  font-size:20px !important;
+  font-weight: bold;
+  font-family: 'malgun gothic', '맑은 고딕', 'sans-serif' !important;
+  text-align:center;
+  color: var(--Gray-90, #26282C);
+}
+.secondary_auth_confirm_input_auth_code_word:focus {
+  border-color: var(--Blue-50, #3882FF);
+  box-shadow: 0px 0px 0px 3px rgba(56, 130, 255, 0.25);
+}
+.secondary_auth_confirm_input_auth_code_word:focus-visible {
+  outline:none !important;
+}
+/* Chrome, Safari, Edge, Opera */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+/* Firefox */
+input[type=number] {
+  -moz-appearance: textfield;
+}
+.secondary_auth_confirm_view_request_code_wrap, .secondary_auth_confirm_input_request_code_wrap {
+  margin-top:12px;
+  border:1px solid var(--Gray-20, #E1E4E9);
+  background:var(--Gray-5, #F9F9FB);
+  display:inline-block;
+  padding:4px 10px;
+  border-radius:10px;
+  color:var(--Blue-70, #2755A6);
+  font-size:12px;
+}
+.secondary_auth_confirm_view_remain_time_wrap, .secondary_auth_remain_time_wrap {
+  margin-top:20px;
+  color:var(--Error, #FF444E);
+/*   font-size:14px; */
+}
+.secondary_auth_confirm_view_remain_time, .secondary_auth_remain_time {
+  vertical-align:top;
+  margin-top:2px;
+  margin-left:3px;
+}
+.secondary_auth_confirm_view_remain_time_icon_wrap, .secondary_auth_remain_time_icon_wrap {
+  display:inline-block;
+  margin-top:1px;
+  vertical-align:middle;
+}
+.secondary_auth_confirm_view_input_desc, .secondary_auth_input_desc {
+  margin-top:12px;
+}
+</style>
+<div id="dialog_secondary_auth" style="padding: 0px;">
+  <div id="secondary_auth_loading_wrap" style="display:none;">
+    <div id="secondary_auth_loading_bg" style="">
+      <div id="secondary_auth_loading_top" style=""><img src="/ilos/images/loading.gif" /></div>
+<!--       <div id="secondary_auth_loading_desc">텍스트17</div> 텍스트18
+    </div>
+  </div>
+  <div id="secondary_auth_wrap" class="font_body2">
+    <div id="secondary_auth_select_form" class="secondary_auth_stage">
+      <div>
+        <p>텍스트19</p>
+      </div>
+      
+      <div id="secondary_auth_way_wrap" class="secondary_auth_way_wrap">
+      
+      </div>
+    </div>
+    <div id="secondary_auth_sub_list_form" style="" class="secondary_auth_stage">
+      <div>
+        <p><span id="secondary_auth_sub_list_title"></span></p> 
+      </div>
+      <div id="secondary_auth_sub_list_wrap" class="secondary_auth_sub_list_wrap">
+        
+      </div>
+      <div id="secondary_auth_sub_list_btn_wrap">
+        <button id="btnCancelSecondaryAuth" class="secondary_auth_btn secondary_auth_prev_btn text_btn" type="button" onkeypress="this.onclick;" onclick="cancelSecondaryAuth();" style="float:left;">텍스트20</button>
+        <button id="btnConfirmSecondaryAuth" class="secondary_auth_btn secondary_auth_next_btn text_btn" type="button" onkeypress="this.onclick;" onclick="startSecondaryAuthUsingSelected();" style="float:right;">텍스트21</button>
+      </div>
+    </div>
+    <div id="secondary_auth_sub_list_form2" style="" class="secondary_auth_stage">
+      <div>
+        <p><span id="secondary_auth_sub_list_title2"></span></p> 
+      </div>
+      <div id="secondary_auth_sub_list_wrap2" class="secondary_auth_sub_list_wrap">
+        
+      </div>
+      <div id="secondary_auth_sub_list_btn_wrap2">
+        <button id="btnCancelSecondaryAuth2" class="secondary_auth_btn secondary_auth_prev_btn text_btn" type="button" onkeypress="this.onclick;" onclick="cancelSecondaryAuth();" style="float:left;">텍스트22</button>
+        <button id="btnConfirmSecondaryAuth2" class="secondary_auth_btn secondary_auth_next_btn text_btn" type="button" onkeypress="this.onclick;" onclick="startSecondaryAuthUsingSelected2();" style="float:right;">텍스트23</button>
+      </div>
+    </div>
+    <div id="secondary_auth_confirm_form" style="display:none;" class="secondary_auth_stage">
+      <div class="secondary_auth_confirm_title_wrap font_body1">
+        <span id="secondary_auth_confirm_target"></span>
+      </div>
+      <div class="secondary_auth_confirm_desc_wrap font_body3">
+        <span id="secondary_auth_confirm_desc"></span>
+      </div>
+      <div id="secondary_auth_confirm_view_wrap" class="secondary_auth_confirm_view_wrap" style="display:none;">
+        <div class="secondary_auth_confirm_view_inner_wrap">
+          <div class="secondary_auth_confirm_view_auth_code_title">텍스트24</div>
+          <div id="secondary_auth_confirm_view_auth_code_wrap" class="secondary_auth_confirm_view_auth_code_wrap">
+            <span class="secondary_auth_confirm_view_auth_code_word">텍스트25</span>
+            <span class="secondary_auth_confirm_view_auth_code_word">텍스트26</span>
+            <span class="secondary_auth_confirm_view_auth_code_word">텍스트27</span>
+            <span class="secondary_auth_confirm_view_auth_code_word">텍스트28</span>
+          </div>
+          <div class="secondary_auth_confirm_view_request_code_wrap">
+            <span>텍스트29 </span>
+            <span id="secondary_auth_confirm_view_request_code">-</span>
+          </div>
+          <div class="secondary_auth_confirm_view_remain_time_wrap font_body2">
+            <span class="secondary_auth_confirm_view_remain_time_icon_wrap"><img src="/ilos/images/secondauth/icon_alarm_clock_red.png" title="Remaining time" /></span>
+            <span id="secondary_auth_confirm_view_remain_time" class="secondary_auth_confirm_view_remain_time" title="Remaining time">-:--</span>
+          </div>
+
+        </div>
+        <div id="secondary_auth_confirm_check_is_finish_alert" style="display:none;">
+          텍스트30<br />텍스트31
+        </div>
+      </div>
+      <div id="secondary_auth_confirm_input_wrap" class="secondary_auth_confirm_input_wrap" style="display:none;">
+        <div style="display:none;">
+          <input type="hidden" value="" id="secondary_auth_value_auth_seq" /> 
+          <input type="hidden" value="" id="secondary_auth_value_auth_way" /> 
+          <input type="hidden" value="" id="secondary_auth_value_auth_param" />
+  <!--         <input type="hidden" value="" id="secondary_auth_value_auth_div" /> 텍스트32
+        </div>
+        <div class="secondary_auth_confirm_input_box">
+          <div class="secondary_auth_confirm_input_inner_wrap">
+            <div class="secondary_auth_confirm_input_auth_code_title font_body2">텍스트33</div>
+            <div id="secondary_auth_confirm_input_auth_code_wrap" class="secondary_auth_confirm_input_auth_code_wrap">
+              <input type="number" pattern="[0-9]*" inputmode="numeric" id="secondary_auth_confirm_input_auth_code_word_1" class="secondary_auth_confirm_input_auth_code_word" value="" maxlength="1" odr="1" oninput="checkMaxLength(this);" onfocus="onFocusInputCode(this, event);" onblur="onBlurInputCode(this, event);checkConfirmCodeReady();" onkeydown="checkInputCode(this, event);" />
+              <input type="number" pattern="[0-9]*" inputmode="numeric" id="secondary_auth_confirm_input_auth_code_word_2" class="secondary_auth_confirm_input_auth_code_word" value="" maxlength="1" odr="2" oninput="checkMaxLength(this);" onfocus="onFocusInputCode(this, event);" onblur="onBlurInputCode(this, event);checkConfirmCodeReady();" onkeydown="checkInputCode(this, event);" />
+              <input type="number" pattern="[0-9]*" inputmode="numeric" id="secondary_auth_confirm_input_auth_code_word_3" class="secondary_auth_confirm_input_auth_code_word" value="" maxlength="1" odr="3" oninput="checkMaxLength(this);" onfocus="onFocusInputCode(this, event);" onblur="onBlurInputCode(this, event);checkConfirmCodeReady();" onkeydown="checkInputCode(this, event);" />
+              <input type="number" pattern="[0-9]*" inputmode="numeric" id="secondary_auth_confirm_input_auth_code_word_4" class="secondary_auth_confirm_input_auth_code_word" value="" maxlength="1" odr="4" oninput="checkMaxLength(this);" onfocus="onFocusInputCode(this, event);" onblur="onBlurInputCode(this, event);checkConfirmCodeReady();" onkeydown="checkInputCode(this, event);" />
+            </div>
+            <div class="secondary_auth_confirm_input_request_code_wrap" style="display:none;">
+              <span>텍스트34 </span>
+              <span id="secondary_auth_confirm_input_request_code">-</span>
+            </div>
+            <div class="secondary_auth_remain_time_wrap font_body2">
+              <span class="secondary_auth_remain_time_icon_wrap"><img src="/ilos/images/secondauth/icon_alarm_clock_red.png" title="Remaining time" /></span>
+              <span id="secondary_auth_remain_time" class="secondary_auth_remain_time" title="Remaining time">-:--</span>
+            </div>
+          </div>
+        
+
+
+        </div>
+        <div id="secondary_auth_confirm_input_alert" style="display:none;">
+          텍스트35
+        </div>
+      </div>
+      <div class="secondary_auth_confirm_btn_wrap">
+        <button id="btnCancelSecondaryAuth" class="secondary_auth_btn secondary_auth_prev_btn text_btn" type="button" onkeypress="this.onclick;" onclick="cancelSecondaryAuth();" style="float:left;">텍스트36</button>
+        <button id="btnConfirmSecondaryAuth" class="secondary_auth_btn secondary_auth_next_btn text_btn" type="button" onkeypress="this.onclick;" onclick="confirmSecondaryAuth();" style="float:right;">텍스트37 </button>
+      </div>
+    </div>
+  </div>
+</div>
+    

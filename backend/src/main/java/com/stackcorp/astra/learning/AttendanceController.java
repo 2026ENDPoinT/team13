@@ -9,6 +9,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
 import com.stackcorp.astra.catalog.api.CourseRosters;
@@ -85,9 +86,11 @@ class AttendanceController {
 
 	private final AuditLog audit;
 
+	private final SchoolScreens school;
+
 	AttendanceController(LearningAccess access, LearningClock clock, AttendanceQueries queries,
 			AttendanceService service, AttendancePolicy policy, CourseRosters rosters, UserDirectory users,
-			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit) {
+			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit, SchoolScreens school) {
 		this.access = access;
 		this.clock = clock;
 		this.queries = queries;
@@ -98,18 +101,24 @@ class AttendanceController {
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 		this.audit = audit;
+		this.school = school;
 	}
 
 	/**
 	 * 출석부(EP-0011). 학생에게는 차시마다 자기 상태와 요약을, 담당자에게는 차시마다 상태별 수를 주차별로 돌려준다.
-	 * {@code week}를 주면 그 주차만 보인다. 요약은 언제나 과목 전체다.
+	 * {@code week}를 주면 그 주차만 보인다. 요약은 언제나 과목 전체다. 학교에서 읽는 과목(ADR-0043)의 학생에게는 학생 본인의 학교
+	 * 출석을 그 학생의 학교 session으로 읽어 같은 모양으로 준다({@code origin: "school"}).
 	 */
 	@GetMapping("/api/courses/{courseId}/attendance")
-	ResponseEntity<AttendanceView> attendance(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+	ResponseEntity<?> attendance(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@RequestParam(required = false) Integer week) {
 		CourseRole role = this.access.roleIn(actor.userId(), courseId).orElseThrow(ApiException::notFound);
 		if (week != null && (week < 1 || week > MAX_WEEK)) {
 			throw ApiException.invalid("week는 1 이상 " + MAX_WEEK + " 이하여야 합니다.");
+		}
+		Optional<SchoolScreens.AttendanceView> school = this.school.attendance(actor, courseId, week, this.clock.now());
+		if (school.isPresent()) {
+			return ok(school.get());
 		}
 		boolean instructor = role == CourseRole.INSTRUCTOR;
 		Settings settings = this.policy.of(courseId);

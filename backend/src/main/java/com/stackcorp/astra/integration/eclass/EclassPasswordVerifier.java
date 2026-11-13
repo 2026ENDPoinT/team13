@@ -22,6 +22,7 @@ import java.security.KeyStore;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -44,7 +45,12 @@ import org.jsoup.nodes.Element;
 
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
-import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolMaterial;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolPost;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolAttendanceWeek;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolGradeItem;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolSyllabus;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolVideo;
 import com.stackcorp.astra.identity.api.SchoolCourseRooms;
 import com.stackcorp.astra.identity.api.SchoolCourseRooms.SchoolCourseRoom;
 import com.stackcorp.astra.identity.api.SchoolLoginException;
@@ -59,7 +65,8 @@ import com.stackcorp.astra.identity.api.SchoolPasswordVerifier;
  * 그것을 닫으면 버린다. 학교 session을 저장하거나 다른 확인에 다시 쓰지 않는다.</li>
  * <li>강의실은 과목을 session에 묶는 요청({@code eclass_room2.acl}) 뒤 강의실 첫 화면({@code submain_form.acl})을 열어 읽는다.
  * 화면 해석은 {@link CourseRoomPage}다.</li>
- * <li>강의실 안의 내용(파일모음, 자료 상세, 첨부 받기)은 과목을 묶은 뒤 같은 session으로 읽는다. 해석은 {@link SchoolContentPages}다.
+ * <li>강의실 안의 내용(파일모음, 자료 상세, 공지 목록과 상세, 첨부 받기)은 과목을 묶은 뒤 같은 session으로 읽는다. 해석은
+ * {@link SchoolContentPages}다. 영상 상세({@code online_view_form.acl}만), 강의계획서, 출석, 성적은 {@link SchoolScreenPages}다.
  * 이 class는 읽기 요청만 보낸다. 다음은 부르지 않는다(학교에 학습·출석을 알리거나 학교의 확인 절차를 건너뛰는 요청): 영상
  * {@code online_view_navi}·{@code online_view_hisno}·{@code online_view_at}·{@code online_view_time}·{@code online_view_status}·
  * {@code online_view_check}·{@code online_view_replace_*}·{@code online_learning*}, {@code accessone.hellolms.com},
@@ -99,6 +106,25 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 	private static final String FILE_LIST = "/ilos/cls/st/co/efile_list.acl";
 
 	private static final String DOWNLOAD = "/ilos/co/efile_download.acl";
+
+	private static final String NOTICE_LIST = "/ilos/cls/st/notice/notice_list.acl";
+
+	private static final String NOTICE_VIEW = "/ilos/cls/st/notice/notice_view_pop.acl";
+
+	/** 공지 목록 한 쪽의 공지 수. 학교 화면은 8개씩 보이지만 요청한 수만큼 준다. */
+	private static final int NOTICE_PAGE = 50;
+
+	private static final int MAX_NOTICE_PAGES = 10;
+
+	private static final String VIDEO = "/ilos/cls/st/online/online_view_form.acl";
+
+	private static final String PLAN_POP = "/ilos/main/rg/regular_view_pop.acl";
+
+	private static final String PLAN_VIEW = "/ilos/main/rg/regular_view_plan.acl";
+
+	private static final String ATTENDANCE = "/ilos/cls/st/attend/attendance_list.acl";
+
+	private static final String GRADES = "/ilos/cls/st/eval/eval3_result_view_detail_list.acl";
 
 	/** 학교 활동·파일 번호. 숫자나 대문자·숫자 키다. */
 	private static final Pattern ITEM_ID = Pattern.compile("[0-9A-Za-z]{1,40}");
@@ -231,7 +257,7 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 	}
 
 	/** 자료 상세와 첨부 목록. 학교에서 조회수가 는다. 이어 보기 기록({@code activity_continue_update.acl})은 보내지 않는다. */
-	private SchoolMaterial material(Session session, URI referer, String courseKey, String itemId, String studentId) {
+	private SchoolPost material(Session session, URI referer, String courseKey, String itemId, String studentId) {
 		if (!ITEM_ID.matcher(itemId).matches()) {
 			throw notFound("item");
 		}
@@ -245,7 +271,51 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		if (contentSeq != null) {
 			files = attachments(session, referer, courseKey, studentId, contentSeq, "lecture_material", itemId);
 		}
-		return SchoolContentPages.material(detail.document(), files, year == null ? 0 : year);
+		return SchoolContentPages.post(detail.document(), files, year == null ? 0 : year);
+	}
+
+	/** 공지 목록 전체. 목록 화면이라 학교 쪽 읽음 표시를 바꾸지 않는다. 쪽마다 {@value #NOTICE_PAGE}개씩 차례로 읽는다. */
+	private List<SchoolNotice> notices(Session session, URI referer, String courseKey) {
+		Integer year = CourseRoomPage.yearOf(courseKey);
+		if (year == null) {
+			throw unavailable("room_key");
+		}
+		bind(session, referer, courseKey);
+		List<SchoolNotice> notices = new ArrayList<>();
+		for (int page = 1; page <= MAX_NOTICE_PAGES; page++) {
+			Page list = session.request(resolve(this.base, NOTICE_LIST), "POST", "start=" + page + "&display="
+					+ NOTICE_PAGE + "&SCH_VALUE=&ODR=&encoding=utf-8", true, referer);
+			requireSignedIn(list);
+			List<SchoolNotice> part = SchoolContentPages.notices(list.document(), list.body(), year,
+					(id) -> CourseRoomPage.connect(this.base, courseKey, "notice", id));
+			notices.addAll(part);
+			Integer total = SchoolContentPages.noticeTotal(list.body());
+			if (part.size() < NOTICE_PAGE || (total != null && notices.size() >= total)) {
+				break;
+			}
+		}
+		return notices.stream().distinct().toList();
+	}
+
+	/**
+	 * 공지 상세와 첨부 목록. 학교에서 그 학생이 읽은 것으로 표시되고 조회수가 는다. "공지를 확인했습니다"({@code notice_confirm.acl})와 댓글
+	 * 요청은 보내지 않는다.
+	 */
+	private SchoolPost notice(Session session, URI referer, String courseKey, String itemId, String studentId) {
+		if (!ITEM_ID.matcher(itemId).matches()) {
+			throw notFound("item");
+		}
+		Integer year = CourseRoomPage.yearOf(courseKey);
+		bind(session, referer, courseKey);
+		Page detail = session.request(resolve(this.base, NOTICE_VIEW), "POST",
+				"ARTL_NUM=" + encode(itemId) + "&encoding=utf-8", true, referer);
+		requireSignedIn(detail);
+		String contentSeq = SchoolContentPages.contentSeq(detail.body());
+		List<SchoolFile> files = List.of();
+		if (contentSeq != null) {
+			files = attachments(session, referer, courseKey, studentId, contentSeq, "notice", itemId);
+		}
+		return SchoolContentPages.post(detail.document(), files, year == null ? 0 : year);
 	}
 
 	/** {@code efile_list.acl}: 내용 하나의 첨부 목록 조각. */
@@ -268,6 +338,66 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		URI url = resolve(this.base, DOWNLOAD + "?FILE_SEQ=" + encode(file.fileSeq()) + "&CONTENT_SEQ="
 				+ encode(file.contentSeq()) + "&ky=" + encode(courseKey) + "&ud=" + encode(studentId) + "&pf_st_flag=2");
 		return session.download(url, referer, maxBytes, target);
+	}
+
+	// 영상 상세, 강의계획서, 출석, 성적(ADR-0043 4·5단계). 해석은 SchoolScreenPages다. 모두 화면을 읽기만 한다.
+
+	/**
+	 * 영상 활동 상세({@code online_view_form.acl}) 하나만 읽는다. 카드를 눌렀을 때 학교 화면이 부르는 학습창·영상 주소·중복 시청·2차
+	 * 인증 요청은 보내지 않는다.
+	 */
+	private SchoolVideo video(Session session, URI referer, String courseKey, String itemId) {
+		if (!ITEM_ID.matcher(itemId).matches()) {
+			throw notFound("item");
+		}
+		Integer year = CourseRoomPage.yearOf(courseKey);
+		bind(session, referer, courseKey);
+		Page detail = session.request(resolve(this.base, VIDEO + "?LECTURE_WEEKS=" + itemId + "&encoding=utf-8"), "GET",
+				null, true, referer);
+		requireSignedIn(detail);
+		return SchoolScreenPages.video(detail.document(), year == null ? 0 : year);
+	}
+
+	/**
+	 * 강의계획서. 학교 화면처럼 강의실 첫 화면의 {@code lecPlanViewPop()} 값으로 팝업({@code regular_view_pop.acl})과 내용
+	 * ({@code regular_view_plan.acl})을 차례로 읽는다. 계획서 버튼이 없으면(비정규 과정) {@code NOT_FOUND}다.
+	 */
+	private SchoolSyllabus syllabus(Session session, URI referer, String courseKey) {
+		bind(session, referer, courseKey);
+		Page room = session.request(resolve(this.base, ROOM), "GET", null, false, referer);
+		requireSignedIn(room);
+		Map<String, String> plan = SchoolScreenPages.planParameters(room.body());
+		if (plan == null || !courseKey.equals(plan.get("KJKEY"))) {
+			throw notFound("syllabus_absent");
+		}
+		String body = plan.entrySet()
+			.stream()
+			.map((e) -> e.getKey() + "=" + encode(e.getValue()))
+			.collect(Collectors.joining("&")) + "&encoding=utf-8";
+		requireSignedIn(session.request(resolve(this.base, PLAN_POP), "POST", body, true, referer));
+		Page content = session.request(resolve(this.base, PLAN_VIEW), "POST", body, true, referer);
+		requireSignedIn(content);
+		return SchoolScreenPages.syllabus(content.document());
+	}
+
+	/** 학생 본인의 출석, 모든 주차({@code SCH_WEEK_NO} 빈 값). */
+	private List<SchoolAttendanceWeek> attendance(Session session, URI referer, String courseKey) {
+		Integer year = CourseRoomPage.yearOf(courseKey);
+		bind(session, referer, courseKey);
+		Page list = session.request(resolve(this.base, ATTENDANCE), "POST", "SCH_WEEK_NO=&encoding=utf-8", true,
+				referer);
+		requireSignedIn(list);
+		return SchoolScreenPages.attendance(list.document(), year == null ? 0 : year);
+	}
+
+	/** 학생 본인의 평가 활동과 점수. 유형 값을 비우면 학교가 빈 목록을 주므로 {@code all}을 보낸다. */
+	private List<SchoolGradeItem> grades(Session session, URI referer, String courseKey) {
+		Integer year = CourseRoomPage.yearOf(courseKey);
+		bind(session, referer, courseKey);
+		Page list = session.request(resolve(this.base, GRADES), "POST",
+				"SCH_EVAL_ACTIVITY_ID=all&SCH_VALUE=&encoding=utf-8", true, referer);
+		requireSignedIn(list);
+		return SchoolScreenPages.grades(list.document(), year == null ? 0 : year);
 	}
 
 	private static boolean signedOut(Page page) {
@@ -637,9 +767,22 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		}
 
 		@Override
-		public synchronized SchoolMaterial material(String courseKey, String itemId, Duration requestTimeout,
+		public synchronized SchoolPost material(String courseKey, String itemId, Duration requestTimeout,
 				Duration remaining) {
 			return content(() -> EclassPasswordVerifier.this.material(open(requestTimeout, remaining), this.referer,
+					courseKey, itemId, this.studentId));
+		}
+
+		@Override
+		public synchronized List<SchoolNotice> notices(String courseKey, Duration requestTimeout, Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.notices(open(requestTimeout, remaining), this.referer,
+					courseKey));
+		}
+
+		@Override
+		public synchronized SchoolPost notice(String courseKey, String itemId, Duration requestTimeout,
+				Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.notice(open(requestTimeout, remaining), this.referer,
 					courseKey, itemId, this.studentId));
 		}
 
@@ -648,6 +791,33 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 				Duration requestTimeout, Duration remaining) {
 			return content(() -> EclassPasswordVerifier.this.download(open(requestTimeout, remaining), this.referer,
 					courseKey, this.studentId, file, maxBytes, target));
+		}
+
+		@Override
+		public synchronized SchoolVideo video(String courseKey, String itemId, Duration requestTimeout,
+				Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.video(open(requestTimeout, remaining), this.referer,
+					courseKey, itemId));
+		}
+
+		@Override
+		public synchronized SchoolSyllabus syllabus(String courseKey, Duration requestTimeout, Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.syllabus(open(requestTimeout, remaining), this.referer,
+					courseKey));
+		}
+
+		@Override
+		public synchronized List<SchoolAttendanceWeek> attendance(String courseKey, Duration requestTimeout,
+				Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.attendance(open(requestTimeout, remaining), this.referer,
+					courseKey));
+		}
+
+		@Override
+		public synchronized List<SchoolGradeItem> grades(String courseKey, Duration requestTimeout,
+				Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.grades(open(requestTimeout, remaining), this.referer,
+					courseKey));
 		}
 
 		private Session open(Duration requestTimeout, Duration remaining) {

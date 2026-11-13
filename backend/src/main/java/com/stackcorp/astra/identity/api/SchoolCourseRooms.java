@@ -8,7 +8,12 @@ import java.util.List;
 
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
-import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolMaterial;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolPost;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolAttendanceWeek;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolGradeItem;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolSyllabus;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolVideo;
 
 /**
  * 학번·비밀번호 확인({@link SchoolPasswordVerifier#verify})으로 열린 학교 e-Class session으로 학생의 강의실을 읽는 손잡이. 학교
@@ -18,9 +23,9 @@ import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolMaterial;
  * session에 묶어 가져가고({@link SchoolSessions}) 그 session이 끝날 때 닫는다. 로그인 요청을 받은 쪽은 응답 전에 {@code claim()}이
  * true면(아무도 가져가지 않았으면) 바로 닫는다. 다른 쪽은 닫지 않고 읽기만 한다.</li>
  * <li>학교 강의실은 session에 과목 하나가 묶이는 구조라 요청을 차례로 보낸다. 구현은 한 객체의 읽기를 하나씩 차례로 처리한다.</li>
- * <li>목록 읽기({@link #read}, {@link #files})는 학교 쪽 상태를 바꾸지 않는다. 상세 읽기와 파일 받기는 학교에서 조회수나 읽음 표시가
- * 바뀔 수 있으므로, 그 학생이 STack에서 그 항목을 열었을 때만 그 학생의 손잡이로 부른다. 로그인 때, 뒤에서 도는 작업, 미리 읽기로
- * 부르지 않는다.</li>
+ * <li>목록 읽기({@link #read}, {@link #files}, {@link #notices})는 학교 쪽 상태를 바꾸지 않는다. 상세 읽기와 파일 받기는 학교에서
+ * 조회수나 읽음 표시가 바뀔 수 있으므로, 그 학생이 STack에서 그 항목을 열었을 때만 그 학생의 손잡이로 부른다. 로그인 때, 뒤에서 도는
+ * 작업, 미리 읽기로 부르지 않는다.</li>
  * <li>영상 학습창(출석·학습시간을 학교에 보내는 요청)과 2차 인증에 닿는 요청은 보내지 않는다.</li>
  * </ul>
  */
@@ -49,7 +54,21 @@ public interface SchoolCourseRooms {
 	 * @param itemId 학교 자료 번호(강의실 목록 링크의 {@code n})
 	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 그 자료를 보여 주지 않았다
 	 */
-	SchoolMaterial material(String courseKey, String itemId, Duration requestTimeout, Duration remaining);
+	SchoolPost material(String courseKey, String itemId, Duration requestTimeout, Duration remaining);
+
+	/**
+	 * 과목의 강의실 공지 목록({@code notice_list.acl}) 전체. 목록 화면이라 학교 쪽 읽음 표시를 바꾸지 않는다. 화면 순서다.
+	 * @throws SchoolLoginException {@code EXPIRED}면 학교 session이 끝났다. {@code UNAVAILABLE}이면 목록을 알아보지 못했다
+	 */
+	List<SchoolNotice> notices(String courseKey, Duration requestTimeout, Duration remaining);
+
+	/**
+	 * 공지 하나의 상세와 첨부 목록({@code notice_view_pop.acl}). 학교에서 그 학생이 그 공지를 읽은 것으로 표시되고 조회수가 하나 는다.
+	 * "공지를 확인했습니다"({@code notice_confirm.acl})는 보내지 않는다.
+	 * @param itemId 학교 공지 번호({@link SchoolNotice#itemId()})
+	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 그 공지를 보여 주지 않았다
+	 */
+	SchoolPost notice(String courseKey, String itemId, Duration requestTimeout, Duration remaining);
 
 	/**
 	 * 첨부 파일 하나를 받아 {@code target}에 쓴다.
@@ -57,6 +76,28 @@ public interface SchoolCourseRooms {
 	 */
 	SchoolDownload download(String courseKey, SchoolFile file, long maxBytes, Path target, Duration requestTimeout,
 			Duration remaining);
+
+	// 영상 상세, 강의계획서, 출석, 성적(ADR-0043 4단계·5단계). 모두 그 학생이 STack에서 그 화면을 열었을 때만 부른다.
+
+	/**
+	 * 영상 활동 하나의 상세({@code online_view_form.acl}): 콘텐츠 목록, 진도율, 학습시간, 출석인정 시간. 학습창, 영상 주소 조회, 시청
+	 * 기록 요청은 보내지 않는다.
+	 * @param itemId 학교 영상 활동 번호(강의실 목록 링크의 {@code n})
+	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 그 활동을 보여 주지 않았다
+	 */
+	SchoolVideo video(String courseKey, String itemId, Duration requestTimeout, Duration remaining);
+
+	/**
+	 * 정규과목의 강의계획서({@code regular_view_pop.acl}, {@code regular_view_plan.acl}). 요청 값은 강의실 첫 화면의 script에서 읽는다.
+	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 계획서를 주지 않았다(비정규 과정 등)
+	 */
+	SchoolSyllabus syllabus(String courseKey, Duration requestTimeout, Duration remaining);
+
+	/** 학생 본인의 출석({@code attendance_list.acl}, 모든 주차). 주차 순서다. */
+	List<SchoolAttendanceWeek> attendance(String courseKey, Duration requestTimeout, Duration remaining);
+
+	/** 학생 본인의 평가 활동과 점수({@code eval3_result_view_detail_list.acl}, 모든 유형). 화면 순서다. */
+	List<SchoolGradeItem> grades(String courseKey, Duration requestTimeout, Duration remaining);
 
 	/** 쿠키를 버린다. 여러 번 불러도 된다. 닫은 뒤 읽기는 {@code EXPIRED}로 실패한다. */
 	void close();

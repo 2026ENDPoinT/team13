@@ -235,7 +235,7 @@ final class CourseRoomPage {
 	}
 
 	/** 학교 홈의 할 일 항목이 쓰는 연결 주소. 과목을 session에 묶고 그 활동으로 넘긴다. */
-	private static String connect(URI base, String courseKey, String type, String item) {
+	static String connect(URI base, String courseKey, String type, String item) {
 		return base.resolve(CONNECT) + "?SEQ=" + encode(item) + "&gubun=" + encode(type) + "&KJKEY="
 				+ encode(courseKey);
 	}

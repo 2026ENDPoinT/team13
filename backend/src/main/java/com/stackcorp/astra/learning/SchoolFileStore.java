@@ -17,10 +17,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * school_files: 학교 강의실 파일 목록과 받아 둔 사본(ADR-0043). 학교 화면이 원천이므로 학교 파일모음 목록에서 사라진 행은 지우고, 받아
- * 둔 사본의 첨부를 끊는다(마지막 참조였으면 파일도 지워진다).
+ * 둔 사본의 첨부를 끊는다(마지막 참조였으면 파일도 지워진다). 파일모음에 나오지 않는 파일(공지 첨부)은 그 상세를 열 때와 그 글이 학교
+ * 목록에서 사라질 때 맞춘다.
  */
 @Component
 class SchoolFileStore {
+
+	/** 학교 파일모음({@code files_list.acl})에 나오지 않는 파일이 붙는 활동 유형. 파일모음 목록으로 지우지 않는다. */
+	static final Set<String> OUTSIDE_FILE_LIST = Set.of(SchoolNotices.NOTICE);
 
 	private static final String SELECT = """
 			SELECT school_file_id, course_id, file_seq, content_seq, school_type, school_item_id, file_name, size_bytes,
@@ -49,7 +53,8 @@ class SchoolFileStore {
 	}
 
 	/**
-	 * 학교 파일모음 목록 전체로 바꾼다. 새 파일은 넣고, 있던 파일은 이름·크기·붙은 활동을 고치고, 목록에 없는 파일은 지운다.
+	 * 학교 파일모음 목록 전체로 바꾼다. 새 파일은 넣고, 있던 파일은 이름·크기·붙은 활동을 고치고, 목록에 없는 파일은 지운다. 파일모음에
+	 * 나오지 않는 유형({@link #OUTSIDE_FILE_LIST})의 파일은 건드리지 않는다.
 	 */
 	void replace(long courseId, List<SchoolFile> files) {
 		this.transaction.executeWithoutResult((tx) -> {
@@ -57,7 +62,8 @@ class SchoolFileStore {
 			Set<String> seen = new HashSet<>();
 			files.forEach((f) -> seen.add(f.fileSeq()));
 			for (Row row : of(courseId)) {
-				if (!seen.contains(row.fileSeq())) {
+				if (!seen.contains(row.fileSeq())
+						&& (row.schoolType() == null || !OUTSIDE_FILE_LIST.contains(row.schoolType()))) {
 					remove(row);
 				}
 			}
@@ -82,6 +88,13 @@ class SchoolFileStore {
 				}
 			}
 		});
+	}
+
+	/** 그 활동들의 파일을 지운다(활동이 학교 목록에서 사라졌을 때). 부르는 쪽의 transaction 안에서 돈다. */
+	void removeFor(long courseId, String schoolType, Collection<String> schoolItemIds) {
+		for (Row row : of(courseId, schoolType, schoolItemIds)) {
+			remove(row);
+		}
 	}
 
 	private void upsert(long courseId, List<SchoolFile> files) {

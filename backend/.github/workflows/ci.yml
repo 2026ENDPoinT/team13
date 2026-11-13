@@ -2,21 +2,63 @@ name: CI
 
 on:
   push:
-    # dev는 batch로 합친 통합 브랜치다. main으로 올리기 전에 같은 세 작업을 거친다.
+    # dev는 batch로 합친 통합 브랜치다. main으로 올리기 전에 같은 작업을 거친다.
     branches: [main, dev]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# 같은 브랜치·PR에 새 커밋이 오면 이전 실행을 끊는다. main은 배포(Jenkins)가 결과를 기다리므로 끊지 않는다.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # action은 commit SHA로, container 이미지는 digest로 고정한다. 판은 줄 끝 주석에 적는다. 판을 올릴 때는 SHA와 주석을 함께 바꾼다.
+# 바뀐 파일에 필요한 작업만 돈다(changes). 문서만 바뀌면 아무것도 돌지 않고, 수동 실행(workflow_dispatch)은 전부 돈다.
+# main 은 배포 직전 관문이라 코드가 바뀌었으면 세 작업을 모두 돈다(자바 코드만 바뀌어도 실제 이미지 기동을 확인한다).
+#   build      코드·설정이 바뀌면(문서·자산·ERD 스냅샷만 바뀐 경우 제외)
+#   schema     마이그레이션이나 db/tools 가 바뀌면. ERD 스냅샷이 오래됐으면 실패 대신 경고만 남긴다
+#   container  Dockerfile·compose·docker/·.env.example·gradle·src/main/resources 가 바뀌면
 jobs:
+  changes:
+    name: Decide what to run
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+      schema: ${{ steps.diff.outputs.schema }}
+      container: ${{ steps.diff.outputs.container }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ] \
+             || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "전체 실행"; { echo code=true; echo schema=true; echo container=true; } >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files=$(git diff --name-only "$BASE" HEAD)
+          printf '%s\n' "$files"
+          pick() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
+          code=$(printf '%s\n' "$files" | grep -vE '^$|^(docs|assets|db/erdcloud)/|\.md$' | grep -q . && echo true || echo false)
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$code" = true ]; then
+            echo "main 코드 변경: 전체 실행"; { echo code=true; echo schema=true; echo container=true; } | tee -a "$GITHUB_OUTPUT"; exit 0
+          fi
+          {
+            echo "code=$code"
+            echo "schema=$(pick '^(src/main/resources/db/migration/|db/tools/)')"
+            echo "container=$(pick '^(Dockerfile|\.dockerignore|compose\.yaml|\.env\.example|docker/|build\.gradle|settings\.gradle|gradle/|src/main/resources/)')"
+          } | tee -a "$GITHUB_OUTPUT"
+
   build:
     name: Build and test
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,6 +87,8 @@ jobs:
 
   schema:
     name: Schema check and ERD snapshot
+    needs: changes
+    if: needs.changes.outputs.schema == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,17 +120,19 @@ jobs:
             exit 1
           fi
 
-      # 마이그레이션을 바꾸고 스냅샷을 다시 만들지 않으면 실패한다.
+      # 마이그레이션을 바꾸고 스냅샷을 다시 만들지 않았으면 알린다. 배포를 막을 일은 아니므로 실패시키지 않는다.
       - name: ERD snapshot is up to date
         run: |
           python3 db/tools/erdcloud_snapshot.py
-          if ! git diff --exit-code -- db/erdcloud/snapshot.json; then
-            echo "::error::db/erdcloud/snapshot.json is stale. Run 'python db/tools/erdcloud_snapshot.py' and commit the result (db/README.md section 5 step 4)."
-            exit 1
+          if ! git diff --quiet -- db/erdcloud/snapshot.json; then
+            echo "::warning::db/erdcloud/snapshot.json is stale. Run 'python db/tools/erdcloud_snapshot.py' and commit the result (db/README.md section 5 step 4)."
+            echo "ERD 스냅샷이 오래됐습니다. \`python db/tools/erdcloud_snapshot.py\` 를 돌려 커밋하세요." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   container:
     name: Container image and compose smoke test
+    needs: changes
+    if: needs.changes.outputs.container == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
