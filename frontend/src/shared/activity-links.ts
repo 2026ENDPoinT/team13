@@ -24,9 +24,13 @@ export interface ActivityTargetRow {
 /** 평가 활동 유형 → 행이 주는 그 화면의 ID 필드. */
 const TARGET: Record<ResolvedType, keyof ActivityTargetRow> = { report: "assignmentId", test: "quizId", survey: "surveyId" };
 
-/** 서버 자료 활동의 학생 상세(`m=lecture_material&n=srv-<activityId>`). */
+/**
+ * 서버 자료 활동의 학생 상세(`m=lecture_material&n=srv-<activityId>`). 학교 e-Class에서 가져온 자료(`school-<n>`)는 그 ID 그대로
+ * (`n=school-<n>`)다.
+ */
 export function materialHref(kj: string | number, activityId: string | number): string {
-  return `${ACTIVITY_PATH}?${new URLSearchParams({ m: "lecture_material", n: `srv-${activityId}`, kj: String(kj) })}`;
+  const ref = /^school-[1-9]\d{0,17}$/.test(String(activityId)) ? String(activityId) : `srv-${activityId}`;
+  return `${ACTIVITY_PATH}?${new URLSearchParams({ m: "lecture_material", n: ref, kj: String(kj) })}`;
 }
 
 /** 과제·시험·설문 행(`{ assignmentId | quizId | surveyId }`)이 주는 그 화면의 ID, 없으면 null. */

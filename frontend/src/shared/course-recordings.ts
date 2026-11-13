@@ -19,6 +19,7 @@ import { toast } from "../store.ts";
 import { appendWebm, isAppendable } from "./webm-append.ts";
 import { originalCleanupWarning } from "./recording-join.ts";
 import type { RecordingStudyResults } from "./recording-study.ts";
+import { startLiveTranscript, pauseLiveTranscript, resumeLiveTranscript, stopLiveTranscript } from "./live-transcript.ts";
 
 const DATABASE = "astra-course-recordings";
 const VERSION = 1;
@@ -965,6 +966,8 @@ export async function startRecording({ courseId, source, folderId = null, append
     });
   }
   recorder.start(1000);
+  // 마이크 녹음만: 탭 소리는 브라우저 음성 인식에 넣을 수 없다. 줄의 시각은 이어서 녹음한 앞부분을 포함한 녹음 시각이다.
+  if (source === "mic") startLiveTranscript(() => (session === current ? elapsed(current) + (current.append ? current.append.record.durationMs : 0) : 0));
   emit({ type: "change" });
 }
 
@@ -1041,6 +1044,7 @@ async function joinRecording(current: Session, blob: Blob, durationMs: number): 
 async function finish(current: Session): Promise<RecordingRecord | null> {
   const durationMs = elapsed(current, current.stoppedAt || Date.now());
   current.stream.getTracks().forEach((track) => track.stop());
+  stopLiveTranscript();
   if (session === current) session = null;
   try {
     const blob = new Blob(current.chunks, { type: current.recorder.mimeType || current.chunks[0]?.type || "audio/webm" });
@@ -1125,6 +1129,7 @@ export function pauseRecording(): void {
   session.recorder.pause();
   session.pausedAt = Date.now();
   emit({ type: "change" });
+  pauseLiveTranscript();
 }
 
 export function resumeRecording(): void {
@@ -1133,6 +1138,7 @@ export function resumeRecording(): void {
   session.pausedTotal += Date.now() - session.pausedAt;
   session.pausedAt = 0;
   emit({ type: "change" });
+  resumeLiveTranscript();
 }
 
 export function stopRecording(): Promise<RecordingRecord | null> {

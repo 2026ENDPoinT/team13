@@ -4,6 +4,7 @@
 import { apiGet, apiSend, ApiError, newRequestKey } from "./api.ts";
 import { subscribe } from "./backend.ts";
 import { createResource, retryLater } from "./remote-cache.ts";
+import { followNoticeRead } from "./home-remote.ts";
 
 export const NOTICE_PAGE = 8;
 
@@ -84,9 +85,19 @@ function remember(courseId: Id, state: NoticeReadState): void {
 }
 
 const readSent = new Set<string>(); // noticeKey, per session: `read` is sent once per opened notice
-subscribe(() => readSent.clear());
+// A new session (sign-in, sign-out, another account) starts over; a re-read of the course records does not.
+let session = "";
+subscribe((next) => {
+  const now = `${next.status}:${next.me ? next.me.userId : ""}`;
+  if (now === session) return;
+  session = now;
+  readSent.clear();
+});
 
-/** Marks a notice read when its detail is opened. Sends at most once per session. */
+/**
+ * Marks a notice read when its detail is opened. Sends at most once per session. The unread counts that other screens
+ * read from the course records (left menu, course cards) are re-read right after (`followNoticeRead`).
+ */
 export async function markNoticeRead(courseId: Id, noticeId: Id): Promise<NoticeReadState | null> {
   const key = noticeKey(courseId, noticeId);
   if (readSent.has(key)) return null;
@@ -94,6 +105,7 @@ export async function markNoticeRead(courseId: Id, noticeId: Id): Promise<Notice
   try {
     const state = await apiSend<NoticeReadState>("POST", `${one(courseId, noticeId)}/read`);
     remember(courseId, state);
+    if (state && state.read) void followNoticeRead(state.noticeId);
     return state;
   } catch (error) {
     readSent.delete(key);

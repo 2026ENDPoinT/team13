@@ -30,7 +30,8 @@ vi.mock("../../src/shared/api.ts", async (original) => ({
 
 import { resolveCoursesWith } from "../../src/data.ts";
 import { render } from "../../src/areas/course/course.tsx";
-import { activityParts, activitySnapshot, passServerFilter, schoolHref } from "../../src/shared/course-activities-remote.ts";
+import { activityParts, activitySnapshot, passServerFilter } from "../../src/shared/course-activities-remote.ts";
+import { schoolHref } from "../../src/shared/school-content.tsx";
 import { lectureRows, weeksOf } from "../../src/shared/lectures-remote.ts";
 import { reloadRoom, roomEntry } from "../../src/shared/course-room-remote.ts";
 import { getState } from "../../src/store.ts";

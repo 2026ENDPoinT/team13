@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { courseById, type Course } from "../../data.ts";
 import { hrefFor, find } from "../../manifest.ts";
 import type { ScreenCtx } from "../../types.ts";
@@ -22,6 +22,7 @@ import { folderHref, recordingHref } from "./study-files.tsx";
 import { serverStudyLecture } from "./study-server.tsx";
 import { RecordingStudyView, demoRecordingStudy } from "./recording-study.tsx";
 import { printSummaryPdf } from "./recording-summary-pdf.ts";
+import { liveTranscript, onLiveTranscriptChange } from "../../shared/live-transcript.ts";
 import { recordingJobPending } from "../../shared/recording-study.ts";
 
 const SOURCES: { id: RecordingSource; label: string; hint: string }[] = [
@@ -139,7 +140,7 @@ function SetupView({ course }: { course: Course }) {
       </div>
       <p className="err" role="alert" hidden={!error}>{error}</p>
       <UnsavedList />
-      <p className="rec-note">{`녹음 전 교수님의 허락을 받아 주세요. 오디오는 ${storedWhere(server != null)}. 자동 전사는 연결되지 않았습니다.`}</p>
+      <p className="rec-note">{`녹음 전 교수님의 허락을 받아 주세요. 오디오는 ${storedWhere(server != null)}. 마이크로 녹음하면 녹음 중 화면에 임시 실시간 전사가 표시됩니다(저장되지 않음).`}</p>
       {server != null ? <ServerUsage courseId={server} /> : null}
       <input
         ref={fileInput} type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.opus,.webm,.weba,.aac,.flac" hidden aria-label="저장할 오디오 파일 선택"
@@ -167,6 +168,43 @@ function UnsavedList() {
         </div>
       ))}
     </div>
+  );
+}
+
+/** 녹음 중 하단에 쭉 이어지는 실시간 전사(브라우저 음성 인식). 맨 아래에 있으면 새 줄을 따라가고, 위로 올려 읽는 중이면 멈춘다. */
+function LiveTranscriptPanel({ source }: { source: RecordingSource }) {
+  const live = useSyncExternalStore(onLiveTranscriptChange, liveTranscript);
+  const box = useRef<HTMLDivElement>(null);
+  const follow = useRef(true);
+  useEffect(() => {
+    const el = box.current;
+    if (el && follow.current) el.scrollTop = el.scrollHeight;
+  }, [live.lines, live.interim]);
+  if (source !== "mic") return <p className="rec-note">탭 소리 녹음은 실시간 전사를 지원하지 않습니다. 저장한 뒤 서버가 전사를 제공하면 녹음 화면에 표시됩니다.</p>;
+  if (!live.supported) return <p className="rec-note">이 브라우저는 실시간 전사를 지원하지 않습니다. 데스크톱 Chrome 또는 Edge에서 열어 주세요. 녹음은 그대로 됩니다.</p>;
+  const empty = !live.lines.length && !live.interim;
+  return (
+    <section className="rec-live-transcript" aria-label="실시간 전사">
+      <h2>
+        <span>실시간 전사</span>
+        <small>{live.error ? "멈춤" : live.listening ? "듣는 중" : "일시정지"}</small>
+      </h2>
+      <div
+        ref={box} className="rec-live-lines" role="log" aria-live="off" tabIndex={0}
+        onScroll={(event) => {
+          const el = event.currentTarget;
+          follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
+      >
+        {empty ? <p className="rec-live-empty">{live.error ? "" : live.listening ? "말씀하시면 여기에 글로 나타납니다." : "다시 시작하면 이어서 전사합니다."}</p> : null}
+        {live.lines.map((line, index) => (
+          <p key={index} className="rec-live-line"><time>{formatDuration(line.at)}</time><span>{line.text}</span></p>
+        ))}
+        {live.interim ? <p className="rec-live-line is-interim"><time aria-hidden="true" /><span>{live.interim}</span></p> : null}
+      </div>
+      {live.error ? <p className="err" role="alert">{live.error}</p> : null}
+      <p className="rec-note">브라우저의 음성 인식으로 만든 임시 전사입니다. 이 화면에만 보이고 저장되지 않으며, Chrome·Edge는 음성을 브라우저 제공사 서버로 보내 인식합니다. 틀린 부분이 있을 수 있습니다.</p>
+    </section>
   );
 }
 
@@ -211,6 +249,7 @@ function LiveView({ live }: { live: ActiveRecording }) {
           {saving ? "저장 중…" : "중지하고 저장"}
         </Button>
       </div>
+      <LiveTranscriptPanel source={live.source} />
       <p className="rec-note">다른 화면으로 이동해도 녹음은 계속됩니다. 저장하기 전에 이 탭을 닫으면 녹음이 사라집니다.</p>
       {live.browserOnly && studyRoomOnServer()
         ? <p className="rec-note">이 브라우저에만 있는 폴더에서 시작한 녹음이라 이 브라우저에만 저장됩니다. 서버로 옮기려면 저장한 뒤 ‘내 계정으로 옮기기’를 누르세요.</p>

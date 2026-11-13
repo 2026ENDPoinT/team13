@@ -52,6 +52,14 @@ export function buildPlan(ctx?: AssistantCtx): string[] {
     .filter((id) => byId.get(id)?.type !== "test"), context.activities);
 }
 
+/** 목업의 "오늘 할 일": 홈 히어로가 세는 사흘 안 마감 활동(시험 제외, 완료 제외). 영상 → 과제 순이라 기계학습 → 고급웹 순이 된다. */
+export function todayDeadlinePlan(): string[] {
+  const state = getState();
+  return orderPlan(myDayGroups(state).soon.items
+    .filter((item: Activity) => item.type !== "test" && !isDone(item.id) && !surveyDone(state, item.id))
+    .map((item: Activity) => item.id));
+}
+
 function migrateRun(run: PlanRun): void {
   if (run.version === 2) return;
   const active = run.steps[run.cursor];

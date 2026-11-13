@@ -46,6 +46,8 @@ export interface Screen {
   serverLecture?: number;
   serverItem?: number | null;
   serverMaterial?: number | null;
+  /** A material imported from the school's e-Class (`n=school-<n>`); never a number. */
+  serverSchoolMaterial?: string | null;
   serverLink?: { type: string; activityId: number } | null;
 }
 

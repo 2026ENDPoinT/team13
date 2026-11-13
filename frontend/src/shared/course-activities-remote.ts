@@ -11,6 +11,7 @@ import { serverActivityHref, materialHref, targetIdOf } from "./activity-links.t
 import { courseWeeks, lectureDetails, lectureProgress, courseKey, detailKey, lectureRows, weeksOf } from "./lectures-remote.ts";
 import type { WeekActivity } from "./lectures-remote.ts";
 import { materialLists, materialKey, materialsOf } from "./materials-remote.ts";
+import { schoolHref, schoolMaterialsOf, schoolFilesOf, SCHOOL_MATERIAL_ID } from "./school-content.tsx";
 import { assignmentLists, listKey as assignmentListKey, studentAssignmentHref, accepting } from "./assignments-remote.ts";
 import { quizLists, quizListKey, studentQuizHref } from "./quizzes-remote.ts";
 import { surveyLists, studentSurveyHref } from "./surveys-remote.ts";
@@ -26,24 +27,6 @@ export function serverOwnsCourse(kj: string | null | undefined): boolean {
 
 /** 서버 활동 유형(`activity_type`) → 화면 유형(색, 필터 칩). */
 export const VIEW_TYPE: Readonly<Record<string, string>> = { lecture_weeks: "video", lecture_material: "material", report: "report", test: "test", survey: "survey" };
-
-/** 학교 e-Class 주소가 링크가 되는 유일한 출처. 백엔드의 `schoolUrl`은 모두 이 호스트의 to-do 연결 주소다. */
-export const SCHOOL_ORIGIN = "https://eclass.seoultech.ac.kr";
-
-/**
- * 가져온 학교 활동의 `schoolUrl`이 새 탭 링크가 될 수 있으면 그 주소, 아니면 null. `https:`이고 호스트가 정확히
- * `eclass.seoultech.ac.kr`(기본 포트, 사용자 정보 없음)일 때만 허용한다. 다른 호스트, `http:`, `javascript:`, 상대 주소는 링크가 아니다.
- */
-export function schoolHref(url: unknown): string | null {
-  if (typeof url !== "string" || !url) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  return parsed.origin === SCHOOL_ORIGIN && !parsed.username && !parsed.password ? parsed.href : null;
-}
 
 /** 부분 목록 이름과 그 실패 문구에 쓰는 한국어 이름. */
 export const PART_LABEL: Readonly<Record<PartName, string>> = {
@@ -137,8 +120,10 @@ export interface ActivityRow {
   ongoing: boolean;
   missing: boolean;
   done: boolean;
-  /** 학교 e-Class에서 가져온 행(`origin: "school"`). `href`가 있으면 그 학교 주소이고 새 탭으로 연다. */
+  /** 학교 e-Class에서 가져온 행(`origin: "school"`). */
   school?: boolean;
+  /** `href`가 학교 e-Class 주소라 새 탭으로 연다. 학교 자료는 STack 자료 상세로 열리므로 아니다. */
+  external?: boolean;
   item: unknown;
   progress?: unknown[] | null;
   files?: unknown[];
@@ -190,12 +175,29 @@ export function activitySnapshot(parts: ActivityPart[], kj: string, { instructor
   const denied = failures.some((failure) => failure.name === "weeks" && !failure.stale && missingError(failure.error));
   const rows: Omit<ActivityRow, "order">[] = [];
   const weeks = weeksOf(data.weeks);
-
+  // 학교에서 가져온 자료는 주차 목록(본인 `done`·`phase`, 순서)과 자료 목록(첨부 파일)에 함께 올 수 있다. 한 자료는 한 행이다:
+  // 주차 목록의 행이 자리와 상태를 정하고, 자료 목록은 그 행에 파일을 붙인다. 주차 목록에 없는 학교 자료만 자료 목록에서 행이 된다.
+  // 어느 쪽에서 왔든 링크는 STack 자료 상세(`n=school-<n>`)다.
+  const schoolMaterials = new Map(schoolMaterialsOf(data.materials).map((material) => [material.activityId, material]));
+  const listedSchool = new Set<string>();
+  for (const week of weeks) {
+    for (const activity of Array.isArray(week.activities) ? week.activities : []) {
+      if (activity.origin === "school") listedSchool.add(String(activity.activityId));
+    }
+  }
   for (const material of materialsOf(data.materials)) {
     rows.push({
       type: "material", kind: "lecture_material", key: `material-${material.activityId}`, weekNo: material.weekNo, title: material.title,
       openAt: material.openAt, closeAt: null, phase: material.phase || null, href: materialHref(kj, material.activityId), activityId: material.activityId,
       ongoing: false, missing: false, done: false, item: material, files: Array.isArray(material.files) ? material.files : [],
+    });
+  }
+  for (const material of schoolMaterials.values()) {
+    if (listedSchool.has(material.activityId)) continue;
+    rows.push({
+      type: "material", kind: "lecture_material", key: material.activityId, weekNo: material.weekNo, title: material.title,
+      openAt: material.openAt, closeAt: null, phase: material.phase || null, href: materialHref(kj, material.activityId), activityId: material.activityId,
+      ongoing: material.phase === "open", missing: false, done: false, school: true, item: material, files: schoolFilesOf(material),
     });
   }
   for (const activity of lectureRows(weeks)) {
@@ -240,11 +242,16 @@ export function activitySnapshot(parts: ActivityPart[], kj: string, { instructor
       if (activity.origin === "school") {
         const type = typeof activity.type === "string" && activity.type ? activity.type : "etc";
         const ongoing = activity.phase === "open";
+        const id = String(activity.activityId);
+        // A school material opens STack's own material detail; any other imported row opens the school's e-Class.
+        const material = (type === "material" || activity.schoolType === "lecture_material") && SCHOOL_MATERIAL_ID.test(id);
+        const href = material ? materialHref(kj, id) : schoolHref(activity.schoolUrl);
         rows.push({
-          type, kind: activity.schoolType || type, key: `school-${String(activity.activityId).replace(/^school-/, "")}`, weekNo: week.weekNo,
-          title: activity.title, openAt: activity.openAt, closeAt: activity.closeAt, phase: activity.phase || null, href: schoolHref(activity.schoolUrl),
-          activityId: activity.activityId, ongoing, done: activity.done === true, school: true, item: activity,
+          type, kind: activity.schoolType || type, key: `school-${id.replace(/^school-/, "")}`, weekNo: week.weekNo,
+          title: activity.title, openAt: activity.openAt, closeAt: activity.closeAt, phase: activity.phase || null, href,
+          activityId: activity.activityId, ongoing, done: activity.done === true, school: true, external: !material && href !== null, item: activity,
           missing: ongoing && activity.done === false && type !== "material" && activity.offline !== true,
+          ...(material ? { files: schoolFilesOf(schoolMaterials.get(id)) } : {}),
         });
         continue;
       }

@@ -1,5 +1,88 @@
 # Handoff
 
+## 2026-11-14 공지를 읽으면 왼쪽 메뉴 "공지사항" 수가 새로 고침 없이 줄어든다
+
+### 작업 내용
+- 원인: 왼쪽 메뉴 수(`shell.tsx:62`)는 `GET /api/me/courses`의 `unreadNotices`를 읽고, 이 목록은 접속할 때(`backend.ts` `load`) 한 번만 받는다. 공지를 열어 `markNoticeRead`(`notices-remote.ts:90-102`)가 `POST …/read`를 보내도 공지 목록·상세 캐시만 고치고 과목 목록은 그대로였다.
+- `backend.ts` `refreshCourses()`: `GET /api/me/courses`를 다시 받아 과목 기록을 바꾸고 구독자를 다시 그린다(`ready`일 때만, 그 사이 세션이 바뀌었으면 버린다). 폴링은 없다. 읽음 한 번에 한 번 받는다.
+- `home-remote.ts` `followNoticeRead()`: 읽은 공지를 홈 집계 `notices`에서 읽음으로 바꾸고, 다시 받은 과목 기록의 `unreadNotices`를 홈 집계 `courses`에 옮긴다(`applyCourseCounts`, 교수 공지 화면의 과목 카드가 읽는다). `markNoticeRead`가 읽음 응답 뒤에 부른다.
+- `notices-remote.ts`: 읽음 한 번 보내기 기록(`readSent`)은 이제 세션(상태·사용자)이 바뀔 때만 지운다. 이전에는 백엔드 상태가 바뀔 때마다 지워 과목 기록을 다시 받는 것만으로도 지워졌다.
+- 알림마당 공지(홈 `communityNotices`): 수를 보이는 곳이 없고, 읽으면 `site-notices-remote.ts` `rememberRead`가 이미 홈 집계의 행을 읽음으로 바꾼다. 고칠 것이 없었다.
+
+### 변경 파일
+- `src/shared/backend.ts`, `src/shared/home-remote.ts`, `src/shared/notices-remote.ts`
+- 테스트 `tests/integration/notice-read-counts.test.ts`(새)
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 통과, `npm run build` 통과(청크 크기 경고만).
+- 백엔드 origin/main 5f1dff0 run-only + 프런트 4193: 교수 P-1042로 `bi`에 공지 2개 등록, 학생 21101234의 공지사항 화면 왼쪽 메뉴 "공지사항 5" → "감사 공지 1" 열기 → `POST …/notices/22/read` 뒤 `GET /api/me/courses` 한 번 → "공지사항 4", 두 번째 공지 → "공지사항 3"(새로 고침 없음).
+- 학생 홈의 과목 카드에는 안 읽은 공지 수가 없다. 시드에 알림마당 공지가 없어 홈 알림마당 줄은 브라우저로 보지 못했다.
+
+### 남은 작업
+- 없음.
+
+## 2026-11-14 목업: "오늘 할 일 전부 해줘" → 기계학습·고급웹 Plan 자동 시작
+
+### 작업 내용
+- 요청: 목업 상태에서 "오늘 할 일 전부 해줘"를 입력하면 기계학습 → 고급웹프로그래밍 순으로 Plan 스택에 쌓고 자동으로 진행.
+- 전에는 `/api/assistant`(AI)를 거쳐 키가 없으면 실패했고, 계획이 나와도 Accept를 눌러야 했다. 이제 `command-bar.tsx`의 `submitCommand`(백엔드 미연결 분기)에서 `isTodayAllRequest(text)`(`aliases.ts`)가 맞으면 AI를 부르지 않고 `todayDeadlinePlan()`(`plan.ts`)으로 `createRun` → `startRun`을 바로 호출한다. 열린 계획 확인(Accept) 단계는 없고 트레이가 열린다.
+- "오늘 할 일" = 홈 히어로가 세는 사흘 안 마감 활동(`myDayGroups().soon`, 시험·완료 제외). 샘플에서는 `lec-11-1`(기계학습 11주 1차시) → `rep-web`(고급웹 과제). 영상 → 과제 정렬(`orderPlan`)이라 이 순서가 나온다. 영상은 끝나면 다음 단계로 자동 이동하고, 과제는 "확인 필요"(제출은 직접).
+- 과목·유형이 붙은 문장("데베 강의 전부 해줘" 등), "전부 해줘"만 있는 문장은 이 지름길에 걸리지 않고 기존 AI/해석 경로를 탄다. 처리할 일이 없으면 "오늘 처리할 일이 없어요."를 보인다.
+
+### 변경 파일
+- `src/shared/assistant/aliases.ts`(`isTodayAllRequest`), `src/shared/assistant/plan.ts`(`todayDeadlinePlan`), `src/areas/home/command-bar.tsx`
+- 테스트 `tests/unit/today-all-request.test.ts`(새)
+
+### 검증
+- `npm run typecheck` 통과. 관련 테스트 4파일 87건 통과.
+- AI 키·게이트웨이 없이 `node server.mjs --dev --port 4391`로 브라우저 확인: 입력 → `/api/assistant` 호출 0회, 기계학습 플레이어로 이동, 트레이 `Plan 0/2 재생 중`(영상 기계학습 → 과제 고급웹프로그래밍). 2x로 영상을 끝내자 고급웹 과제 화면으로 자동 이동, `Plan 1/2`·과제 "확인 필요", 콘솔 오류 없음.
+
+### 남은 작업
+- 백엔드 연결(로그인) 홈은 이 지름길을 쓰지 않는다(자동 계획 미지원 정책 유지).
+- 다른 날짜로 샘플 데이터(`TODAY`)가 바뀌면 "오늘 할 일" 구성도 바뀌므로 `today-all-request.test.ts`의 기대값(`lec-11-1`, `rep-web`)을 같이 봐야 한다.
+
+## 2026-11-14 녹음 중 화면 하단 실시간 전사
+
+### 작업 내용
+- 요청: 녹음 중 화면(`LiveView`) 하단에 전사가 쭉 이어져 보이게.
+- 백엔드에 실시간 전사 API가 없어(README 계약은 저장 후 결과만), 브라우저 음성 인식(Web Speech API, `ko-KR`)으로 화면에만 표시한다. 새 `src/shared/live-transcript.ts`가 인식기를 켜고(침묵으로 끝나면 300ms 뒤 다시 켬), 확정 문장은 녹음 시각과 함께 줄로 쌓고 말하는 중인 문장은 흐리게 보인다. 일시정지에서 끄고 다시 시작에서 켜며, 저장·중지에서 줄을 지운다(`course-recordings.ts`의 `startRecording`·`pauseRecording`·`resumeRecording`·`finish`).
+- 화면(최종): 녹음을 누르는 순간부터 저장된 녹음 화면과 같은 배치(`.rs`)로 열린다. 머리에 녹음 제목(`녹음 MM.DD HH:mm`)·`마이크 · 시간 · 날짜`·(저장 전이라 꺼진) 다운로드 버튼, 왼쪽 위 녹음 카드(플레이어 카드와 같은 모양: 상태, 꺼진 재생 막대와 현재 길이, 큰 일시정지/다시 시작 버튼, `중지하고 저장`), 그 아래 전사 목록(`rs-lines`; 맨 아래면 새 줄을 따라가고 위로 올려 읽으면 "최신 전사" 버튼, 말하는 중인 문장은 강조 줄), 오른쪽은 요약 자리(저장 뒤 서버가 만든 경우에만 표시)와 안내 문구. 로그인 전(샘플)·로그인 후(서버) 같은 `LiveView`를 쓴다. 탭 소리 녹음·미지원 브라우저·권한 거부/네트워크 오류는 전사 자리에 이유를 안내하고 녹음은 계속된다. `ActiveRecording`에 `title`·`startedAt` 추가.
+- 한계: 저장되지 않는다(저장된 녹음의 전사는 여전히 서버가 만든 결과). Chrome·Edge는 음성을 브라우저 제공사 서버로 보내 인식하며 이를 화면에 안내했다. Firefox·Safari 일부는 미지원.
+
+### 변경 파일
+- `src/shared/live-transcript.ts`(새), `src/shared/course-recordings.ts`, `src/areas/home/recording.tsx`, `src/areas/home/home.css`
+- 테스트 `tests/unit/live-transcript.test.ts`(새), `vitest.config.ts`(coverage include)
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 29파일 1421건 통과.
+- 로그인 후(서버 모드): 백엔드(8080, Origin 허용이 4190뿐이라 Origin을 바꿔 주는 임시 프록시 경유) + 개발자 로그인으로 같은 화면, 녹음 → 중지하고 저장 → 서버 저장 뒤 녹음 파일 화면 이동 확인(임시 프록시·서버는 지움, 개발 DB에 시험 녹음 1건 남음).
+- Chromium에서 마이크 스트림과 인식기를 가짜로 바꿔 확인: 녹음 시작 시 상자 표시, 확정 줄·진행 중 문장 표시, 15줄 뒤 맨 아래로 자동 스크롤, 중지·저장 뒤 상자 사라짐, 콘솔 오류 없음.
+
+### 남은 작업
+- 실제 마이크·실제 Chrome 음성 인식 정확도와 일시정지·다시 시작은 브라우저에서 확인하지 못했다(일시정지·재시작은 단위 테스트만).
+- 서버 저장용 전사가 필요하면 백엔드가 스트리밍/업로드 후 전사 API를 제공해야 한다.
+
+## 2026-11-14 학교 e-Class 자료를 STack 자료 상세로: 목록·상세·미리보기·내려받기와 학교 오류 상태
+
+### 작업 내용
+- 백엔드(`STAC-000-school-content`, 1c81144)는 학생의 `GET …/materials`에 학교 자료를 `origin: "school"`, 문자열 `activityId`(`school-<n>`), 복사 전 문자열 `fileId`(`school-file-<n>`)로 붙이고, `GET …/activities/school-<n>`이 열 때만 학교 상세를 읽는다. 파일 내용·미리보기 주소는 문자열 ID를 받아 303/307로 네이티브 파일 주소로 보낸다.
+- 한 자료 한 행: 주차 목록의 학교 행(본인 `done`·`phase`, 자리)이 이기고, 자료 목록은 그 행에 파일을 붙인다. 주차 목록에 없는 학교 자료만 자료 목록에서 행이 된다. 링크는 어느 쪽이든 STack 자료 상세 `m=lecture_material&n=school-<n>`(같은 창). 다른 학교 행(과제·시험 등)은 #19처럼 e-Class 새 탭.
+- 자료 상세(`n=school-<n>`): 본문은 텍스트(`Prose`), 작성자·게시일, 파일마다 미리보기(`preview_form.acl?n=school-file-<n>`, 복사 뒤 숫자면 `srv-<id>`)·내려받기, "e-Class에서 열기". 학습실·요약·학습실에 저장은 학교 파일에 두지 않는다. 상세는 주소에 들어올 때만 한 번 읽고(포커스 새로고침 없음), 목록·파일모음은 상세·썸네일·미리보기를 부르지 않는다.
+- 오류: 409 `school_signin_required` → "학번·e-Class 비밀번호로 다시 로그인"이 로그인 모달을 이 화면 위에 열고(닫기 가능), 로그인되면 같은 자료를 다시 읽는다(`requestSchoolSignin`). 409 `file_scanning` → `Retry-After`(1~30초)만큼 기다렸다 다시, 최대 12번(`whileScanning`, 내려받기·미리보기). 422 → 사유와 e-Class 링크. 502 → 다시 시도.
+- 파일모음(46): 서버 파일 아래에 "학교 e-Class 자료" 묶음(같은 검색어로 거름, 이미 서버 목록에 나온 복사본은 빼고, 크기는 "약").
+- 문자열 ID 경로: 화면 필드는 `serverSchoolMaterial`(문자열)로 따로 두고 `serverMaterial`(숫자)은 그대로. `materialsOf`는 네이티브만 준다(교수 강의실·학습실 기록·`listRemotePdfs`는 학교 자료를 보지 않는다). `schoolHref`·`SCHOOL_ORIGIN`은 `shared/school-content.tsx`로 옮겼다.
+
+### 변경 파일
+- 새 파일: `src/shared/school-content.tsx`, `tests/integration/school-materials.test.ts`
+- `src/shared/course-activities-remote.ts`, `materials-remote.ts`, `activity-links.ts`, `course-pdfs-remote.ts`, `uploads-remote.tsx`, `preview-remote.tsx`, `entry-login.tsx`, `backend-prompt.tsx`, `src/areas/course/activities-server.tsx`, `src/areas/learning/activity-server.tsx`, `preview-server.tsx`, `learning.tsx`, `learning.css`, `src/router.tsx`, `src/types.ts`, `tests/integration/school-activities.test.ts`(import 경로)
+
+### 검증
+- `origin/main`(ace7e4a) 위로 rebase한 뒤 `npm run typecheck` 오류 없음, `npm test` 31파일 1443개 통과(새 13개, 기존 테스트는 #19 테스트의 import 경로만 바꿈), `npm run build` 성공.
+- 실제 실행(로컬 백엔드 1c81144 `bootTestRun` 18480/18481, 프론트 `http://localhost:4193`, 본인 계정 학교 로그인 2번): 과목 하나에서 강의실 12행 중 학교 자료 8행이 한 자료 한 행·같은 창 링크, 다른 학교 행 4개는 새 탭. 학습활동 목록 자료 필터 8행. 파일모음 학교 파일 10개(썸네일 없음). 이미 읽은 자료 하나: 작성자·게시일·첨부 1개(본문은 비어 있었다), e-Class 링크. PDF(약 200KB) 미리보기 11쪽, 복사 뒤 숫자 ID로 내려받기 202,564바이트(`%PDF-`). 로그아웃 뒤 같은 자료 주소 → 로그인 모달, 다시 로그인 → 같은 자료. 백엔드 요청 기록: 학교 상세 읽기는 직접 연 3번뿐, 학교 파일 목록 읽기 1번.
+
+### 남은 작업
+- 409 `school_signin_required`는 실제로 만들지 못했다(로컬 백엔드를 다시 띄우면 DB가 초기화되어 401이 된다). Vitest로만 확인.
+
 ## 2026-11-14 런타임 점검 5 결함 수정(F1·F2·F3·F5·F6·F7)
 
 ### 작업 내용
@@ -26,6 +109,18 @@
 
 ### 남은 작업
 - 결정 필요: 파일함에 파일을 넣을 화면이 없으므로 "파일함에서 첨부"를 남길지. 지금은 시드 파일과 다른 경로로 들어간 파일만 고를 수 있다.
+
+## 2026-11-14 프론트 보안 점검(코드 변경 없음)
+
+### 작업 내용
+- 정적 점검(grep + 코드 읽기). XSS 싱크(`dangerouslySetInnerHTML`은 정적 SVG 1곳), `target=_blank`, `location.assign`, localStorage·IndexedDB, CSP·헤더, 서비스워커, 프록시 헤더, `npm audit --omit=dev`(0건), 벤더 pdf.js(5.4.394, `isEvalSupported:false`)를 확인했다.
+- 발견: (1) `/api/assistant`가 무인증이고 속도 제한이 `socket.remoteAddress` 기준이라 터널 뒤에서는 전 사용자가 한 버킷을 공유할 수 있음, (2) 학교 비밀번호를 `POST /api/auth/eclass-login`으로 직접 받음(정책·신뢰 위험), (3) `meetingUrl` href 무검증(`learning.tsx`, `professor.tsx`; CSP가 막아 실질 위험 낮음), (4) `sanitizeRichSource`는 정규식 블랙리스트(렌더가 React 노드라 현재는 안전), (5) 개발 로그인 차단이 `cf-connecting-ip` 헤더 유무에 의존.
+
+### 변경 파일
+- 없음(handoff.md만)
+
+### 남은 작업
+- 백엔드는 점검하지 않았다: `returnTo` 서버측 검증, dev 로그인 운영 비활성, eclass-login의 학교 서버 접속 여부.
 
 ## 2026-11-14 로그인은 포커스된 모달 하나로만 (본문·내 메뉴의 로그인 폼 전부 제거)
 
@@ -811,4 +906,11 @@
 ## 남은 변경 원격 푸시 완료
 - 후속 사용자 요청에 따라 전체 변경 커밋 `2a47193`을 `origin/main`에 푸시했다. 원격 갱신 `d851254..2a47193` 성공을 확인했다.
 - 이번 요청의 변경 파일: 푸시 결과를 기록한 `handoff.md`만. 기능 코드는 변경하지 않았다.
+- 남은 작업: 없음.
+
+## 목업(샘플) 모드 로그인 상태 브라우저 실행
+- 사용자 요청에 따라 `ASTRA_API_ORIGIN` 없는 샘플 모드로 브라우저를 띄웠다. 이미 실행 중이던 `node server.mjs --dev`(PID 29620, `http://127.0.0.1:4190/`)를 그대로 사용했고 새 서버는 시작하지 않았다.
+- 샘플 모드(`backendStatus === "off"`)는 로그인 모달 없이 학생 계정(박민준) 홈이 열린다. `/ilos/main/main_form.acl?as=st`에서 로그인 모달 0개, 홈 렌더링을 스크린샷으로 확인했다.
+- 브라우저: 관리형 Chromium 탭 `mock`(1440x900, `persist`). 앱 상태가 `localStorage`에 복원되어 처음엔 마지막 화면(자료 요약)이 열려 홈으로 이동시켰다.
+- 변경 파일: `handoff.md`만. 코드 변경 없음.
 - 남은 작업: 없음.

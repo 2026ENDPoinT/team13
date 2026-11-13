@@ -16,6 +16,12 @@ export const intentKeywords: Record<string, string[]> & { plan: string[] } = {
   video: ["강의", "영상", "수업", "듣", "틀어", "재생", "이어"],
 };
 
+/** "오늘 할 일 전부 해줘" 꼴(과목·유형 없이 오늘 할 일 전체): 목업에서는 AI 없이 로컬로 계획을 만든다. */
+export function isTodayAllRequest(text: string): boolean {
+  const input = String(text || "").toLowerCase().replace(/[\s.,!?。~]+/g, "");
+  return /^(?:오늘)?(?:할일|남은일|남은것|남은거|해야할일)(?:을|를|은|는)?(?:전부|전체|모두|다|싹다)(?:해줘|해주세요|해|하자|해라|처리해줘|처리해|끝내줘|끝내자|진행해줘|진행해)?$/.test(input);
+}
+
 // Bulk execution needs an explicit request; an existing plan is not permission for a new request.
 /** A previous turn of the conversation (only `text` and `result.kind` are read). */
 export interface PlanHistoryTurn {

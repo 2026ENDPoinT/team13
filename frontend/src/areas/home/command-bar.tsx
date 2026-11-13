@@ -3,6 +3,7 @@ import { Link, navigate } from "../../router.tsx";
 import { render } from "../../store.ts";
 import { currentRole, routeFor } from "../../shared/routes.ts";
 import { markChatUsed, setHeroInputOut } from "../../shared/assistant/chat-state.ts";
+import { isTodayAllRequest } from "../../shared/assistant/aliases.ts";
 import { Icon } from "../../ui/icon.tsx";
 import { activityById, typeLabel, typeIcon, TODAY } from "../../shared/format.ts";
 import { nextActions, describe } from "../../shared/assistant/resolve.ts";
@@ -11,7 +12,7 @@ import type { AssistantResult } from "../../shared/assistant/activity-context.ts
 import { searchClassrooms, classroomForCommand } from "../../shared/assistant/classrooms.ts";
 import { ask, execute } from "../../shared/assistant/run.ts";
 import { foldTray, focusTray, openTray, refreshTray } from "../../shared/assistant-tray.tsx";
-import { planGroups, runState, startRun, stopRun } from "../../shared/assistant/plan.ts";
+import { createRun, planGroups, runState, startRun, stopRun, todayDeadlinePlan } from "../../shared/assistant/plan.ts";
 import type { Activity } from "../../data.ts";
 import { backendState, backendStatus, subscribe as onBackendChange } from "../../shared/backend.ts";
 import { serverCourseViews } from "../../shared/course-view.ts";
@@ -560,6 +561,21 @@ async function submitCommand({ acceptRun, command, field: given }: { acceptRun?:
   if (reply === "accept" && !run) {
     field.clear();
     say("먼저 원하는 계획을 입력해 주세요. 요약을 확인한 뒤 시작할 수 있어요.");
+    return;
+  }
+  // 목업: "오늘 할 일 전부 해줘"는 AI 없이 오늘 마감 할 일(영상 → 과제)을 Plan으로 쌓고 바로 시작한다.
+  if (isTodayAllRequest(text)) {
+    const targets = todayDeadlinePlan();
+    field.clear();
+    if (!targets.length) {
+      say("오늘 처리할 일이 없어요.");
+      return;
+    }
+    sayText = "";
+    createRun(targets);
+    startRun({ navigate });
+    refreshTray();
+    openTray();
     return;
   }
   // 현재 계획을 문맥으로 유지한다. 수정·거절·새 요청은 AI 응답이 확정된 뒤 적용한다.

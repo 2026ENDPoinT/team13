@@ -247,7 +247,7 @@ function renderActivity(screen: Screen, ctx: ScreenCtx): ReactNode {
   if (screen.serverQuiz) return remoteQuizDetail(screen, ctx, helpers);
   if (screen.serverSurvey) return remoteSurveyDetail(screen, ctx, helpers);
   if (screen.serverLecture) return remoteLectureDetail(screen, ctx, helpers);
-  if (screen.serverMaterial) return remoteMaterialDetail(screen, ctx, helpers);
+  if (screen.serverMaterial || screen.serverSchoolMaterial) return remoteMaterialDetail(screen, ctx, helpers);
   if (screen.serverLink) return remoteActivityLink(screen, ctx, helpers);
   const a = activities.find((item) => item.id === screen.activityId);
   if (!a) return <EmptyState title="활동을 찾을 수 없습니다" body="목록에서 다른 활동을 선택해 보세요." />;
