@@ -128,6 +128,7 @@ wait_healthy() {
   return 1
 }
 
+tagged=false
 fail() {
   echo "$1; rolling back to ${previous:0:7}" >&2
   checkout "$previous"
@@ -136,11 +137,13 @@ fail() {
       frontend_swap_back
       frontend_restart ;;
     eclass-backend)
-      for image in "${backend_images[@]}"; do
-        docker image inspect "$image:previous" >/dev/null 2>&1 && docker tag "$image:previous" "$image:local"
-      done
-      backend_restart || true
-      echo "DB 마이그레이션은 되돌리지 않는다. 필요하면 위 db backup 으로 복원한다." >&2 ;;
+      # 이번 배포가 :previous 를 새로 태그한 뒤에만 이미지를 되돌린다. 그 전(compose 검사 실패)에는
+      # 컨테이너를 건드리지 않았으므로 지난 배포의 :previous 로 내려가지 않게 아무것도 하지 않는다.
+      if [[ $tagged == true ]]; then
+        for image in "${backend_images[@]}"; do docker tag "$image:previous" "$image:local"; done
+        backend_restart || true
+        echo "DB 마이그레이션은 되돌리지 않는다. 필요하면 위 db backup 으로 복원한다." >&2
+      fi ;;
     campus-lessonviewer)
       lessonviewer_restart ;;
   esac
@@ -158,6 +161,7 @@ case $target in
     # 새 커밋의 compose.yaml 이 지금 .env 로 해석되지 않으면(새 필수 변수 등) 아무것도 바꾸기 전에 멈춘다.
     docker compose config --quiet || fail "compose config invalid for $sha (.env 에 새 변수가 필요한지 확인)"
     for image in "${backend_images[@]}"; do docker tag "$image:local" "$image:previous"; done
+    tagged=true
     backend_build || fail "image build failed"
     backend_backup_db || fail "db backup failed"
     backend_restart || { docker compose logs --no-color --tail=60 api worker >&2 || true; fail "containers did not become healthy"; }
