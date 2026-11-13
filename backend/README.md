@@ -71,7 +71,7 @@ git commit -m "Update reference to <변경 요약>"
 - 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
 - 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
-- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 117 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
+- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 119 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
 
 ## 빌드와 실행
 
@@ -286,6 +286,27 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 | `ASTRA_STUDYROOM_MAX_FOLDERS_PER_COURSE` | `50` | 한 과목 학습실의 폴더 수 상한 |
 | `ASTRA_STUDYROOM_RATE_LIMIT` · `ASTRA_STUDYROOM_RATE_WINDOW` | `120` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 학습실 변경 명령 수. 녹음 올리기는 업로드 제한(`ASTRA_UPLOAD_RATE_LIMIT`)을 쓴다 |
 | `ASTRA_STUDYROOM_PLAY_RATE_LIMIT` | `600` | 한 사용자가 같은 구간 안에 보낼 수 있는 녹음 재생 요청 수(GET·HEAD, 탐색마다 하나) |
+
+### 학습실 녹음 전사·요약 설정
+
+새 학습실 녹음은 올리면 자동으로 Deepgram이 전사하고 요약 모델이 요약한다([ADR-0041](docs/adr/0041-recording-transcription-and-summary.md)). `ASTRA_DEEPGRAM_API_KEY`가 없으면 기능이 꺼진다: 작업을 만들지 않고 응답에 `transcription`, `summary`를 싣지 않는다. Deepgram key만 있고 모델(`ASTRA_LLM_API_KEY`, `ASTRA_LLM_ENABLED`, 위 "LLM 설정")이 없으면 전사만 한다. 요약은 그 모델 설정을 그대로 쓴다. api와 worker가 같은 `.env`를 받아야 한다(api가 작업을 만들고 worker가 처리한다). 이미 만든 작업은 worker에서 그 제공자 설정이 없어지면 `failed`로 닫힌다. 값은 시작할 때 검사하고, 틀리면 앱이 뜨지 않는다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_DEEPGRAM_API_KEY` | 없음 | Deepgram API key. 저장소와 로그에 남기지 않는다 |
+| `ASTRA_DEEPGRAM_URL` | `https://api.deepgram.com` | 이 주소 뒤에 `/v1/listen`을 붙여 부른다. https만(loopback은 http 허용). EU 처리는 `https://api.eu.deepgram.com` |
+| `ASTRA_DEEPGRAM_MODEL` | `nova-3` | 인식 모델 |
+| `ASTRA_DEEPGRAM_LANGUAGE` | `multi` | 인식 언어. `multi`는 한국어·영어가 섞인 강의를 한 모델로 받는다 |
+| `ASTRA_DEEPGRAM_LANGUAGE_HINTS` | `ko,en` | `multi`일 때만 보내는 `language_hint` |
+| `ASTRA_DEEPGRAM_TIMEOUT` | `15m` | 요청 하나의 전체 제한 시간 |
+| `ASTRA_DEEPGRAM_MAX_RESPONSE_BYTES` | `64MB` | 응답 본문 상한 |
+| `ASTRA_RECORDING_STUDY_MAX_RECORDING_MINUTES` | `180` | 녹음 하나의 길이 상한(분) |
+| `ASTRA_RECORDING_STUDY_DAILY_MINUTES` · `ASTRA_RECORDING_STUDY_MONTHLY_MINUTES` | `300` · `1800` | 사용자 한 사람이 하루·한 달(달력 월)에 전사할 수 있는 오디오 분. Deepgram이 잰 실제 길이로 센다 |
+| `ASTRA_RECORDING_STUDY_MAX_CONCURRENT` | `4` | 모든 worker를 합쳐 동시에 처리하는 전사 수, 요약 수(종류마다) |
+| `ASTRA_RECORDING_STUDY_SUMMARY_CHUNK_CHARS` | `24000` | 요약 호출 한 번에 보내는 전사 글자 수. 넘으면 나눠 요약한다 |
+| `ASTRA_RECORDING_STUDY_POLL_INTERVAL` | `10s` | worker가 대기 작업을 찾는 간격 |
+| `ASTRA_RECORDING_STUDY_LEASE` · `ASTRA_RECORDING_STUDY_LEASE_RENEWAL` | `20m` · `1m` | 실행 lease와 갱신 간격(lease보다 짧게) |
+| `ASTRA_RECORDING_STUDY_MAX_ATTEMPTS` · `ASTRA_RECORDING_STUDY_RETRY_BACKOFF` | `4` · `1m` | 일시 오류일 때 실행 횟수와 첫 재시도 대기(4배씩 늘고 1시간 상한) |
 
 ### 온라인 강의 학습 설정
 

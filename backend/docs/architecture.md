@@ -723,7 +723,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 ### 7.21 학습실 폴더와 강의 녹음
 
-결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음은 요약과 학습 대화에 들어가지 않는다.
+결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음은 쪽별 요약과 학습 대화에 들어가지 않는다. 녹음의 전사·요약은 7.22절이다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -739,6 +739,21 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | `GET /api/me/study-room/recordings/{recordingId}/content` · `HEAD` | 소유자 | 오디오. `Range` 하나면 206과 `Content-Range`, 내용 밖이면 416, 여러 구간이면 200 전체. 언제나 `attachment`, `Accept-Ranges: bytes`, `nosniff`, `CSP: sandbox`, `private, no-store`. 검사 전 409 `not_ready`, 거부 409 `content_rejected`. `HEAD`는 행만 읽는다. 사용자마다 10분에 600번. 감사 기록은 session·녹음마다 10분에 한 번, 저장소를 열기 전에 남긴다. 이미 남겼는지 찾지 못하면 재생을 막지 않고 다시 남긴다 |
 
 한 사용자의 학습실 변경은 `study_room_quotas`의 그 사용자 행을 먼저 잠그고 차례로 한다. 녹음 파일은 과목 없이(`files.course_id` NULL) 첨부 없이 기록하므로 과목 파일 내려받기, 미리보기, 요약, 학습 대화는 그 파일을 열지 못한다. 변경 명령은 사용자마다 10분에 120번(`astra.study-room.rate-limit`), 녹음 올리기는 업로드 요청 제한도 함께 쓴다.
+
+### 7.22 학습실 녹음 전사·요약
+
+결정은 [ADR-0041](adr/0041-recording-transcription-and-summary.md)에 있다. 프론트엔드 계약(Frontend-final `README.md` "녹음 전사·요약 연동 계약", `src/shared/recording-study.ts`)대로 녹음 하나를 돌려주는 응답에 선택 필드 `transcription`, `summary`를 싣는다.
+
+| 응답 | `transcription` / `summary` |
+|---|---|
+| `GET …/recordings/{recordingId}`, `POST …/courses/{courseId}/recordings`(201, 같은 key 재전송 포함), `PATCH …/recordings/{recordingId}` | 작업마다 `{"status":"queued"}`, `{"status":"processing"}`, `{"status":"ready","result":…}`, `{"status":"failed","message":"…"}`. 작업이 없으면 키가 없다 |
+| `GET …/recordings`, `GET …/courses/{courseId}` | 싣지 않는다(키가 없다). 화면은 상세에서만 읽는다 |
+
+- 전사 `result`: `{"segments":[{"at":초,"text":"…"}],"text":"줄바꿈으로 이은 전체"}`. `at`은 0.01초 단위, 오름차순, `0 ≤ at ≤ 실제 길이`. 말소리가 없으면 `segments: []`, `text: ""`.
+- 요약 `result`: `{"overview":"…","sections":[{"title":"…","at":초,"points":[{"term":"…","text":"…","at":초}],"table":{"head":[…],"rows":[[…]]}}],"note":"…"}`. `table`은 있을 때만. 모든 `at`은 전사 줄 시각이고 섹션은 오름차순이다. 모두 일반 텍스트다.
+- 작업은 업로드 transaction에서 `queued`로 만든다(Deepgram key가 있으면 전사, 모델도 있으면 요약). worker(`RecordingStudyRunner`)가 검사를 마친 녹음만 Deepgram으로, 전사가 끝난 녹음만 요약 모델로 처리한다. 실패 문장은 코드마다 정한 한국어 문장이다(`RecordingStudyFailures`).
+- 한도: 녹음 하나 180분, 사용자당 하루 300분·한 달 1800분(Deepgram이 잰 실제 길이로 청구), 종류마다 동시 처리 4개. 실제 길이가 상한을 넘거나 선언보다 허용 범위 넘게 길면 결과를 내주지 않는다.
+- 녹음을 지우면 같은 transaction에서 작업과 결과를 지운다. 처리 중인 결과는 버려진다.
 
 ## 8. Valkey 도입 기준
 
@@ -846,5 +861,6 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 아바타 사진 처리 | converter는 한 번에 하나만 처리해 긴 문서 변환 뒤에 사진이 기다린다. 사진 대기열의 길이·나이 지표는 없다. JPEG의 EXIF 회전은 적용하지 않는다(화면이 canvas로 그린 사진을 올린다). 카탈로그 과목 상세의 교수 아바타는 구성원이 아닌 사람에게 사진 없이 이름 글자로만 보인다([ADR-0038](adr/0038-avatar-photo.md)) | 사진 대기열 지표를 `FilesBacklog`에 더하고, 대기가 길면 converter에 사진 전용 실행 slot을 둔다. 교수 사진 공개 범위는 학교와 정한다 |
 | 한국 밖 브라우저의 일시 표시 | offset 없는 일시는 기관 시간대의 벽시계다. 프론트엔드가 `new Date(문자열)`로 읽으면 브라우저 시간대로 해석해 한국 밖에서 시각이 어긋난다([ADR-0039](adr/0039-institution-wall-clock-time.md)) | 프론트엔드가 `GET /api/auth/methods`의 `timeZone`으로 읽고 표시한다. 입력은 `datetime-local` 값을 그대로 보낸다 |
 | 학습실 녹음의 크기와 계정 삭제 | 녹음 파일은 50 MB까지라 브라우저 기본 bitrate로는 긴 강의가 넘을 수 있다. 계정 삭제 흐름이 없어 학습실 행과 녹음 파일은 소유자가 지울 때까지 남고, `users` 행을 cascade 없이 가리킨다([ADR-0040](adr/0040-study-room-sync.md)) | 프론트엔드가 `audioBitsPerSecond`를 낮춘다. 더 긴 녹음이 필요하면 clamd `StreamMaxLength`와 함께 상한을 올리고 스트림 업로드에 기록 자리를 더한다. 계정 삭제를 만들 때 같은 transaction에서 녹음 파일 참조를 놓고 학습실 행을 지운다 |
+| 학습실 녹음의 외부 처리 동의 | Deepgram key가 있으면 새 녹음은 학생 업로드만으로 Deepgram과 요약 모델 제공자에 간다. 녹음에 섞인 교수자·다른 학생의 동의, 과목·학생 단위 끄기, 실패·한도 녹음의 다시 처리, 기능 전 녹음의 처리가 없다. 길이 한도는 보내기 전에는 client가 보낸 길이로만 본다([ADR-0041](adr/0041-recording-transcription-and-summary.md)) | 학교 개인정보 기준과 고지를 받아 동의·끄기 단계를 정한다. 필요하면 재처리 API와 서버 쪽 오디오 길이 측정을 더한다 |
 | 오류 문장의 필드 이름 | 사용자가 입력하거나 고르는 값(제목, 본문, 설명, 기간, 배점, 문항·보기, 강의계획서 항목, 사유, 그룹 이름, 쪽지 고르기)의 400 문장은 화면의 항목 이름으로 바꿨다. `size`, `cursor`, `page`, `revision`, `version`, `If-Match`, `Idempotency-Key`, 열거 값(`type`, `status`, `sort`, `audience` 등), ID 목록의 400 문장은 바르게 만든 client가 보내지 않는 계약 오류라 아직 필드 이름을 쓴다 | client는 계약 오류 문장을 그대로 보이지 말고 `code`와 일반 문구로 바꾼다. 화면에 그대로 보이는 경로가 생기면 그 문장부터 바꾼다 |
 | 쪽지 목록의 기준 시각 | 다음 쪽은 첫 쪽의 기준 시각까지의 쪽지만 낸다. 오래 열어 둔 목록은 그 뒤 온 쪽지를 다음 쪽에 넣지 않는다 | 화면이 새 쪽지를 알리면 cursor 없이 첫 쪽을 다시 읽는다 |
