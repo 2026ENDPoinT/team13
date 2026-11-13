@@ -1,2 +1,5 @@
 # 정적 자산은 바이트 그대로 둔다. 줄바꿈 변환을 하지 않는다(Windows core.autocrlf 포함).
 public/** -text
+# 배포 스크립트·설정은 Linux 에서 실행하므로 LF 로 둔다.
+deploy/** text eol=lf
+Jenkinsfile text eol=lf

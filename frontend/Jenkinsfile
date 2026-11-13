@@ -1,0 +1,36 @@
+// CI: 모든 브랜치·같은 조직 PR 에서 타입 검사와 빌드(node 22 컨테이너, yoobin-desktop-linux).
+// CD(main): Hermes 의 e-class 프론트엔드(eclass.stack-edu.com)를 이 커밋으로 다시 빌드해 바꾼다.
+// Jenkins·Hermes 배포 구성은 deploy/jenkins/README.md.
+pipeline {
+  agent none
+  options {
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 30, unit: 'MINUTES')
+  }
+  stages {
+    stage('Check') {
+      agent { docker { image 'node:22-alpine' } }
+      environment {
+        HOME = "${env.WORKSPACE_TMP}/home"
+        npm_config_cache = "${env.WORKSPACE_TMP}/npm-cache"
+      }
+      steps {
+        sh 'npm ci --no-audit --no-fund'
+        sh 'npm run typecheck'
+        sh 'npx vite build'
+        sh 'node --check server.mjs'
+        sh 'test -f dist/index.html'
+      }
+    }
+    stage('Deploy') {
+      when { branch 'main' }
+      agent any
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'hermes-deploy', keyFileVariable: 'KEY')]) {
+          sh 'ssh -i "$KEY" -o BatchMode=yes -o UserKnownHostsFile="$HERMES_KNOWN_HOSTS" "$HERMES_SSH" eclass-frontend "$GIT_COMMIT"'
+        }
+      }
+    }
+  }
+}

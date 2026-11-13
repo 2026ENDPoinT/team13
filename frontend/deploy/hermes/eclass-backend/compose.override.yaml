@@ -1,0 +1,71 @@
+# Hermes 단일 host 배포용 덧붙임. Hermes ~/projects/eclass-backend/app/compose.override.yaml 의 사본(STack-Backend 레포에는 넣지 않는다).
+# compose.yaml은 S3 저장소를 띄우지 않으므로 같은 host에 S3 호환 저장소(SeaweedFS)를 둔다.
+# MinIO는 공식 이미지 배포가 끊겨 쓰지 않는다. SeaweedFS는 api·worker만 닿는 내부 network(data)에만 붙고
+# host에 port를 publish하지 않는다. 자격증명은 s3.json(이 디렉터리, 커밋하지 않음)에 있다.
+services:
+  s3:
+    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # 4.53
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -master.volumeSizeLimitMB=1024
+      - -volume.max=0
+    volumes:
+      - s3-data:/data
+      - ./s3.json:/etc/seaweedfs/s3.json:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options: { max-size: 20m, max-file: "3" }
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1024m
+
+  # 처음 한 번 bucket을 만든다. 이미 있으면 그대로 둔다.
+  s3-init:
+    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # 4.53
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        for b in astra-content astra-delivery; do
+        echo "s3.bucket.create -name $$b" | weed shell -master=s3:9333 2>&1 | grep -v "already exists" || true;
+        done;
+        echo "s3.bucket.list" | weed shell -master=s3:9333
+    networks: [data]
+    depends_on:
+      s3:
+        condition: service_healthy
+    restart: "no"
+    logging: *logging
+
+  # 빈 스키마에서도 RSS 가 500–590 MiB 라 768m 한도에 가깝다(performance_schema 포함). 버퍼 풀(128 MB)은 그대로 두고 한도만 올린다.
+  mysql:
+    deploy:
+      resources:
+        limits:
+          memory: 1280m
+
+  api:
+    depends_on:
+      s3-init:
+        condition: service_completed_successfully
+
+  worker:
+    depends_on:
+      s3-init:
+        condition: service_completed_successfully
+
+volumes:
+  s3-data: {}
