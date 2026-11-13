@@ -93,7 +93,9 @@ def log(**fields):
     print(json.dumps({'at': time.strftime('%Y-%m-%dT%H:%M:%S'), **fields}, ensure_ascii=False), flush=True)
 
 
-def via_agy(body, model=None, timeout=None):
+def via_agy(body, model=None, timeout=None, short=False):
+    """short: 도우미처럼 일부러 짧게 끊는 요청. 시간 초과 같은 일시 실패로는 차단기를 걸지 않는다(쿼터·로그아웃·agy 없음만 건다).
+    걸면 Hermes 에이전트·녹음 요약 같은 다른 요청까지 AGY_COOLDOWN 동안 agy 를 못 쓴다."""
     model, timeout = model or AGY_MODEL, timeout or AGY_TIMEOUT
     paused = breaker.skip()
     if paused:
@@ -104,7 +106,8 @@ def via_agy(body, model=None, timeout=None):
     try:
         response = client.chat.completions.create(model=model, timeout=timeout, **kwargs)
     except Exception as error:
-        breaker.trip(error)
+        if not short or isinstance(error, HARD_ERRORS):
+            breaker.trip(error)
         raise
     finally:
         AGY_SLOTS.release()
@@ -318,7 +321,7 @@ class Handler(BaseHTTPRequestHandler):
         _assist_systems['generate'] = (messages[0]['content'], time.monotonic())
         started = time.monotonic()
         try:
-            data = via_agy({'messages': messages}, ASSIST_MODEL, ASSIST_TIMEOUT)
+            data = via_agy({'messages': messages}, ASSIST_MODEL, ASSIST_TIMEOUT, short=True)
             value = extract_json(data['choices'][0]['message'].get('content'))
             errors = schema_errors(value, schema)
             if errors:
@@ -389,7 +392,7 @@ class Handler(BaseHTTPRequestHandler):
         _assist_systems['chat-json'] = (messages[0]['content'], time.monotonic())
         started = time.monotonic()
         try:
-            data = via_agy({'messages': messages}, ASSIST_MODEL, JSON_AGY_TIMEOUT)
+            data = via_agy({'messages': messages}, ASSIST_MODEL, JSON_AGY_TIMEOUT, short=True)
             message = data['choices'][0]['message']
             message['content'] = json.dumps(extract_json(message.get('content')), ensure_ascii=False)
             log(route='json-agy', model=ASSIST_MODEL, ms=int((time.monotonic() - started) * 1000))
