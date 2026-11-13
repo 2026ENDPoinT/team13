@@ -4,6 +4,7 @@
 // lands (`useResource`). Nothing here is persisted; every cache is dropped when the session changes.
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { subscribe as onBackendChange } from "./backend.ts";
+import { ApiError } from "./api.ts";
 
 const visits = new Map<string, { entry: unknown; key: string }>();
 // A history state object that `replaceVisit()` put in place of another stands for that one, so
@@ -44,9 +45,10 @@ export interface Entry<T> {
   error: unknown;
   loading: Promise<void> | null;
   /**
-   * The data `drop()` cleared, until the reload after the write lands (it stays if that reload
-   * fails). For display only: a list may keep showing these rows meanwhile, with its row actions
-   * off; nothing may build form state, versions or revisions from it.
+   * The data `drop()` cleared, until the reload after the write lands. It stays if that reload
+   * fails, unless the failure denies access (401, 403, 404): rows of a course the user may no
+   * longer see are not kept. For display only: a list may keep showing these rows meanwhile, with
+   * its row actions off; nothing may build form state, versions or revisions from it.
    */
   previous?: T | null;
 }
@@ -139,7 +141,9 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
           entry.data = data;
           entry.previous = null;
         }, (error: unknown) => {
-          if (counts()) entry.error = error;
+          if (!counts()) return;
+          entry.error = error;
+          if (error instanceof ApiError && [401, 403, 404].includes(error.status)) entry.previous = null;
         })
         .finally(() => {
           if (gen !== generation) return;

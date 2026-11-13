@@ -332,7 +332,7 @@ function FieldBlock({ memo, prefix, repaint }: { memo: FormMemo; prefix: string;
     <div className="span-2"><Field label="설명">
       <textarea rows={3} maxLength={10000} value={memo.description} aria-label={`${prefix}설명`} disabled={disabled} onChange={(event) => set("description", event.currentTarget.value)} />
     </Field></div>
-    <p className="pf-sub span-2">콘텐츠마다 정하는 인정 기준 시간은 학생의 적립 시간이 그 이상이면 그 콘텐츠의 인정 기준을 충족한 것으로 봅니다. 출석은 그 주차에 온라인 출석 차시가 하나뿐일 때만 그 차시로 자동 인정되고, 그 밖에는 출석부 기록이 정합니다.</p>
+    <p className="pf-sub span-2">학생의 적립 시간이 콘텐츠의 인정 기준 시간 이상이면 그 콘텐츠의 인정 기준을 충족합니다. 출석은 온라인 출석 차시에 연결된 공개 강의의 콘텐츠를 모두 충족했을 때만 그 차시로 자동 인정됩니다. 그 차시는 그 주의 휴강하지 않은 유일한 온라인 차시이거나 강의가 직접 지정한 차시여야 하고, 출석부에 이미 정해진 출석은 바꾸지 않습니다. 그 밖에는 출석부 기록이 정합니다.</p>
   </>;
 }
 
