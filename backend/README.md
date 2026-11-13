@@ -16,6 +16,113 @@
 
 2026-11-10 STack-Backend에서 루트 `src/`·MySQL 마이그레이션·`db/`·`docs/`를 커밋 이력과 함께 STack-eclass-Backend로 옮겼다(STAC-90). 2026-11-13 STack-eclass-Backend를 커밋 이력과 함께 다시 STack-Backend로 옮겼고, 이때 캠퍼스 온 백엔드(`backend/`)는 main에서 지웠다. 캠퍼스 온의 마지막 상태는 `archive/campus-on` 브랜치에 있다.
 
+## 구조 한눈에 보기 (C4)
+
+이 레포의 코드와 `compose.yaml`이 정의하는 구조를 C4의 위 두 단계로 그린다. 둥근 끝 상자는 사람, 굵은 파란 상자는 이 시스템과 그 실행 단위, 점선 상자는 외부 시스템, 원통은 저장소다. 실선 화살표는 호출이고, 점선 화살표는 브라우저 redirect나 공유 volume이다.
+
+### System Context
+
+```mermaid
+flowchart LR
+  ST(["학생"])
+  IN(["교수자<br/>교수 · 조교 · 비정규 담당자"])
+  OP(["알림마당 운영자"])
+  BG(["break-glass 관리자"])
+  FE["프론트엔드 · 앞단 proxy<br/>Frontend-final server.mjs<br/>Cloudflare Tunnel"]
+  AS["ASTRA 백엔드<br/>이 레포"]
+  IDP["학교 IdP<br/>OpenID Connect"]
+  EC["학교 e-Class<br/>ILOS 로그인 화면"]
+  LLM["LLM 제공자<br/>OpenAI 호환 API"]
+  S3[("객체 저장소<br/>S3 · S3 호환")]
+  MIR["ClamAV 서명 mirror"]
+  ST & IN & OP & BG -->|"브라우저"| FE
+  FE -->|"/api · /doc · /vod"| AS
+  FE -.->|"로그인 redirect"| IDP
+  AS -->|"code 교환 · JWKS"| IDP
+  AS -->|"학번 로그인 확인 · 수강과목"| EC
+  AS -->|"쪽 요약 · 학습 대화"| LLM
+  AS -->|"파일 읽기 · 쓰기"| S3
+  AS -->|"서명 내려받기"| MIR
+  classDef person fill:#e8f0fe,stroke:#1a73e8
+  classDef system fill:#1a73e8,stroke:#0b3d91,stroke-width:3px,color:#fff
+  classDef ext fill:#f5f5f5,stroke:#777,stroke-dasharray:5 3
+  class ST,IN,OP,BG person
+  class AS system
+  class FE,IDP,EC,LLM,S3,MIR ext
+```
+
+사람은 코드가 정하는 역할로 나눈다. 학생과 교수자는 과목 안의 역할(`catalog.api.CourseMemberships.CourseRole`의 `STUDENT`, `INSTRUCTOR`)이다. 알림마당 운영자는 `community_operators` 행으로 정하고(`communication/CommunityOperators`), break-glass 관리자는 로컬 로그인과 TOTP로 들어오는 계정이다(`identity/breakglass/BreakGlassLogin`).
+
+| 외부 시스템 | 방향 | 오가는 것 |
+|---|---|---|
+| 프론트엔드 · 앞단 proxy | 브라우저 → proxy → 백엔드 | SPA와 `server.mjs`는 [Frontend-final](https://github.com/STack-Corp/Frontend-final) 레포에 있다. `server.mjs`가 `/api`, `/doc`, `/vod`를 api로 넘기고, 그 앞의 Cloudflare Tunnel이 TLS를 끝낸다. Terraform 구성(`infra/`)에서는 CloudFront가 이 자리에 온다 |
+| 학교 IdP | 백엔드 → IdP, 브라우저 → IdP | OpenID Connect code flow와 PKCE. 설정했을 때만 켜진다 |
+| 학교 e-Class | 백엔드 → e-Class | 학번·비밀번호로 학교 화면에 로그인해 보고 이름·학과·학년과 수강과목을 읽는다. 학교에 공개 API가 없어 브라우저와 같은 form 요청을 보낸다. 설정했을 때만 켜진다 |
+| LLM 제공자 | 백엔드 → 제공자 | 교수자가 동의한 자료의 쪽별 요약과 학습 대화. 기본 주소는 DeepSeek이다. API key가 있을 때만 켜진다 |
+| 객체 저장소 | 백엔드 → 저장소 | 업로드 원본, 쪽 이미지, HLS segment 같은 파생물. compose는 저장소를 띄우지 않는다 |
+| ClamAV 서명 mirror | 백엔드 → mirror | 악성코드 서명만 내려받는다. 업로드 파일은 보내지 않는다 |
+
+### Container
+
+```mermaid
+flowchart LR
+  FE["프론트엔드 · 앞단 proxy<br/>Frontend-final"]
+  subgraph HOST["compose 프로젝트 astra"]
+    API["api<br/>Spring Boot"]
+    WK["worker<br/>Spring Boot"]
+    CV["converter<br/>Java · LibreOffice"]
+    TC["transcoder<br/>Java · ffmpeg"]
+    DB[("mysql<br/>MySQL 8.4")]
+    AV["clamav<br/>clamd"]
+    FC["freshclam"]
+  end
+  SCH["학교 IdP · e-Class"]
+  S3[("객체 저장소<br/>S3 · S3 호환")]
+  LLM["LLM 제공자"]
+  MIR["ClamAV 서명 mirror"]
+  FE -->|"HTTP :8080"| API
+  API -->|"HTTPS 로그인 확인"| SCH
+  API & WK -->|"JDBC"| DB
+  API & WK -->|"S3 API"| S3
+  WK -->|"HTTP :8090 문서"| CV
+  WK -->|"HTTP :8091 영상"| TC
+  WK -->|"TCP :3310 검사"| AV
+  WK -->|"HTTPS 요약 · 대화"| LLM
+  FC -.->|"서명 volume"| AV
+  FC -->|"HTTPS 서명"| MIR
+  classDef box fill:#1a73e8,stroke:#0b3d91,stroke-width:3px,color:#fff
+  classDef ext fill:#f5f5f5,stroke:#777,stroke-dasharray:5 3
+  class API,WK,CV,TC,DB,AV,FC box
+  class FE,S3,SCH,LLM,MIR ext
+```
+
+| container | 기술 | 맡는 일 |
+|---|---|---|
+| `api` | Spring Boot 4, Java 25 (Spring profile `api`) | HTTP API와 로그인. 시작할 때 Flyway 마이그레이션을 적용한다. 브라우저 요청은 앞단 proxy를 거쳐서만 온다 |
+| `worker` | api와 같은 jar (Spring profile `worker`) | 배경 작업. 업로드 검사, 문서 변환, 영상 변환, 쪽별 요약, 학습 대화, 정리 작업을 한다. 할 일은 DB의 작업 행에서 가져오고 api와 직접 통신하지 않는다 |
+| `converter` | 같은 jar의 `com.stackcorp.converter`, PDFBox, LibreOffice | 문서를 쪽 이미지·텍스트·썸네일로 바꾸고 아바타 사진을 정규화한다. 외부 network, 비밀값, 저장소 credential이 없다 |
+| `transcoder` | 같은 jar의 `com.stackcorp.transcoder`, ffmpeg | 영상을 HLS segment로 바꾼다. 외부 network, 비밀값, 저장소 credential, 암호화 key가 없다 |
+| `mysql` | MySQL 8.4 (compose profile `mysql`) | 정본 데이터와 작업 행. profile을 끄면 RDS 같은 외부 MySQL을 쓴다 |
+| `clamav` | ClamAV clamd (compose profile `scan`) | 업로드 파일의 악성코드 검사. worker만 닿는다 |
+| `freshclam` | ClamAV freshclam (compose profile `scan`) | 서명을 받아 clamav와 함께 쓰는 volume에 둔다. 다른 container에 닿지 않는다 |
+
+api의 코드는 `com.stackcorp.astra` 아래 패키지 하나가 모듈 하나다. 모듈은 다른 모듈의 `api` 패키지만 쓸 수 있고 `ModuleStructureTests`가 이를 확인한다. worker는 같은 모듈을 실행하고 배경 작업 bean만 더 켠다.
+
+| 모듈 | 맡는 일 |
+|---|---|
+| `identity` | 사용자, 외부 신원 연결, session, 기기, 재인증, break-glass 로그인 |
+| `catalog` | 학기, 과목, 수강, 시간표, 알림 |
+| `learning` | 강의실, 주차, 학습활동, 영상 학습 session, 출석 |
+| `assessment` | 과제, 퀴즈, 설문, 성적 |
+| `communication` | 공지, Q&A, 게시판, 쪽지, 알림마당 |
+| `files` | 업로드, 첨부, 파일함, 학습실, 문서 rendition, 영상 asset, 업로드 검사 작업. 객체 저장소를 부르는 유일한 모듈이다 |
+| `summary` | 강의 자료의 쪽별 요약, LLM 동의, 학습 대화 |
+| `home` | 메인 화면 집계, 할 일, 캘린더. 쓰기가 없다 |
+| `integration` | 다른 모듈이 정의한 port의 구현. 학교 IdP, 학교 e-Class, LLM, converter·transcoder·clamd client, `/doc`·`/vod` cookie 서명. 외부 network를 여는 유일한 모듈이다 |
+| `shared` | 오류 형식, requestId, 시간, 멱등 원장, 감사 로그, 지표. 모든 모듈이 쓴다 |
+
+모듈 안의 구성, port, 배경 작업, 요청 흐름은 [docs/c4.md](docs/c4.md) 3~4절에 있고, 배포 토폴로지와 결정의 이유는 [docs/architecture.md](docs/architecture.md)에 있다.
+
 ## 폴더 구성
 
 | 경로 | 내용 |
