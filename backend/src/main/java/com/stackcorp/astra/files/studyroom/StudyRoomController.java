@@ -39,13 +39,16 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * 학습실의 내 폴더, 항목 배치, 강의 녹음 API(ADR-0040). 프론트엔드가 브라우저에만 두던 폴더 트리(study-folders.js)와 녹음
- * (course-recordings.js)을 그대로 옮긴다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 사용자는 session principal에서만 정한다(SC-02).
+ * 학습실의 내 폴더, 항목 배치, 강의 녹음 API(ADR-0040). 프론트엔드가 브라우저에만 두던 폴더 트리(src/shared/study-folders.ts)와
+ * 녹음(src/shared/course-recordings.ts)을 그대로 옮긴다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 사용자는 session principal에서만
+ * 정한다(SC-02).
  */
 @RestController
 class StudyRoomController {
@@ -207,6 +210,12 @@ class StudyRoomController {
 	ResponseEntity<InputStreamResource> content(@AuthenticationPrincipal Actor actor, @PathVariable long recordingId,
 			@RequestHeader(name = HttpHeaders.RANGE, required = false) String range) {
 		return this.studyRoom.content(actor, positive(recordingId), range);
+	}
+
+	/** 재생 전 크기와 형식만 묻는 HEAD. 녹음 행만 읽고 저장소를 열지 않는다. GET이 HEAD를 대신 받지 않도록 따로 둔다. */
+	@RequestMapping(path = BASE + "/recordings/{recordingId}/content", method = RequestMethod.HEAD)
+	ResponseEntity<Void> contentHead(@AuthenticationPrincipal Actor actor, @PathVariable long recordingId) {
+		return this.studyRoom.contentHead(actor, positive(recordingId));
 	}
 
 	@ExceptionHandler(RangeNotSatisfiable.class)

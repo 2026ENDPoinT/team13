@@ -32,7 +32,7 @@ import jakarta.servlet.http.HttpServletResponse;
  * 디스크로 받으므로, handler에서 요청 제한(SC-09)을 세면 제한을 넘긴 사용자도 요청마다 본문을 다 보낸 뒤에야 거부된다. 이 filter는
  * Spring Security가 사용자를 정한 뒤, DispatcherServlet보다 앞에서 돈다.
  * <ul>
- * <li>multipart를 받는 업로드 경로(아래 세 곳)는 사용자·연산 요청 제한을 여기서 센다. 권한이 없는 시도와 뒤에서 거부하는 업로드도
+ * <li>multipart를 받는 업로드 경로(아래 네 곳)는 사용자·연산 요청 제한을 여기서 센다. 권한이 없는 시도와 뒤에서 거부하는 업로드도
  * 센다.</li>
  * <li>그 밖의 경로로 온 multipart는 받을 handler가 없으므로 multipart를 나누지 않고 415로 끝낸다. 이 판정은 CSRF 검사와 로그인
  * 검사를 통과해 이 filter까지 온 요청에만 적용된다. 로그인하지 않은 요청이 보호 경로로 오면 그 전에 401이다.</li>
@@ -60,6 +60,9 @@ class MultipartRateLimitFilter extends OncePerRequestFilter {
 				// 파일함에 올리기는 일반 업로드와 같은 제한을 함께 쓴다(FileboxUploads, ADR-0028 12번).
 				new Limit(paths.matcher(HttpMethod.POST, "/api/filebox/files"), "upload", properties.rateLimit(),
 						properties.rateWindow()),
+				// 학습실 녹음 올리기(files.studyroom)도 일반 업로드와 같은 제한을 함께 쓴다(ADR-0040).
+				new Limit(paths.matcher(HttpMethod.POST, "/api/me/study-room/courses/{courseId}/recordings"), "upload",
+						properties.rateLimit(), properties.rateWindow()),
 				// 아바타 사진(files.avatar.AvatarImageController). 사용자당 10분에 10번.
 				new Limit(paths.matcher(HttpMethod.POST, "/api/me/profile/image"), "avatar-upload", 10,
 						Duration.ofMinutes(10)));

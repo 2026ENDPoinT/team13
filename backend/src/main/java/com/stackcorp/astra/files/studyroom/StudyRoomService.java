@@ -1,6 +1,7 @@
 package com.stackcorp.astra.files.studyroom;
 
 import java.io.InputStream;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -68,9 +69,13 @@ class StudyRoomService {
 
 	private static final int ATTEMPTS = 3;
 
-	private static final Map<String, String> AUDIO_TYPES = Map.of("webm", "audio/webm", "ogg", "audio/ogg", "mp3",
-			"audio/mpeg", "m4a", "audio/mp4", "mp4", "audio/mp4", "wav", "audio/wav", "aac", "audio/aac", "flac",
-			"audio/flac");
+	/** 같은 session의 같은 녹음 재생을 감사 기록에 한 번만 남기는 구간. */
+	static final Duration PLAY_AUDIT_WINDOW = Duration.ofMinutes(10);
+
+	/** 녹음 정책의 확장자마다 재생 MIME. 정책 행(upload_policies)에 있어도 여기 없는 확장자는 받지 않는다. */
+	static final Map<String, String> AUDIO_TYPES = Map.of("webm", "audio/webm", "weba", "audio/webm", "ogg",
+			"audio/ogg", "opus", "audio/ogg", "mp3", "audio/mpeg", "m4a", "audio/mp4", "mp4", "audio/mp4", "wav",
+			"audio/wav", "aac", "audio/aac", "flac", "audio/flac");
 
 	private final StudyRoomRecords records;
 
@@ -143,32 +148,42 @@ class StudyRoomService {
 
 	// ---------- 폴더 ----------
 
-	/** 폴더를 과목 학습실 끝에 만든다. 같은 과목에 같은 이름(대소문자 구분 없음)이 있으면 409다. */
+	/**
+	 * 폴더를 과목 학습실 끝에 만든다. 같은 과목에 글자 그대로 같은 이름이 있으면 409다.
+	 * <p>
+	 * 멱등 원장의 receipt에는 폴더 ID만 둔다. 이름을 24시간 원장에 남기지 않기 위해서다. 같은 key의 재전송은 그 폴더의 지금 상태(그 사이 바뀐
+	 * 이름과 version)를 돌려주고, 그 사이 지운 폴더면 410 {@code folder_deleted}다.
+	 */
 	FolderView createFolder(Actor actor, long courseId, String rawName, String idempotencyKey) {
 		String name = folderName(rawName);
 		long owner = actor.userId();
 		limit(actor);
 		requireMember(owner, courseId);
-		return inTransaction(() -> this.idempotency.execute(owner, "study_room.folder.create", idempotencyKey,
-				Arrays.asList(courseId, name), FolderView.class, () -> {
-					this.records.lockQuota(owner);
-					List<Folder> folders = this.records.folders(owner, courseId);
-					if (folders.size() >= this.properties.maxFoldersPerCourse()) {
-						throw new ApiException(HttpStatus.CONFLICT, "too_many_folders",
-								"한 과목에 폴더는 " + this.properties.maxFoldersPerCourse() + "개까지 만들 수 있습니다.");
-					}
-					int position = folders.stream().mapToInt(Folder::position).max().orElse(0) + 1;
-					long id;
-					try {
-						id = this.records.insertFolder(owner, courseId, name, position);
-					}
-					catch (DuplicateKeyException ex) {
-						throw nameConflict();
-					}
-					this.audit.success(owner, actor.sessionId(), "study_room.folder.create", "study_room_folder", id,
-							courseId);
-					return FolderView.of(this.records.folder(owner, id).orElseThrow());
-				}));
+		return inTransaction(() -> {
+			CreatedFolder created = this.idempotency.execute(owner, "study_room.folder.create", idempotencyKey,
+					Arrays.asList(courseId, name), CreatedFolder.class, () -> {
+						this.records.lockQuota(owner);
+						List<Folder> folders = this.records.folders(owner, courseId);
+						if (folders.size() >= this.properties.maxFoldersPerCourse()) {
+							throw new ApiException(HttpStatus.CONFLICT, "too_many_folders",
+									"한 과목에 폴더는 " + this.properties.maxFoldersPerCourse() + "개까지 만들 수 있습니다.");
+						}
+						int position = folders.stream().mapToInt(Folder::position).max().orElse(0) + 1;
+						long id;
+						try {
+							id = this.records.insertFolder(owner, courseId, name, position);
+						}
+						catch (DuplicateKeyException ex) {
+							throw nameConflict();
+						}
+						this.audit.success(owner, actor.sessionId(), "study_room.folder.create", "study_room_folder", id,
+								courseId);
+						return new CreatedFolder(id);
+					});
+			return FolderView.of(this.records.folder(owner, created.id())
+				.orElseThrow(() -> new ApiException(HttpStatus.GONE, "folder_deleted",
+						"이 요청으로 만든 폴더는 그 뒤 지워졌습니다.")));
+		});
 	}
 
 	FolderView renameFolder(Actor actor, long id, int version, String rawName) {
@@ -340,18 +355,23 @@ class StudyRoomService {
 	 * 녹음 파일을 올려 녹음을 만든다. 업로드 정책 study_recording으로 검사하고, 업로드 기록과 같은 transaction에서 용량을 잡고 녹음 행과
 	 * (폴더가 있으면) 배치를 만든다. 검사기가 있으면 검사를 마칠 때까지 재생하지 못한다.
 	 * <p>
-	 * 같은 Idempotency-Key로 같은 파일과 값을 다시 보내면 처음 만든 녹음을 돌려준다. 하나라도 다르면 409
-	 * {@code idempotency_conflict}이고 아무것도 만들지 않는다.
+	 * 같은 Idempotency-Key로 같은 파일과 값을 다시 보내면 처음 만든 녹음의 지금 상태를 돌려준다. 하나라도 다르면 409
+	 * {@code idempotency_conflict}이고 아무것도 만들지 않는다. 처음 만든 녹음을 그 사이 지웠으면 410 {@code recording_deleted}다. 이미
+	 * 쓴 key의 재전송은 한도, 폴더 검사를 다시 하지 않는다. 동시에 온 같은 key의 두 요청은 사용자 행을 잠근 뒤 먼저 끝난 쪽을 보고 검사를
+	 * 건너뛰므로, 한도에 닿아 있어도 같은 녹음을 받는다.
 	 */
 	RecordingView createRecording(Actor actor, long courseId, MultipartFile file, NewRecording meta,
 			String idempotencyKey) {
 		long owner = actor.userId();
 		limit(actor);
 		requireMember(owner, courseId);
-		// 이 key로 만든 녹음이 이미 있으면 재전송이다. 그 뒤에 바뀐 폴더 상태와 용량으로 같은 요청을 거부하지 않도록 미리 보는 검사를
-		// 건너뛴다. 같은 요청인지는 업로드가 지문으로 판정한다.
-		boolean retried = idempotencyKey != null && this.records.recordingOfUploadKey(owner, idempotencyKey).isPresent();
-		if (!retried) {
+		// 정책에 있어도 재생 형식을 정하지 못하는 확장자는 저장하기 전에 거부한다. 응답에 파일 이름을 넣지 않는다.
+		FileNames.sanitize(file.getOriginalFilename()).flatMap(FileNames::extension).ifPresent((extension) -> {
+			if (!AUDIO_TYPES.containsKey(extension)) {
+				throw extensionNotAllowed();
+			}
+		});
+		if (!keyUsed(owner, idempotencyKey)) {
 			if (meta.folderId() != null) {
 				folderIn(owner, meta.folderId(), courseId);
 			}
@@ -364,6 +384,10 @@ class StudyRoomService {
 					@Override
 					public void reserve(long sizeBytes) {
 						Quota quota = StudyRoomService.this.records.lockQuota(owner);
+						if (keyUsed(owner, idempotencyKey)) {
+							// 같은 key의 요청이 먼저 끝났다. 이 transaction은 업로드 key 중복으로 되돌아가고 먼저 만든 녹음을 돌려준다.
+							return;
+						}
 						if (meta.folderId() != null) {
 							folderIn(owner, meta.folderId(), courseId);
 						}
@@ -375,7 +399,7 @@ class StudyRoomService {
 					public void place(long fileId, String name) {
 						String mimeType = FileNames.extension(name)
 							.map(AUDIO_TYPES::get)
-							.orElseThrow(() -> new IllegalStateException("녹음 정책에 없는 확장자입니다: " + name));
+							.orElseThrow(StudyRoomService::extensionNotAllowed);
 						long id = StudyRoomService.this.records.insertRecording(owner, courseId, fileId, meta.title(),
 								meta.source(), mimeType, meta.durationMs(), meta.recordedAt());
 						if (meta.folderId() != null) {
@@ -386,10 +410,15 @@ class StudyRoomService {
 					}
 
 				});
+		// 지문이 같은 업로드가 있는데 녹음이 없으면, 그 업로드로 만든 녹음을 그 사이 지운 것이다.
 		long id = this.records.recordingOfUpload(owner, uploadId)
-			.orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, "idempotency_conflict",
-					"같은 Idempotency-Key를 다른 요청에 썼습니다."));
+			.orElseThrow(() -> new ApiException(HttpStatus.GONE, "recording_deleted",
+					"이 요청으로 만든 녹음은 그 뒤 지워졌습니다. 다시 올리려면 새 Idempotency-Key를 쓰세요."));
 		return recording(owner, id);
+	}
+
+	private boolean keyUsed(long owner, String idempotencyKey) {
+		return idempotencyKey != null && this.records.uploadKeyUsed(owner, idempotencyKey);
 	}
 
 	RecordingView renameRecording(Actor actor, long id, int version, String rawTitle) {
@@ -424,6 +453,8 @@ class StudyRoomService {
 			if (this.references.release(recording.fileId())) {
 				this.uploads.deleteUploadOf(recording.fileId());
 			}
+			// 지운 파일 행에 가져온 파일 이름(곧 제목)이 남지 않게 한다.
+			this.uploads.forgetName(recording.fileId());
 			this.records.removeUsage(owner, recording.sizeBytes(), 1);
 			this.audit.success(owner, actor.sessionId(), "study_room.recording.delete", "study_room_recording", id,
 					recording.courseId());
@@ -433,9 +464,38 @@ class StudyRoomService {
 
 	/**
 	 * 녹음 재생과 내려받기. 구간 요청(Range) 하나를 받아 206으로 그 구간만 보낸다. 검사를 마치지 않았으면 409 {@code not_ready},
-	 * 거부했으면 409 {@code content_rejected}다. 처음부터 읽는 요청만 감사 기록에 남긴다(탐색마다 남기지 않는다).
+	 * 거부했으면 409 {@code content_rejected}다. 저장소 객체는 언제나 보낼 구간만 읽고, client가 끝까지 읽지 않고 끊으면 남은 내용을
+	 * 받지 않고 연결을 끊는다.
+	 * <p>
+	 * 감사 기록은 구간과 관계없이 같은 로그인 session의 같은 녹음 재생을 {@link #PLAY_AUDIT_WINDOW} 안에 한 번 남긴다. 탐색마다 남기지
+	 * 않으면서, 처음이 아닌 구간({@code bytes=1-})만 읽어 기록을 피할 수 없다.
 	 */
 	ResponseEntity<InputStreamResource> content(Actor actor, long id, String rangeHeader) {
+		Recording recording = playable(actor, id);
+		long size = recording.sizeBytes();
+		Optional<ByteRange> range = ByteRange.parse(rangeHeader, size);
+		long first = range.map(ByteRange::first).orElse(0L);
+		long last = range.map(ByteRange::last).orElse(size - 1);
+		InputStream content = this.store.openRange(Bucket.CONTENT, recording.storageKey(), first, last)
+			.orElseThrow(ApiException::notFound);
+		if (!this.audit.recordedSince(actor.sessionId(), "study_room.recording.play", "study_room_recording", id,
+				PLAY_AUDIT_WINDOW)) {
+			this.audit.success(actor.userId(), actor.sessionId(), "study_room.recording.play", "study_room_recording", id,
+					recording.courseId());
+		}
+		return Downloads.ranged(downloadName(recording), recording.mimeType(), size, first, last, range.isPresent(),
+				content);
+	}
+
+	/** HEAD: 녹음 행만 읽어 GET과 같은 header를 돌려준다. 저장소를 열지 않고 감사 기록도 남기지 않는다. */
+	ResponseEntity<Void> contentHead(Actor actor, long id) {
+		Recording recording = playable(actor, id);
+		return Downloads.rangedHead(downloadName(recording), recording.mimeType(), recording.sizeBytes());
+	}
+
+	private Recording playable(Actor actor, long id) {
+		this.rateLimiter.check("study-room-play", actor.userId(), this.properties.playRateLimit(),
+				this.properties.rateWindow());
 		Recording recording = this.records.recording(actor.userId(), id).orElseThrow(ApiException::notFound);
 		if (Recording.SCANNING.equals(recording.state())) {
 			throw new ApiException(HttpStatus.CONFLICT, "not_ready", "악성코드 검사를 마치지 않은 녹음입니다.");
@@ -443,20 +503,7 @@ class StudyRoomService {
 		if (Recording.REJECTED.equals(recording.state())) {
 			throw new ApiException(HttpStatus.CONFLICT, "content_rejected", "검사에서 거부된 녹음입니다. 지워 주세요.");
 		}
-		long size = recording.sizeBytes();
-		Optional<ByteRange> range = ByteRange.parse(rangeHeader, size);
-		long first = range.map(ByteRange::first).orElse(0L);
-		long last = range.map(ByteRange::last).orElse(size - 1);
-		Optional<InputStream> in = range.isPresent()
-				? this.store.openRange(Bucket.CONTENT, recording.storageKey(), first, last)
-				: this.store.open(Bucket.CONTENT, recording.storageKey());
-		InputStream content = in.orElseThrow(ApiException::notFound);
-		if (first == 0) {
-			this.audit.success(actor.userId(), actor.sessionId(), "study_room.recording.play", "study_room_recording", id,
-					recording.courseId());
-		}
-		return Downloads.ranged(downloadName(recording), recording.mimeType(), size, first, last, range.isPresent(),
-				content);
+		return recording;
 	}
 
 	// ---------- 공통 ----------
@@ -468,14 +515,17 @@ class StudyRoomService {
 				this.properties.maxFoldersPerCourse());
 	}
 
-	/** 폴더 이름: 앞뒤 공백을 빼고 1~60자, 경로 구분자와 제어 문자는 받지 않는다. */
+	/**
+	 * 폴더 이름: 앞뒤 공백을 빼고 1~60자(UTF-16 단위, 화면 입력의 maxlength와 같다), 제어 문자는 받지 않는다. {@code /}와
+	 * {@code \}는 경로가 아니라 이름의 글자다.
+	 */
 	static String folderName(String raw) {
 		String name = raw == null ? "" : raw.strip();
 		if (name.isEmpty() || name.length() > MAX_FOLDER_NAME) {
 			throw ApiException.invalid("폴더 이름은 1자 이상 " + MAX_FOLDER_NAME + "자 이하여야 합니다.");
 		}
-		if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.codePoints().anyMatch(Character::isISOControl)) {
-			throw ApiException.invalid("폴더 이름에 쓸 수 없는 문자가 있습니다.");
+		if (name.codePoints().anyMatch(Character::isISOControl)) {
+			throw ApiException.invalid("폴더 이름에 줄바꿈 같은 제어 문자를 쓸 수 없습니다.");
 		}
 		return name;
 	}
@@ -544,6 +594,10 @@ class StudyRoomService {
 		return new ApiException(HttpStatus.CONFLICT, "version_conflict", "다른 곳에서 먼저 바뀌었습니다. 다시 불러와 주세요.");
 	}
 
+	private static ApiException extensionNotAllowed() {
+		return new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "extension_not_allowed", "올릴 수 없는 파일 형식입니다.");
+	}
+
 	private static ApiException nameConflict() {
 		return new ApiException(HttpStatus.CONFLICT, "name_conflict", "같은 이름의 폴더가 이미 있습니다.");
 	}
@@ -579,6 +633,10 @@ class StudyRoomService {
 
 	/** 녹음 업로드의 요청 지문에 들어가는 값. */
 	record RecordingRequest(long courseId, NewRecording recording) {
+	}
+
+	/** 폴더 만들기의 멱등 receipt. 이름은 원장에 남기지 않는다. */
+	record CreatedFolder(long id) {
 	}
 
 	record FolderView(long id, long courseId, String name, int position, Instant createdAt, int version) {

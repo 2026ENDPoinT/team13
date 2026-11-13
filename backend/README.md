@@ -277,14 +277,15 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 
 ### 학습실 설정
 
-학습실의 내 폴더, 항목 배치, 강의 녹음(`/api/me/study-room/**`)은 [ADR-0040](docs/adr/0040-study-room-sync.md)을 따른다. 녹음 파일 하나의 크기와 확장자는 `upload_policies`의 `study_recording` 행(50 MB, `webm, ogg, mp3, m4a, mp4, wav, aac, flac`)이 정한다. 크기를 올리면 clamd `StreamMaxLength`와 `ASTRA_SCAN_CLAMD_MAX_STREAM_BYTES`도 그보다 크게 둔다.
+학습실의 내 폴더, 항목 배치, 강의 녹음(`/api/me/study-room/**`)은 [ADR-0040](docs/adr/0040-study-room-sync.md)을 따른다. 녹음 파일 하나의 크기와 확장자는 `upload_policies`의 `study_recording` 행(50 MB, `webm, weba, ogg, opus, mp3, m4a, mp4, wav, aac, flac`)이 정한다. 행에 확장자를 더하려면 `StudyRoomService.AUDIO_TYPES`에 재생 형식도 더한다(없으면 422). 크기를 올리면 clamd `StreamMaxLength`와 `ASTRA_SCAN_CLAMD_MAX_STREAM_BYTES`도 그보다 크게 둔다.
 
 | 환경 변수 | 기본값 | 내용 |
 |---|---|---|
 | `ASTRA_STUDYROOM_QUOTA` | `2GB` | 사용자 한 사람의 녹음 바이트 합 상한. 파일함 용량과 따로 센다 |
 | `ASTRA_STUDYROOM_MAX_RECORDINGS` | `500` | 사용자 한 사람의 녹음 수 상한 |
 | `ASTRA_STUDYROOM_MAX_FOLDERS_PER_COURSE` | `50` | 한 과목 학습실의 폴더 수 상한 |
-| `ASTRA_STUDYROOM_RATE_LIMIT` · `ASTRA_STUDYROOM_RATE_WINDOW` | `120` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 학습실 변경 명령 수. 녹음 올리기는 업로드 제한(`ASTRA_UPLOAD_RATE_LIMIT`)도 함께 쓴다 |
+| `ASTRA_STUDYROOM_RATE_LIMIT` · `ASTRA_STUDYROOM_RATE_WINDOW` | `120` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 학습실 변경 명령 수. 녹음 올리기는 업로드 제한(`ASTRA_UPLOAD_RATE_LIMIT`)을 쓴다 |
+| `ASTRA_STUDYROOM_PLAY_RATE_LIMIT` | `600` | 한 사용자가 같은 구간 안에 보낼 수 있는 녹음 재생 요청 수(GET·HEAD, 탐색마다 하나) |
 
 ### 온라인 강의 학습 설정
 

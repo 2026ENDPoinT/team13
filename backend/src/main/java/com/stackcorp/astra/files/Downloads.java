@@ -45,6 +45,13 @@ public final class Downloads {
 			.body(new InputStreamResource(content));
 	}
 
+	/** {@link #ranged}의 HEAD 응답. 본문 없이 전체를 보낼 때와 같은 header를 보낸다. */
+	public static ResponseEntity<Void> rangedHead(String name, String mimeType, long totalBytes) {
+		return headers(ResponseEntity.ok(), name, mimeType).header(HttpHeaders.ACCEPT_RANGES, "bytes")
+			.contentLength(totalBytes)
+			.build();
+	}
+
 	/**
 	 * @param mimeType 저장할 때 내용으로 판정한 MIME. 없으면 application/octet-stream
 	 */

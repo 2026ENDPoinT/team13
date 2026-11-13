@@ -5,9 +5,10 @@
 -- upload_sessions다.
 
 -- 강의 녹음 업로드 정책. 녹음 파일은 과목 없이(files.course_id NULL) 저장하고 첨부하지 않으므로 과목 파일 경로로는 열리지 않는다.
--- 확장자마다 내용 형식을 함께 검사한다(files.upload.ContentInspector). 크기 상한은 악성코드 검사기가 받는 크기(64 MB) 아래로 둔다.
+-- 확장자마다 내용 형식을 함께 검사한다(files.upload.ContentInspector). opus는 Ogg, weba는 WebM 용기다. 크기 상한은 악성코드 검사기가 받는
+-- 크기(64 MB) 아래로 둔다.
 INSERT INTO upload_policies (policy_code, policy_name, max_file_bytes, max_file_count, allowed_extensions)
-VALUES ('study_recording', '학습실 강의 녹음', 52428800, 1, 'webm,ogg,mp3,m4a,mp4,wav,aac,flac');
+VALUES ('study_recording', '학습실 강의 녹음', 52428800, 1, 'webm,weba,ogg,opus,mp3,m4a,mp4,wav,aac,flac');
 
 -- 사용자별 학습실 사용량. 용량·개수 검사와 증감을 이 행을 잠근 뒤 같은 transaction에서 하므로 동시에 올려도 한도를 넘지 않는다.
 CREATE TABLE study_room_quotas (
@@ -20,18 +21,20 @@ CREATE TABLE study_room_quotas (
   CONSTRAINT fk_study_room_quotas_users FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='학습실 사용량';
 
--- 과목 학습실 안의 내 폴더. 한 단계뿐이다(폴더 안의 폴더는 없다). 같은 과목 안 이름은 대소문자 구분 없이 유일하다.
+-- 과목 학습실 안의 내 폴더. 한 단계뿐이다(폴더 안의 폴더는 없다). 같은 과목 안 이름은 글자 그대로(binary collation) 유일하다. 프론트엔드의
+-- 같은 이름 판정(===)과 같아 대소문자, 악센트, 전각, 정규화가 다르면 다른 이름이다.
 CREATE TABLE study_room_folders (
   study_room_folder_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '학습실 폴더 ID',
   owner_user_id        BIGINT UNSIGNED NOT NULL COMMENT '소유 사용자 ID',
   course_id            BIGINT UNSIGNED NOT NULL COMMENT '과목 ID',
-  folder_name          VARCHAR(60)     NOT NULL COMMENT '폴더 이름',
+  folder_name          VARCHAR(60)     COLLATE utf8mb4_bin NOT NULL COMMENT '폴더 이름',
   folder_position      INT UNSIGNED    NOT NULL COMMENT '과목 안 표시 순서(1부터)',
   folder_version       INT UNSIGNED    NOT NULL DEFAULT 1 COMMENT '이름 바꾸기·순서 바꾸기·지우기 낙관적 버전',
   created_at           DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '생성 일시',
   updated_at           DATETIME(3)     NULL     ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '수정 일시',
   PRIMARY KEY (study_room_folder_id),
   UNIQUE KEY uq_study_room_folders_owner_course_name (owner_user_id, course_id, folder_name),
+  UNIQUE KEY uq_study_room_folders_owner_folder (owner_user_id, study_room_folder_id),
   KEY idx_study_room_folders_course (course_id),
   CONSTRAINT fk_study_room_folders_users FOREIGN KEY (owner_user_id) REFERENCES users (user_id),
   CONSTRAINT fk_study_room_folders_courses FOREIGN KEY (course_id) REFERENCES courses (course_id)
@@ -53,6 +56,7 @@ CREATE TABLE study_room_recordings (
   updated_at              DATETIME(3)     NULL     ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '수정 일시',
   PRIMARY KEY (study_room_recording_id),
   UNIQUE KEY uq_study_room_recordings_file (file_id),
+  UNIQUE KEY uq_study_room_recordings_owner_recording (owner_user_id, study_room_recording_id),
   KEY idx_study_room_recordings_owner_course (owner_user_id, course_id, recorded_at),
   KEY idx_study_room_recordings_course (course_id),
   CONSTRAINT ck_study_room_recordings_source CHECK (recording_source IN ('mic', 'tab', 'audio')),
@@ -62,6 +66,7 @@ CREATE TABLE study_room_recordings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='학습실 녹음';
 
 -- 항목을 폴더에 둔 배치. 행이 없는 항목은 과목 학습실 맨 위에 있다. 항목은 과목 강의자료 파일이나 내 녹음 가운데 하나이고 폴더 하나에만 있다.
+-- 폴더와 녹음은 (소유자, ID) 복합 FK로 가리켜, 남의 폴더에 두거나 남의 녹음을 두는 행은 DB가 받지 않는다.
 CREATE TABLE study_room_placements (
   study_room_placement_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '학습실 배치 ID',
   owner_user_id           BIGINT UNSIGNED NOT NULL COMMENT '소유 사용자 ID',
@@ -74,11 +79,12 @@ CREATE TABLE study_room_placements (
   PRIMARY KEY (study_room_placement_id),
   UNIQUE KEY uq_study_room_placements_owner_file (owner_user_id, file_id),
   UNIQUE KEY uq_study_room_placements_recording (study_room_recording_id),
-  KEY idx_study_room_placements_folder (study_room_folder_id),
+  KEY idx_study_room_placements_owner_folder (owner_user_id, study_room_folder_id),
+  KEY idx_study_room_placements_owner_recording (owner_user_id, study_room_recording_id),
   KEY idx_study_room_placements_file (file_id),
   CONSTRAINT ck_study_room_placements_item CHECK ((file_id IS NULL) <> (study_room_recording_id IS NULL)),
   CONSTRAINT fk_study_room_placements_users FOREIGN KEY (owner_user_id) REFERENCES users (user_id),
-  CONSTRAINT fk_study_room_placements_study_room_folders FOREIGN KEY (study_room_folder_id) REFERENCES study_room_folders (study_room_folder_id),
+  CONSTRAINT fk_study_room_placements_study_room_folders FOREIGN KEY (owner_user_id, study_room_folder_id) REFERENCES study_room_folders (owner_user_id, study_room_folder_id),
   CONSTRAINT fk_study_room_placements_files FOREIGN KEY (file_id) REFERENCES files (file_id),
-  CONSTRAINT fk_study_room_placements_study_room_recordings FOREIGN KEY (study_room_recording_id) REFERENCES study_room_recordings (study_room_recording_id)
+  CONSTRAINT fk_study_room_placements_study_room_recordings FOREIGN KEY (owner_user_id, study_room_recording_id) REFERENCES study_room_recordings (owner_user_id, study_room_recording_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='학습실 배치';

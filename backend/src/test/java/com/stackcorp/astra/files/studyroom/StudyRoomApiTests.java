@@ -11,10 +11,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -27,6 +31,8 @@ import java.util.concurrent.TimeUnit;
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
+import com.stackcorp.astra.TestcontainersConfiguration.TestBuckets;
+import com.stackcorp.astra.files.StorageGcDriver;
 
 import jakarta.servlet.http.Cookie;
 
@@ -34,6 +40,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockMultipartFile;
@@ -42,6 +49,8 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -60,6 +69,15 @@ class StudyRoomApiTests extends IntegrationTest {
 
 	@Autowired
 	JdbcClient jdbc;
+
+	@Autowired
+	S3Client s3;
+
+	@Autowired
+	TestBuckets buckets;
+
+	@Autowired
+	ApplicationContext context;
 
 	long course;
 
@@ -91,8 +109,8 @@ class StudyRoomApiTests extends IntegrationTest {
 		assertThat(first.get("courseId").asLong()).isEqualTo(this.course);
 		long second = folder(this.owner, this.course, "Week 1");
 
-		// 같은 과목의 같은 이름은 대소문자 구분 없이 409, 다른 과목이면 된다.
-		createFolder(this.owner, this.course, "week 1").andExpect(status().isConflict())
+		// 같은 과목의 글자 그대로 같은 이름은 409, 다른 과목이면 된다.
+		createFolder(this.owner, this.course, "Week 1").andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("name_conflict"));
 		long otherCourse = this.data.course();
 		this.data.enroll(otherCourse, this.ownerId);
@@ -100,7 +118,7 @@ class StudyRoomApiTests extends IntegrationTest {
 		// 구성원이 아닌 과목, 잘못된 이름
 		createFolder(this.owner, this.data.course(), "몰래").andExpect(status().isNotFound());
 		createFolder(this.owner, this.course, " ").andExpect(status().isBadRequest());
-		createFolder(this.owner, this.course, "a/b").andExpect(status().isBadRequest());
+		createFolder(this.owner, this.course, "a\\nb").andExpect(status().isBadRequest());
 		createFolder(this.owner, this.course, "x".repeat(61)).andExpect(status().isBadRequest());
 		this.owner.postJson(BASE + "/courses/" + this.course + "/folders", "{\"name\":\"a\",\"parentId\":1}")
 			.andExpect(status().isBadRequest());
@@ -121,7 +139,7 @@ class StudyRoomApiTests extends IntegrationTest {
 		this.owner.send(patch(BASE + "/folders/" + id, "\"1\"", "{\"name\":\"다시\"}"))
 			.andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("version_conflict"));
-		this.owner.send(patch(BASE + "/folders/" + id, "\"2\"", "{\"name\":\"WEEK 1\"}"))
+		this.owner.send(patch(BASE + "/folders/" + id, "\"2\"", "{\"name\":\"Week 1\"}"))
 			.andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("name_conflict"));
 
@@ -130,6 +148,21 @@ class StudyRoomApiTests extends IntegrationTest {
 		assertThat(ids(course(this.owner, this.course).get("folders"))).containsExactly(id);
 		// 지운 뒤에 만든 폴더는 끝에 붙는다.
 		assertThat(json(createFolder(this.owner, this.course, "새 폴더")).get("position").asInt()).isEqualTo(2);
+	}
+
+	@Test
+	void folderNamesAreUniqueExactlyAsTheBrowserComparesThem() throws Exception {
+		// 화면은 이름을 ===로 비교한다. 대소문자, 악센트, 전각, 정규화(NFC/NFD)가 다르면 다른 폴더다.
+		for (String name : List.of("Week1", "week1", "Café", "Cafe", "Ｗｅｅｋ１", "Cafe\u0301", "1/2학기", "C:\\\\강의")) {
+			createFolder(this.owner, this.course, name).andExpect(status().isCreated());
+		}
+		JsonNode folders = course(this.owner, this.course).get("folders");
+		assertThat(folders).hasSize(8);
+		assertThat(folders.get(6).get("name").asString()).isEqualTo("1/2학기");
+		assertThat(folders.get(7).get("name").asString()).isEqualTo("C:\\강의");
+		createFolder(this.owner, this.course, "week1").andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("name_conflict"));
+		createFolder(this.owner, this.course, " Café ").andExpect(status().isConflict());
 	}
 
 	@Test
@@ -151,6 +184,27 @@ class StudyRoomApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.code").value("too_many_folders"));
 		// 다른 사람의 한도와는 따로 센다.
 		createFolder(this.other, this.course, "51번째").andExpect(status().isCreated());
+	}
+
+	@Test
+	void aReplayedFolderCreateReturnsTheFolderAsItIsNowAndTheLedgerKeepsNoName() throws Exception {
+		long id = json(this.owner.send(post(BASE + "/courses/" + this.course + "/folders", "{\"name\":\"비밀 프로젝트\"}")
+			.header("Idempotency-Key", "fold-replay")).andExpect(status().isCreated())).get("id").asLong();
+		assertThat(this.jdbc.sql("""
+				SELECT receipt_json FROM idempotency_ledger WHERE principal_user_id = :u AND idempotency_key = 'fold-replay'
+				""").param("u", this.ownerId).query(String.class).single()).doesNotContain("비밀");
+		this.owner.send(patch(BASE + "/folders/" + id, "\"1\"", "{\"name\":\"새 이름\"}")).andExpect(status().isOk());
+		this.owner.send(post(BASE + "/courses/" + this.course + "/folders", "{\"name\":\"비밀 프로젝트\"}")
+			.header("Idempotency-Key", "fold-replay"))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.id").value(id))
+			.andExpect(jsonPath("$.name").value("새 이름"))
+			.andExpect(jsonPath("$.version").value(2));
+		this.owner.send(delete(BASE + "/folders/" + id, "\"2\"")).andExpect(status().isNoContent());
+		this.owner.send(post(BASE + "/courses/" + this.course + "/folders", "{\"name\":\"비밀 프로젝트\"}")
+			.header("Idempotency-Key", "fold-replay"))
+			.andExpect(status().isGone())
+			.andExpect(jsonPath("$.code").value("folder_deleted"));
 	}
 
 	@Test
@@ -326,10 +380,26 @@ class StudyRoomApiTests extends IntegrationTest {
 		range(id, "bytes=0-1,4-5").andExpect(status().isOk()).andExpect(content().bytes(audio));
 		range(id, "bytes=9-3").andExpect(status().isOk()).andExpect(content().bytes(audio));
 
-		// 처음부터 읽은 요청만 감사 기록에 남는다.
-		assertThat(this.jdbc.sql("""
-				SELECT COUNT(*) FROM audit_events WHERE actor_user_id = :u AND operation = 'study_room.recording.play'
-				""").param("u", this.ownerId).query(Long.class).single()).isEqualTo(4);
+		// 탐색마다 남기지 않는다. 같은 session의 재생은 10분에 한 번이다.
+		assertThat(plays()).isEqualTo(1);
+		// 처음이 아닌 구간만 읽어도 다른 session이면 남는다.
+		ApiClient laptop = new ApiClient(this.mvc, this.data.session(this.ownerId));
+		laptop.send(MockMvcRequestBuilders.get(BASE + "/recordings/" + id + "/content").header("Range", "bytes=1-"))
+			.andExpect(status().isPartialContent());
+		assertThat(plays()).isEqualTo(2);
+		// HEAD는 행만 읽고 본문과 감사 기록이 없다.
+		this.owner.send(MockMvcRequestBuilders.head(BASE + "/recordings/" + id + "/content"))
+			.andExpect(status().isOk())
+			.andExpect(header().longValue("Content-Length", audio.length))
+			.andExpect(header().string("Accept-Ranges", "bytes"))
+			.andExpect(header().string("Content-Type", "audio/webm"))
+			.andExpect(content().bytes(new byte[0]));
+		new ApiClient(this.mvc, this.data.session(this.ownerId))
+			.send(MockMvcRequestBuilders.head(BASE + "/recordings/" + id + "/content"))
+			.andExpect(status().isOk());
+		assertThat(plays()).isEqualTo(2);
+		this.other.send(MockMvcRequestBuilders.head(BASE + "/recordings/" + id + "/content"))
+			.andExpect(status().isNotFound());
 
 		// 제목 바꾸기
 		this.owner.send(patch(BASE + "/recordings/" + id, "\"1\"", "{\"title\":\"알고리즘 9주차\"}"))
@@ -366,27 +436,31 @@ class StudyRoomApiTests extends IntegrationTest {
 
 	@Test
 	void recordingUploadsAreValidated() throws Exception {
+		// 업로드 요청 제한(테스트 설정 6회)은 거부한 multipart 요청도 세므로 요청마다 새 구성원으로 보낸다.
 		String at = Instant.now().toString();
-		record(this.owner, this.course, "a.webm", webm(), "t", "phone", "10", at, null, null).andExpect(status().isBadRequest());
-		record(this.owner, this.course, "a.webm", webm(), null, "mic", "10", at, null, null).andExpect(status().isBadRequest());
-		record(this.owner, this.course, "a.webm", webm(), "t".repeat(201), "mic", "10", at, null, null)
+		record(fresh(), this.course, "a.webm", webm(), "t", "phone", "10", at, null, null).andExpect(status().isBadRequest());
+		record(fresh(), this.course, "a.webm", webm(), null, "mic", "10", at, null, null).andExpect(status().isBadRequest());
+		record(fresh(), this.course, "a.webm", webm(), "t".repeat(201), "mic", "10", at, null, null)
 			.andExpect(status().isBadRequest());
-		record(this.owner, this.course, "a.webm", webm(), "t", "mic", "0", at, null, null).andExpect(status().isBadRequest());
-		record(this.owner, this.course, "a.webm", webm(), "t", "mic", "12.5", at, null, null).andExpect(status().isBadRequest());
-		record(this.owner, this.course, "a.webm", webm(), "t", "mic", "86400001", at, null, null)
+		record(fresh(), this.course, "a.webm", webm(), "t", "mic", "0", at, null, null).andExpect(status().isBadRequest());
+		record(fresh(), this.course, "a.webm", webm(), "t", "mic", "12.5", at, null, null).andExpect(status().isBadRequest());
+		record(fresh(), this.course, "a.webm", webm(), "t", "mic", "86400001", at, null, null)
 			.andExpect(status().isBadRequest());
-		record(this.owner, this.course, "a.webm", webm(), "t", "mic", "10", Instant.now().plus(1, ChronoUnit.HOURS).toString(),
+		record(fresh(), this.course, "a.webm", webm(), "t", "mic", "10", Instant.now().plus(1, ChronoUnit.HOURS).toString(),
 				null, null).andExpect(status().isBadRequest());
-		record(this.owner, this.course, "a.webm", webm(), "t", "mic", "10", "2026-11-13 14:05", null, null)
+		record(fresh(), this.course, "a.webm", webm(), "t", "mic", "10", "2026-11-13 14:05", null, null)
 			.andExpect(status().isBadRequest());
 		// 확장자, 내용 형식, 빈 파일
-		record(this.owner, this.course, "a.pdf", webm(), "t", "mic", "10", at, null, null)
+		record(fresh(), this.course, "a.pdf", webm(), "t", "mic", "10", at, null, null)
 			.andExpect(status().isUnprocessableContent())
 			.andExpect(jsonPath("$.code").value("extension_not_allowed"));
-		record(this.owner, this.course, "a.mp3", ogg(), "t", "audio", "10", at, null, null)
+		record(fresh(), this.course, "a.mp3", ogg(), "t", "audio", "10", at, null, null)
 			.andExpect(status().isUnprocessableContent())
 			.andExpect(jsonPath("$.code").value("content_mismatch"));
-		record(this.owner, this.course, "a.webm", new byte[0], "t", "mic", "10", at, null, null)
+		record(fresh(), this.course, "a.opus", webm(), "t", "audio", "10", at, null, null)
+			.andExpect(status().isUnprocessableContent())
+			.andExpect(jsonPath("$.code").value("content_mismatch"));
+		record(fresh(), this.course, "a.webm", new byte[0], "t", "mic", "10", at, null, null)
 			.andExpect(status().isUnprocessableContent())
 			.andExpect(jsonPath("$.code").value("empty_file"));
 		// 구성원이 아닌 과목, 다른 과목의 폴더, 남의 폴더
@@ -415,6 +489,8 @@ class StudyRoomApiTests extends IntegrationTest {
 		assertThat(mime("f.aac", concat(new byte[] { (byte) 0xFF, (byte) 0xF1, 0x50, (byte) 0x80 }, random())))
 			.isEqualTo("audio/aac");
 		assertThat(mime("g.flac", concat("fLaC".getBytes(StandardCharsets.US_ASCII), random()))).isEqualTo("audio/flac");
+		assertThat(mime("h.opus", ogg())).isEqualTo("audio/ogg");
+		assertThat(mime("i.weba", webm())).isEqualTo("audio/webm");
 	}
 
 	@Test
@@ -434,6 +510,174 @@ class StudyRoomApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.code").value("idempotency_conflict"));
 		assertThat(course(this.owner, this.course).get("recordings")).hasSize(1);
 		assertThat(course(this.owner, this.course).get("usage").get("recordingCount").asInt()).isEqualTo(1);
+	}
+
+	@Test
+	void aReplayAtTheLimitReturnsTheRecordingAndAReplayAfterDeleteIsGone() throws Exception {
+		long userId = member();
+		ApiClient client = client(userId);
+		byte[] audio = webm();
+		String at = "2026-11-12T05:00:00Z";
+		long folderId = folder(client, this.course, "가져온 녹음");
+		long first = id(record(client, this.course, "r.webm", audio, "녹음", "mic", "1000", at, folderId, "rec-replay")
+			.andExpect(status().isCreated()));
+		// 한도에 닿았고 폴더를 지웠어도 같은 key의 재전송은 같은 녹음이다.
+		this.jdbc.sql("UPDATE study_room_quotas SET recording_count = 500 WHERE owner_user_id = :o").param("o", userId).update();
+		client.send(delete(BASE + "/folders/" + folderId, "\"1\"")).andExpect(status().isNoContent());
+		record(client, this.course, "r.webm", audio, "녹음", "mic", "1000", at, folderId, "rec-replay")
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.id").value(first));
+		client.send(delete(BASE + "/recordings/" + first, "\"1\"")).andExpect(status().isNoContent());
+		record(client, this.course, "r.webm", audio, "녹음", "mic", "1000", at, folderId, "rec-replay")
+			.andExpect(status().isGone())
+			.andExpect(jsonPath("$.code").value("recording_deleted"));
+	}
+
+	@Test
+	void concurrentUploadsWithTheSameKeyCreateOneRecordingEvenAtTheLimit() throws Exception {
+		long userId = member();
+		ApiClient client = client(userId);
+		this.jdbc.sql("INSERT INTO study_room_quotas (owner_user_id, recording_count) VALUES (:o, 499)")
+			.param("o", userId)
+			.update();
+		byte[] audio = webm();
+		List<String> bodies = Collections.synchronizedList(new ArrayList<>());
+		List<Integer> statuses = concurrently(List.of(() -> {
+			var response = record(client, this.course, "r.webm", audio, "녹음", "mic", "1000", "2026-11-12T05:00:00Z", null,
+					"same-key").andReturn().getResponse();
+			bodies.add(response.getContentAsString());
+			return response.getStatus();
+		}, () -> {
+			var response = record(client, this.course, "r.webm", audio, "녹음", "mic", "1000", "2026-11-12T05:00:00Z", null,
+					"same-key").andReturn().getResponse();
+			bodies.add(response.getContentAsString());
+			return response.getStatus();
+		}));
+		assertThat(statuses).as(bodies.toString()).containsExactly(201, 201);
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM study_room_recordings WHERE owner_user_id = :o")
+			.param("o", userId)
+			.query(Long.class)
+			.single()).isEqualTo(1);
+		assertThat(this.jdbc.sql("SELECT recording_count FROM study_room_quotas WHERE owner_user_id = :o")
+			.param("o", userId)
+			.query(Integer.class)
+			.single()).isEqualTo(500);
+	}
+
+	@Test
+	void concurrentUploadsNeverPassTheLimitsAndLeaveNoObjectWithoutABlobRow() throws Exception {
+		long countUser = member();
+		this.jdbc.sql("INSERT INTO study_room_quotas (owner_user_id, recording_count) VALUES (:o, 497)")
+			.param("o", countUser)
+			.update();
+		long bytesUser = member();
+		List<byte[]> contents = new ArrayList<>();
+		for (int i = 0; i < 10; i++) {
+			contents.add(webm());
+		}
+		long size = contents.get(0).length;
+		this.jdbc.sql("INSERT INTO study_room_quotas (owner_user_id, used_bytes) VALUES (:o, :b)")
+			.param("o", bytesUser)
+			.param("b", 2L * 1024 * 1024 * 1024 - 2 * size - 1)
+			.update();
+		List<Callable<Integer>> calls = new ArrayList<>();
+		for (int i = 0; i < 10; i++) {
+			ApiClient client = client(i < 5 ? countUser : bytesUser);
+			byte[] content = contents.get(i);
+			calls.add(() -> record(client, this.course, "r.webm", content, "녹음", "mic", "10", Instant.now().toString(), null,
+					null).andReturn().getResponse().getStatus());
+		}
+		List<Integer> statuses = concurrently(calls);
+		assertThat(statuses.subList(0, 5)).filteredOn((s) -> s == 201).hasSize(3);
+		assertThat(statuses.subList(0, 5)).filteredOn((s) -> s == 409).hasSize(2);
+		assertThat(statuses.subList(5, 10)).filteredOn((s) -> s == 201).hasSize(2);
+		assertThat(statuses.subList(5, 10)).filteredOn((s) -> s == 409).hasSize(3);
+		assertThat(this.jdbc.sql("SELECT recording_count FROM study_room_quotas WHERE owner_user_id = :o")
+			.param("o", countUser)
+			.query(Integer.class)
+			.single()).isEqualTo(500);
+		assertThat(this.jdbc.sql("SELECT used_bytes FROM study_room_quotas WHERE owner_user_id = :o")
+			.param("o", bytesUser)
+			.query(Long.class)
+			.single()).isEqualTo(2L * 1024 * 1024 * 1024 - 1);
+
+		// 저장한 뒤 기록하지 못한 내용도 blob 행(참조 0)이 있어 저장소 GC가 찾는다. 행 없는 객체는 남지 않는다.
+		List<String> shas = contents.stream().map(StudyRoomApiTests::sha256).toList();
+		for (String sha : shas) {
+			if (objectExists(baseKey(sha))) {
+				assertThat(blobRow(sha)).as(sha).isTrue();
+			}
+		}
+		ageUnreferencedBlobs(shas);
+		StorageGcDriver.drain(this.context);
+		for (String sha : shas) {
+			Integer references = this.jdbc
+				.sql("SELECT reference_count FROM file_blobs WHERE content_sha256 = :sha AND purged_at IS NULL")
+				.param("sha", sha)
+				.query(Integer.class)
+				.optional()
+				.orElse(0);
+			assertThat(objectExists(baseKey(sha))).as(sha).isEqualTo(references > 0);
+		}
+	}
+
+	@Test
+	void recordingsSharingOneBlobKeepTheBytesUntilTheLastOneIsDeleted() throws Exception {
+		byte[] audio = ogg();
+		String sha = sha256(audio);
+		String at = Instant.now().toString();
+		long a = id(record(this.owner, this.course, "내 강의.ogg", audio, "첫째", "audio", "10", at, null, null)
+			.andExpect(status().isCreated()));
+		long b = id(record(this.owner, this.course, "내 강의.ogg", audio, "둘째", "audio", "10", at, null, null)
+			.andExpect(status().isCreated()));
+		assertThat(references(sha)).isEqualTo(2);
+		assertThat(course(this.owner, this.course).get("usage").get("usedBytes").asLong()).isEqualTo(2L * audio.length);
+
+		long fileA = fileOf(a);
+		this.owner.send(delete(BASE + "/recordings/" + a, "\"1\"")).andExpect(status().isNoContent());
+		assertThat(references(sha)).isEqualTo(1);
+		// 지운 녹음의 파일 행에는 가져온 파일 이름이 남지 않는다.
+		assertThat(this.jdbc.sql("SELECT original_file_name FROM files WHERE file_id = :f").param("f", fileA)
+			.query(String.class)
+			.single()).isEqualTo("recording.ogg");
+		ageUnreferencedBlobs(List.of(sha));
+		StorageGcDriver.drain(this.context);
+		assertThat(objectExists(baseKey(sha))).isTrue();
+		this.owner.get(BASE + "/recordings/" + b + "/content").andExpect(status().isOk()).andExpect(content().bytes(audio));
+
+		this.owner.send(delete(BASE + "/recordings/" + b, "\"1\"")).andExpect(status().isNoContent());
+		assertThat(references(sha)).isZero();
+		assertThat(course(this.owner, this.course).get("usage").get("usedBytes").asLong()).isZero();
+		ageUnreferencedBlobs(List.of(sha));
+		StorageGcDriver.drain(this.context);
+		assertThat(objectExists(baseKey(sha))).isFalse();
+		assertThat(this.jdbc.sql("SELECT purged_at IS NOT NULL FROM file_blobs WHERE content_sha256 = :sha")
+			.param("sha", sha)
+			.query(Boolean.class)
+			.single()).isTrue();
+	}
+
+	@Test
+	void anExtensionThePolicyAllowsButNoAudioTypeCoversIsRejectedBeforeStoring() throws Exception {
+		byte[] text = ("비밀 메모 " + UUID.randomUUID()).getBytes(StandardCharsets.UTF_8);
+		this.jdbc.sql("UPDATE upload_policies SET allowed_extensions = CONCAT(allowed_extensions, ',txt') WHERE policy_code = 'study_recording'")
+			.update();
+		try {
+			String body = record(this.owner, this.course, "비밀 메모.txt", text, "메모", "audio", "10", Instant.now().toString(),
+					null, null)
+				.andExpect(status().isUnprocessableContent())
+				.andExpect(jsonPath("$.code").value("extension_not_allowed"))
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+			assertThat(body).doesNotContain("비밀");
+		}
+		finally {
+			this.jdbc.sql("UPDATE upload_policies SET allowed_extensions = 'webm,weba,ogg,opus,mp3,m4a,mp4,wav,aac,flac' WHERE policy_code = 'study_recording'")
+				.update();
+		}
+		assertThat(blobRow(sha256(text))).isFalse();
+		assertThat(objectExists(baseKey(sha256(text)))).isFalse();
 	}
 
 	@Test
@@ -515,6 +759,9 @@ class StudyRoomApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.code").value("content_rejected"));
 		// 거부한 녹음도 지울 수 있다.
 		this.owner.send(delete(BASE + "/recordings/" + id, "\"1\"")).andExpect(status().isNoContent());
+		JsonNode usage = course(this.owner, this.course).get("usage");
+		assertThat(usage.get("usedBytes").asLong()).isZero();
+		assertThat(usage.get("recordingCount").asInt()).isZero();
 	}
 
 	@Test
@@ -643,6 +890,79 @@ class StudyRoomApiTests extends IntegrationTest {
 	}
 
 	// ---------- helpers ----------
+
+	/** 이 과목의 새 수강생. 업로드 요청 제한을 테스트마다 따로 쓰도록 사용자를 나눈다. */
+	private long member() {
+		long userId = this.data.user("STUDENT");
+		this.data.enroll(this.course, userId);
+		return userId;
+	}
+
+	private ApiClient client(long userId) {
+		return new ApiClient(this.mvc, this.data.session(userId));
+	}
+
+	private ApiClient fresh() {
+		return client(member());
+	}
+
+	private long plays() {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM audit_events WHERE actor_user_id = :u AND operation = 'study_room.recording.play'
+				""").param("u", this.ownerId).query(Long.class).single();
+	}
+
+	private long fileOf(long recordingId) {
+		return this.jdbc.sql("SELECT file_id FROM study_room_recordings WHERE study_room_recording_id = :id")
+			.param("id", recordingId)
+			.query(Long.class)
+			.single();
+	}
+
+	private int references(String sha) {
+		return this.jdbc.sql("SELECT reference_count FROM file_blobs WHERE content_sha256 = :sha")
+			.param("sha", sha)
+			.query(Integer.class)
+			.single();
+	}
+
+	private boolean blobRow(String sha) {
+		return this.jdbc.sql("SELECT COUNT(*) FROM file_blobs WHERE content_sha256 = :sha")
+			.param("sha", sha)
+			.query(Long.class)
+			.single() > 0;
+	}
+
+	// 참조가 0인 blob을 GC 유예 시간이 지난 것으로 만든다.
+	private void ageUnreferencedBlobs(List<String> shas) {
+		this.jdbc.sql("""
+				UPDATE file_blobs SET updated_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 DAY)
+				 WHERE content_sha256 IN (:shas) AND reference_count = 0
+				""").param("shas", shas).update();
+	}
+
+	private boolean objectExists(String key) {
+		try {
+			this.s3.headObject((b) -> b.bucket(this.buckets.content()).key(key));
+			return true;
+		}
+		catch (NoSuchKeyException ex) {
+			return false;
+		}
+	}
+
+	private static String baseKey(String sha) {
+		return "blobs/" + sha.substring(0, 2) + "/" + sha;
+	}
+
+	static String sha256(byte[] content) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
+		}
+		catch (java.security.NoSuchAlgorithmException ex) {
+			throw new IllegalStateException(ex);
+		}
+	}
 
 	private ResultActions createFolder(ApiClient client, long courseId, String name) throws Exception {
 		return client.postJson(BASE + "/courses/" + courseId + "/folders", "{\"name\":\"" + name + "\"}");

@@ -50,6 +50,28 @@ class UploadRecords {
 	}
 
 	/**
+	 * 기록하지 못한 업로드가 기본 key에 남긴 객체를 참조 수 0인 blob 행으로 남긴다. 저장소 GC가 유예 시간 뒤 이 행을 잠가 지운 것으로 표시하고
+	 * 객체를 지운다(ADR-0011 5번). 같은 내용의 행이 이미 있으면 아무것도 하지 않는다. 그 행이 객체를 쓰거나 GC가 정리한다.
+	 */
+	void registerUnreferenced(String sha256, long size, String mime, String storageKey, String initialState) {
+		try {
+			this.jdbc.sql("""
+					INSERT INTO file_blobs (content_sha256, size_bytes, detected_mime_type, storage_key, blob_state, reference_count)
+					VALUES (:sha, :size, :mime, :key, :state, 0)
+					""")
+				.param("sha", sha256)
+				.param("size", size)
+				.param("mime", mime)
+				.param("key", storageKey)
+				.param("state", initialState)
+				.update();
+		}
+		catch (DuplicateKeyException ex) {
+			// 같은 내용의 blob이 이미 있다.
+		}
+	}
+
+	/**
 	 * 같은 내용의 blob을 참조한다. 없으면 만들고, 있으면 참조 수만 올린다. blob 행을 잠근 뒤 판정하므로 검사 worker의 판정(ADR-0018)과
 	 * GC의 삭제 표시(StorageGc, ADR-0011)와 엇갈리지 않는다. 잠금 순서는 file_blobs → files → upload_sessions다.
 	 * <ul>

@@ -1,5 +1,6 @@
 package com.stackcorp.astra.shared.audit;
 
+import java.time.Duration;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
@@ -48,6 +49,27 @@ public class AuditLog {
 	public void success(long actorUserId, long sessionId, String operation, String objectType, long objectId,
 			Long courseId) {
 		record(actorUserId, sessionId, operation, objectType, objectId, courseId, OK);
+	}
+
+	/**
+	 * 같은 로그인 session이 같은 대상에 같은 연산을 within 안에 이미 남겼는지. 재생처럼 한 번의 행위가 요청 여러 개(구간 탐색)로 나뉘는 읽기
+	 * 연산이 기록을 구간 안에 한 번만 남길 때 쓴다. 대상 index(object_type, object_id)로 찾는다.
+	 */
+	public boolean recordedSince(long sessionId, String operation, String objectType, long objectId, Duration within) {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM audit_events
+				 WHERE object_type = :objectType AND object_id = :objectId AND operation = :operation
+				   AND session_id = :session AND result_code = :ok
+				   AND occurred_at >= DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL :seconds SECOND)
+				""")
+			.param("objectType", objectType)
+			.param("objectId", objectId)
+			.param("operation", operation)
+			.param("session", sessionId)
+			.param("ok", OK)
+			.param("seconds", within.toSeconds())
+			.query(Long.class)
+			.single() > 0;
 	}
 
 	/**

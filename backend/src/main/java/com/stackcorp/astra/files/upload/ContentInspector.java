@@ -59,11 +59,12 @@ final class ContentInspector {
 			case "mp4" -> when(isoBrand(head).filter((brand) -> !QUICKTIME_BRAND.equals(brand)).isPresent(), "video/mp4");
 			case "mov" -> when(isoBrand(head).filter(QUICKTIME_BRAND::equals).isPresent(), "video/quicktime");
 			case "webm" -> when(ebmlDocType(head).filter("webm"::equals).isPresent(), "video/webm");
+			case "weba" -> when(ebmlDocType(head).filter("webm"::equals).isPresent(), "audio/webm");
 			case "mkv" -> when(ebmlDocType(head).filter("matroska"::equals).isPresent(), "video/x-matroska");
 			case "m4a" -> when(isoBrand(head).filter((brand) -> !QUICKTIME_BRAND.equals(brand)).isPresent(), "audio/mp4");
 			case "mp3" -> when(startsWith(head, ID3) || mpegAudioFrame(head), "audio/mpeg");
 			case "aac" -> when(startsWith(head, ID3) || adtsFrame(head), "audio/aac");
-			case "ogg" -> when(startsWith(head, OGG), "audio/ogg");
+			case "ogg", "opus" -> when(startsWith(head, OGG), "audio/ogg");
 			case "flac" -> when(startsWith(head, FLAC), "audio/flac");
 			case "wav" -> when(startsWith(head, RIFF) && head.length >= 12
 					&& "WAVE".equals(new String(head, 8, 4, StandardCharsets.US_ASCII)), "audio/wav");

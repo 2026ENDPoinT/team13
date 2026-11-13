@@ -4,16 +4,16 @@ import java.util.Optional;
 
 import com.stackcorp.astra.files.upload.UploadRecords.Policy;
 import com.stackcorp.astra.shared.ApiException;
-import com.stackcorp.astra.shared.RateLimiter;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * 학습실 강의 녹음(files.studyroom)이 쓰는 업로드 기능(ADR-0040). 일반 업로드와 같은 정책, 이름 규칙, 내용 검사, 악성코드 검사 상태,
- * 요청 제한을 따른다. 파일은 과목 없이(files.course_id NULL) 기록하고 첨부하지 않으므로, 과목 파일 경로, 첨부 확정, 미리보기, 요약은
- * 이 파일을 열지 못한다. 업로드는 기록과 같은 transaction에서 녹음 행과 함께 attached가 된다.
+ * 학습실 강의 녹음(files.studyroom)이 쓰는 업로드 기능(ADR-0040). 일반 업로드와 같은 정책, 이름 규칙, 내용 검사, 악성코드 검사 상태를
+ * 따른다. 요청 제한(upload)은 multipart 본문을 나누기 전에 {@link MultipartRateLimitFilter}가 센다. 파일은 과목 없이(files.course_id
+ * NULL) 기록하고 첨부하지 않으므로, 과목 파일 경로, 첨부 확정, 미리보기, 요약은 이 파일을 열지 못한다. 업로드는 기록과 같은
+ * transaction에서 녹음 행과 함께 attached가 된다.
  */
 @Service
 public class StudyRecordingUploads {
@@ -25,18 +25,11 @@ public class StudyRecordingUploads {
 
 	private final UploadRecords records;
 
-	private final RateLimiter rateLimiter;
-
-	private final UploadProperties properties;
-
 	private final JdbcClient jdbc;
 
-	StudyRecordingUploads(UploadService uploads, UploadRecords records, RateLimiter rateLimiter,
-			UploadProperties properties, JdbcClient jdbc) {
+	StudyRecordingUploads(UploadService uploads, UploadRecords records, JdbcClient jdbc) {
 		this.uploads = uploads;
 		this.records = records;
-		this.rateLimiter = rateLimiter;
-		this.properties = properties;
 		this.jdbc = jdbc;
 	}
 
@@ -54,8 +47,6 @@ public class StudyRecordingUploads {
 	 * @return 업로드 ID
 	 */
 	public long receive(long userId, MultipartFile file, String clientKey, Object request, Target target) {
-		// 거부한 업로드도 센다. 본문은 이미 받은 뒤라 횟수로 막는다.
-		this.rateLimiter.check("upload", userId, this.properties.rateLimit(), this.properties.rateWindow());
 		if (clientKey != null && !UploadService.CLIENT_KEY.matcher(clientKey).matches()) {
 			throw ApiException.invalid("Idempotency-Key 형식이 올바르지 않습니다.");
 		}
@@ -89,6 +80,17 @@ public class StudyRecordingUploads {
 		this.jdbc.sql("UPDATE upload_sessions SET upload_state = 'deleted' WHERE file_id = :file AND upload_state = 'attached'")
 			.param("file", fileId)
 			.update();
+	}
+
+	/**
+	 * 지운 녹음 파일의 원래 이름(가져온 오디오 파일 이름, 곧 녹음 제목)을 {@code recording.<확장자>}로 바꾼다. 녹음을 지우는
+	 * transaction에서 부른다. 파일 행은 저장소 GC와 감사 대상 ID 때문에 남지만 사용자가 지운 이름은 남기지 않는다(ADR-0040 9번).
+	 */
+	public void forgetName(long fileId) {
+		this.jdbc.sql("""
+				UPDATE files SET original_file_name = CONCAT('recording.', COALESCE(file_extension, 'bin'))
+				 WHERE file_id = :file AND source_menu_code = :purpose
+				""").param("file", fileId).param("purpose", PURPOSE).update();
 	}
 
 	private Policy policy() {

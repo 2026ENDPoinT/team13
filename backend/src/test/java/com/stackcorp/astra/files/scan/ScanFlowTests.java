@@ -574,6 +574,51 @@ class ScanFlowTests extends IntegrationTest {
 		recording(infected, status().isUnprocessableContent()).andExpect(jsonPath("$.code").value("content_rejected"));
 	}
 
+	@Test
+	void aScanVerdictArrivingWhileARecordingIsDeletedLeavesConsistentState() throws Exception {
+		byte[] content = ("OggS deleted during scan " + UUID.randomUUID()).getBytes(StandardCharsets.US_ASCII);
+		long id = ApiClient.json(recording(content, status().isCreated())).get("id").asLong();
+		long fileId = this.jdbc.sql("SELECT file_id FROM study_room_recordings WHERE study_room_recording_id = :id")
+			.param("id", id)
+			.query(Long.class)
+			.single();
+		clamd.slow(java.time.Duration.ofMillis(300));
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			CountDownLatch start = new CountDownLatch(1);
+			Future<?> scan = pool.submit(() -> {
+				start.await();
+				drain();
+				return null;
+			});
+			Future<Integer> delete = pool.submit(() -> {
+				start.await();
+				return this.student
+					.send(MockMvcRequestBuilders.delete("/api/me/study-room/recordings/" + id).header("If-Match", "\"1\""))
+					.andReturn()
+					.getResponse()
+					.getStatus();
+			});
+			start.countDown();
+			scan.get(30, TimeUnit.SECONDS);
+			assertThat(delete.get(30, TimeUnit.SECONDS)).isEqualTo(204);
+		}
+		finally {
+			pool.shutdownNow();
+		}
+		// 판정은 내용(blob)에 남고, 지운 녹음과 파일은 되살아나지 않으며 사용량은 0이다.
+		Map<String, Object> file = this.jdbc.sql("""
+				SELECT f.state, f.original_file_name, b.blob_state, b.reference_count
+				  FROM files f JOIN file_blobs b ON b.file_blob_id = f.file_blob_id WHERE f.file_id = :id
+				""").param("id", fileId).query().singleRow();
+		assertThat(file).containsEntry("state", "deleted").containsEntry("original_file_name", "recording.ogg");
+		assertThat(number(file, "reference_count")).isZero();
+		assertThat(file.get("blob_state")).isIn("clean", "quarantined");
+		this.student.get("/api/me/study-room/recordings/" + id).andExpect(status().isNotFound());
+		assertThat(ApiClient.json(this.student.get("/api/me/study-room/recordings")).get("usage").get("usedBytes").asLong())
+			.isZero();
+	}
+
 	private ResultActions recording(byte[] content, ResultMatcher expected) throws Exception {
 		return this.student
 			.send(MockMvcRequestBuilders.multipart("/api/me/study-room/courses/" + this.course + "/recordings")

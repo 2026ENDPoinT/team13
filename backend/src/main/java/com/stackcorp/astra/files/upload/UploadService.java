@@ -196,7 +196,7 @@ class UploadService {
 				});
 			}
 			catch (DuplicateKeyException ex) {
-				discardUnused(sha, storageKey, null);
+				discardUnused(sha, size, mime, storageKey, null);
 				// 같은 멱등 key의 요청이 동시에 들어왔다. 먼저 끝난 쪽이 같은 요청이면 그 결과를 돌려주고, 다르면 409다.
 				if (clientKey == null) {
 					throw ex;
@@ -209,16 +209,16 @@ class UploadService {
 					this.store.delete(Bucket.CONTENT, storageKey);
 				}
 				else {
-					discardUnused(sha, storageKey, null);
+					discardUnused(sha, size, mime, storageKey, null);
 				}
 				throw ex;
 			}
 			catch (RuntimeException ex) {
-				discardUnused(sha, storageKey, null);
+				discardUnused(sha, size, mime, storageKey, null);
 				throw ex;
 			}
 			if (recorded != null) {
-				discardUnused(sha, storageKey, recorded.blobKey());
+				discardUnused(sha, size, mime, storageKey, recorded.blobKey());
 				return recorded.upload();
 			}
 			if (attempt >= 2) {
@@ -248,13 +248,29 @@ class UploadService {
 		return "blobs/" + sha.substring(0, 2) + "/" + sha;
 	}
 
-	// 새 key에 저장했지만 blob이 그 key를 쓰지 않게 됐으면 지운다. 기본 key는 같은 내용의 다른 요청과 함께 쓰므로 남긴다.
-	private void discardUnused(String sha, String storageKey, String blobKey) {
-		if (storageKey == null || storageKey.equals(baseKey(sha)) || storageKey.equals(blobKey)) {
+	/**
+	 * 저장했지만 기록하지 못했거나 blob이 쓰지 않게 된 객체를 정리한다.
+	 * <ul>
+	 * <li>새 임의 key에 저장했으면 그 key는 이 요청만 쓰므로 바로 지운다.</li>
+	 * <li>기본 key는 같은 내용의 다른 요청이 저장한 뒤 아직 기록하지 않았을 수 있어 바로 지우면 그 요청의 원본이 사라진다. 기록이 실패했고
+	 * 그 내용의 blob 행이 없으면 참조 수 0인 blob 행으로 남겨 저장소 GC가 유예 시간 뒤 지우게 한다. 같은 내용의 다른 요청은 그 행을
+	 * 함께 쓰고, GC와의 엇갈림은 이미 있는 blob 행 잠금(ADR-0011 5번)이 막는다. 행이 있으면 그 행이 객체를 쓰거나 GC가 지운다.</li>
+	 * </ul>
+	 *
+	 * @param blobKey 기록에 성공했으면 blob이 쓰는 key, 실패했으면 null
+	 */
+	private void discardUnused(String sha, long size, String mime, String storageKey, String blobKey) {
+		if (storageKey == null || storageKey.equals(blobKey)) {
 			return;
 		}
 		try {
-			this.store.delete(Bucket.CONTENT, storageKey);
+			if (!storageKey.equals(baseKey(sha))) {
+				this.store.delete(Bucket.CONTENT, storageKey);
+			}
+			else if (blobKey == null) {
+				this.transaction.executeWithoutResult(
+						(tx) -> this.records.registerUnreferenced(sha, size, mime, storageKey, this.scan.initialBlobState()));
+			}
 		}
 		catch (RuntimeException ex) {
 			log.warn("failed to discard unused upload object", ex);

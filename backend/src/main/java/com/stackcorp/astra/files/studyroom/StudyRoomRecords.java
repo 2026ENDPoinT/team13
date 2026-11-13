@@ -217,12 +217,15 @@ class StudyRoomRecords {
 				""").param("upload", uploadId).param("owner", owner).query(Long.class).optional();
 	}
 
-	/** 같은 멱등 key로 먼저 올린 업로드가 만든 녹음. */
-	Optional<Long> recordingOfUploadKey(long owner, String clientKey) {
-		return this.jdbc.sql("""
-				SELECT r.study_room_recording_id FROM upload_sessions u JOIN study_room_recordings r ON r.file_id = u.file_id
-				 WHERE u.owner_user_id = :owner AND u.client_upload_key = :key AND r.owner_user_id = :owner
-				""").param("owner", owner).param("key", clientKey).query(Long.class).optional();
+	/**
+	 * 이 사용자가 이 멱등 key로 올린 업로드가 있는지. 업로드의 용도와 상태는 보지 않는다. 같은 요청인지는 업로드가 지문으로 판정한다.
+	 */
+	boolean uploadKeyUsed(long owner, String clientKey) {
+		return this.jdbc.sql("SELECT COUNT(*) FROM upload_sessions WHERE owner_user_id = :owner AND client_upload_key = :key")
+			.param("owner", owner)
+			.param("key", clientKey)
+			.query(Long.class)
+			.single() > 0;
 	}
 
 	// ---------- placements ----------
