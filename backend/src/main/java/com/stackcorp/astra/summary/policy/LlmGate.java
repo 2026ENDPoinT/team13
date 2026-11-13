@@ -1,0 +1,100 @@
+package com.stackcorp.astra.summary.policy;
+
+import java.util.Optional;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+
+import com.stackcorp.astra.shared.ApiException;
+import com.stackcorp.astra.summary.api.CourseStaff;
+import com.stackcorp.astra.summary.api.LlmClient;
+
+/**
+ * 과목 자료의 내용을 외부 LLM에 보내기 전에 거치는 문(ADR-0032). 다음을 모두 만족해야 열린다.
+ * <ul>
+ * <li>배포 스위치 {@code astra.llm.enabled}가 켜져 있다.</li>
+ * <li>책임 교수자가 그 과목, 그 범위에 지금 배포의 제공자 profile로 동의했고 철회하지 않았다.</li>
+ * <li>그 교수자가 지금도 과목의 결정권자다({@link CourseStaff#isDecider}). 조교와 수강만 확정된 교수·조교의 동의는 효력이 없다.</li>
+ * </ul>
+ * 책임 교수자는 쪽별 요약이면 생성을 요청한 교수자, 학습 대화면 그 파일의 요약을 게시한 교수자다. api는 명령을 받을 때, worker는
+ * 모델을 부르기 전마다 다시 확인한다.
+ * <p>
+ * 명령을 받을 때는 제공자가 설정됐는지({@link LlmClient} bean이 있는지, 곧 API key가 있는지)도 본다. 없으면 스위치가 꺼진 것과 같은
+ * 503 {@code llm_disabled}이고 처리 조건도 {@code enabled=false}로 알린다({@link #available}). 제공자에 닿지 못하는 일시 장애는
+ * 설정의 문제가 아니므로 여기서 보지 않는다. 이미 원장에 들어온 작업과 질문은 worker가 {@code not_configured}로 닫으므로
+ * {@link #closed}는 스위치만 본다.
+ */
+@Component
+public class LlmGate {
+
+	/** 닫힌 이유: 배포 스위치가 꺼졌다. */
+	public static final String DISABLED = "disabled";
+
+	/** 닫힌 이유: 유효한 동의가 없다. */
+	public static final String CONSENT = "consent";
+
+	private final LlmPolicyProperties properties;
+
+	private final ConsentRepository consents;
+
+	private final CourseStaff staff;
+
+	private final ObjectProvider<LlmClient> llm;
+
+	LlmGate(LlmPolicyProperties properties, ConsentRepository consents, CourseStaff staff,
+			ObjectProvider<LlmClient> llm) {
+		this.properties = properties;
+		this.consents = consents;
+		this.staff = staff;
+		this.llm = llm;
+	}
+
+	/** 배포 스위치 {@code astra.llm.enabled}. worker가 이미 받은 작업과 질문을 닫을지 정할 때 쓴다. */
+	public boolean enabled() {
+		return this.properties.enabled();
+	}
+
+	/** 새 요청을 받을 수 있다. 스위치가 켜져 있고 제공자가 설정됐다. {@code GET /api/llm/policy}의 {@code enabled}다. */
+	public boolean available() {
+		return enabled() && this.llm.getIfAvailable() != null;
+	}
+
+	public ProviderProfile profile() {
+		return this.properties.policy();
+	}
+
+	/**
+	 * @throws ApiException 503 {@code llm_disabled} 스위치가 꺼졌거나 제공자가 설정되지 않았을 때
+	 */
+	public void requireEnabled() {
+		if (!available()) {
+			throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "llm_disabled", "이 서비스에서는 외부 AI 기능을 쓰지 않습니다.");
+		}
+	}
+
+	/**
+	 * @throws ApiException 503 {@code llm_disabled}, 409 {@code llm_consent_required}
+	 */
+	public void require(long courseId, Long responsibleUserId, ProcessingScope scope) {
+		requireEnabled();
+		if (closed(courseId, responsibleUserId, scope).isPresent()) {
+			throw new ApiException(HttpStatus.CONFLICT, "llm_consent_required",
+					"담당 교수자가 이 기능의 외부 AI 처리에 동의하지 않았습니다.");
+		}
+	}
+
+	/** @return 닫혔으면 그 이유({@link #DISABLED} 또는 {@link #CONSENT}) */
+	public Optional<String> closed(Long courseId, Long responsibleUserId, ProcessingScope scope) {
+		if (!enabled()) {
+			return Optional.of(DISABLED);
+		}
+		if (courseId == null || responsibleUserId == null
+				|| !this.consents.hasCurrent(courseId, responsibleUserId, scope, profile().digest())
+				|| !this.staff.isDecider(responsibleUserId, courseId)) {
+			return Optional.of(CONSENT);
+		}
+		return Optional.empty();
+	}
+
+}

@@ -1,0 +1,39 @@
+# ADR-0027 알림은 원래 변경과 같은 transaction에서 만들고, 미래에 보이는 대상은 알림 사건으로 예약한다
+
+## 상태
+채택 (2026-11-11)
+
+## 맥락
+알림(화면 04, EP-0138, EP-0280~0282)은 `catalog`가 소유한다(architecture.md 4.1). 알림을 일으키는 공지(`communication`), 자료(`learning`), 과제(`assessment`)는 `catalog`에 의존하고, `catalog`는 그 모듈들에 의존하지 않는다. 그래서 `catalog`는 공지나 활동 행을 읽어 볼 수 없다.
+
+지켜야 할 것은 다음과 같다.
+- 재시도한 명령이 같은 사람에게 알림을 두 번 만들지 않는다(SC-05). 원래 변경이 되돌아가면 알림도 남지 않는다.
+- 예약 공지, 시작 일시가 미래인 자료·과제는 쓴 때가 아니라 보이기 시작할 때 알린다. 받는 사람은 그때의 과목 구성원이다.
+- 알림이 받는 사람이 더 볼 수 없는 대상을 드러내지 않는다. 알림 문장에는 대상 제목이 들어간다.
+- 안 읽은 수는 헤더 배지가 주기적으로 부르므로 싸야 하고, 목록의 안 읽음 필터와 같은 조건이어야 한다(EP-0138).
+- worker가 둘이어도 한 번만 보낸다.
+
+## 결정
+1. `catalog.api.Notifications`가 생성 API다. `publish`(과목에서 한 역할인 사람 모두), `send`(정한 사람, 최대 1000명, 과목이 있으면 그 구성원만), `withdraw`(대상의 알림과 예약을 지움)다. 모두 `Propagation.MANDATORY`라 부르는 쪽 transaction 안에서만 실행된다. 유형은 `NotificationKind` enum이고 이름이 `notifications.notification_type` 값이다. 유형이 연결 대상 종류와 문장 앞부분을 정한다. 대상 ID는 값으로 받는다.
+2. 과목 알림 한 건은 `notification_events` 행 하나다(V26). `(유형, 대상)`이 unique이고 받는 역할, 문장, 보일 시각(`visible_at`), 보낸 시각(`delivered_at`)을 가진다. `publish`는 이 행을 upsert하고 잠근 뒤 다음을 한다.
+   - 보일 시각이 지났고 아직 안 보냈으면 지금 구성원을 읽어 알림 행을 만들고 보낸 것으로 표시한다. 받는 사람은 오름차순으로 200명씩 여러 행 INSERT로 넣는다.
+   - 이미 보냈으면 알림 행의 문장만 새 제목으로 바꾼다. 나중에 수강한 사람에게 옛 공지를 새로 보내지 않는다.
+   - 보일 시각이 미래면 보낸 알림이 있을 때 지우고 미보냄으로 되돌린다. worker가 그 시각 뒤에 보낸다.
+3. worker(`NotificationSweeper`)는 30초마다 보일 시각이 지난 미보냄 사건을 찾고, 사건마다 READ COMMITTED transaction 하나에서 `FOR UPDATE SKIP LOCKED`로 잡아 보낸다. 잠금 충돌은 세 번까지 다시 시도하고, 그래도 실패한 사건은 미보냄으로 남아 다음 주기에 다시 잡히며 실패 수를 예외로 알린다. 사건 행을 먼저, 알림 행을 나중에 잠근다. `publish`와 `withdraw`도 같은 순서다.
+4. 알림 행은 `(유형, 대상, 사용자)`가 unique다. 같은 사건을 두 worker나 재시도가 다시 보내도 두 번째 행은 생기지 않는다. 다른 객체를 만드는 재시도(멱등 key 없이 다시 보낸 자료 등록)는 다른 대상이라 따로 알린다. 같은 key의 재전송은 각 명령의 멱등 처리(공용 원장, 공지의 client key)가 명령 자체를 다시 실행하지 않는다.
+5. 볼 수 있는지는 두 갈래로 정한다. 과목 관계는 읽을 때 `catalog`가 판정한다. 목록, 안 읽은 수, 읽음, 삭제가 같은 SQL 조건(본인, 보존 기간 안, 과목 알림이면 지금도 구성원)을 쓴다. 대상의 공개 상태는 대상을 숨기는 쪽이 같은 transaction에서 `withdraw`로 거둔다(공지 삭제, 임시 공지로 돌림, 예약으로 미룸, 과제 비공개, 점수 공개 취소). 거둔 알림은 지우고 남기지 않는다.
+6. 받는 사람의 읽음, 모두 읽음, 삭제는 READ COMMITTED transaction에서 조건부 UPDATE/DELETE로 한다. 다시 보내도 결과가 같다. 보존 기간(60일)이 지난 알림은 worker가 지운다.
+
+## 결과와 트레이드오프
+- 알림은 원래 변경과 함께 commit되거나 함께 사라진다. 이벤트 listener가 commit 뒤 따로 만드는 방식은 그 사이 실패를 다시 보낼 outbox가 필요하고, listener가 발행 측 타입을 참조하면 `catalog`가 그 모듈에 의존하게 된다(4.1절).
+- 예약을 알림 행의 "보일 시각" 열로 처리하고 읽을 때 거르는 방식은 worker가 필요 없지만, 받는 사람을 쓴 때 정해 나중에 수강한 학생이 받지 못하고, 예약을 바꿀 때마다 모든 받는 사람 행을 고쳐야 하며, 보이기 시작하는 순간을 알 수 없어 push를 붙일 수 없다. 그래서 쓰지 않았다.
+- worker가 각 모듈의 테이블(`posts.published_at`, `learning_activities.open_at`)을 cursor로 훑는 방식은 `catalog`가 다른 모듈의 테이블을 읽어야 하고, 모듈마다 sweeper와 cursor 상태를 따로 둬야 한다. 사건 행은 만든 쪽 transaction에 함께 쓰여 하나의 sweeper로 끝난다.
+- 읽을 때 대상 모듈에 볼 수 있는지 묻는 port 방식은 대상 공개 상태가 바뀌는 길을 놓치지 않지만, 안 읽은 수를 셀 때 안 읽은 알림 전부를 세 모듈에 물어야 해서 배지 polling이 비싸지고 목록과 수의 조건이 갈린다. 대신 만든 쪽이 숨기는 모든 길에서 `withdraw`를 불러야 한다. 부르지 않은 길은 알림이 남는다. 강의 자료는 수정(비공개)과 삭제에서 거둔다. architecture.md 12절에 남겼다.
+- 원본의 "취소된 알림"(`notification_canceled`, `is_canceled`)처럼 거둔 알림을 흐리게 남기는 방식은 제목이 그대로 보여 쓰지 않았다. `is_canceled`는 쓰지 않는다.
+- 알림 문장은 만든 때의 제목이다. 이미 보낸 뒤 제목을 고치면 `publish`가 문장을 바꾼다.
+- `notifications.activity_id`와 `notification_events.activity_id`에는 `learning_activities` FK가 있다. 활동은 소프트 삭제만 하므로 막히지 않지만, 활동 행을 물리 삭제하려면 알림을 먼저 지워야 한다.
+- 질의응답 답변(`QUESTION_ANSWERED`)은 답글을 만드는 transaction에서 질문 작성자에게 보낸다. 자기 질문에 단 답글은 보내지 않는다. 질문마다 알림은 하나이고, 남은 답글이 없어지거나 질문을 지우면 거둔다.
+- 쪽지(`MESSAGE_RECEIVED`)는 보내는 transaction에서 받는사람에게 보낸다. 쪽지는 과목 관계가 끊겨도 받은함에 남으므로 알림에 과목을 묶지 않는다. 회수하면 그 쪽지의 알림을 모두 거둔다. 이미 읽은 수신자의 알림도 함께 지워진다.
+- 알림 push는 없다. WebSocket fan-out(8절)을 붙이면 알림 행을 만든 transaction이 commit된 뒤 보낸다.
+- 대상 ID는 화면이 그 대상을 여는 ID다. 과제 알림은 처음에 학습활동 ID를 적었으나 과제 ID로 바꿨다([ADR-0036](0036-notification-screen-target-and-instructor-roster.md), V36). 과제 점수 공개는 과제의 공개 명령으로도 바뀌고, 같은 규칙으로 알림을 보내고 거둔다.
+- 과목 없는 전체 알림(알림마당 공지, `publishSite`)도 같은 사건 모델이다. 다만 받는 사람이 수천 명이라 만든 쪽 transaction에서 보내지 않고, worker가 사건에 남긴 위치부터 대상 사용자 한 묶음씩 transaction을 나눠 보낸다([ADR-0036](0036-notification-screen-target-and-instructor-roster.md) 5~7번, V36).

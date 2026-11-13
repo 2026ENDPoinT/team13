@@ -1,0 +1,10 @@
+# 이미지에 필요한 것만 build context에 넣는다. .env, .git, 테스트 소스, build 산출물은 들어가지 않는다.
+*
+!gradlew
+!gradle
+!settings.gradle
+!build.gradle
+!src/main
+!docker/entrypoint.sh
+!docker/healthcheck.sh
+!docker/imds-probe.sh
