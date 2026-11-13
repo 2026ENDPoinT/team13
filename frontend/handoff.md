@@ -693,3 +693,8 @@
 - 변경 파일: `src/areas/home/course-cards.tsx`, `src/areas/home/home-server.tsx`, `src/areas/home/home.css`, `src/areas/home/recording-study.css`, `src/areas/home/recording.tsx`, `src/areas/home/recording-summary-pdf.ts`, `tests/integration/recording-study.test.ts`, `tests/unit/recording-summary-pdf.test.ts`, `handoff.md`.
 - 이번 요청은 기존 변경의 커밋만 수행하며 기능을 추가 수정하거나 검사를 반복하지 않는다. 각 작업의 검증·한계는 앞선 기록을 따른다.
 - 남은 작업: 이번 요청에는 푸시가 포함되지 않아 원격 푸시는 수행하지 않는다.
+
+## 남은 변경 원격 푸시 완료
+- 후속 사용자 요청에 따라 전체 변경 커밋 `2a47193`을 `origin/main`에 푸시했다. 원격 갱신 `d851254..2a47193` 성공을 확인했다.
+- 이번 요청의 변경 파일: 푸시 결과를 기록한 `handoff.md`만. 기능 코드는 변경하지 않았다.
+- 남은 작업: 없음.
