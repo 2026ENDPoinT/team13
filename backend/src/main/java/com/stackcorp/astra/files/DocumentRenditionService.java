@@ -43,7 +43,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
 import tools.jackson.core.JacksonException;
-import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -75,10 +74,8 @@ class DocumentRenditionService implements DocumentRenditions {
 
 	private static final Logger log = LoggerFactory.getLogger(DocumentRenditionService.class);
 
-	// 저장한 document.json을 읽는다. 쪽 정보에 나중에 더한 boolean(imageUnavailable)이 없는, 전에 만든 rendition도 false로 읽는다.
-	static final JsonMapper JSON = JsonMapper.builder()
-		.disable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
-		.build();
+	// 저장한 document.json을 쓰고 읽는다. 필수 숫자·참거짓 값이 빠진 파일은 0이나 false로 읽지 않고 실패한다.
+	static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private static final Pattern KEY = Pattern.compile("[0-9a-f]{64}");
 

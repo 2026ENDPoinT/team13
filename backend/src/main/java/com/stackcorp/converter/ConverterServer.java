@@ -3,6 +3,7 @@ package com.stackcorp.converter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -29,12 +30,14 @@ import com.sun.net.httpserver.HttpServer;
  * {@code unsupported_format}, 자식의 메모리 상한을 넘으면 {@code too_large}, 제한 시간을 넘으면 {@code timeout}이다.</li>
  * <li>{@code POST /avatar}: 본문은 PNG나 JPEG 바이트다. 성공하면 200과 {@value AvatarImage#SIZE}px 정사각형 JPEG를 돌려준다
  * ({@link AvatarImage}). 이미지가 아니면 422 {@code not_image}, 상한을 넘으면 413·422 {@code too_large}다.</li>
- * <li>{@code GET /health}: 200.</li>
+ * <li>{@code GET /health}: 200. 변환 port가 아니라 따로 연 상태 확인 port에서만 답한다.</li>
  * </ul>
  *
- * 한 번에 한 문서만 변환한다({@code /render}와 {@code /avatar}는 같은 잠금으로 직렬화). {@code /health}는 변환 중에도 바로 답한다.
- * 실행: {@code java -Dloader.main=com.stackcorp.converter.ConverterServer -cp app.jar
+ * 한 번에 한 문서만 변환한다({@code /render}와 {@code /avatar}는 같은 잠금으로 직렬화). {@code /health}는 변환 서버와 thread를
+ * 나누지 않는 상태 확인 서버가 답한다. 본문을 보내지 않거나 응답을 읽지 않는 client가 변환 thread를 모두 붙잡아도 healthcheck는
+ * 바로 답을 받는다. 실행: {@code java -Dloader.main=com.stackcorp.converter.ConverterServer -cp app.jar
  * org.springframework.boot.loader.launch.PropertiesLauncher}. 환경 변수 {@code CONVERTER_PORT}(기본 8090),
+ * {@code CONVERTER_HEALTH_PORT}(기본 8092, 127.0.0.1에만 연다),
  * {@code CONVERTER_MAX_BYTES}(기본 50 MiB)를 읽는다. {@code CONVERTER_SOFFICE}에 LibreOffice 실행 파일의 절대 경로가 있으면
  * office 형식을 받는다. 그때 {@code CONVERTER_PRLIMIT}(기본 /usr/bin/prlimit), {@code CONVERTER_OFFICE_TIMEOUT_SECONDS}(기본 120),
  * {@code CONVERTER_OFFICE_MAX_PDF_BYTES}(기본 100 MiB), {@code CONVERTER_OFFICE_MEMORY_BYTES}(기본 3 GiB)를 읽는다. PDF 변환 자식의
@@ -48,29 +51,37 @@ public final class ConverterServer implements AutoCloseable {
 	// 변환 하나가 도는 동안 줄 서서 기다릴 수 있는 요청 수. 넘으면 바로 503 busy로 돌려보낸다.
 	static final int MAX_WAITING = 8;
 
-	// HTTP 스레드 수. 변환 1 + 대기 MAX_WAITING을 다 채워도 /health와 503 응답에 쓸 스레드가 남는다.
-	private static final int THREADS = 2 * (MAX_WAITING + 1);
+	// HTTP 스레드 수. 변환 1 + 대기 MAX_WAITING을 다 채워도 503 응답에 쓸 스레드가 남는다. 본문을 보내지 않는 client는 이 스레드를
+	// 모두 붙잡을 수 있으므로 /health는 이 스레드를 쓰지 않는다.
+	static final int THREADS = 2 * (MAX_WAITING + 1);
 
 	private final HttpServer server;
 
 	private final ExecutorService executor;
 
+	// GET /health만 답한다. 변환 서버와 스레드를 나눠 쓰지 않는다.
+	private final HttpServer health;
+
+	private final ExecutorService healthExecutor;
+
 	private final long maxBytes;
 
-	// 변환 작업(/render, /avatar)을 한 번에 하나만 돌린다. /health는 이 자리를 쓰지 않는다.
+	// 변환 작업(/render, /avatar)을 한 번에 하나만 돌린다.
 	private final Semaphore slot = new Semaphore(1, true);
 
-	// slot을 쥐었거나 기다리는 요청 수의 상한. 스레드가 대기 요청으로 다 차 /health를 굶기지 않게 한다.
+	// slot을 쥐었거나 기다리는 요청 수의 상한. 스레드가 대기 요청으로 다 차 503 응답을 굶기지 않게 한다.
 	private final Semaphore admission = new Semaphore(MAX_WAITING + 1);
 
 	private final OfficeEngine office;
 
 	private final RenderProcess renderer;
 
-	private ConverterServer(HttpServer server, ExecutorService executor, long maxBytes, OfficeEngine office,
-			RenderProcess renderer) {
+	private ConverterServer(HttpServer server, ExecutorService executor, HttpServer health,
+			ExecutorService healthExecutor, long maxBytes, OfficeEngine office, RenderProcess renderer) {
 		this.server = server;
 		this.executor = executor;
+		this.health = health;
+		this.healthExecutor = healthExecutor;
 		this.maxBytes = maxBytes;
 		this.office = office;
 		this.renderer = renderer;
@@ -82,27 +93,50 @@ public final class ConverterServer implements AutoCloseable {
 	}
 
 	/**
+	 * 상태 확인 서버는 127.0.0.1의 빈 port에 연다({@link #healthPort}).
+	 *
 	 * @param office office 형식을 PDF로 바꾸는 엔진. null이면 office 형식은 unsupported_format으로 거부한다
 	 */
 	public static ConverterServer start(InetSocketAddress address, long maxBytes, OfficeEngine office)
 			throws IOException {
-		return start(address, maxBytes, office, RenderProcess.sameJvm(Path.of(System.getProperty("java.io.tmpdir")),
-				RenderProcess.DEFAULT_HEAP_MB, RenderProcess.DEFAULT_TIMEOUT, RenderProcess.DEFAULT_STEP_TIMEOUT));
+		return start(address, new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), maxBytes, office,
+				RenderProcess.sameJvm(Path.of(System.getProperty("java.io.tmpdir")), RenderProcess.DEFAULT_HEAP_MB,
+						RenderProcess.DEFAULT_TIMEOUT, RenderProcess.DEFAULT_STEP_TIMEOUT));
 	}
 
-	static ConverterServer start(InetSocketAddress address, long maxBytes, OfficeEngine office, RenderProcess renderer)
-			throws IOException {
+	/**
+	 * @param healthAddress {@code GET /health}만 답하는 상태 확인 서버의 주소
+	 */
+	static ConverterServer start(InetSocketAddress address, InetSocketAddress healthAddress, long maxBytes,
+			OfficeEngine office, RenderProcess renderer) throws IOException {
 		System.setProperty("java.awt.headless", "true");
 		HttpServer server = HttpServer.create(address, 0);
-		// /avatar의 Java2D 처리와 자식 JVM을 기다리는 요청은 thread를 오래 잡는다. virtual thread면 carrier를 붙잡아 /health까지
+		HttpServer health;
+		try {
+			health = HttpServer.create(healthAddress, 0);
+		}
+		catch (IOException ex) {
+			server.stop(0);
+			throw ex;
+		}
+		// /avatar의 Java2D 처리와 자식 JVM을 기다리는 요청은 thread를 오래 잡는다. virtual thread면 carrier를 붙잡아 다른 요청까지
 		// 굶길 수 있어 개수가 정해진 platform thread를 쓴다.
 		ExecutorService executor = Executors.newFixedThreadPool(THREADS);
-		ConverterServer converter = new ConverterServer(server, executor, maxBytes, office, renderer);
+		// healthcheck는 container 안에서 10초마다 하나씩 온다. 하나가 끊기지 않고 남아도 다음 확인이 답을 받도록 둘을 둔다.
+		ExecutorService healthExecutor = Executors.newFixedThreadPool(2);
+		ConverterServer converter = new ConverterServer(server, executor, health, healthExecutor, maxBytes, office,
+				renderer);
 		server.createContext("/render", (exchange) -> converter.serialized(exchange, converter::render));
 		server.createContext("/avatar", (exchange) -> converter.serialized(exchange, converter::avatar));
-		server.createContext("/health", (exchange) -> respond(exchange, 200, "application/json", "{}"));
 		server.setExecutor(executor);
+		health.createContext("/health", (exchange) -> {
+			try (exchange) {
+				respond(exchange, 200, "application/json", "{}");
+			}
+		});
+		health.setExecutor(healthExecutor);
 		server.start();
+		health.start();
 		return converter;
 	}
 
@@ -110,15 +144,22 @@ public final class ConverterServer implements AutoCloseable {
 		return this.server.getAddress().getPort();
 	}
 
+	public int healthPort() {
+		return this.health.getAddress().getPort();
+	}
+
 	@Override
 	public void close() {
+		this.health.stop(0);
 		this.server.stop(0);
+		this.healthExecutor.shutdownNow();
 		this.executor.shutdownNow();
 	}
 
 	public static void main(String[] args) throws IOException {
 		Map<String, String> env = System.getenv();
 		int port = Integer.parseInt(env.getOrDefault("CONVERTER_PORT", "8090"));
+		int healthPort = Integer.parseInt(env.getOrDefault("CONVERTER_HEALTH_PORT", "8092"));
 		long maxBytes = Long.parseLong(env.getOrDefault("CONVERTER_MAX_BYTES", String.valueOf(50L << 20)));
 		String soffice = env.get("CONVERTER_SOFFICE");
 		OfficeEngine office = null;
@@ -135,9 +176,12 @@ public final class ConverterServer implements AutoCloseable {
 						String.valueOf(RenderProcess.DEFAULT_TIMEOUT.toSeconds())))),
 				Duration.ofSeconds(Long.parseLong(env.getOrDefault("CONVERTER_RENDER_STEP_TIMEOUT_SECONDS",
 						String.valueOf(RenderProcess.DEFAULT_STEP_TIMEOUT.toSeconds())))));
-		ConverterServer server = start(new InetSocketAddress(port), maxBytes, office, renderer);
+		// 상태 확인은 container 안의 healthcheck만 부른다. worker가 닿는 network에는 열지 않는다(ADR-0019 3번의 관리 port와 같다).
+		ConverterServer server = start(new InetSocketAddress(port),
+				new InetSocketAddress(InetAddress.getLoopbackAddress(), healthPort), maxBytes, office, renderer);
 		Runtime.getRuntime().addShutdownHook(new Thread(server::close));
-		System.out.println("converter listening on " + server.port() + " office=" + (office != null ? "on" : "off"));
+		System.out.println("converter listening on " + server.port() + " health=" + server.healthPort() + " office="
+				+ (office != null ? "on" : "off"));
 	}
 
 	private void serialized(HttpExchange exchange, HttpHandler handler) throws IOException {

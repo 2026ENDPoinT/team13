@@ -48,7 +48,8 @@ COPY --chmod=0555 docker/imds-probe.sh /usr/local/bin/astra-imds-probe
 ENV TMPDIR=/tmp
 USER 10001:10001
 
-# 8080: api의 HTTP API. 8090: converter. 8091: transcoder. 관리 port 8081은 container 안의 127.0.0.1에만 열리므로 적지 않는다.
+# 8080: api의 HTTP API. 8090: converter. 8091: transcoder. 관리 port 8081과 converter의 상태 확인 port 8092는 container 안의
+# 127.0.0.1에만 열리므로 적지 않는다.
 EXPOSE 8080 8090 8091
 ENTRYPOINT ["/usr/local/bin/astra"]
 CMD ["api"]

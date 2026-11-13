@@ -210,13 +210,14 @@ DB의 일시와 API의 offset 없는 일시(`openAt`, `closeAt`, `serverTime` �
 
 ```sh
 java -Dloader.main=com.stackcorp.converter.ConverterServer -cp stack-eclass-backend.jar \
-  org.springframework.boot.loader.launch.PropertiesLauncher   # CONVERTER_PORT 기본 8090
+  org.springframework.boot.loader.launch.PropertiesLauncher   # CONVERTER_PORT 기본 8090, CONVERTER_HEALTH_PORT 기본 8092
 ```
 
-converter는 PDF를 받는다. `CONVERTER_SOFFICE`에 LibreOffice 실행 파일의 절대 경로가 있으면 pptx, docx, xlsx도 받아 PDF로 바꾼 뒤 같은 길로 처리한다. HWP, HWPX는 받지 않는다([ADR-0033](docs/adr/0033-document-preview-and-office-conversion.md)). converter 이미지(Dockerfile target `converter`)는 아래 값을 넣어 둔다. 로컬 실행과 테스트의 converter는 LibreOffice 대신 가짜 엔진(`FakeOfficeEngine`)으로 office 문서를 번호만 적힌 쪽으로 바꾼다.
+converter는 PDF를 받는다. `CONVERTER_SOFFICE`에 LibreOffice 실행 파일의 절대 경로가 있으면 pptx, docx, xlsx도 받아 PDF로 바꾼 뒤 같은 길로 처리한다. HWP, HWPX는 받지 않는다([ADR-0033](docs/adr/0033-document-preview-and-office-conversion.md)). converter 이미지(Dockerfile target `converter`)는 아래 값을 넣어 둔다. 로컬 실행과 테스트의 converter는 LibreOffice 대신 가짜 엔진(`FakeOfficeEngine`)으로 office 문서를 번호만 적힌 쪽으로 바꾼다. 상태 확인 `GET /health`는 변환 port가 아니라 `127.0.0.1`의 `CONVERTER_HEALTH_PORT`에서 자기 thread로 답한다. 느린 client가 변환 thread를 모두 붙잡아도 healthcheck는 바로 답을 받는다.
 
 | converter 환경 변수 | 기본값 | 내용 |
 |---|---|---|
+| `CONVERTER_HEALTH_PORT` | `8092` | `GET /health`만 답하는 port. container 안의 `127.0.0.1`에만 열린다 |
 | `CONVERTER_SOFFICE` | 없음(이미지: `/usr/lib/libreoffice/program/soffice`) | 비우면 office 형식을 `unsupported_format`으로 거부한다 |
 | `CONVERTER_PRLIMIT` | `/usr/bin/prlimit` | soffice의 자원 상한을 거는 실행 파일. 없으면 converter가 뜨지 않는다 |
 | `CONVERTER_OFFICE_TIMEOUT_SECONDS` | `120` | 문서 하나를 PDF로 바꾸는 제한 시간. 넘으면 process tree를 강제로 끝낸다 |
@@ -448,7 +449,7 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 | `freshclam` (프로필 `scan`) | 없음 | 있음(자기 network `signatures`에 혼자 있다) | ClamAV 서명 갱신. clamav와는 서명 volume만 함께 쓴다. 업로드 파일을 받지 않고 다른 container에 닿지 않는다 |
 
 - `scan` 프로필은 host 메모리를 3 GiB 넘게 더 쓴다. api, worker, converter, transcoder와 함께 띄우려면 host 메모리가 8 GiB 이상이어야 한다. 빈 서명 volume으로 처음 띄우면 freshclam이 서명을 받는 몇 분 동안 clamav와 worker가 뜨지 않는다. 그동안 api가 받은 업로드는 `quarantined`로 남고, worker가 뜬 뒤 검사된다. clean으로 넘어가지 않는다.
-- 상태 확인은 각 container 안의 `127.0.0.1:8081/actuator/health/readiness`(api, worker), `127.0.0.1:8090/health`(converter), `127.0.0.1:8091/health`(transcoder)뿐이다. host와 API port에는 `/actuator`가 없다. 상태는 `docker compose ps`로 본다.
+- 상태 확인은 각 container 안의 `127.0.0.1:8081/actuator/health/readiness`(api, worker), `127.0.0.1:8092/health`(converter), `127.0.0.1:8091/health`(transcoder)뿐이다. converter의 상태 확인 port는 변환 port(8090)와 thread를 나누지 않아 변환 요청이 밀려도 답한다. host와 API port에는 `/actuator`가 없다. 상태는 `docker compose ps`로 본다.
 - 로그는 stdout의 JSON(ECS) 한 줄이다. `docker compose logs api`로 본다.
 - container는 uid 10001로 실행하고 root filesystem은 읽기 전용이다. 쓰기는 `/tmp`(tmpfs)와 transcoder의 `/work` volume에만 한다. 이미지에는 transcoder가 쓰는 ffmpeg가 들어 있고 다른 역할은 실행하지 않는다.
 - 저장소는 S3 API면 된다. AWS S3와 instance role이면 bucket 이름만 넣고, S3 호환 저장소면 `ASTRA_STORAGE_ENDPOINT`, `ASTRA_STORAGE_ACCESS_KEY`, `ASTRA_STORAGE_SECRET_KEY`, `ASTRA_STORAGE_PATH_STYLE=true`를 넣는다. 이 구성은 저장소를 띄우지 않는다. EC2에서 container가 instance role을 쓰려면 instance metadata의 hop limit이 2여야 한다. 그러면 bridge network의 모든 container가 instance metadata에 닿으므로, host firewall이 `egress` network(bridge `astra-egress`, api와 worker만 붙는다)에서 온 것만 통과시킨다([ADR-0020](docs/adr/0020-terraform-layout.md) 6번). Terraform으로 만든 EC2에는 이 규칙이 있다. 다른 host에서 instance role을 쓰면 같은 규칙을 직접 넣는다.
