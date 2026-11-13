@@ -142,7 +142,9 @@ for service in api worker converter transcoder; do
 	fi
 	docker compose exec -T "${service}" bash -c 'echo x > /tmp/probe' || fail "${service} cannot write to /tmp"
 done
-pass "containers run as non-root on a read-only root filesystem with a writable /tmp"
+docker compose exec -T api bash -c 'echo x > /spool/probe && rm /spool/probe' \
+	|| fail "api cannot write to its multipart spool volume"
+pass "containers run as non-root on a read-only root filesystem with a writable /tmp; api has a writable /spool"
 
 # 10. 로그는 JSON 한 줄이고 query string을 남기지 않는다.
 curl --silent --output /dev/null --max-time 10 "http://${api_port}/api/auth/csrf?probe=smoke-query-value"

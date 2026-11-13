@@ -49,6 +49,12 @@ services:
     # api와 worker는 같은 신뢰 경계(같은 host, 같은 instance role)에 있어 같은 env file을 받는다. converter는 받지 않는다.
     env_file: .env
     networks: [egress, data]
+    environment:
+      # multipart 업로드 본문은 /tmp(tmpfs, container 메모리) 대신 host 디스크의 volume에 임시로 받는다. 요청 thread
+      # (server.tomcat.threads.max=64)마다 multipart 상한(51MB)을 받아도 약 3.2 GiB다. 요청이 끝나면 Tomcat이 지운다.
+      SPRING_SERVLET_MULTIPART_LOCATION: /spool
+    volumes:
+      - upload-spool:/spool
     ports:
       - "${ASTRA_API_BIND:-127.0.0.1}:${ASTRA_API_PORT:-8080}:8080"
     depends_on:
@@ -278,3 +284,4 @@ volumes:
   mysql-data: {}
   clamav-db: {}
   transcoder-work: {}
+  upload-spool: {}
