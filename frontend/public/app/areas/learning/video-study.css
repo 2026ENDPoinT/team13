@@ -1,0 +1,34 @@
+.video-study { display: grid; gap: var(--space-4); min-width: 0; }
+.video-study h2 { font-size: var(--text-lg); }
+.video-study .vs-note { color: var(--text-2); font-size: var(--text-xs); line-height: var(--leading-sm); }
+.vs-note:empty { display: none; }
+.vs-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, 340px); gap: var(--space-5); align-items: start; }
+.vs-main { display: grid; gap: var(--space-3); min-width: 0; }
+.vs-mode { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.vs-mode-label, .vs-demo { padding: 3px var(--space-2); border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--link); font-size: var(--text-2xs); font-weight: var(--weight-bold); }
+.vs-main video { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: var(--gray-100); border-radius: var(--radius-md); }
+.vs-main video:fullscreen { width: 100vw; height: 100vh; border-radius: 0; }
+.vs-main .player-page { min-height: 0; min-width: 0; border: var(--border-w) solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.vs-main .player-stage { min-height: 280px; aspect-ratio: 16 / 9; }
+.vs-main .player-page:fullscreen { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+.vs-main .player-page:fullscreen .player-stage { aspect-ratio: auto; min-height: 0; }
+.vs-main .player-page:fullscreen .player-top, .vs-main .player-page:fullscreen .player-sheet { display: none; }
+.video-study p { margin: 0; }
+.vs-player-actions { display: flex; justify-content: flex-end; }
+.vs-side { min-width: 0; background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.vs-side-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4); }
+.vs-tabs { display: flex; border-bottom: var(--border-w) solid var(--border); padding: 0 var(--space-3); }
+.vs-tab { flex: 1; border: 0; border-bottom: 2px solid transparent; padding: var(--space-3) var(--space-1); min-height: var(--hit-touch); font-size: var(--text-xs); background: transparent; color: var(--text-2); }
+.vs-tab.on { border-bottom-color: var(--accent); color: var(--text); font-weight: var(--weight-bold); }
+.vs-tab:focus-visible, .vs-time:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.video-study .vs-status { padding: var(--space-3) var(--space-4); font-size: var(--text-xs); color: var(--link); background: var(--accent-soft); }
+.vs-side-body { display: grid; gap: var(--space-4); padding: var(--space-4); max-height: 520px; overflow-y: auto; font-size: var(--text-sm); line-height: var(--leading-md); }
+.video-study .vs-side h3 { font-size: var(--text-md); }
+.vs-side progress, .vs-side select { width: 100%; min-width: 0; accent-color: var(--accent); }
+.vs-side select { padding: var(--space-2); background: var(--surface-2); border: var(--border-w) solid var(--border); border-radius: var(--radius-sm); }
+.vs-points { margin: 0; padding-left: var(--space-5); }
+.vs-points li + li { margin-top: var(--space-3); }
+.vs-points small { display: block; color: var(--muted); }
+.vs-transcript { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+.vs-time { background: var(--accent-soft); color: var(--link); border: 0; border-radius: var(--radius-sm); padding: var(--space-2); min-height: var(--hit-touch); font-size: var(--text-xs); }
+@media (max-width: 1100px) { .vs-layout { grid-template-columns: 1fr; } .vs-side-body { max-height: none; } }

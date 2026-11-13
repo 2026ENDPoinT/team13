@@ -1,0 +1,218 @@
+.doc-viewer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.doc-viewer:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.doc-viewer__bar {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  background: var(--surface-2);
+  border-bottom: var(--border-w) solid var(--border);
+}
+
+.doc-viewer__title {
+  flex: 1 1 8rem;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-viewer__indicator {
+  flex: none;
+  min-width: 4.5rem;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--hit);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.doc-viewer__jump {
+  box-sizing: border-box;
+  flex: none;
+  width: 4.5rem;
+  max-width: 28vw;
+  height: var(--hit);
+  min-height: var(--hit);
+  padding: 0 var(--space-2);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.doc-viewer__bar .btn,
+.doc-viewer__bar .icon-btn {
+  height: var(--hit);
+  min-height: var(--hit);
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.doc-viewer__nav:disabled,
+.doc-viewer__mode:disabled {
+  opacity: var(--disabled);
+  cursor: not-allowed;
+}
+
+.doc-viewer__extras {
+  flex: 1 1 auto;
+}
+
+.doc-viewer__stage {
+  position: relative;
+  height: min(64vh, 640px);
+  min-height: 220px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* ResizeObserver in document-viewer.js already preserves the page position as sheets resize. */
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  padding: var(--space-4);
+  touch-action: pan-y;
+}
+
+.doc-viewer.is-compact .doc-viewer__stage {
+  height: min(48vh, 420px);
+  min-height: 180px;
+  padding: var(--space-3);
+}
+
+.doc-viewer__page {
+  min-height: 240px;
+}
+
+.doc-viewer__page + .doc-viewer__page {
+  margin-top: var(--space-4);
+}
+
+.doc-viewer__sheet {
+  position: relative;
+  width: min(100%, 920px);
+  margin: 0 auto;
+  overflow: hidden;
+  background: var(--preview-paper);
+  color: var(--preview-ink);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.viewer > .doc-viewer {
+  border: 0;
+  border-radius: 0;
+}
+
+.doc-viewer__sheet .preview-doc {
+  margin: 0;
+  min-height: 420px;
+  box-shadow: none;
+}
+
+.doc-viewer__canvas {
+  width: 100%;
+  min-height: 120px;
+  background: var(--preview-paper);
+}
+
+.doc-viewer__canvas canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.doc-viewer__text,
+.doc-viewer__pending {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--preview-ink);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.doc-viewer.is-compact .doc-viewer__text:not(.doc-viewer__sr) {
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.doc-viewer__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.doc-viewer.is-slide .doc-viewer__stage {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.doc-viewer.is-slide .doc-viewer__page {
+  display: none;
+  min-height: 0;
+  margin: 0;
+}
+
+.doc-viewer.is-slide .doc-viewer__page.is-current {
+  display: block;
+}
+
+@media (max-width: 430px) {
+  .doc-viewer__bar :is(.btn, .icon-btn, .doc-viewer__jump) {
+    height: var(--hit-touch);
+    min-height: var(--hit-touch);
+  }
+
+  .doc-viewer__bar .icon-btn {
+    width: var(--hit-touch);
+    min-width: var(--hit-touch);
+  }
+
+  .doc-viewer__indicator {
+    line-height: var(--hit-touch);
+  }
+
+  .doc-viewer__stage {
+    height: min(52vh, 480px);
+    padding: var(--space-3);
+  }
+
+  .doc-viewer__sheet .preview-doc {
+    min-height: 280px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-viewer__stage {
+    scroll-behavior: auto;
+  }
+}

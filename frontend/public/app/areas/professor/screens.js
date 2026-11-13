@@ -1,0 +1,71 @@
+const pfRoom = "/ilos/cls/pf/submain/submain_form.acl";
+
+export const screens = [
+  { id: "pf_main", role: "professor", title: "교수 홈", path: "/ilos/pf/main/main_form.acl", nav: "home", kind: "pf-main", layout: "prof" },
+  { id: "pf_room_week", role: "professor", title: "강의실", path: pfRoom, query: { mode: "week" }, nav: "classroom", kind: "pf-room", course: "bi", layout: "prof", mode: "week" },
+  { id: "pf_room_activity", role: "professor", title: "수업활동", path: pfRoom, query: { mode: "activity" }, nav: "classroom", kind: "pf-room", course: "bi", layout: "prof", mode: "activity" },
+  { id: "pf_week_add", role: "professor", title: "활동 등록", path: "/ilos/cls/pf/activity/activity_insert_form.acl", nav: "classroom", kind: "pf-form", form: "activity", course: "bi", layout: "prof" },
+  { id: "pf_contents", role: "professor", title: "영상 콘텐츠", path: "/ilos/pf/contents/contents_list_form.acl", nav: "contents", kind: "pf-form", form: "contents", layout: "prof" },
+  { id: "pf_zoom", role: "professor", title: "실시간 강의", path: "/ilos/cls/pf/zoom/zoom_insert_form.acl", nav: "live", kind: "pf-form", form: "zoom", course: "bi", layout: "prof" },
+  { id: "pf_notice_write", role: "professor", title: "공지 작성", path: "/ilos/cls/pf/notice/notice_insert_form.acl", nav: "announce", kind: "pf-form", form: "notice", course: "bi", layout: "prof" },
+  { id: "pf_material_write", role: "professor", title: "자료 등록", path: "/ilos/cls/pf/material/material_insert_form.acl", nav: "files", kind: "pf-form", form: "material", course: "bi", layout: "prof" },
+  { id: "pf_report_create", role: "professor", title: "과제 출제", path: "/ilos/cls/pf/report/report_insert_form.acl", nav: "report", kind: "pf-form", form: "report", course: "bi", layout: "prof" },
+  { id: "pf_report_status", role: "professor", title: "제출 현황", path: "/ilos/cls/pf/report/report_status_form.acl", nav: "report", kind: "pf-status", course: "bi", layout: "prof" },
+  { id: "pf_report_grade", role: "professor", title: "과제 채점", path: "/ilos/cls/pf/report/report_grade_form.acl", nav: "report", kind: "pf-grade", course: "bi", layout: "prof" },
+  { id: "pf_exam_create", role: "professor", title: "시험 출제", path: "/ilos/cls/pf/test/test_insert_form.acl", nav: "exam", kind: "pf-form", form: "exam", course: "bi", layout: "prof" },
+  { id: "pf_exam_status", role: "professor", title: "응시 현황", path: "/ilos/cls/pf/test/test_status_form.acl", nav: "exam", kind: "pf-exam-status", course: "bi", layout: "prof" },
+  { id: "pf_exam_grade", role: "professor", title: "시험 채점", path: "/ilos/cls/pf/test/test_grade_form.acl", nav: "exam", kind: "pf-exam-grade", course: "bi", layout: "prof" },
+  { id: "pf_bank", role: "professor", title: "문제은행", path: "/ilos/mp/bank_main_form.acl", nav: "bank", kind: "pf-bank", layout: "prof" },
+  { id: "pf_attend", role: "professor", title: "출석 관리", path: "/ilos/cls/pf/attend/attend_manage_form.acl", nav: "attendance", kind: "pf-attend", course: "bi", layout: "prof", mode: "general" },
+  { id: "pf_attend_smart", role: "professor", title: "스마트 출석", path: "/ilos/cls/pf/attend/attend_manage_form.acl", query: { mode: "smart" }, nav: "attendance", kind: "pf-attend", course: "bi", layout: "prof", mode: "smart" },
+  { id: "pf_attend_makeup", role: "professor", title: "휴강·보강", path: "/ilos/cls/pf/attend/attend_manage_form.acl", query: { mode: "makeup" }, nav: "attendance", kind: "pf-attend", course: "bi", layout: "prof", mode: "makeup" },
+  { id: "pf_gradebook", role: "professor", title: "성적 관리", path: "/ilos/cls/pf/eval/gradebook_form.acl", nav: "grades", kind: "pf-gradebook", course: "bi", layout: "prof" },
+  { id: "pf_appeal", role: "professor", title: "이의신청", path: "/ilos/cls/pf/appeal/appeal_list_form.acl", nav: "appeal", kind: "pf-appeal", course: "bi", layout: "prof" },
+  { id: "pf_team", role: "professor", title: "팀 프로젝트", path: "/ilos/cls/pf/team/team_list_form.acl", nav: "team", kind: "pf-team", course: "bi", layout: "prof" },
+  { id: "pf_discuss", role: "professor", title: "토론·설문", path: "/ilos/cls/pf/discuss/discuss_insert_form.acl", nav: "discuss", kind: "pf-form", form: "discuss", course: "bi", layout: "prof" },
+  { id: "pf_monitor", role: "professor", title: "수강생", path: "/ilos/cls/pf/learner/learner_list_form.acl", nav: "monitor", kind: "pf-monitor", course: "bi", layout: "prof" },
+  { id: "pf_ta", role: "professor", title: "조교 설정", path: "/ilos/cls/pf/setting/assistant_form.acl", nav: "settings", kind: "pf-ta", course: "bi", layout: "prof" },
+  { id: "pf_message", role: "professor", title: "쪽지 발송", path: "/ilos/cls/pf/message/message_send_form.acl", nav: "message", kind: "pf-form", form: "pmessage", course: "bi", layout: "prof" },
+  { id: "pf_courses", role: "professor", title: "강의과목", path: "/ilos/pf/course/course_list_form.acl", nav: "regular", kind: "pf-courses", layout: "prof" },
+  { id: "pf_study", role: "professor", title: "학습실", path: "/ilos/pf/study/study_form.acl", nav: "study", kind: "pf-study", layout: "prof" },
+  { id: "pf_lecture", role: "professor", title: "강의 미리보기", path: "/ilos/cls/pf/activity/lecture_form.acl", nav: "classroom", kind: "pf-lecture", layout: "prof" },
+  { id: "pf_submissions", role: "professor", title: "과제 제출", path: "/ilos/cls/pf/report/report_submit_form.acl", nav: "report", kind: "pf-submissions", course: "bi", layout: "prof" },
+  { id: "pf_quiz", role: "professor", title: "시험 상세", path: "/ilos/cls/pf/test/test_detail_form.acl", nav: "exam", kind: "pf-quiz", course: "bi", layout: "prof" },
+  { id: "pf_pdf", role: "professor", title: "자료 미리보기", path: "/ilos/cls/pf/files/preview_form.acl", nav: "files", kind: "pf-pdf", course: "bi", layout: "prof" },
+  { id: "pf_notice", role: "professor", title: "알림마당", path: "/ilos/pf/community/notice_list_form.acl", nav: "info", kind: "pf-notice", layout: "prof" },
+  { id: "pf_qna", role: "professor", title: "질의응답", path: "/ilos/cls/pf/qna/qna_list_form.acl", nav: "qna", kind: "pf-qna", course: "bi", layout: "prof" },
+  { id: "pf_calendar", role: "professor", title: "일정", path: "/ilos/pf/calendar/calendar_form.acl", nav: "calendar", kind: "pf-calendar", layout: "prof" },
+];
+
+export const professorRail = [
+  ["home", "pf_main", "홈"],
+  ["book", "pf_room_week", "강의"],
+  ["layers", "pf_contents", "콘텐츠"],
+  ["bank", "pf_bank", "문제은행"],
+];
+
+export const professorHomeNav = [
+  { screenId: "pf_main", label: "홈", nav: "home" },
+  { screenId: "pf_courses", label: "강의과목", nav: "regular" },
+  { screenId: "pf_contents", label: "콘텐츠관리", nav: "contents" },
+  { screenId: "pf_bank", label: "문제은행", nav: "bank" },
+  { screenId: "pf_notice", label: "알림마당", nav: "info" },
+  { screenId: "pf_calendar", label: "일정", nav: "calendar" },
+];
+
+export const professorCourseNav = [
+  { nav: "plan", label: "강의계획서", screenId: "pf_room_week" },
+  { nav: "live", label: "실시간강의", screenId: "pf_zoom" },
+  { nav: "announce", label: "공지", screenId: "pf_notice_write" },
+  { nav: "qna", label: "질의응답", screenId: "pf_qna" },
+  { nav: "files", label: "강의자료", screenId: "pf_material_write" },
+  { nav: "attendance", label: "출석", screenId: "pf_attend" },
+  { nav: "report", label: "과제", screenId: "pf_report_create" },
+  { nav: "team", label: "팀프로젝트", screenId: "pf_team" },
+  { nav: "exam", label: "시험", screenId: "pf_exam_create" },
+  { nav: "discuss", label: "토론·설문", screenId: "pf_discuss" },
+  { nav: "appeal", label: "이의신청", screenId: "pf_appeal" },
+  { nav: "grades", label: "성적", screenId: "pf_gradebook" },
+  { nav: "monitor", label: "수강생", screenId: "pf_monitor" },
+  { nav: "settings", label: "설정", screenId: "pf_ta" },
+];

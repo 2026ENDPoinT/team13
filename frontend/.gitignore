@@ -1,0 +1,6 @@
+node_modules/
+.private/
+verification/local/
+*.log
+.env*
+!.env.example
