@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 
 import org.apache.tomcat.util.http.fileupload.FileUploadException;
+import org.apache.tomcat.util.http.fileupload.InvalidFileNameException;
+import org.apache.tomcat.util.http.fileupload.MultipartStream.IllegalBoundaryException;
 import org.apache.tomcat.util.http.fileupload.MultipartStream.MalformedStreamException;
 import org.apache.tomcat.util.http.fileupload.impl.IOFileUploadException;
 import org.apache.tomcat.util.http.fileupload.impl.InvalidContentTypeException;
@@ -34,6 +36,13 @@ class MultipartFailureTests {
 				new FileUploadException("the request was rejected because no multipart boundary was found")))
 			.isTrue();
 		assertThat(clientFault(new ServletException(new InvalidContentTypeException("not multipart/form-data"))))
+			.isTrue();
+		// 파일 이름에 NUL이 있다
+		assertThat(clientFault(new ServletException(new InvalidFileNameException("a\u0000.png", "Invalid file name"))))
+			.isTrue();
+		// 안쪽 multipart의 boundary 길이가 바깥과 다르다
+		assertThat(clientFault(new FileUploadException("The length of a boundary token cannot be changed",
+				new IllegalBoundaryException("The length of a boundary token cannot be changed"))))
 			.isTrue();
 	}
 

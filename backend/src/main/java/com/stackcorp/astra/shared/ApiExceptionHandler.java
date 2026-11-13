@@ -1,6 +1,8 @@
 package com.stackcorp.astra.shared;
 
 import org.apache.tomcat.util.http.fileupload.FileUploadException;
+import org.apache.tomcat.util.http.fileupload.InvalidFileNameException;
+import org.apache.tomcat.util.http.fileupload.MultipartStream.IllegalBoundaryException;
 import org.apache.tomcat.util.http.fileupload.MultipartStream.MalformedStreamException;
 import org.apache.tomcat.util.http.fileupload.impl.InvalidContentTypeException;
 import org.springframework.http.CacheControl;
@@ -85,11 +87,13 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	/**
 	 * Tomcat의 multipart parser가 본문 자체를 거부했는지. 본문을 읽거나 임시 파일에 쓰다 난 입출력 오류는 parser가
 	 * {@code IOFileUploadException}이나 {@code FileUploadException}의 cause로 감싸므로, cause가 없는 parser 오류와 형식 오류
-	 * 예외만 client 탓으로 본다.
+	 * 예외만 client 탓으로 본다: 끝나지 않은 본문, 받을 수 없는 Content-Type, NUL이 든 파일 이름, 바깥과 길이가 다른 안쪽
+	 * multipart boundary.
 	 */
 	static boolean malformedByClient(Throwable ex) {
 		for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
 			if (cause instanceof MalformedStreamException || cause instanceof InvalidContentTypeException
+					|| cause instanceof InvalidFileNameException || cause instanceof IllegalBoundaryException
 					|| (cause.getClass() == FileUploadException.class && cause.getCause() == null)) {
 				return true;
 			}

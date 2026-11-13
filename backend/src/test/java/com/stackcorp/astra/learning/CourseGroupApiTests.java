@@ -1,7 +1,6 @@
 package com.stackcorp.astra.learning;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -101,23 +100,17 @@ class CourseGroupApiTests extends IntegrationTest {
 		addMember(this.professor, alpha, this.mate);
 		addMember(this.professor, beta, this.third);
 
-		// 학생은 자기 그룹과 그 구성원의 이름만 본다. 학번은 없고, 사용자 ID와 사진 유무는 본인 항목에만 있다.
+		// 학생은 자기 그룹과 그 구성원의 이름만 본다. 학번과 사용자 ID는 없다.
 		this.student.get(groups(this.course))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.length()").value(1))
 			.andExpect(jsonPath("$[0].name").value("1조"))
 			.andExpect(jsonPath("$[0].members.length()").value(2))
 			.andExpect(jsonPath("$[0].members[0].name").value("테스트 STUDENT"))
-			.andExpect(jsonPath("$[0].members[0].userId").value(this.stu))
+			.andExpect(jsonPath("$[0].members[0].userId").doesNotExist())
 			.andExpect(jsonPath("$[0].members[0].studentNo").doesNotExist())
-			.andExpect(jsonPath("$[0].members[0].hasPhoto").value(true))
-			.andExpect(jsonPath("$[0].members[1].userId").value(nullValue()));
-		// 다른 학생은 사진이 있어도 사용자 ID가 없어 아바타를 부를 수 없으므로 사진 유무도 false다.
-		this.classmate.get(groups(this.course))
-			.andExpect(jsonPath("$[0].members[0].userId").value(nullValue()))
-			.andExpect(jsonPath("$[0].members[0].hasPhoto").value(false))
-			.andExpect(jsonPath("$[0].members[1].userId").value(this.mate))
-			.andExpect(jsonPath("$[0].members[1].hasPhoto").value(false));
+			// 사용자 ID가 없으면 아바타를 부를 수 없으므로 사진 유무도 false다.
+			.andExpect(jsonPath("$[0].members[0].hasPhoto").value(false));
 		this.thirdStudent.get(groups(this.course))
 			.andExpect(jsonPath("$.length()").value(1))
 			.andExpect(jsonPath("$[0].name").value("2조"))

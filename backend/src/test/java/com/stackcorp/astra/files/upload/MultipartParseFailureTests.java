@@ -20,6 +20,7 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.util.unit.DataSize;
 
 import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestcontainersConfiguration;
@@ -30,11 +31,15 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * multipart 본문을 나누지 못한 업로드. client가 보낸 본문이 multipart 형식이 아니면 400 {@code invalid_request}이고, 서버가 본문을
- * 임시 디스크로 받지 못하면 그대로 500 {@code internal_error}다. MockMvc는 multipart를 미리 나눠 두므로 실제 Tomcat으로 본다.
+ * multipart 본문을 나누지 못한 업로드. client가 보낸 본문이 multipart 형식이 아니면 400 {@code invalid_request}, 요청 상한을
+ * 넘으면 413 {@code too_large}이고, 서버가 본문을 임시 디스크로 받지 못하면 그대로 500 {@code internal_error}다. MockMvc는
+ * multipart를 미리 나눠 두므로 실제 Tomcat으로 본다. 상한을 넘는 본문을 빨리 보내도록 이 context의 multipart 상한을 낮춘다. 상한을
+ * 넘은 본문은 Tomcat이 max-swallow-size(2MB)까지 읽어 버리므로 그보다 작게 둔다.
  */
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
+		properties = { "spring.servlet.multipart.max-file-size=" + MultipartParseFailureTests.LIMIT,
+				"spring.servlet.multipart.max-request-size=" + MultipartParseFailureTests.LIMIT })
 class MultipartParseFailureTests {
 
 	private static final HttpClient HTTP = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
@@ -42,6 +47,8 @@ class MultipartParseFailureTests {
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private static final String BOUNDARY = "astra-boundary";
+
+	static final String LIMIT = "1MB";
 
 	// 업로드 경로 세 곳. 일반 업로드의 purpose는 과목이 필요 없는 것을 쓴다.
 	private static final String[] ENDPOINTS = { "/api/uploads?purpose=message_attachment", "/api/filebox/files",
@@ -84,6 +91,41 @@ class MultipartParseFailureTests {
 			.getBytes(StandardCharsets.ISO_8859_1);
 		for (String path : ENDPOINTS) {
 			assertProblem(send(path, "multipart/form-data; boundary=" + BOUNDARY, body), 400, "invalid_request", path);
+		}
+	}
+
+	@Test
+	void aFileNameWithANulByteIsABadRequest() throws Exception {
+		byte[] body = complete(part("file", "a\u0000.png") + "\u0089PNG").getBytes(StandardCharsets.ISO_8859_1);
+		for (String path : ENDPOINTS) {
+			assertProblem(send(path, "multipart/form-data; boundary=" + BOUNDARY, body), 400, "invalid_request", path);
+		}
+	}
+
+	@Test
+	void aNestedMultipartWhoseBoundaryLengthDiffersIsABadRequest() throws Exception {
+		// 안쪽 multipart/mixed의 boundary는 바깥 boundary와 길이가 같아야 한다(Tomcat parser가 같은 buffer를 쓴다).
+		byte[] body = complete("--" + BOUNDARY + "\r\nContent-Disposition: form-data; name=\"file\"\r\n"
+				+ "Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n"
+				+ "Content-Disposition: attachment; filename=\"a.png\"\r\n\r\n\u0089PNG\r\n--x--")
+			.getBytes(StandardCharsets.ISO_8859_1);
+		for (String path : ENDPOINTS) {
+			assertProblem(send(path, "multipart/form-data; boundary=" + BOUNDARY, body), 400, "invalid_request", path);
+		}
+	}
+
+	@Test
+	void aBodyOverTheMultipartLimitIsStillTooLarge() throws Exception {
+		// 넓은 MultipartException 처리기가 생겨도 크기 초과(MaxUploadSizeExceededException)는 413이다.
+		byte[] file = new byte[(int) DataSize.parse(LIMIT).toBytes() + 1024];
+		byte[] head = part("file", "a.png").getBytes(StandardCharsets.ISO_8859_1);
+		byte[] tail = ("\r\n--" + BOUNDARY + "--\r\n").getBytes(StandardCharsets.ISO_8859_1);
+		byte[] body = new byte[head.length + file.length + tail.length];
+		System.arraycopy(head, 0, body, 0, head.length);
+		System.arraycopy(file, 0, body, head.length, file.length);
+		System.arraycopy(tail, 0, body, head.length + file.length, tail.length);
+		for (String path : ENDPOINTS) {
+			assertProblem(send(path, "multipart/form-data; boundary=" + BOUNDARY, body), 413, "too_large", path);
 		}
 	}
 

@@ -34,8 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 강의실 그룹활동(EP-0039, EP-0040의 대체 계약). 담당자는 과목의 그룹과 구성원을 관리하고 모든 그룹을 본다. 학생은 자기가 속한 그룹과
- * 그 그룹 구성원의 이름만 본다. 다른 그룹의 구성원, 학번, 다른 학생의 사용자 ID와 사진 유무는 학생에게 보이지 않는다. 이름과 설명은 일반
- * 텍스트다.
+ * 그 그룹 구성원의 이름만 본다. 다른 그룹의 구성원, 학번, 사용자 ID는 학생에게 보이지 않는다. 이름과 설명은 일반 텍스트다.
  */
 @RestController
 class CourseGroupController {
@@ -89,15 +88,11 @@ class CourseGroupController {
 				.toList();
 		}
 		else {
-			// 다른 학생의 사용자 ID와 사진 유무는 숨기고, 요청한 학생 본인 항목에만 준다. 본인 ID는 이미 아는 값이다.
-			long self = actor.userId();
 			Map<Long, String> byId = this.names.namesOf(userIds);
-			boolean selfPhoto = userIds.contains(self) && !this.photos.visibleTo(self, List.of(self)).isEmpty();
 			body = groups.stream()
 				.map((g) -> view(g, members.getOrDefault(g.groupId(), List.of())
 					.stream()
-					.map((id) -> id == self ? new MemberView(self, byId.get(id), null, selfPhoto)
-							: new MemberView(null, byId.get(id), null, false))
+					.map((id) -> new MemberView(null, byId.get(id), null, false))
 					.toList()))
 				.toList();
 		}
@@ -232,10 +227,10 @@ class CourseGroupController {
 	}
 
 	/**
-	 * @param userId 담당자에게 보인다. 학생 응답에는 그 학생 본인 항목에만 있다
+	 * @param userId 담당자에게만 보인다
 	 * @param studentNo 학번. 담당자에게만 보인다
 	 * @param hasPhoto 요청한 사람이 {@code GET /api/users/{userId}/avatar}로 사진을 받을 수 있으면 true(ADR-0038). userId가 없는
-	 * 항목(학생 응답의 다른 학생)에서는 언제나 false다
+	 * 학생 응답에서는 언제나 false다
 	 */
 	record MemberView(Long userId, String name, String studentNo, boolean hasPhoto) {
 
