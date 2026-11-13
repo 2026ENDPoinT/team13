@@ -309,6 +309,21 @@ describe("로그인 서버 히어로 명령", () => {
     expect(control.askServer.mock.calls.map((call) => call[0])).toEqual(["서버 보안설계 (c731) 강의실로 이동", "서버 보안설계 (c732) 강의실로 이동"]);
   });
 
+  it("서버 과목 이름이 영어(Database)여도 '데베'로 찾고 Tab으로 완성한다", () => {
+    control.courses = [{
+      course: { id: "c900", ko: "Database", en: "", code: "DB900", enrolled: true, closed: false, kind: "regular" } as Course,
+      remote: { courseId: 900, name: "Database", code: "DB900", role: "STUDENT" } as MyCourse,
+    }];
+    act(() => {
+      control.listeners.forEach((listener) => listener({ status: "ready", me: { userId: 1 } } as BackendSnapshot));
+      paint();
+    });
+    type("데베");
+    expect(host.querySelector(".cmd-key")?.textContent).toBe("Tab");
+    key("Tab");
+    expect(input().value).toBe("Database 강의실로 이동");
+  });
+
   it("상세가 없는 활동과 중복 명령을 추천으로 노출하지 않는다", () => {
     control.todo!.items.push(
       { activityId: 9203, courseId: 731, type: "zoom", title: "열 수 없는 회의" },

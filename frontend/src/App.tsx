@@ -1,9 +1,10 @@
-import { Component, useEffect, useLayoutEffect, type ReactNode } from "react";
+import { Component, useEffect, useLayoutEffect, useSyncExternalStore, type ReactNode } from "react";
 import { useAppState, getState, render, save } from "./store.ts";
 import { closeDialog, currentParams, currentScreen, followBackendRole, GoButton, HOME_PATH, navigate } from "./router.tsx";
 import { routeFor } from "./shared/routes.ts";
 import { observeScreen, screenKey } from "./shared/assistant/plan.ts";
 import { useSeenWhileOpen } from "./shared/unread-badges.tsx";
+import { backendSettled, subscribe as onBackendChange } from "./shared/backend.ts";
 import { EntryLoginDialog, useEntryLogin } from "./shared/entry-login.tsx";
 import { Shell } from "./shell/shell.tsx";
 import { Button, ErrorState } from "./ui/kit.tsx";
@@ -126,6 +127,10 @@ export function App() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
+
+  // 새로고침 직후에는 서버 연결(세션·과목)을 확인하기 전이라 상태가 "off"(목업)다. 그때 화면을 그리면 목업이 잠깐 비치므로 확인이 끝날 때까지 빈 배경만 둔다.
+  const settled = useSyncExternalStore(onBackendChange, backendSettled);
+  if (!settled) return <div role="status" aria-busy="true" aria-label="불러오는 중" />;
 
   const key = `${location.pathname}${location.search}`;
   const dialog = loginRequired

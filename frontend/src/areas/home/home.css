@@ -225,10 +225,11 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 @media (prefers-reduced-motion: reduce) { .cmd-say-bubble { animation: none; } }
 
 /* 누르면 바로 실행되는 추천 문장. 위(다음 행동 카드)와 아래(비워 둔 답 줄 + 입력창) 사이 빈 공간의 세로 가운데에 놓는다:
-   위 여백 = gap, 아래 여백 = gap + 답 한 줄 + gap 이므로 (답 한 줄 + gap) / 2 만큼 내리고, 같은 만큼 아래 여백을 줄여 전체 높이는 그대로 둔다. */
+   위 여백 = gap, 아래 여백 = gap + 답 한 줄 + gap 이므로 (답 한 줄 + gap) / 2 만큼 내리고, 같은 만큼 아래 여백을 줄여 전체 높이는 그대로 둔다.
+   overflow 때문에 포커스 링(2px + offset 2px = 4px)이 잘리므로 padding을 4px로 두고 -2px 마진으로 상쇄해 배치는 그대로다. */
 .hero-prompts {
   --prompts-shift: calc((var(--leading-sm) + var(--space-3)) / 2);
-  list-style: none; margin: var(--prompts-shift) 0 calc(var(--prompts-shift) * -1); padding: 2px; display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-2);
+  list-style: none; margin: calc(var(--prompts-shift) - 2px) -2px calc(var(--prompts-shift) * -1 - 2px); padding: 4px; display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-2);
   overflow-x: auto; scrollbar-width: none;
 }
 .hero-prompts::-webkit-scrollbar { display: none; }
