@@ -99,7 +99,7 @@ class QnaAnswerService {
 					Locked question = this.posts.lockVisible(viewer, BoardKind.QNA, questionId)
 						.orElseThrow(ApiException::notFound);
 					String title = ANSWER_PREFIX + question.title();
-					Long group = this.files.attach(actor.userId(), courseId, answer.uploadIds(), title);
+					Long group = this.files.attach(actor.userId(), courseId, answer.uploadIds());
 					this.posts.countAnswer(questionId, 1);
 					long answerId = this.posts.insert(question.boardId(), actor.userId(), "ANSWER", questionId,
 							new NewText(title, answer.body(), answer.anonymous(), false), group);
@@ -135,7 +135,7 @@ class QnaAnswerService {
 		String text = body(body);
 		BoardFiles.Change attachments = BoardFiles.validated(body.attachments(), BoardFiles.MAX_UPLOADS);
 		this.rateLimiter.check("qna-answer-update", actor.userId(), 60, Duration.ofMinutes(10));
-		Locked question = this.posts.lockVisible(viewer, BoardKind.QNA, questionId).orElseThrow(ApiException::notFound);
+		this.posts.lockVisible(viewer, BoardKind.QNA, questionId).orElseThrow(ApiException::notFound);
 		if (this.posts.updateAnswer(questionId, answerId, actor.userId(), body.version(), text,
 				anonymous(viewer, body)) == 0) {
 			this.posts.current(answerId).orElseThrow(ApiException::notFound);
@@ -143,7 +143,7 @@ class QnaAnswerService {
 		}
 		if (attachments != null) {
 			Long group = this.files.change(BoardFiles.PURPOSE, actor.userId(), courseId,
-					this.posts.attachmentGroup(answerId), attachments, ANSWER_PREFIX + question.title());
+					this.posts.attachmentGroup(answerId), attachments);
 			this.posts.setAttachmentGroup(answerId, group);
 		}
 		this.audit.success(actor.userId(), actor.sessionId(), "qna_answer.update", "post", answerId, courseId);
