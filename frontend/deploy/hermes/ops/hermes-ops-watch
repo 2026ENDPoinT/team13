@@ -163,6 +163,25 @@ def push_heartbeat(problems, now):
         problems['http:desktop'] = 'yoobin-desktop(Jenkins·백업 사본·바깥 감시)에 ssh 접속 불가'
 
 
+def check_egress_network(problems):
+    """astra_egress 대역은 compose 가 고정하지 않는다. network 를 다시 만들어 대역이 바뀌면 백엔드의 신뢰 proxy 설정,
+    LLM 게이트웨이 주소(172.24.0.1)와 iptables 규칙이 조용히 어긋나므로 알린다."""
+    out = run('docker', 'network', 'inspect', 'astra_egress', '--format',
+              '{{range .IPAM.Config}}{{.Subnet}} {{.Gateway}}{{end}}').stdout.split()
+    if len(out) != 2:
+        problems['net:astra_egress'] = 'astra_egress network 를 찾을 수 없음'
+        return
+    subnet, gateway = out
+    env = HOME / 'projects/eclass-backend/app/.env'
+    trusted = next((line.split('=', 1)[1] for line in env.read_text().splitlines()
+                    if line.startswith('ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES=')), '') if env.exists() else ''
+    if subnet not in trusted.split(','):
+        problems['net:trusted-proxies'] = (f'astra_egress 대역 {subnet} 이 백엔드 ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES 에 없음 '
+                                           '(모든 사용자가 한 주소로 보임)')
+    if gateway != '172.24.0.1':
+        problems['net:gateway'] = f'astra_egress gateway 가 {gateway} 로 바뀜(LLM 게이트웨이·중계·iptables 는 172.24.0.1 기준)'
+
+
 def check_llm_relay(problems):
     """e-class api·worker 컨테이너 안 127.0.0.1:18090(llm-relay socat) → 게이트웨이 경로. 컨테이너만 다시 만들면 끊긴다."""
     for container in ('astra-api-1', 'astra-worker-1'):
@@ -241,6 +260,7 @@ def main():
     check_units(problems)
     check_http(problems)
     check_llm_relay(problems)
+    check_egress_network(problems)
     check_backups(problems, now)
     if not args.dry_run:
         push_heartbeat(problems, now)
