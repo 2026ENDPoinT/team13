@@ -51,7 +51,8 @@ import io.micrometer.core.instrument.MeterRegistry;
  * {@link SummaryBacklog}가 낸다.
  * <p>
  * 모델을 부르기 전마다 동의 문(LlmGate)을 다시 확인한다. 배포 스위치가 꺼지거나 요청한 교수자가 동의를 철회하면 다음 호출 경계에서
- * 멈추고 {@code disabled}·{@code consent} 코드로 취소한다(ADR-0032). 끝난 작업의 사용량은 과목 합계에 더한다.
+ * 멈추고 {@code disabled}·{@code consent} 코드로 취소한다(ADR-0032). 끝난 작업의 사용량은 과목 합계에 더한다. 학생이 학습실의 자기
+ * 문서에 요청한 작업(ADR-0040 14번)은 소유자가 학생이라 교수자 동의를 보지 않고 배포 스위치만 보며, 과목이 없어 과목 합계에 더하지 않는다.
  */
 @Component
 @Profile("worker")
@@ -282,6 +283,9 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 	}
 
 	private Optional<String> gateClosed(SummaryJob job) {
+		if (job.studyRoom()) {
+			return this.gate.enabled() ? Optional.empty() : Optional.of(LlmGate.DISABLED);
+		}
 		return this.gate.closed(job.courseId(), job.requestedByUserId(), ProcessingScope.PAGE_SUMMARY);
 	}
 

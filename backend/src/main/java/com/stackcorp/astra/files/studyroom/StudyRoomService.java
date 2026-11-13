@@ -20,6 +20,7 @@ import com.stackcorp.astra.files.Downloads;
 import com.stackcorp.astra.files.FileReferences;
 import com.stackcorp.astra.files.api.FileAccess;
 import com.stackcorp.astra.files.api.FileAction;
+import com.stackcorp.astra.files.api.StudyRoomDocumentSummaries;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
 import com.stackcorp.astra.files.studyroom.RecordingStudyViews.Job;
@@ -39,6 +40,7 @@ import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.dao.DuplicateKeyException;
@@ -53,7 +55,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 학습실의 내 폴더, 항목 배치, 강의 녹음, 내 문서(ADR-0040). 모두 소유자 한 사람만 보고 바꾼다. 다른 사용자의 폴더, 녹음, 문서, 배치는
- * 없는 ID와 같은 404이고, 하나라도 섞인 요청은 아무것도 바꾸지 않는다. 담당자, 운영자, 요약·학습 대화가 읽는 길은 없다.
+ * 없는 ID와 같은 404이고, 하나라도 섞인 요청은 아무것도 바꾸지 않는다. 담당자, 운영자, 학습 대화가 읽는 길은 없다. 녹음의 전사·요약
+ * (ADR-0041)과 문서의 요약(summary 모듈, ADR-0040 14번)은 소유자가 요청하고 소유자만 읽는다.
  * <p>
  * 한 사용자의 변경 명령은 READ COMMITTED transaction 하나에서 study_room_quotas 행을 먼저 잠근 뒤 처리한다. 순서 바꾸기, 배치,
  * 용량 검사가 다른 명령과 엇갈리지 않는다. 교착이나 잠금 대기 초과로 실패한 transaction은 통째로 되돌린 뒤 정해진 횟수만큼 다시 한다.
@@ -112,10 +115,13 @@ class StudyRoomService {
 
 	private final RecordingStudy recordingStudy;
 
+	private final ObjectProvider<StudyRoomDocumentSummaries> summaries;
+
 	StudyRoomService(StudyRoomRecords records, StudyRoomUploads uploads, FileReferences references,
 			ObjectStore store, FileAccess access, CourseMemberships memberships, RateLimiter rateLimiter,
 			Idempotency idempotency, AuditLog audit, PlatformTransactionManager transactionManager,
-			StudyRoomProperties properties, RecordingStudy recordingStudy) {
+			StudyRoomProperties properties, RecordingStudy recordingStudy,
+			ObjectProvider<StudyRoomDocumentSummaries> summaries) {
 		this.records = records;
 		this.uploads = uploads;
 		this.references = references;
@@ -129,6 +135,7 @@ class StudyRoomService {
 		this.transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 		this.properties = properties;
 		this.recordingStudy = recordingStudy;
+		this.summaries = summaries;
 	}
 
 	// ---------- 읽기 ----------
@@ -148,7 +155,7 @@ class StudyRoomService {
 		return new CourseView(courseId,
 				this.records.folders(owner, courseId).stream().map(FolderView::of).toList(),
 				this.records.recordings(owner, courseId).stream().map(RecordingView::of).toList(),
-				this.records.documents(owner, courseId).stream().map(DocumentView::of).toList(), placements,
+				documentViews(this.records.documents(owner, courseId)), placements,
 				usage(owner));
 	}
 
@@ -540,7 +547,19 @@ class StudyRoomService {
 	// ---------- 문서 ----------
 
 	DocumentView document(long owner, long id) {
-		return DocumentView.of(this.records.document(owner, id).orElseThrow(ApiException::notFound));
+		return documentView(this.records.document(owner, id).orElseThrow(ApiException::notFound));
+	}
+
+	private DocumentView documentView(Document document) {
+		return documentViews(List.of(document)).getFirst();
+	}
+
+	// 요약 상태는 summary 모듈이 안다(ADR-0040 14번). 요약 기능이 없는 배포에서는 null이다.
+	private List<DocumentView> documentViews(List<Document> documents) {
+		StudyRoomDocumentSummaries summaries = this.summaries.getIfAvailable();
+		Map<Long, String> statuses = summaries == null || documents.isEmpty() ? Map.of()
+				: summaries.statuses(documents.stream().map(Document::fileId).toList());
+		return documents.stream().map((d) -> DocumentView.of(d, statuses.get(d.fileId()))).toList();
 	}
 
 	/**
@@ -614,7 +633,7 @@ class StudyRoomService {
 				throw versionConflict();
 			}
 			if (title == null) {
-				return DocumentView.of(document);
+				return documentView(document);
 			}
 			if (this.records.renameDocument(owner, id, version, title) == 0) {
 				throw versionConflict();
@@ -641,6 +660,11 @@ class StudyRoomService {
 			// 지운 파일 행에 올린 파일 이름(곧 기본 제목)이 남지 않게 한다.
 			this.uploads.forgetName(Kind.DOCUMENT, document.fileId());
 			this.records.removeUsage(owner, document.sizeBytes(), 0, 1);
+			// 대기 중인 요약은 취소하고 실행 중인 요약에는 취소를 요청한다. 결과와 쪽 이미지는 저장소 GC가 파일과 함께 지운다.
+			StudyRoomDocumentSummaries summaries = this.summaries.getIfAvailable();
+			if (summaries != null) {
+				summaries.discard(document.fileId());
+			}
 			this.audit.success(owner, actor.sessionId(), "study_room.document.delete", "study_room_document", id,
 					document.courseId());
 			return null;
@@ -886,13 +910,14 @@ class StudyRoomService {
 	 * @param state ready, scanning(검사 중, 내용을 받을 수 없음), rejected(검사에서 거부)
 	 * @param folderId 둔 폴더. 과목 학습실 맨 위면 null
 	 * @param updatedAt 마지막으로 바꾼 일시. 바꾼 적이 없으면 createdAt
+	 * @param summaryStatus 가장 최근 요약의 상태: queued, processing, ready, failed. 요청한 적이 없으면 null
 	 */
 	record DocumentView(long documentId, long courseId, String title, String fileName, long sizeBytes, String state,
-			Long folderId, Instant createdAt, Instant updatedAt, int version) {
+			Long folderId, Instant createdAt, Instant updatedAt, int version, String summaryStatus) {
 
-		static DocumentView of(Document d) {
+		static DocumentView of(Document d, String summaryStatus) {
 			return new DocumentView(d.id(), d.courseId(), d.title(), d.fileName(), d.sizeBytes(), d.state(),
-					d.folderId(), d.createdAt(), d.updatedAt(), d.version());
+					d.folderId(), d.createdAt(), d.updatedAt(), d.version(), summaryStatus);
 		}
 
 	}

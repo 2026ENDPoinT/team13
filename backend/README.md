@@ -305,6 +305,7 @@ Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://gen
 | `ASTRA_STORAGE_REGION` | `ap-northeast-2` | |
 | `ASTRA_CONVERTER_URL` | `http://converter:8090` | converter 주소 |
 | `ASTRA_SUMMARY_POLL_INTERVAL` | `5s` | worker가 대기 중인 요약 작업을 찾는 간격 |
+| `ASTRA_SUMMARY_STUDY_DOCUMENT_DAILY_LIMIT` | `20` | 한 사용자가 하루(기관 시간대)에 요청할 수 있는 학습실 내 문서 요약 수([ADR-0040](docs/adr/0040-study-room-sync.md) 14번). 넘으면 429 `summary_daily_limit` |
 | `ASTRA_UPLOAD_TTL` | `24h` | 첨부하지 않은 업로드를 쓸 수 있는 시간 |
 | `ASTRA_UPLOAD_RATE_LIMIT` · `ASTRA_UPLOAD_RATE_WINDOW` | `30` · `10m` | 한 사용자가 구간 안에 올릴 수 있는 파일 수 |
 | `ASTRA_FILES_GC_INTERVAL` | `1m` | worker 저장소 GC가 한 번 돈 뒤 쉬는 시간 |

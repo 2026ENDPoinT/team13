@@ -1,7 +1,7 @@
 # ADR-0040 학습실의 내 폴더, 강의 녹음, 내 문서는 서버에 소유자 한 사람의 것으로 두고, 바이트는 업로드 흐름으로 받아 소유자에게만 내보낸다
 
 ## 상태
-채택 (2026-11-13). 11번은 [ADR-0041](0041-recording-transcription-and-summary.md)이 바꿨다(2026-11-14). 14번(내 문서)을 더했다(2026-11-14).
+채택 (2026-11-13). 11번은 [ADR-0041](0041-recording-transcription-and-summary.md)이 바꿨다(2026-11-14). 14번(내 문서)을 더했다(2026-11-14). 14번의 "문서는 모델에 보내지 않는다"는 같은 날 소유자 결정으로 바꿔 소유자가 요청하면 요약한다(14번 "요약").
 
 ## 맥락
 프론트엔드 학습실은 로그인한 사용자에게도 두 가지를 브라우저에만 둔다. 다른 기기에서는 보이지 않는다.
@@ -11,7 +11,7 @@
 
 소유자는 둘을 서버에 두기로 했다. 녹음은 학생 본인의 개인 콘텐츠다. 강의 녹음은 수업 중 다른 사람의 목소리와 교수자의 강의를 담는다.
 
-더한 범위(2026-11-14): 학습실의 "새로 만들기 → PDF·문서 업로드"는 학생에게도 보이지만, 프론트엔드가 교수자의 강의자료 등록(용도 `lecture_material`, `POST /api/courses/{id}/materials`)으로 올렸다. `lecture_material`은 교수자만 올릴 수 있어(`UploadPurpose`) 학생 업로드는 모두 권한 오류로 끝났다. 학생이 자기 PDF를 둘 자리가 서버에 없었다. 소유자는 학생의 PDF를 녹음과 같은 규칙(소유자 한 사람, 비공개, 과목에 게시하지 않음, 모델에 보내지 않음, 같은 용량, 같은 검사)으로 두기로 했다(14번). 교수자의 학습실 업로드는 지금처럼 강의자료 등록이다.
+더한 범위(2026-11-14): 학습실의 "새로 만들기 → PDF·문서 업로드"는 학생에게도 보이지만, 프론트엔드가 교수자의 강의자료 등록(용도 `lecture_material`, `POST /api/courses/{id}/materials`)으로 올렸다. `lecture_material`은 교수자만 올릴 수 있어(`UploadPurpose`) 학생 업로드는 모두 권한 오류로 끝났다. 학생이 자기 PDF를 둘 자리가 서버에 없었다. 소유자는 학생의 PDF를 녹음과 같은 규칙(소유자 한 사람, 비공개, 과목에 게시하지 않음, 같은 용량, 같은 검사)으로 두고, 학생이 요청하면 강의자료와 같은 흐름으로 요약하기로 했다(14번). 교수자의 학습실 업로드는 지금처럼 강의자료 등록이다.
 
 이미 있는 것: 업로드 흐름과 용도별 정책([ADR-0010](0010-upload-acceptance.md)), 내용 단위 악성코드 검사([ADR-0018](0018-malware-scan-clamd.md)), 파일 참조와 GC([ADR-0011](0011-material-deletion.md)), 멱등 원장과 version 전제 조건([ADR-0012](0012-idempotency-ledger-and-audit.md), ADR-0011 2번), 사용자별 사용량 행으로 차례를 정하는 개인 파일함([ADR-0028](0028-filebox.md)).
 
@@ -45,13 +45,14 @@
 12. **보존**: 녹음과 폴더는 소유자가 지울 때까지 둔다. 학기가 끝나거나 과목을 잃어도 지우지 않는다. 기관 보존 정책이 없어 날짜를 지어내지 않는다(SC-07). 이 저장소에는 계정 삭제 흐름이 없다. 새 테이블은 `users`를 cascade 없이 가리키므로 사용자 행은 학습실 행이 남아 있는 동안 지워지지 않는다. 계정 삭제를 만들 때 그 흐름이 같은 transaction에서 녹음 파일 참조를 놓고(9번) 학습실 행을 지운다.
 13. **같은 내용 공유가 드러내는 것**: 원본은 SHA-256 단위로 한 객체를 함께 쓴다(ADR-0010 5번). 그래서 어떤 파일과 똑같은 바이트를 이미 가진 사용자는 그것을 녹음으로 올려, 누군가 같은 내용을 이 서비스에 저장한 적이 있는지 알 수 있다. 검사기가 있는 배포에서 같은 내용이 이미 clean이면 녹음이 바로 `ready`이고, 이미 거부된 내용이면 422 `content_rejected`이며, 저장을 건너뛰어 응답 시간도 짧다. 이것을 받아들인다. 알 수 있는 것은 "이 바이트가 있다"뿐이고 누가, 어느 과목에, 무엇으로 올렸는지는 알 수 없으며, 그 바이트를 이미 가진 사람만 물을 수 있다. 녹음은 기기와 시각마다 바이트가 달라 같은 내용이 생기는 경우는 대개 같은 파일(배포된 강의 파일)을 가져올 때다. 사용자마다 내용을 따로 저장하면 이 신호는 없어지지만 저장과 검사를 사용자 수만큼 하게 되고, 다른 모든 업로드와 다른 저장 규칙이 생긴다. 막아야 하는 배포가 생기면 녹음 용도만 사용자별 key(`blobs/{user}/{sha}`)로 나누는 것을 다시 본다.
 14. **내 문서**: (2026-11-14 추가, 소유자 결정) 학생이 학습실에 올리는 자기 PDF는 녹음과 같은 방식으로 둔다. 새 메커니즘을 만들지 않고 녹음의 업로드 transaction, 멱등 규칙, 검사 판정, 용량, 지우기, 배치, 과목 보기를 그대로 쓴다.
-   - **바이트**: 새 업로드 용도 `study_document`(`upload_policies`, multipart, 50 MB, 확장자 `pdf`, 내용 signature 확인)로 받는다. 업로드 기록과 같은 transaction에서 용량을 잡고 `study_room_documents` 행(과 폴더가 있으면 배치)을 만들고 업로드를 `attached`로 둔다. 파일은 과목 없이(`files.course_id` NULL) 기록하고 첨부하지 않으므로 녹음과 같이 과목 파일 경로, 미리보기, 쪽별 요약, 학습 대화가 열지 못한다. 문서는 전사·요약 작업(ADR-0041)을 만들지 않고, 외부 모델 어디에도 보내지 않는다.
+   - **바이트**: 새 업로드 용도 `study_document`(`upload_policies`, multipart, 50 MB, 확장자 `pdf`, 내용 signature 확인)로 받는다. 업로드 기록과 같은 transaction에서 용량을 잡고 `study_room_documents` 행(과 폴더가 있으면 배치)을 만들고 업로드를 `attached`로 둔다. 파일은 과목 없이(`files.course_id` NULL) 기록하고 첨부하지 않으므로 녹음과 같이 과목 파일 경로, 미리보기, 과목 경로의 요약 API, 학습 대화가 열지 못한다. 녹음의 전사·요약 작업(ADR-0041)은 만들지 않는다.
    - **제목**: 1~300자(UTF-16 단위), 제어 문자는 받지 않는다. 보내지 않으면 업로드 이름 규칙으로 정리한 파일 이름에서 `.pdf`를 뺀 값이다. 응답의 `fileName`은 그 정리한 이름이고 내려받기 이름이다.
    - **멱등**: 업로드 key는 `Idempotency-Key` header나 multipart `key` 칸으로 받는다(둘 다 보내면 같아야 하고, 다르면 400). 요청 지문에 과목, 제목, 폴더를 넣는다. 재전송, 동시 요청, 그 사이 지운 문서(410 `document_deleted`)의 규칙은 녹음(6번)과 같다.
    - **고치기와 지우기**: 프론트엔드 계약대로 version을 header가 아니라 본문(`PATCH {title, version}`)과 query(`DELETE ?version=n`)로 받는다. 다르면 409 `version_conflict`, `DELETE`에 version이 없으면 428이다. 지우기는 녹음(9번)과 같고, 지운 파일 행의 이름은 `document.pdf`가 된다.
    - **내용**: `GET …/documents/{id}/content`는 소유자만 받는다. 응답 header와 Range 처리, 요청 제한(`play-rate-limit`)은 녹음 재생과 같고, 감사 기록(`study_room.document.read`)도 같은 session·문서마다 10분에 한 번이다. 검사 전이면 409 `file_scanning`과 `Retry-After: 10`이다. 거부했으면 422 `content_rejected`다. 녹음은 둘 다 409이지만, 문서는 "기다리면 받는다"(409와 `Retry-After`)와 "다시 받아도 바뀌지 않는다"를 상태 코드로 가르려고 422를 골랐다. 업로드에서 이미 거부된 내용이 받는 응답과 같다.
    - **용량**: 녹음과 문서가 `study_room_quotas.used_bytes` 하나(2 GB)를 함께 쓴다. 문서 수는 따로 500개(`astra.study-room.max-documents`, 409 `too_many_documents`)다. 크기 상한(413), 개수, 용량 순으로 답하는 것은 8번과 같다. 사용량 응답에 `documentCount`, `maxDocuments`, `maxDocumentFileBytes`를 더했다.
    - **배치**: 배치 경로의 종류에 `documents`를 더했다(`PUT/DELETE …/placements/documents/{documentId}`, 응답 `kind`는 `document`). 녹음처럼 같은 과목 폴더에만 둔다(409 `course_mismatch`).
+   - **요약**: (2026-11-14 개정, 소유자 결정) 처음 결정은 "문서는 외부 모델 어디에도 보내지 않는다"였다. 지금은 소유자가 `POST …/documents/{id}/summary`로 요청하면 강의자료 쪽별 요약과 같은 원장(`summary_jobs`, `job_origin = 'study_room'`), pipeline, worker, 출력 검사로 요약한다([ADR-0006](0006-summary-module.md) 8번). 쪽 이미지와 텍스트는 강의자료와 같은 rendition 경로(`DocumentRenditions`, 격리한 converter)가 만들고, worker가 작업을 잡을 때 만든다. 검사를 마치지 않은 문서는 409 `file_scanning`(`Retry-After: 10`), 거부된 문서는 422 `content_rejected`다. 교수자 동의는 보지 않고 배포 스위치·제공자 설정(503 `llm_disabled`), 처리 조건 고지, 개인정보 가림, 감사 기록은 같다([ADR-0032](0032-llm-consent-and-study-chat.md) 21번). 사용자마다 하루 20번(`astra.summary.study-document-daily-limit`, 429 `summary_daily_limit`과 다음 자정까지의 `Retry-After`)이다. 진행 중이거나 완료된 요약이 있으면 새 작업을 만들지 않고, 실패한 뒤의 요청은 앞 작업의 중간 결과를 이어받는 새 작업이다. `GET …/summary`는 `{status, message?, summary?}`이고 `summary`는 강의자료 게시본과 같은 모양이다. 쪽 이미지 cookie는 이 응답을 받는 소유자에게만 그 rendition 경로로 발급한다. 문서 보기에 가장 최근 요약의 상태 `summaryStatus`(요청한 적이 없으면 null)를 더했다. files는 summary에 의존하지 않으므로 상태는 summary가 구현하는 `files.api.StudyRoomDocumentSummaries`로 묻는다. 문서를 지우면 대기 중인 요약은 취소하고 실행 중인 요약에는 취소를 요청하며, 결과와 쪽 이미지는 저장소 GC가 파일의 파생물, rendition과 함께 지운다.
 
 ## 결과와 트레이드오프
 - 다른 기기에서 같은 폴더와 녹음을 본다. 녹음은 학교 저장소에 남으므로 브라우저 고지("이 브라우저에만 저장")는 프론트엔드가 바꿔야 한다.

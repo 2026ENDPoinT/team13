@@ -26,7 +26,9 @@ class SummaryJobRepository {
 	private static final String COLUMNS = """
 			summary_job_id, file_id, file_version_no, course_id, requested_by_user_id, retry_of_job_id, job_state, job_stage,
 			pages_done, pages_total, model_name, prompt_version, call_count, input_tokens, output_tokens, error_code,
-			error_message, cancel_requested_at, created_at, started_at, finished_at""";
+			error_message, cancel_requested_at, created_at, started_at, finished_at, job_origin""";
+
+	static final String STUDY_ROOM = "study_room";
 
 	private final JdbcClient jdbc;
 
@@ -57,6 +59,53 @@ class SummaryJobRepository {
 			.param("id", jobId)
 			.query(SummaryJobRepository::map)
 			.optional();
+	}
+
+	/**
+	 * 학생이 학습실의 자기 문서에 요청한 작업(ADR-0040 14번). 과목이 없고 교수자 동의를 보지 않는다.
+	 * @throws org.springframework.dao.DuplicateKeyException 같은 파일에 진행 중인 작업이 있을 때
+	 */
+	long insertStudyRoom(long fileId, int fileVersionNo, long requestedBy, Long retryOf) {
+		GeneratedKeyHolder key = new GeneratedKeyHolder();
+		this.jdbc.sql("""
+				INSERT INTO summary_jobs (file_id, file_version_no, job_origin, requested_by_user_id, retry_of_job_id)
+				VALUES (:fileId, :version, 'study_room', :requestedBy, :retryOf)
+				""")
+			.param("fileId", fileId)
+			.param("version", fileVersionNo)
+			.param("requestedBy", requestedBy)
+			.param("retryOf", retryOf)
+			.update(key, "summary_job_id");
+		return key.getKey().longValue();
+	}
+
+	/** 사용자가 오늘(기관 시간대, ADR-0039) 요청한 학습실 문서 요약 작업 수. */
+	int studyRoomRequestsToday(long userId) {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM summary_jobs
+				 WHERE job_origin = 'study_room' AND requested_by_user_id = :user AND created_at >= CURRENT_DATE()
+				""").param("user", userId).query(Integer.class).single();
+	}
+
+	/** 파일마다 가장 최근 작업. 작업이 없는 파일은 빠진다. */
+	List<SummaryJob> latestOfFiles(Collection<Long> fileIds) {
+		return this.jdbc.sql("SELECT " + COLUMNS + """
+				 FROM summary_jobs
+				 WHERE summary_job_id IN (SELECT MAX(summary_job_id) FROM summary_jobs WHERE file_id IN (:ids) GROUP BY file_id)
+				""").param("ids", fileIds).query(SummaryJobRepository::map).list();
+	}
+
+	/** 파일의 대기 작업을 취소하고 실행 중인 작업에는 취소를 요청한다. */
+	void cancelForFile(long fileId) {
+		this.jdbc.sql("""
+				UPDATE summary_jobs
+				   SET job_state = 'cancelled', cancel_requested_at = CURRENT_TIMESTAMP(3), finished_at = CURRENT_TIMESTAMP(3)
+				 WHERE file_id = :file AND job_state = 'queued'
+				""").param("file", fileId).update();
+		this.jdbc.sql("""
+				UPDATE summary_jobs SET cancel_requested_at = IFNULL(cancel_requested_at, CURRENT_TIMESTAMP(3))
+				 WHERE file_id = :file AND job_state = 'running'
+				""").param("file", fileId).update();
 	}
 
 	/** 파일의 최근 작업. 최신이 먼저다. */
@@ -255,7 +304,8 @@ class SummaryJobRepository {
 				rs.getObject("pages_total", Integer.class), rs.getString("model_name"), rs.getString("prompt_version"),
 				rs.getInt("call_count"), rs.getLong("input_tokens"), rs.getLong("output_tokens"),
 				rs.getString("error_code"), rs.getString("error_message"), rs.getTimestamp("cancel_requested_at") != null,
-				instant(rs, "created_at"), instant(rs, "started_at"), instant(rs, "finished_at"));
+				instant(rs, "created_at"), instant(rs, "started_at"), instant(rs, "finished_at"),
+				STUDY_ROOM.equals(rs.getString("job_origin")));
 	}
 
 	private static Instant instant(ResultSet rs, String column) throws SQLException {

@@ -16169,6 +16169,19 @@
      "relType": "ZERO_OR_ONE_OR_MANY"
     },
     {
+     "_id": "r2BkCAPCt2t3mSq8f",
+     "name": "요청 출처",
+     "pName": "job_origin",
+     "domain": "",
+     "type": "VARCHAR(12)",
+     "defaultValue": "'course'",
+     "isAllowNull": false,
+     "comment": "요청 출처: course(교수자가 요청한 강의자료 요약)|study_room(학생이 요청한 학습실 내 문서 요약)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "jB4eDT3PfepYNLHhR",
      "name": "작업을 요청한 사용자 ID",
      "pName": "requested_by_user_id",
