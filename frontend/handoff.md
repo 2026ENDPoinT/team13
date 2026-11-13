@@ -1,5 +1,26 @@
 # Handoff
 
+## 2026-11-14 공지를 읽으면 왼쪽 메뉴 "공지사항" 수가 새로 고침 없이 줄어든다
+
+### 작업 내용
+- 원인: 왼쪽 메뉴 수(`shell.tsx:62`)는 `GET /api/me/courses`의 `unreadNotices`를 읽고, 이 목록은 접속할 때(`backend.ts` `load`) 한 번만 받는다. 공지를 열어 `markNoticeRead`(`notices-remote.ts:90-102`)가 `POST …/read`를 보내도 공지 목록·상세 캐시만 고치고 과목 목록은 그대로였다.
+- `backend.ts` `refreshCourses()`: `GET /api/me/courses`를 다시 받아 과목 기록을 바꾸고 구독자를 다시 그린다(`ready`일 때만, 그 사이 세션이 바뀌었으면 버린다). 폴링은 없다. 읽음 한 번에 한 번 받는다.
+- `home-remote.ts` `followNoticeRead()`: 읽은 공지를 홈 집계 `notices`에서 읽음으로 바꾸고, 다시 받은 과목 기록의 `unreadNotices`를 홈 집계 `courses`에 옮긴다(`applyCourseCounts`, 교수 공지 화면의 과목 카드가 읽는다). `markNoticeRead`가 읽음 응답 뒤에 부른다.
+- `notices-remote.ts`: 읽음 한 번 보내기 기록(`readSent`)은 이제 세션(상태·사용자)이 바뀔 때만 지운다. 이전에는 백엔드 상태가 바뀔 때마다 지워 과목 기록을 다시 받는 것만으로도 지워졌다.
+- 알림마당 공지(홈 `communityNotices`): 수를 보이는 곳이 없고, 읽으면 `site-notices-remote.ts` `rememberRead`가 이미 홈 집계의 행을 읽음으로 바꾼다. 고칠 것이 없었다.
+
+### 변경 파일
+- `src/shared/backend.ts`, `src/shared/home-remote.ts`, `src/shared/notices-remote.ts`
+- 테스트 `tests/integration/notice-read-counts.test.ts`(새)
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 통과, `npm run build` 통과(청크 크기 경고만).
+- 백엔드 origin/main 5f1dff0 run-only + 프런트 4193: 교수 P-1042로 `bi`에 공지 2개 등록, 학생 21101234의 공지사항 화면 왼쪽 메뉴 "공지사항 5" → "감사 공지 1" 열기 → `POST …/notices/22/read` 뒤 `GET /api/me/courses` 한 번 → "공지사항 4", 두 번째 공지 → "공지사항 3"(새로 고침 없음).
+- 학생 홈의 과목 카드에는 안 읽은 공지 수가 없다. 시드에 알림마당 공지가 없어 홈 알림마당 줄은 브라우저로 보지 못했다.
+
+### 남은 작업
+- 없음.
+
 ## 2026-11-14 목업: "오늘 할 일 전부 해줘" → 기계학습·고급웹 Plan 자동 시작
 
 ### 작업 내용
