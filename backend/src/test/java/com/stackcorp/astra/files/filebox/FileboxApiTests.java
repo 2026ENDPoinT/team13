@@ -432,6 +432,26 @@ class FileboxApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void aFileOverTheSizeLimitIsTooLargeEvenWithNoRoomLeft() throws Exception {
+		// 항목을 지워도 풀리지 않는 이유(파일 크기)를 용량 부족보다 먼저 답한다.
+		this.jdbc.sql("INSERT INTO filebox_quotas (owner_user_id, quota_bytes) VALUES (:u, 10)")
+			.param("u", this.ownerId)
+			.update();
+		this.jdbc.sql("UPDATE upload_policies SET max_file_bytes = 20 WHERE policy_code = 'filebox'").update();
+		try {
+			FileboxCalls.upload(this.owner, null, "big.txt", text(), null)
+				.andExpect(status().isContentTooLarge())
+				.andExpect(jsonPath("$.code").value("too_large"));
+		}
+		finally {
+			this.jdbc.sql("UPDATE upload_policies SET max_file_bytes = 52428800 WHERE policy_code = 'filebox'").update();
+		}
+		FileboxCalls.upload(this.owner, null, "big.txt", text(), null)
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("quota_exceeded"));
+	}
+
+	@Test
 	void concurrentUploadsNeverExceedTheQuota() throws Exception {
 		this.jdbc.sql("INSERT INTO filebox_quotas (owner_user_id, quota_bytes) VALUES (:u, 250)")
 			.param("u", this.ownerId)

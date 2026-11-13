@@ -413,7 +413,9 @@ class FileboxService {
 			if (parentId != null) {
 				activeFolder(owner, parentId);
 			}
-			// 저장하기 전에 한 번 본다. 정확한 검사는 기록할 때 잠근 뒤에 한다.
+			// 저장하기 전에 한 번 본다. 정확한 검사는 기록할 때 잠근 뒤에 한다. 파일 하나의 크기 상한(413)은 항목을 지워도 풀리지 않으므로
+			// 용량·개수보다 먼저 본다. 잠근 뒤의 검사 앞에서는 업로드 흐름이 크기를 이미 본다.
+			this.uploads.requireSize(file.getSize());
 			requireRoom(this.records.quota(owner), file.getSize(), 1);
 		}
 		long uploadId = this.uploads.receive(owner, file, idempotencyKey, parentId, new FileboxUploads.Target() {

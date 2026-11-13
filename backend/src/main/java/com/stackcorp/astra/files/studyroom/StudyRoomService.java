@@ -559,7 +559,12 @@ class StudyRoomService {
 			.orElseThrow(ApiException::notFound);
 	}
 
+	/**
+	 * 녹음 하나를 더 둘 수 있는지. 오래가는 이유부터 답한다. 파일 하나의 크기 상한(413 {@code too_large})은 녹음을 지워도 풀리지
+	 * 않으므로 개수(409 {@code too_many_recordings})와 용량(409 {@code quota_exceeded})보다 먼저 본다.
+	 */
 	private void requireRoom(Quota quota, long bytes) {
+		this.uploads.requireSize(bytes);
 		if (quota.recordingCount() + 1 > this.properties.maxRecordings()) {
 			throw new ApiException(HttpStatus.CONFLICT, "too_many_recordings",
 					"녹음은 " + this.properties.maxRecordings() + "개까지 저장할 수 있습니다.");

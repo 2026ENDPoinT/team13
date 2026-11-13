@@ -138,9 +138,7 @@ class UploadService {
 		if (size <= 0) {
 			throw rejected("empty_file", "빈 파일은 올릴 수 없습니다.");
 		}
-		if (policy.maxFileBytes() != null && size > policy.maxFileBytes()) {
-			throw new ApiException(HttpStatus.CONTENT_TOO_LARGE, "too_large", "파일이 너무 큽니다.");
-		}
+		requireSize(policy, size);
 
 		Inspected inspected = inspect(file, size);
 		String mime = ContentInspector.detect(extension, inspected.head())
@@ -225,6 +223,16 @@ class UploadService {
 				throw new IllegalStateException("지운 blob을 다시 참조하지 못했습니다.");
 			}
 			existing = this.records.blob(sha);
+		}
+	}
+
+	/**
+	 * 파일 하나의 크기 상한. 넘으면 413 {@code too_large}다. 용량·개수 한도를 보는 쪽은 이것을 먼저 본다. 용량을 비워도 받을 수 없는
+	 * 파일에 용량이 부족하다고 답하지 않기 위해서다.
+	 */
+	static void requireSize(Policy policy, long size) {
+		if (policy.maxFileBytes() != null && size > policy.maxFileBytes()) {
+			throw new ApiException(HttpStatus.CONTENT_TOO_LARGE, "too_large", "파일이 너무 큽니다.");
 		}
 	}
 

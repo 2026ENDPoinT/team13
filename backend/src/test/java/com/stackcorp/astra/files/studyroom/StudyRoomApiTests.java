@@ -727,6 +727,39 @@ class StudyRoomApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void aFileOverTheSizeLimitIsTooLargeEvenWithNoRoomLeft() throws Exception {
+		// 용량을 비워도 풀리지 않는 이유(파일 크기)를 먼저 답한다. 업로드 요청 제한(테스트 설정 6회) 때문에 요청마다 새 구성원으로 보낸다.
+		String at = Instant.now().toString();
+		long full = member();
+		this.jdbc.sql("INSERT INTO study_room_quotas (owner_user_id, used_bytes, recording_count) VALUES (:o, :b, 500)")
+			.param("o", full)
+			.param("b", 2L * 1024 * 1024 * 1024)
+			.update();
+		long tight = member();
+		this.jdbc.sql("INSERT INTO study_room_quotas (owner_user_id, used_bytes) VALUES (:o, :b)")
+			.param("o", tight)
+			.param("b", 2L * 1024 * 1024 * 1024 - 10)
+			.update();
+		this.jdbc.sql("UPDATE upload_policies SET max_file_bytes = 20 WHERE policy_code = 'study_recording'").update();
+		try {
+			record(client(full), this.course, "r.webm", webm(), "녹음", "mic", "10", at, null, null)
+				.andExpect(status().isContentTooLarge())
+				.andExpect(jsonPath("$.code").value("too_large"));
+			record(client(tight), this.course, "r.webm", webm(), "녹음", "mic", "10", at, null, null)
+				.andExpect(status().isContentTooLarge())
+				.andExpect(jsonPath("$.code").value("too_large"));
+		}
+		finally {
+			this.jdbc.sql("UPDATE upload_policies SET max_file_bytes = 52428800 WHERE policy_code = 'study_recording'")
+				.update();
+		}
+		// 크기 상한 안의 파일은 그대로 용량 부족이다.
+		record(client(tight), this.course, "r.webm", webm(), "녹음", "mic", "10", at, null, null)
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("quota_exceeded"));
+	}
+
+	@Test
 	void deletingARecordingReleasesItsFileAndPlacement() throws Exception {
 		long folderId = folder(this.owner, this.course, "강의");
 		long id = id(record(this.owner, this.course, "r.webm", webm(), "녹음", "mic", "10", Instant.now().toString(), folderId,
