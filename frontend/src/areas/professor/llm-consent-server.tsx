@@ -2,7 +2,8 @@
 // terms (`GET /api/llm/policy`), my consent per scope for this course with grant (acknowledgement
 // when the terms say cross-border transfer or training use) and revoke, re-consent when the terms
 // changed (`current: false` or 409 `llm_policy_changed`), and the course's LLM usage. An instructor
-// who may not consent (`canGrant: false`, a teaching assistant) sees the state read-only except revoke. Summary
+// who may not consent (`canGrant: false`, a teaching assistant) sees the state read-only except revoke. A
+// deployment with the feature off (`enabled: false`) lists only granted scopes, each with revoke. Summary
 // jobs refused with 409 `llm_consent_required` / 503 `llm_disabled` point here.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, LoadingState, ErrorState } from "../../ui/kit.tsx";
@@ -94,19 +95,37 @@ function ConsentSection({ courseId }: { courseId: number | string }) {
         <Fact label="고지 판" value={p.noticeVersion || "-"} />
       </dl>
     );
-    if (!p.enabled) {
+    // A disabled deployment (switch off or no provider key) takes no new consent, but a consent given earlier stays
+    // listed with only "철회" so it can be withdrawn before a provider is configured again.
+    const enabled = Boolean(p.enabled);
+    const rows = (Array.isArray(mine.data) ? mine.data : []).filter((item) => SCOPES[item.scope] && (enabled || item.granted));
+    // A teaching assistant (`canGrant: false`) sees the state without consent buttons or the "terms changed" label;
+    // an old consent of theirs can still be revoked (the backend keeps revoke for every instructor).
+    const decider = mayGrant(mine.data);
+    const scopeRows = rows.map((item) => (
+      <ScopeRow
+        key={item.scope}
+        item={item}
+        enabled={enabled}
+        decider={decider}
+        policy={p}
+        courseId={courseId}
+        acknowledged={acknowledged}
+        say={say}
+        onPolicyChanged={() => { setAcknowledged(false); void loadPolicy(); }}
+        focusAck={() => ack.current?.focus()}
+      />
+    ));
+    if (!enabled) {
       body = (
         <>
           <p className="pf-sub" role="note">이 서비스에서는 외부 AI 기능을 쓰지 않습니다. 쪽별 요약 생성과 학생 학습 대화가 모두 꺼져 있습니다. 이미 게시한 요약은 학생에게 계속 보입니다.</p>
           {terms}
+          {scopeRows}
         </>
       );
     } else {
       const u = usage && usage.data;
-      const rows = (Array.isArray(mine.data) ? mine.data : []).filter((item) => SCOPES[item.scope]);
-      // A teaching assistant (`canGrant: false`) sees the state without consent buttons or the "terms changed" label;
-      // an old consent of theirs can still be revoked (the backend keeps revoke for every instructor).
-      const decider = mayGrant(mine.data);
       body = (
         <>
           {decider
@@ -119,19 +138,7 @@ function ConsentSection({ courseId }: { courseId: number | string }) {
               <span>국외 이전과 제공자의 학습 이용 가능성을 확인했습니다</span>
             </label>
           ) : null}
-          {rows.map((item) => (
-            <ScopeRow
-              key={item.scope}
-              item={item}
-              decider={decider}
-              policy={p}
-              courseId={courseId}
-              acknowledged={acknowledged}
-              say={say}
-              onPolicyChanged={() => { setAcknowledged(false); void loadPolicy(); }}
-              focusAck={() => ack.current?.focus()}
-            />
-          ))}
+          {scopeRows}
           {u ? <p className="pf-meta">{`사용량 · 쪽별 요약 ${u.pageSummary ? u.pageSummary.calls : 0}회 호출, ${tokensText(u.pageSummary ? u.pageSummary.inputTokens + u.pageSummary.outputTokens : 0)} · 학습 대화 오늘 ${tokensText(u.studyChatTodayTokens)} / 하루 ${tokensText(u.studyChatDailyTokenBudget)}`}</p> : null}
         </>
       );
@@ -148,6 +155,8 @@ function ConsentSection({ courseId }: { courseId: number | string }) {
 
 interface ScopeRowProps {
   item: LlmConsent;
+  /** `enabled` of the policy: when false only the "철회" control of a granted row is offered. */
+  enabled: boolean;
   decider: boolean;
   policy: LlmPolicy;
   courseId: number | string;
@@ -157,7 +166,7 @@ interface ScopeRowProps {
   focusAck: () => void;
 }
 
-function ScopeRow({ item, decider, policy, courseId, acknowledged, say, onPolicyChanged, focusAck }: ScopeRowProps) {
+function ScopeRow({ item, enabled, decider, policy, courseId, acknowledged, say, onPolicyChanged, focusAck }: ScopeRowProps) {
   const [granting, setGranting] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -165,7 +174,8 @@ function ScopeRow({ item, decider, policy, courseId, acknowledged, say, onPolicy
   useEffect(() => () => { live.current = false; }, []);
   const state = !item.granted ? "동의하지 않음"
     : !decider ? "예전에 남긴 동의(효력 없음)"
-    : item.current ? "동의함" : "처리 조건이 바뀌어 다시 동의해야 합니다";
+    : !item.current ? "처리 조건이 바뀌어 다시 동의해야 합니다"
+    : enabled ? "동의함" : "동의함 · 외부 AI 기능이 꺼져 있어 지금은 쓰이지 않음";
 
   async function grant() {
     if (granting) return;
@@ -211,7 +221,7 @@ function ScopeRow({ item, decider, policy, courseId, acknowledged, say, onPolicy
       <b>{SCOPES[item.scope]}</b>
       <span className="pf-meta">{state}</span>
       <div className="pf-actions">
-        {decider && (!item.granted || !item.current) ? (
+        {enabled && decider && (!item.granted || !item.current) ? (
           <Button kind="primary" disabled={granting} aria-busy={granting ? "true" : undefined} onClick={() => { void grant(); }}>
             {granting ? "보내는 중…" : item.granted ? "다시 동의" : "동의"}
           </Button>

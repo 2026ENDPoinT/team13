@@ -5,7 +5,7 @@ import { matchScreen, screens } from "./manifest.ts";
 import { equivalentHref } from "./shared/routes.ts";
 import { getState, save, render, toast } from "./store.ts";
 import { activities, courseById } from "./data.ts";
-import { followRole } from "./shared/backend.ts";
+import { backendStatus, followRole, logout as logoutBackend } from "./shared/backend.ts";
 import { assignmentIdOf } from "./shared/assignments-remote.ts";
 import { quizIdOf } from "./shared/quizzes-remote.ts";
 import { surveyIdOf } from "./shared/surveys-remote.ts";
@@ -158,6 +158,14 @@ export interface NavigateOptions {
   /** Keep the address as given instead of mapping it to the current role's equivalent. */
   allowExit?: boolean;
   logout?: boolean;
+  /** With `logout`: the server confirmed the end of the session (the logged-out page may say so). */
+  serverLogout?: boolean;
+}
+
+/** True on the logged-out page entry pushed right after a logout the server confirmed. */
+export function serverLogoutConfirmed(): boolean {
+  const entry: unknown = history.state;
+  return Boolean(entry && typeof entry === "object" && "serverLogout" in entry && entry.serverLogout === true);
 }
 
 export function navigate(href: string, opts: NavigateOptions = {}) {
@@ -168,7 +176,7 @@ export function navigate(href: string, opts: NavigateOptions = {}) {
     state.role = "student";
     state.navOpen = false;
     save();
-    history.pushState({}, "", "/ilos/lo/logout.acl");
+    history.pushState(opts.serverLogout ? { serverLogout: true } : {}, "", "/ilos/lo/logout.acl");
     applyRoute();
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     return;
@@ -217,10 +225,23 @@ export interface FollowOptions {
   resetScroll?: boolean;
 }
 
+// A server logout in flight: further 로그아웃 clicks are ignored (one POST, one logged-out history entry).
+let loggingOut = false;
+
 /** What an in-app link does when clicked: navigate, switching role or logging out when asked. */
 export function followLink(href: string, opts: FollowOptions = {}) {
   if (opts.logout) {
-    navigate("/ilos/lo/logout.acl", { logout: true });
+    // Signed in to the server: end that session first (as the backend strip's 로그아웃 does). A confirmed end
+    // empties every per-user cache and saved input (`onSignOut`), then the logged-out page shows; a failed one
+    // keeps the user where they are, still signed in, and says so.
+    if (loggingOut) return;
+    if (backendStatus() === "ready") {
+      loggingOut = true;
+      logoutBackend().then(
+        () => navigate("/ilos/lo/logout.acl", { logout: true, serverLogout: true }),
+        (error: unknown) => toast(error instanceof Error ? error.message : String(error)),
+      ).finally(() => { loggingOut = false; });
+    } else navigate("/ilos/lo/logout.acl", { logout: true });
     return;
   }
   if (opts.roleSwitch) {

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { seedState, activities, type AppState } from "./data.ts";
+import { mayStoreUserData, onSignOut } from "./shared/backend.ts";
 
 const KEY = "astra-state";
 let state = load();
@@ -64,6 +65,9 @@ export function getState(): AppState {
 }
 
 export function save() {
+  // This tab still holds a user another tab has signed out (it catches up on the storage event): writing now
+  // would put that user's search words and input back for the next one.
+  if (!mayStoreUserData()) return;
   try {
     localStorage.setItem(KEY, JSON.stringify({ ...state, toast: "" }));
     if (state.themeMode === "light" || state.themeMode === "dark") localStorage.setItem("astra-theme", state.themeMode);
@@ -84,6 +88,16 @@ export function update(mutator: (state: AppState) => void) {
   save();
   render();
 }
+
+// Server screens save what the signed-in user typed with the app state: search words (`queries`), list filters and
+// unsaved input (`draft`) and form errors. They go with that user (logout, expired session, another user). The
+// sample-only parts (home command bar, sample submissions) stay.
+onSignOut(() => update((current) => {
+  const seed = seedState();
+  current.queries = seed.queries;
+  current.draft = seed.draft;
+  current.formError = seed.formError;
+}));
 
 export function subscribe(fn: () => void) {
   listeners.add(fn);

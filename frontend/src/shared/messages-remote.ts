@@ -20,6 +20,8 @@ export interface MessagePerson {
   userId: number;
   name: string;
   role?: string;
+  /** `sender`/`firstRecipient` of a list row: false when I cannot get this person's photo. Absent on contacts. */
+  hasPhoto?: boolean;
 }
 
 export interface MessageCourse {

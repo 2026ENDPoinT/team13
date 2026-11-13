@@ -130,7 +130,8 @@ function NoticeForm({ course, courseId, editId }: { course: Course; courseId: nu
     if (!editId || filled || !notice) return;
     adoptVersion(version.current, notice);
     setFilled(notice);
-    setStatus({ text: `${koDateTime(notice.updatedAt)}에 마지막으로 수정한 공지입니다.`, alert: false });
+    // A notice never edited has no `updatedAt`: no sentence then, rather than one without a date.
+    if (notice.updatedAt) setStatus({ text: `${koDateTime(notice.updatedAt)}에 마지막으로 수정한 공지입니다.`, alert: false });
   }, [editId, filled, notice]);
 
   const waiting = Boolean(editId) && !filled;

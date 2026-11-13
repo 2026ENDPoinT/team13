@@ -50,7 +50,11 @@ function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
   if (status === "ready" && me) {
     const signOut = () => {
       setBusy(true);
-      void logout().finally(() => {
+      say("");
+      // A failed logout keeps the session; say so instead of looking signed out.
+      void logout().catch((error: unknown) => {
+        if (live.current) say(error instanceof Error ? error.message : String(error), true);
+      }).finally(() => {
         if (live.current) setBusy(false);
       });
     };
