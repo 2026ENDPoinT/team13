@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { courseById, type Course } from "../../data.ts";
 import { hrefFor, find } from "../../manifest.ts";
 import type { ScreenCtx } from "../../types.ts";
@@ -23,6 +23,7 @@ import { serverStudyLecture } from "./study-server.tsx";
 import { RecordingStudyView, demoRecordingStudy } from "./recording-study.tsx";
 import { printSummaryPdf } from "./recording-summary-pdf.ts";
 import { liveTranscript, onLiveTranscriptChange } from "../../shared/live-transcript.ts";
+import { clock } from "./recording-study.tsx";
 import { recordingJobPending } from "../../shared/recording-study.ts";
 
 const SOURCES: { id: RecordingSource; label: string; hint: string }[] = [
@@ -171,43 +172,55 @@ function UnsavedList() {
   );
 }
 
-/** 녹음 중 하단에 쭉 이어지는 실시간 전사(브라우저 음성 인식). 맨 아래에 있으면 새 줄을 따라가고, 위로 올려 읽는 중이면 멈춘다. */
-function LiveTranscriptPanel({ source }: { source: RecordingSource }) {
+/**
+ * 녹음 중 왼쪽 아래에 쭉 이어지는 실시간 전사(브라우저 음성 인식). 저장된 녹음 화면의 전사 목록과 같은 모양이다.
+ * 맨 아래에 있으면 새 줄을 따라가고, 위로 올려 읽으면 멈추고 "최신 전사" 버튼을 보인다.
+ */
+function LiveTranscript({ source, elapsedMs }: { source: RecordingSource; elapsedMs: number }) {
   const live = useSyncExternalStore(onLiveTranscriptChange, liveTranscript);
-  const box = useRef<HTMLDivElement>(null);
-  const follow = useRef(true);
+  const box = useRef<HTMLOListElement>(null);
+  const [follow, setFollow] = useState(true);
   useEffect(() => {
-    const el = box.current;
-    if (el && follow.current) el.scrollTop = el.scrollHeight;
-  }, [live.lines, live.interim]);
-  if (source !== "mic") return <p className="rec-note">탭 소리 녹음은 실시간 전사를 지원하지 않습니다. 저장한 뒤 서버가 전사를 제공하면 녹음 화면에 표시됩니다.</p>;
-  if (!live.supported) return <p className="rec-note">이 브라우저는 실시간 전사를 지원하지 않습니다. 데스크톱 Chrome 또는 Edge에서 열어 주세요. 녹음은 그대로 됩니다.</p>;
-  const empty = !live.lines.length && !live.interim;
+    const list = box.current;
+    if (list && follow) list.scrollTop = list.scrollHeight;
+  }, [live.lines, live.interim, follow]);
+  const state = (title: string, body: string) => (
+    <div className="rs-transcript is-empty">
+      <p className="lv-state" role="status"><strong>{title}</strong>{body}</p>
+    </div>
+  );
+  if (source !== "mic") return state("탭 소리는 실시간 전사를 지원하지 않습니다", "저장한 뒤 서버가 전사를 제공하면 녹음 화면에 표시됩니다.");
+  if (!live.supported) return state("이 브라우저는 실시간 전사를 지원하지 않습니다", "데스크톱 Chrome 또는 Edge에서 열어 주세요. 녹음은 그대로 됩니다.");
+  if (!live.lines.length && !live.interim) {
+    if (live.error) return state("실시간 전사가 멈췄습니다", live.error);
+    return live.listening ? state("듣는 중입니다", "말씀하시면 여기에 글로 나타납니다.") : state("일시정지 중입니다", "다시 시작하면 이어서 전사합니다.");
+  }
   return (
-    <section className="rec-live-transcript" aria-label="실시간 전사">
-      <h2>
-        <span>실시간 전사</span>
-        <small>{live.error ? "멈춤" : live.listening ? "듣는 중" : "일시정지"}</small>
-      </h2>
-      <div
-        ref={box} className="rec-live-lines" role="log" aria-live="off" tabIndex={0}
+    <div className="rs-transcript">
+      <ol
+        ref={box} className="rs-lines" aria-label="실시간 전사"
         onScroll={(event) => {
-          const el = event.currentTarget;
-          follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+          const list = event.currentTarget;
+          setFollow(list.scrollHeight - list.scrollTop - list.clientHeight < 24);
         }}
       >
-        {empty ? <p className="rec-live-empty">{live.error ? "" : live.listening ? "말씀하시면 여기에 글로 나타납니다." : "다시 시작하면 이어서 전사합니다."}</p> : null}
         {live.lines.map((line, index) => (
-          <p key={index} className="rec-live-line"><time>{formatDuration(line.at)}</time><span>{line.text}</span></p>
+          <li key={index}><div className="rs-line"><time>{clock(line.at / 1000)}</time><span>{line.text}</span></div></li>
         ))}
-        {live.interim ? <p className="rec-live-line is-interim"><time aria-hidden="true" /><span>{live.interim}</span></p> : null}
-      </div>
+        {live.interim ? <li><div className="rs-line" aria-current="true"><time>{clock(elapsedMs / 1000)}</time><span>{live.interim}</span></div></li> : null}
+      </ol>
       {live.error ? <p className="err" role="alert">{live.error}</p> : null}
-      <p className="rec-note">브라우저의 음성 인식으로 만든 임시 전사입니다. 이 화면에만 보이고 저장되지 않으며, Chrome·Edge는 음성을 브라우저 제공사 서버로 보내 인식합니다. 틀린 부분이 있을 수 있습니다.</p>
-    </section>
+      {!follow ? (
+        <button type="button" className="rs-follow" onClick={() => setFollow(true)}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg>
+          최신 전사
+        </button>
+      ) : null}
+    </div>
   );
 }
 
+/** 녹음 중 화면: 저장된 녹음 화면과 같은 배치(왼쪽 녹음 카드와 전사, 오른쪽 요약 자리)에서 전사가 바로 아래로 이어진다. */
 function LiveView({ live }: { live: ActiveRecording }) {
   const [now, setNow] = useState(live);
   const [saving, setSaving] = useState(false);
@@ -224,38 +237,82 @@ function LiveView({ live }: { live: ActiveRecording }) {
   }, []);
   const onServer = serverStudyCourse(live.courseId) != null && !live.browserOnly;
   const near = now.limitBytes != null && now.bytes >= now.limitBytes * WARN_SHARE;
+  const pause = () => {
+    if (live.paused) resumeRecording();
+    else pauseRecording();
+    render();
+  };
   return (
-    <div className={`rec-panel rec-live${live.paused ? " paused" : ""}`}>
-      <div className="rec-state">
-        <span className="rec-dot" aria-hidden="true" />
-        <span>{`${live.paused ? "일시정지" : live.appendTo ? "이어서 녹음 중" : "녹음 중"} · ${sourceLabel(live.source)}`}</span>
+    <>
+      <header className="rs-head">
+        <div>
+          <h1>{live.title}</h1>
+          <p className="tiny">{`${sourceLabel(live.source)} · ${formatDuration(now.elapsedMs)} · ${dateTime.format(live.startedAt)}`}</p>
+        </div>
+        <div className="rs-menu">
+          <button type="button" className="rs-menu-btn" disabled aria-label="다운로드(저장한 뒤 사용할 수 있습니다)" title="저장한 뒤 내려받을 수 있습니다.">
+            <Icon name="download" />
+          </button>
+        </div>
+      </header>
+      <div className="rs">
+        <div className="rs-left">
+          <section className={`rs-player rec-live${live.paused ? " paused" : ""}`} aria-label="녹음 중">
+            <div className="rs-player-top">
+              <h2 className="rec-state"><span className="rec-dot" aria-hidden="true" />{live.paused ? "일시정지" : live.appendTo ? "이어서 녹음 중" : "녹음 중"}</h2>
+              <span role="status">{live.paused ? "일시정지" : "녹음 중"}</span>
+            </div>
+            <input
+              type="range" className="rs-seek" min={0} max={1} step={0.1} value={1} disabled readOnly
+              aria-label="재생 위치(녹음 중에는 쓸 수 없음)" style={{ "--rs-fill": "100%" } as CSSProperties}
+            />
+            <div className="rs-times"><span>{clock(0)}</span><span>{clock(now.elapsedMs / 1000)}</span></div>
+            <div className="rs-controls">
+              <button type="button" className="rs-rate" disabled aria-label="재생 속도(녹음 중에는 쓸 수 없음)">1×</button>
+              <div className="rs-transport">
+                <span className="rs-skip" aria-hidden="true" />
+                <button type="button" className="rs-play" aria-label={live.paused ? "다시 시작" : "일시정지"} onClick={pause}>
+                  <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true">
+                    {live.paused
+                      ? <path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2Z" />
+                      : <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" />}
+                  </svg>
+                </button>
+                <span className="rs-skip" aria-hidden="true" />
+              </div>
+              <span className="rs-rate-spacer" aria-hidden="true" />
+            </div>
+            <button
+              type="button" className="btn btn-primary rs-stop" disabled={saving}
+              onClick={() => {
+                setSaving(true);
+                // The recorder screen follows the "saved" or "error" event to the next view.
+                stopRecording().catch(() => {});
+              }}
+            >
+              {saving ? "저장 중…" : "중지하고 저장"}
+            </button>
+            {now.limitBytes ? <p className="rec-note">{`파일 크기 ${formatBytes(now.bytes)} / 서버 한도 ${formatBytes(now.limitBytes)}`}</p> : null}
+            {near ? <p className="err" role="alert">곧 서버의 파일 크기 한도에 닿습니다. 한도에 닿으면 녹음을 멈추고 저장합니다. 이어서 녹음하려면 그 뒤에 새로 시작하세요.</p> : null}
+          </section>
+        <LiveTranscript source={live.source} elapsedMs={now.elapsedMs} />
       </div>
-      <strong className="rec-clock">{formatDuration(now.elapsedMs)}</strong>
-      {live.appendTo ? <p className="rec-note">{`"${live.appendTo.title}" 뒤에 이어 녹음합니다. 중지하면 한 파일로 저장됩니다.`}</p> : null}
-      {now.limitBytes ? <p className="rec-note">{`파일 크기 ${formatBytes(now.bytes)} / 서버 한도 ${formatBytes(now.limitBytes)}`}</p> : null}
-      {near ? <p className="err" role="alert">곧 서버의 파일 크기 한도에 닿습니다. 한도에 닿으면 녹음을 멈추고 저장합니다. 이어서 녹음하려면 그 뒤에 새로 시작하세요.</p> : null}
-      <div className="btn-row">
-        {live.paused
-          ? <Button kind="secondary" onClick={() => { resumeRecording(); render(); }}>다시 시작</Button>
-          : <Button kind="secondary" onClick={() => { pauseRecording(); render(); }}>일시정지</Button>}
-        <Button
-          kind="primary" disabled={saving}
-          onClick={() => {
-            setSaving(true);
-            // The recorder screen follows the "saved" or "error" event to the next view.
-            stopRecording().catch(() => {});
-          }}
-        >
-          {saving ? "저장 중…" : "중지하고 저장"}
-        </Button>
-      </div>
-      <LiveTranscriptPanel source={live.source} />
-      <p className="rec-note">다른 화면으로 이동해도 녹음은 계속됩니다. 저장하기 전에 이 탭을 닫으면 녹음이 사라집니다.</p>
-      {live.browserOnly && studyRoomOnServer()
-        ? <p className="rec-note">이 브라우저에만 있는 폴더에서 시작한 녹음이라 이 브라우저에만 저장됩니다. 서버로 옮기려면 저장한 뒤 ‘내 계정으로 옮기기’를 누르세요.</p>
-        : null}
-      <TranscriptNote onServer={onServer} />
+      <section className="rs-tools" aria-label="요약">
+        <div className="lv-panel rs-panel">
+          <p className="lv-state" role="status"><strong>요약은 녹음을 저장한 뒤 만들어집니다</strong>서버에서 제공하는 경우 처리 후 이 자리에 표시됩니다.</p>
+        </div>
+        <div className="rs-notes">
+          {live.appendTo ? <p className="rec-note">{`"${live.appendTo.title}" 뒤에 이어 녹음합니다. 중지하면 한 파일로 저장됩니다.`}</p> : null}
+          <p className="rec-note">다른 화면으로 이동해도 녹음은 계속됩니다. 저장하기 전에 이 탭을 닫으면 녹음이 사라집니다.</p>
+          {live.browserOnly && studyRoomOnServer()
+            ? <p className="rec-note">이 브라우저에만 있는 폴더에서 시작한 녹음이라 이 브라우저에만 저장됩니다. 서버로 옮기려면 저장한 뒤 ‘내 계정으로 옮기기’를 누르세요.</p>
+            : null}
+          <TranscriptNote onServer={onServer} />
+          {live.source === "mic" ? <p className="rec-note">실시간 전사는 브라우저의 음성 인식으로 만든 임시 전사입니다. 이 화면에만 보이고 저장되지 않으며, Chrome·Edge는 음성을 브라우저 제공사 서버로 보내 인식합니다. 틀린 부분이 있을 수 있습니다.</p> : null}
+        </div>
+      </section>
     </div>
+    </>
   );
 }
 
@@ -589,7 +646,7 @@ function Recording({ course, id }: { course: Course; id: string | null }) {
   return (
     <section className="study rec" data-area="home">
       <p className="term"><Link href={hrefFor(find("study_home"))}>학습실</Link>{" · "}<Link href={folderHref(course.id)}>{course.cardTitle || course.ko}</Link></p>
-      {id ? null : <h1><Icon name="mic" /><span>강의 녹음</span></h1>}
+      {id || (live && live.courseId === course.id) ? null : <h1><Icon name="mic" /><span>강의 녹음</span></h1>}
       {body}
     </section>
   );

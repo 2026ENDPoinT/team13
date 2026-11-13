@@ -90,6 +90,9 @@ export interface ActiveRecording {
   browserOnly: boolean;
   /** "이어서 녹음": the recording this one is joined to when it stops. `elapsedMs` and `bytes` include it. */
   appendTo: { id: string; title: string } | null;
+  /** The title and start the recording gets when saved (a continuation keeps its original recording's). */
+  title: string;
+  startedAt: Date;
 }
 
 /** Audio that neither IndexedDB nor the server took; kept in memory for this page and offered as a download. */
@@ -860,6 +863,8 @@ export function activeRecording(): ActiveRecording | null {
     elapsedMs: elapsed(session) + (append ? append.record.durationMs : 0), bytes: totalBytes(session), limitBytes: session.limitBytes,
     browserOnly: append ? !append.record.remote : recordsInBrowserOnly(session.courseId, session.folderId),
     appendTo: append ? { id: append.record.id, title: append.record.title } : null,
+    title: append ? append.record.title : recordingTitle(session.startedAt),
+    startedAt: append ? new Date(recordedAt(append.record.createdAt)) : session.startedAt,
   };
 }
 
