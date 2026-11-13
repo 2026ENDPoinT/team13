@@ -148,6 +148,12 @@ run "plan" {
     error_message = "The app must run in the institution zone, the same one the RDS parameter group sets (ADR-0039)."
   }
 
+  # The key pair ID is always rendered and the app refuses to start without the matching private key.
+  assert {
+    condition     = output.app_secret_arns["cloudfront-private-key"].required
+    error_message = "The CloudFront private key secret must be required because ASTRA_CLOUDFRONT_KEY_PAIR_ID is always set."
+  }
+
   # M2: the default deployment runs and requires the malware scanner (ADR-0018).
   assert {
     condition = alltrue([for k, v in {
@@ -157,6 +163,12 @@ run "plan" {
       ASTRA_SCAN_REQUIRED   = "true"
     } : lookup(output.app_environment, k, null) == v])
     error_message = "By default the app environment must start the scan profile and require the scanner."
+  }
+
+  # Every upload endpoint must be exempt from the 16 KB WAF body rule, or uploads get 413 at the edge.
+  assert {
+    condition     = length(setsubtract(["/api/uploads", "/api/filebox/files", "/api/me/profile/image"], var.waf_large_body_path_prefixes)) == 0
+    error_message = "waf_large_body_path_prefixes must cover /api/uploads, /api/filebox/files and /api/me/profile/image."
   }
 }
 

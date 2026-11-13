@@ -166,7 +166,7 @@ class CommunityService {
 		return this.idempotency.execute(actor.userId(), "community_material.create", idempotencyKey, material,
 				MaterialView.class, () -> {
 					Long group = this.files.attach(BoardFiles.COMMUNITY_MATERIAL, actor.userId(), null,
-							material.uploadIds(), material.title());
+							material.uploadIds());
 					long postId = this.community.insertMaterial(boardId, actor.userId(), material.title(),
 							material.body(), material.audience(), group);
 					this.audit.success(actor.userId(), actor.sessionId(), "community_material.create", "post", postId,
@@ -199,7 +199,7 @@ class CommunityService {
 		}
 		if (attachments != null) {
 			Long group = this.files.change(BoardFiles.COMMUNITY_MATERIAL, actor.userId(), null,
-					this.posts.attachmentGroup(postId), attachments, title);
+					this.posts.attachmentGroup(postId), attachments);
 			this.posts.setAttachmentGroup(postId, group);
 		}
 		this.audit.success(actor.userId(), actor.sessionId(), "community_material.update", "post", postId, null);
@@ -271,8 +271,7 @@ class CommunityService {
 		long boardId = this.transaction.execute((tx) -> this.boards.boardFor(CommunityBoards.INQUIRY));
 		return this.idempotency.execute(actor.userId(), "community_inquiry.create", idempotencyKey, inquiry,
 				InquiryView.class, () -> {
-					Long group = this.files.attach(BoardFiles.INQUIRY, actor.userId(), null, inquiry.uploadIds(),
-							inquiry.title());
+					Long group = this.files.attach(BoardFiles.INQUIRY, actor.userId(), null, inquiry.uploadIds());
 					long postId = this.posts.insert(boardId, actor.userId(), "QUESTION", null,
 							new NewText(inquiry.title(), inquiry.body(), false, false), group);
 					this.audit.success(actor.userId(), actor.sessionId(), "community_inquiry.create", "post", postId,
@@ -294,7 +293,7 @@ class CommunityService {
 				ReplyView.class, () -> {
 					InquiryRow question = this.community.lockInquiry(postId).orElseThrow(ApiException::notFound);
 					String title = REPLY_PREFIX + question.title();
-					Long group = this.files.attach(BoardFiles.INQUIRY, actor.userId(), null, reply.uploadIds(), title);
+					Long group = this.files.attach(BoardFiles.INQUIRY, actor.userId(), null, reply.uploadIds());
 					long replyId = this.posts.insert(question.boardId(), actor.userId(), "ANSWER", postId,
 							new NewText(title, reply.body(), false, false), group);
 					this.community.markAnswered(postId);

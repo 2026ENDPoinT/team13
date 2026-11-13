@@ -195,6 +195,28 @@ class QnaApiTests extends BoardTestSupport {
 	}
 
 	@Test
+	void longTitlesWithAttachmentsAreSaved() throws Exception {
+		// 질문 제목은 300자, 답글 제목은 "re : " + 질문 제목이다. 둘 다 첨부 그룹 표시명 칸(200자)보다 길다(#15).
+		String title = "질".repeat(300);
+		long asked = upload(this.student, "q.txt", "질문 첨부");
+		long id = created(this.student
+			.postJson(qna(this.course), "{\"title\":\"" + title + "\",\"uploadIds\":[" + asked + "]}")
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.title").value(title)), "postId");
+		long answerUpload = upload(this.professor, "a.txt", "답변 첨부");
+		this.professor
+			.postJson(question(this.course, id) + "/answers", "{\"body\":\"답\",\"uploadIds\":[" + answerUpload + "]}")
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.attachments.length()").value(1));
+		// 제목은 그대로 남고, 첨부 그룹 표시명은 쓰지 않는다.
+		assertThat(count("""
+				SELECT COUNT(*) FROM posts p JOIN attachment_groups g ON g.attachment_group_id = p.attachment_group_id
+				 WHERE (p.post_id = :id OR p.parent_post_id = :id) AND g.group_title IS NULL
+				   AND CHAR_LENGTH(p.title) IN (300, 305)
+				""", id)).isEqualTo(2);
+	}
+
+	@Test
 	void everyEndpointFollowsTheAuthorizationMatrix() throws Exception {
 		long id = created(this.student.postJson(qna(this.course), "{\"title\":\"질문\"}"), "postId");
 		long answer = created(this.student.postJson(question(this.course, id) + "/answers", "{\"body\":\"추가 질문\"}"),

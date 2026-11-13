@@ -142,7 +142,7 @@ class SubmissionService {
 			try {
 				group = this.attachments
 					.derive(new ChangeRequest(userId, courseId, PURPOSE, current, submission.keepFileIds(),
-							submission.uploadIds(), "과제 제출"))
+							submission.uploadIds()))
 					.orElse(null);
 			}
 			catch (AttachmentException ex) {
