@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useReducer, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Button, EmptyState, ErrorState, LoadingState, Badge } from "../../ui/kit.tsx";
-import { Link } from "../../router.tsx";
+import { Link, navigate } from "../../router.tsx";
+import { completeStep, completionToken, screenKey } from "../../shared/assistant/plan.ts";
+import { refreshTray } from "../../shared/assistant-tray.tsx";
 import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor, offers, roleIn, subscribe } from "../../shared/backend.ts";
@@ -684,7 +686,7 @@ function LecturePlayer({ screen, ctx }: { screen: Screen; ctx: ScreenCtx }): Rea
     const item = entry.data.lectureItems?.find((candidate) => candidate.itemId === itemId);
     if (!item || item.state !== "ready") body = <EmptyState title={item ? "아직 재생할 수 없는 콘텐츠입니다" : "콘텐츠를 찾을 수 없습니다"}
       body={item ? item.state === "processing" ? "영상을 변환하고 있습니다. 끝나면 학습할 수 있습니다." : "영상을 재생할 수 없습니다. 담당 교수에게 문의하세요." : "삭제되었거나 이 강의의 콘텐츠가 아닙니다."} actions={detailLink} />;
-    else if (courseId) return <ReadyPlayer key={`${courseId}:${itemId}`} spec={{ kj, courseId, activityId, itemId }} data={entry.data} item={item} />;
+    else if (courseId) return <ReadyPlayer key={`${courseId}:${itemId}`} spec={{ kj, courseId, activityId, itemId }} data={entry.data} item={item} planKey={screenKey(screen.id, ctx.params)} />;
   }
   return <section className="player-page is-open srv-player" data-item-open={`srv-${activityId}`}>{body}</section>;
 }
@@ -708,13 +710,17 @@ function AuthPanel({ ctl }: { ctl: Controller }): ReactNode {
   </section>;
 }
 
-function ReadyPlayer({ spec, data, item }: { spec: PlayerSpec; data: ActivityDetail; item: LectureItem }): ReactNode {
+/** `planKey`: this lecture's plan step key; a plan step for it finishes when the video plays to its end. */
+function ReadyPlayer({ spec, data, item, planKey }: { spec: PlayerSpec; data: ActivityDetail; item: LectureItem; planKey: string }): ReactNode {
   const video = useRef<HTMLVideoElement>(null);
   const root = useRef<HTMLElement>(null);
   const controller = useRef<Controller | null>(null);
   const [, redraw] = useReducer((version: number) => version + 1, 0);
   const fullscreen = usePlayerFullscreen(root);
   const { kj, courseId, activityId, itemId } = spec;
+  // Bound when the player opens, like the sample player: a later switch to another step does not complete this one.
+  const planToken = useRef(completionToken(planKey));
+  const ended = () => { if (completeStep(planToken.current, { navigate, event: "video-ended" })) refreshTray(); };
   useEffect(() => {
     const media = video.current;
     if (!media) return;
@@ -757,7 +763,7 @@ function ReadyPlayer({ spec, data, item }: { spec: PlayerSpec; data: ActivityDet
     <div className="player-top"><h1>{`[${data.weekNo}주] ${item.title}`}</h1>
       <span className={`attend-pill${met ? " ok" : ""}`}>{met ? "인정 기준 충족" : phase === "active" && ctl?.creditable ? "시간 적립 중" : phase === "active" ? "미리보기" : "학습 중 아님"}</span>
     </div>
-    <div className="player-stage"><video ref={video} className="lecture-video srv-video" controls playsInline preload="metadata" aria-label={`${data.title} ${item.title}`} onDoubleClick={(event) => { event.preventDefault(); void togglePlayerFullscreen(root.current); }} /></div>
+    <div className="player-stage"><video ref={video} className="lecture-video srv-video" controls playsInline preload="metadata" aria-label={`${data.title} ${item.title}`} onEnded={ended} onDoubleClick={(event) => { event.preventDefault(); void togglePlayerFullscreen(root.current); }} /></div>
     <div className="player-chrome">
       <p className="tiny" role="status" aria-live="polite">{ctl ? statusText(ctl) : PHASE_TEXT.idle}</p>
       <p className={ctl?.alert ? "err" : "tiny"} role={ctl?.alert ? "alert" : "status"} aria-live="polite">{ctl?.notice || ""}</p>
