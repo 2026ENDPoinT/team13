@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, newRequestKey } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
-import { freshVisit, useResource } from "../../shared/remote-cache.ts";
+import { freshVisit, shownRows, useResource } from "../../shared/remote-cache.ts";
 import { discardUpload, sizeText } from "../../shared/uploads-remote.tsx";
 import {
   lectureCatalog, lectureDetails, lectureForEdit, lectureItemsOf, detailKey, courseKey, uploadLectureVideo, createLecture,
@@ -187,7 +187,7 @@ function addedItems(memo: FormMemo): { title: string; uploadId: number | null; r
     const title = entry.title.trim();
     if (!title || title.length > MAX_TITLE) return `${entry.name}: 콘텐츠 제목은 1자 이상 300자 이하입니다.`;
     const required = requiredSec(entry.requiredMin);
-    if (required === false) return `${entry.name}: 인정 시간은 1분부터 ${MAX_REQUIRED_MIN}분 사이입니다.`;
+    if (required === false) return `${entry.name}: 인정 기준 시간은 1분부터 ${MAX_REQUIRED_MIN}분 사이입니다.`;
     out.push({ title, uploadId: entry.uploadId, requiredSec: required });
   }
   return out;
@@ -282,8 +282,8 @@ function Uploader({ memo, courseId, repaint }: { memo: FormMemo; courseId: Id; r
                   <input maxLength={MAX_TITLE} value={entry.title} aria-label={`${entry.name} 콘텐츠 제목`} disabled={disabled}
                     onChange={(event) => { entry.title = event.currentTarget.value; repaint(); }} />
                 </Field>
-                <Field label="출석 인정 시간(분, 비우면 영상 길이)">
-                  <input type="number" min="1" max={String(MAX_REQUIRED_MIN)} value={entry.requiredMin} aria-label={`${entry.name} 출석 인정 시간(분)`} placeholder="영상 길이" disabled={disabled}
+                <Field label="인정 기준 시간(분, 비우면 영상 길이)">
+                  <input type="number" min="1" max={String(MAX_REQUIRED_MIN)} value={entry.requiredMin} aria-label={`${entry.name} 인정 기준 시간(분)`} placeholder="영상 길이" disabled={disabled}
                     onChange={(event) => { entry.requiredMin = event.currentTarget.value; repaint(); }} />
                 </Field>
               </div>
@@ -332,6 +332,7 @@ function FieldBlock({ memo, prefix, repaint }: { memo: FormMemo; prefix: string;
     <div className="span-2"><Field label="설명">
       <textarea rows={3} maxLength={10000} value={memo.description} aria-label={`${prefix}설명`} disabled={disabled} onChange={(event) => set("description", event.currentTarget.value)} />
     </Field></div>
+    <p className="pf-sub span-2">콘텐츠마다 정하는 인정 기준 시간은 학생의 적립 시간이 그 이상이면 그 콘텐츠의 인정 기준을 충족한 것으로 봅니다. 출석은 그 주차에 온라인 출석 차시가 하나뿐일 때만 그 차시로 자동 인정되고, 그 밖에는 출석부 기록이 정합니다.</p>
   </>;
 }
 
@@ -515,7 +516,8 @@ function LectureList({ course, courseId, open }: { course: Course; courseId: Id;
   });
 
   let body: ReactNode;
-  const data = entry && entry.data;
+  // After a write the list reloads; its previous rows stay on screen for display only (no editor).
+  const { rows: data, stale } = shownRows(entry);
   if (!data) {
     body = !entry || !entry.error
       ? <p className="pf-sub" role="status">서버에 등록된 강의를 불러오는 중입니다.</p>
@@ -526,10 +528,13 @@ function LectureList({ course, courseId, open }: { course: Course; courseId: Id;
   } else {
     const lectures = Array.isArray(data) ? data : [];
     body = <>
-      {entry.error ? <p className="err" role="alert">{lectureMessage(entry.error)}</p> : null}
+      {entry?.error ? <>
+        <p className="err" role="alert">{lectureMessage(entry.error)}</p>
+        {stale ? <Button kind="ghost" disabled={retrying} onClick={() => { setRetrying(true); load(); }}>다시 불러오기</Button> : null}
+      </> : stale ? <p className="pf-sub" role="status">저장한 내용을 반영한 목록을 불러오는 중입니다.</p> : null}
       {lectures.length
         ? lectures.map((lecture) => (
-          <LectureRowView key={lecture.activityId} courseId={courseId} lecture={lecture} instructor={instructor}
+          <LectureRowView key={lecture.activityId} courseId={courseId} lecture={lecture} instructor={instructor} stale={stale}
             open={opened.has(lecture.activityId)} reload={load}
             onToggle={(now) => {
               if (now === opened.has(lecture.activityId)) return;
@@ -555,13 +560,13 @@ function ItemMeta({ item, failText }: { item: LectureItem; failText: string }) {
   return <>
     <StateBadge state={item.state} />{" "}
     <span>{item.title}</span>
-    <span className="pf-meta">{[item.durationSec != null ? ` · 길이 ${durationText(item.durationSec)}` : "", item.requiredSec != null ? ` · 인정 ${durationText(item.requiredSec)}` : ""].join("")}</span>
+    <span className="pf-meta">{[item.durationSec != null ? ` · 길이 ${durationText(item.durationSec)}` : "", item.requiredSec != null ? ` · 인정 기준 시간 ${durationText(item.requiredSec)}` : ""].join("")}</span>
     {item.state === "failed" ? <span className="pf-meta">{failText}</span> : null}
   </>;
 }
 
-function LectureRowView({ courseId, lecture, instructor, open, reload, onToggle }: {
-  courseId: Id; lecture: LectureEntry; instructor: boolean; open: boolean; reload: () => void; onToggle: (open: boolean) => void;
+function LectureRowView({ courseId, lecture, instructor, stale, open, reload, onToggle }: {
+  courseId: Id; lecture: LectureEntry; instructor: boolean; stale: boolean; open: boolean; reload: () => void; onToggle: (open: boolean) => void;
 }) {
   const items = lectureItemsOf(lecture);
   return (
@@ -574,7 +579,8 @@ function LectureRowView({ courseId, lecture, instructor, open, reload, onToggle 
       <ul className="pf-lecture-items">
         {items.map((item) => <li key={item.itemId}><ItemMeta item={item} failText=" · 변환에 실패했습니다. 이 콘텐츠를 빼고 영상을 다시 올리세요." /></li>)}
       </ul>
-      {instructor ? <LectureEditor courseId={courseId} lecture={lecture} reload={reload} /> : null}
+      {instructor && stale ? <p className="pf-sub">이 강의의 최신 내용을 불러온 뒤 수정할 수 있습니다.</p> : null}
+      {instructor && !stale ? <LectureEditor courseId={courseId} lecture={lecture} reload={reload} /> : null}
     </details>
   );
 }
@@ -633,7 +639,7 @@ function LectureEditor({ courseId, lecture, reload }: { courseId: Id; lecture: L
       const title = kept.title.trim();
       const required = requiredSec(kept.requiredMin);
       if (!title || title.length > MAX_TITLE) return say("콘텐츠 제목은 1자 이상 300자 이하입니다.", true);
-      if (required === false) return say(`인정 시간은 1분부터 ${MAX_REQUIRED_MIN}분 사이입니다.`, true);
+      if (required === false) return say(`인정 기준 시간은 1분부터 ${MAX_REQUIRED_MIN}분 사이입니다.`, true);
       keep.push({ itemId, title, requiredSec: required });
     }
     const add = addedItems(memo);
@@ -745,8 +751,8 @@ function KeepRow({ memo, item, repaint }: { memo: EditMemo; item: LectureItem; r
           <input maxLength={MAX_TITLE} value={kept ? kept.title : title} aria-label={`${item.title} 콘텐츠 제목`} disabled={memo.busy || !kept}
             onChange={(event) => { setTitle(event.currentTarget.value); if (kept) kept.title = event.currentTarget.value; }} />
         </Field>
-        <Field label="출석 인정 시간(분)">
-          <input type="number" min="1" max={String(MAX_REQUIRED_MIN)} value={kept ? kept.requiredMin : required} placeholder="영상 길이" aria-label={`${item.title} 출석 인정 시간(분)`} disabled={memo.busy || !kept}
+        <Field label="인정 기준 시간(분)">
+          <input type="number" min="1" max={String(MAX_REQUIRED_MIN)} value={kept ? kept.requiredMin : required} placeholder="영상 길이" aria-label={`${item.title} 인정 기준 시간(분)`} disabled={memo.busy || !kept}
             onChange={(event) => { setRequired(event.currentTarget.value); if (kept) kept.requiredMin = event.currentTarget.value; }} />
         </Field>
       </div>
@@ -882,7 +888,7 @@ function RosterSection({ course, courseId, activityId, page }: { course: Course;
       const all = students.filter((student) => met(student) === columns.length).length;
       const average = Math.round(students.reduce((sum, student) => sum + columns.reduce((s, { index }) => s + percentOf(cellOf(student, index)), 0) / columns.length, 0) / students.length);
       const first = (page - 1) * size + 1;
-      const headers = ["학번", "이름", ...columns.map(({ item }) => item.title), "인정"];
+      const headers = ["학번", "이름", ...columns.map(({ item }) => item.title), "인정 기준 충족"];
       const rows: ReactNode[][] = students.map((student) => [
         student.studentNo || "—",
         student.name || "이름 없음",
@@ -895,7 +901,7 @@ function RosterSection({ course, courseId, activityId, page }: { course: Course;
             <span>
               <b>{`${cellText(p, "progressPercent")}%`}</b>{" "}
               <Badge tone={status === "met" ? "success" : status === "under_required" ? "danger" : "neutral"}>{PROGRESS_STATE[status] || status}</Badge>
-              <span className="pf-meta">{` · ${durationText(p.creditedSec)}${p.requiredSec != null ? ` / ${durationText(p.requiredSec)}` : ""}${attendedAt ? ` · ${koDateTime(attendedAt)} 인정` : ""}`}</span>
+              <span className="pf-meta">{` · ${durationText(p.creditedSec)}${p.requiredSec != null ? ` / ${durationText(p.requiredSec)}` : ""}${attendedAt ? ` · ${koDateTime(attendedAt)} 충족` : ""}`}</span>
             </span>
           );
         }),
@@ -904,7 +910,7 @@ function RosterSection({ course, courseId, activityId, page }: { course: Course;
       body = <>
         <div className="stat-row cols-3">
           <div className="stat pf-stat"><span className="tiny">수강생</span><b>{String(total)}</b></div>
-          <div className="stat pf-stat"><span className="tiny">이 쪽 모두 인정</span><b>{`${all}명`}</b></div>
+          <div className="stat pf-stat"><span className="tiny">이 쪽 모두 인정 기준 충족</span><b>{`${all}명`}</b></div>
           <div className="stat pf-stat"><span className="tiny">이 쪽 평균 진도</span><b>{`${average}%`}</b></div>
         </div>
         <p className="pf-sub">{`적립 시간은 서버가 학습 인정 기간 안에서만 셉니다. ${total}명 가운데 ${first}–${first + students.length - 1}번째입니다.`}</p>
