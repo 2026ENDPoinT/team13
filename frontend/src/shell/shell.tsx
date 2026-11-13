@@ -12,13 +12,15 @@ import { AssistantTray } from "../shared/assistant-tray.tsx";
 import { ChatDock } from "../areas/home/chat-dock.tsx";
 import { collapseHero } from "../areas/home/home.tsx";
 import { useBadge, unreadLabel, type UnreadKind } from "../shared/unread-badges.tsx";
-import { backendState, backendStatus, serverCourses } from "../shared/backend.ts";
+import { backendState, backendStatus, serverCourses, serverCourseOf } from "../shared/backend.ts";
 // Also puts the server course views behind `courseById` (data.ts) before the first render.
 import "../shared/course-view.ts";
 import { profiles, peekAccount, reloadAccount } from "../shared/account-remote.ts";
 import { personAvatar } from "../shared/avatar-remote.tsx";
 import { getState, render } from "../store.ts";
 import type { NavItem, Role, Screen, ScreenCtx } from "../types.ts";
+import { courseWeeks, courseKey } from "../shared/lectures-remote.ts";
+import { useResource } from "../shared/remote-cache.ts";
 
 const copy: Record<"ko" | "en", Record<string, string>> = {
   en: {
@@ -48,6 +50,16 @@ function NavLink({ screen, item, lang, course, role }: { screen: Screen; item: N
   const key = item.labelKey || item.nav || "";
   const label = item.label || copy[lang][key] || key;
   const active = screen.nav === item.nav;
+  const ready = backendStatus() === "ready";
+  const remote = ready ? serverCourseOf(course.id) : null;
+  const weeksKey = remote && item.nav === "classroom" ? courseKey(remote.courseId) : null;
+  const weeks = useResource(courseWeeks, weeksKey);
+  useEffect(() => {
+    if (weeksKey && remote) void courseWeeks.visit("shell:weeks", weeksKey, remote.courseId);
+  }, [weeksKey, remote?.courseId]);
+  const count = !ready ? item.count
+    : item.nav === "classroom" ? weeks?.data?.weeks?.length
+      : item.nav === "announce" ? remote?.unreadNotices : null;
   return (
     <Link
       className={`nav-link${active ? " active" : ""}${screen.hoverNav === item.nav ? " hover-demo" : ""}`}
@@ -56,7 +68,7 @@ function NavLink({ screen, item, lang, course, role }: { screen: Screen; item: N
       aria-current={active ? "page" : undefined}
     >
       <span className="nav-text">{label}</span>
-      {item.count ? <span className="nav-count">{item.count}</span> : null}
+      {count != null && Number(count) > 0 ? <span className="nav-count">{count}</span> : null}
     </Link>
   );
 }
@@ -116,8 +128,8 @@ function HeaderAvatar({ state }: { state: AppState }) {
 }
 
 /**
- * 프로필을 아직 읽지 않았으면 세션마다 한 번 읽고, 읽히면 머리말을 다시 그린다. 실패하면 견본 글자를 둔 채
- * 다시 묻지 않는다(캐시는 세션이 바뀌면 비워진다).
+ * 프로필을 아직 읽지 않았으면 세션마다 한 번 읽고, 읽히면 머리말을 다시 그린다. 실패하면 서버 계정의 약칭을 둔다.
+ * 캐시는 세션이 바뀌면 비워진다.
  */
 function useProfileLoad() {
   const [, repaint] = useReducer((n: number) => n + 1, 0);
@@ -140,7 +152,7 @@ function useProfileLoad() {
  * 왼쪽 메뉴 아래의 학기와 소속. 서버에 로그인했으면 학기는 내 서버 과목의 이번 학기(`term.current`, 없으면 첫 과목의
  * 학기)이고 소속·학년은 내 프로필(`GET /api/me/profile`)이다. 읽기 전이나 없는 값은 비워 둔다. 그 밖에는 견본 그대로다.
  */
-function RailTerm({ chromeRole }: { chromeRole: Role }) {
+function RailTerm({ chromeRole, course }: { chromeRole: Role; course: Course | null }) {
   if (backendStatus() !== "ready") {
     return (
       <div className="rail-term">
@@ -150,7 +162,8 @@ function RailTerm({ chromeRole }: { chromeRole: Role }) {
     );
   }
   const mine = serverCourses().map(({ remote }) => remote);
-  const term = (mine.find((remote) => remote.term && remote.term.current) || mine.find((remote) => remote.term))?.term;
+  const term = course ? serverCourseOf(course.id)?.term
+    : (mine.find((remote) => remote.term && remote.term.current) || mine.find((remote) => remote.term))?.term;
   const own = ownProfile();
   const grade = own && Number.isInteger(own.grade) && chromeRole !== "professor" ? `${own.grade}학년` : "";
   return (
@@ -220,7 +233,7 @@ function SideNav({ screen, chromeRole, course, lang }: { screen: Screen; chromeR
   return (
     <nav className="sidenav" aria-label="메뉴">
       <div className="nav-links">{links}</div>
-      <div className="quick-menu"><RailTerm chromeRole={chromeRole} /></div>
+      <div className="quick-menu"><RailTerm chromeRole={chromeRole} course={isCourse ? course : null} /></div>
     </nav>
   );
 }
@@ -241,7 +254,7 @@ export function Shell({ ctx, hero, aside, dialog, children }: ShellProps) {
   const { state, screen } = ctx;
   const lang = state.lang === "en" ? "en" : "ko";
   const chromeRole: Role = screen.role === "any" ? state.role : screen.role;
-  const course = courseById(state.courseId);
+  const course = courseById(ctx.params.get("kj") || state.courseId);
   const showAside = screen.kind === "home" || screen.kind === "room" || screen.kind === "mobile";
   const collapsed = screen.aside === "0";
   // 녹음 화면과 학습실 자료 요약(LessonViewer)은 좌측 메뉴 없이 본문만 쓴다.

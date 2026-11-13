@@ -817,7 +817,7 @@ a.ntf-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 
   margin: 0; border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
   background: var(--surface); overflow: hidden;
 }
-.home-server-todo .tiny[role="alert"] { color: var(--danger); }
+.aside > .tiny[role="alert"] { color: var(--danger); }
 
 /* 학습실의 서버 영상 강의 카드와 자료 요약·영상 강의 화면. */
 .file-card.kind-lecture .sf-icon svg { fill: currentColor; }

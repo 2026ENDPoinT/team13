@@ -323,7 +323,7 @@ export function renderDialog(name: string, ctx: ScreenCtx): ReactNode | null {
     );
   }
   if (name === "todo" || name === "todo-more") {
-    if (backendStatus() === "ready") return <HomeDialog title="할 일" className="todo-modal">{serverTodoList()}</HomeDialog>;
+    if (backendStatus() === "ready") return <HomeDialog title="할 일" className="todo-modal">{serverTodoList(ctx.params.get("todo-view") || "")}</HomeDialog>;
     return todoDialog(ctx);
   }
   if (name === "chat") {

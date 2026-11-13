@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, navigate } from "../../router.tsx";
 import { render } from "../../store.ts";
-import { routeFor } from "../../shared/routes.ts";
+import { currentRole, routeFor } from "../../shared/routes.ts";
 import { markChatUsed, setHeroInputOut } from "../../shared/assistant/chat-state.ts";
 import { Icon } from "../../ui/icon.tsx";
 import { activityById, typeLabel, typeIcon, TODAY } from "../../shared/format.ts";
@@ -13,6 +13,10 @@ import { ask, execute } from "../../shared/assistant/run.ts";
 import { foldTray, focusTray, openTray, refreshTray } from "../../shared/assistant-tray.tsx";
 import { planGroups, runState, startRun, stopRun } from "../../shared/assistant/plan.ts";
 import type { Activity } from "../../data.ts";
+import { backendState, backendStatus, subscribe as onBackendChange } from "../../shared/backend.ts";
+import { serverCourseViews } from "../../shared/course-view.ts";
+import { useHome, useTodo, loadMoreTodo, homeMessage } from "../../shared/home-remote.ts";
+import { currentServerActions, serverPrompts, serverActionForCommand, TODO_COMMAND, type ServerAction } from "../../shared/assistant/server-home.ts";
 
 const MAX_ROWS = 5;
 // Survive re-renders and navigation: a request in flight, the input revision it was made for, the spoken line.
@@ -30,6 +34,21 @@ export interface CommandInput {
 let commandInput: CommandInput | null = null;
 /** 다른 화면의 챗봇 도크 입력창(홈 히어로 입력창과 동시에 보이지 않는다). */
 let dockInput: CommandInput | null = null;
+let serverListVisible = false;
+let session = `${backendStatus()}:${backendState().me?.userId ?? ""}`;
+onBackendChange((next) => {
+  const owner = `${next.status}:${next.me?.userId ?? ""}`;
+  if (session === owner) return;
+  session = owner;
+  pendingController?.abort();
+  pendingController = null;
+  inputRevision += 1;
+  busy = false;
+  sayText = "";
+  serverListVisible = false;
+  commandInput?.clear();
+  dockInput?.clear();
+});
 
 export function bindDock(handle: CommandInput | null): void {
   dockInput = handle;
@@ -79,6 +98,9 @@ function busyState(on: boolean): void {
 }
 
 export function planPreview(): ReactNode {
+  if (backendStatus() === "ready") {
+    return serverListVisible ? <ServerTodoPreview /> : <section className="hero-plan" id="hero-plan-preview" hidden />;
+  }
   const run = runState();
   if (run?.status !== "ready") {
     return <section className="hero-plan" id="hero-plan-preview" aria-labelledby="hero-plan-title" hidden />;
@@ -166,6 +188,42 @@ function ActionRow({ action }: { action: NextAction }) {
     </li>
   );
 }
+function ServerActionRow({ action }: { action: ServerAction }) {
+  return (
+    <li>
+      <Link className={`hero-action ${action.kind === "video" ? "is-lecture" : "is-deadline"}`} href={action.href} aria-label={`${action.label} ${action.title}, ${action.meta}. 열기`}>
+        <span className={`hero-chip t-${action.kind}`} aria-hidden="true" title={action.label}><Icon name={typeIcon(action.kind)} /></span>
+        <span className="hero-action-main" aria-hidden="true">
+          <span className="hero-action-title">{action.title}</span>
+          <span className={`hero-action-meta${action.urgent ? " is-urgent" : ""}`}>{action.meta}</span>
+        </span>
+        <span className="hero-cta" aria-hidden="true"><span>열기</span><span className="hero-arrow">→</span></span>
+      </Link>
+    </li>
+  );
+}
+
+function ServerTodoPreview() {
+  const entry = useTodo();
+  useHome();
+  const actions = currentServerActions();
+  return (
+    <section className="hero-plan" id="hero-plan-preview" aria-labelledby="hero-plan-title" aria-busy={entry?.loading ? "true" : "false"}>
+      <h2 id="hero-plan-title">서버 할 일 목록</h2>
+      {entry?.error
+        ? <p className="hero-plan-meta" role="status">{homeMessage(entry.error)}</p>
+        : !entry?.data
+          ? <p className="hero-plan-meta" role="status">할 일을 불러오는 중이에요.</p>
+          : actions.length
+            ? <ul className="hero-actions" aria-label="서버 할 일">{actions.map((action) => <ServerActionRow key={action.item.activityId} action={action} />)}</ul>
+            : <p className="hero-plan-meta">현재 열 수 있는 할 일이 없어요.</p>}
+      {entry?.data?.nextCursor && !entry.error
+        ? <button type="button" className="btn" disabled={Boolean(entry.loading)} onClick={() => void loadMoreTodo()}>할 일 더 보기</button>
+        : null}
+      <p className="hero-plan-rule">항목을 선택하면 해당 활동으로 이동해요. 학습과 제출은 활동 화면에서 직접 진행해 주세요.</p>
+    </section>
+  );
+}
 
 function previewRows(text: string) {
   const query = text.trim();
@@ -179,11 +237,16 @@ const MASCOT_STILL = "/app/assets/mascot/orange-mascot-still.png";
 
 /** 히어로의 다음 행동 줄 + 한 번에 실행하는 추천 문장 + 맨 아래 명령 입력창. */
 export function commandBar(onActivate: () => void): ReactNode {
-  return <CommandBar onActivate={onActivate} />;
+  return <CommandBar key={`${backendStatus()}:${backendState().me?.userId ?? ""}`} onActivate={onActivate} />;
 }
 
 function CommandBar({ onActivate }: { onActivate: () => void }) {
-  const actions = nextActions().slice(0, 2);
+  const server = backendStatus() === "ready";
+  useHome();
+  const todo = useTodo();
+  const serverRows = server ? currentServerActions() : [];
+  const actions = server ? [] : nextActions().slice(0, 2);
+  const prompts = server ? serverPrompts(serverRows) : PROMPTS;
   const input = useRef<HTMLInputElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
   const [value, setValue] = useState("");
@@ -248,7 +311,7 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
   const command = candidate?.title;
   const ghost = Boolean(command && command !== value && value && focused && !busy && !composing && caretEnd);
   const prefix = ghost && command ? command.toLowerCase().startsWith(value.toLowerCase()) : false;
-  const ready = runState()?.status === "ready";
+  const ready = !server && runState()?.status === "ready";
 
   useLayoutEffect(() => {
     const node = input.current;
@@ -310,21 +373,23 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
 
   return (
     <div className="hero-assist">
-      {actions.length
-        ? <ul className="hero-actions" aria-label="다음 행동">{actions.map((action) => <ActionRow key={action.id} action={action} />)}</ul>
-        : null}
+      {serverRows.length
+        ? <ul className="hero-actions" aria-label="다음 행동">{serverRows.slice(0, 2).map((action) => <ServerActionRow key={action.item.activityId} action={action} />)}</ul>
+        : actions.length
+          ? <ul className="hero-actions" aria-label="다음 행동">{actions.map((action) => <ActionRow key={action.id} action={action} />)}</ul>
+          : null}
       {ready
         ? null
         : (
           <ul className="hero-prompts" aria-label="추천 문장">
-            {PROMPTS.map((text) => (
+            {prompts.map((text) => (
               <li key={text}>
                 <button type="button" className="hero-prompt" disabled={busy} onClick={() => runPrompt(text)}>{text}</button>
               </li>
             ))}
           </ul>
         )}
-      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{sayText}</p>
+      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{sayText || (server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "")}</p>
       <div className="cmd" role="search" ref={cmdRef}>
         <div
           className={["cmd-box", listShown ? "has-list" : "", ghost ? "has-ghost" : "", busy ? "is-busy" : ""].filter(Boolean).join(" ")}
@@ -352,7 +417,7 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
               id="assistant-input"
               className="cmd-input"
               role="combobox"
-              aria-label="과목 이동이나 할 일 계획을 한 줄로 입력"
+              aria-label={server ? "과목이나 활동 이동을 한 줄로 입력" : "과목 이동이나 할 일 계획을 한 줄로 입력"}
               aria-autocomplete="both"
               aria-expanded={listShown ? "true" : "false"}
               aria-controls="assistant-list"
@@ -362,7 +427,7 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
               aria-describedby={ready ? "hero-plan-reply" : undefined}
               aria-busy={busy ? "true" : "false"}
               readOnly={busy}
-              placeholder={ready ? "계획 수정 또는 ㄱㄱ · Enter" : "무엇을 할까요? 예: 오늘 할 일 전부 해줘"}
+              placeholder={server ? "무엇을 할까요? 예: 할 일 목록 보여줘" : ready ? "계획 수정 또는 ㄱㄱ · Enter" : "무엇을 할까요? 예: 오늘 할 일 전부 해줘"}
               autoComplete="off"
               autoCapitalize="off"
               spellCheck="false"
@@ -450,6 +515,33 @@ async function submitCommand({ acceptRun, command, field: given }: { acceptRun?:
   const text = acceptRun ? "ㄱㄱ" : field.value().trim();
   if (!text) return;
   markChatUsed();
+  if (backendStatus() === "ready") {
+    const requested = command || text;
+    const classroom = classroomForCommand(requested);
+    const action = serverActionForCommand(requested, currentServerActions());
+    field.clear();
+    if (classroom) {
+      const course = serverCourseViews().find(({ course }) => course?.id === classroom.courseId)?.course;
+      if (course) {
+        sayText = classroom.title;
+        navigate(routeFor(currentRole(), "classroom", { kj: course.id, special: course.kind === "special" }));
+        return;
+      }
+    }
+    if (action) {
+      sayText = `${action.title} 활동으로 이동해요.`;
+      navigate(action.href);
+      return;
+    }
+    if (requested.replace(/\s+/g, "") === TODO_COMMAND.replace(/\s+/g, "")) {
+      serverListVisible = true;
+      say("서버 할 일 목록에서 활동을 선택해 주세요. 자동 실행이나 제출은 하지 않아요.");
+      if (docked) navigate(routeFor(currentRole(), "home"));
+      return;
+    }
+    say("과목명을 입력해 강의실을 선택하거나, ‘할 일 목록 보여줘’로 활동을 찾아 주세요. 자동 실행이나 제출은 지원하지 않아요.");
+    return;
+  }
   const reply = planReply(text);
   const run = runState();
   if (acceptRun && (acceptRun !== run?.id || run.status !== "ready")) return;

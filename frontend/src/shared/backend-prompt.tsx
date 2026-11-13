@@ -1,13 +1,11 @@
-// Small ASTRA backend login/logout strip. Renders nothing in mock mode (status `off`).
-// Screens that read server data place it in their own content; the shell is untouched.
+// Sign-in prompt for anonymous backend sessions only. Signed-in pages use the same layout as mock pages.
+// Account/logout controls live in the shared header menu, not an extra content row.
 // Buttons follow `GET /api/auth/methods`: school OIDC navigates to `/api/auth/login`,
 // e-class password login uses one request, and developer personas require `devLogin`.
 // The password is cleared after the request; break-glass login is never offered here.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "../ui/kit.tsx";
-import { backendState, connect, loginAs, loginWithEclass, logout, personaFor, offers, startSchoolLogin } from "./backend.ts";
-
-const ROLE_LABEL: Record<string, string> = { STUDENT: "학생", PROFESSOR: "교수", TA: "조교", STAFF: "교직원" };
+import { backendState, connect, loginAs, loginWithEclass, personaFor, offers, startSchoolLogin } from "./backend.ts";
 
 const UNKNOWN_METHODS = "로그인 방법을 확인하지 못했습니다. 다시 확인을 누르거나 잠시 후 다시 시도하세요.";
 
@@ -18,11 +16,10 @@ export interface BackendPanelOptions {
   text?: string;
 }
 
-/** null when the backend is off; otherwise a login prompt (anon) or the signed-in line (ready). */
+/** Anonymous backend sessions need a login form; mock and signed-in pages add no layout. */
 export function backendPanel(options: BackendPanelOptions = {}): ReactNode {
   const { status } = backendState();
-  if (status === "off") return null;
-  // A new status is a new strip, like the legacy rebuild: no busy state or message carries over.
+  if (status !== "anon") return null;
   return <BackendPanel key={status} compact={Boolean(options.compact)} text={options.text} />;
 }
 
@@ -32,7 +29,7 @@ interface Message {
 }
 
 function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
-  const { status, me, methods } = backendState();
+  const { methods } = backendState();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
   const live = useRef(true);
@@ -47,28 +44,6 @@ function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
   const compactClass = compact ? " is-compact" : "";
   const say = (next: string, alert = false) => setMessage({ text: next, alert });
 
-  if (status === "ready" && me) {
-    const signOut = () => {
-      setBusy(true);
-      say("");
-      // A failed logout keeps the session; say so instead of looking signed out.
-      void logout().catch((error: unknown) => {
-        if (live.current) say(error instanceof Error ? error.message : String(error), true);
-      }).finally(() => {
-        if (live.current) setBusy(false);
-      });
-    };
-    return (
-      <div className={`backend-login is-ready${compactClass}`} aria-label="ASTRA 서버 연결">
-        <p className="backend-login__who">
-          <span className="backend-login__dot" aria-hidden="true" />
-          {`ASTRA 서버 · ${me.name || "사용자"} (${(me.role && ROLE_LABEL[me.role]) || "사용자"})`}
-        </p>
-        <Button kind="ghost" className="backend-login__action" disabled={busy} onClick={signOut}>로그아웃</Button>
-        <StatusLine message={message} />
-      </div>
-    );
-  }
 
   const eclass = offers("eclassPassword");
   const oidc = offers("oidc");

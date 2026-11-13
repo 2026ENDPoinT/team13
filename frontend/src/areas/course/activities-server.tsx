@@ -1,21 +1,19 @@
 // 백엔드 모드의 학생 강의실(40·72), 학습활동 목록(50–56), 파일모음(46). 한 과목의 서버 활동을
 // shared/course-activities-remote.ts가 모은 행으로만 그린다(주차 목록, 자료, 영상과 본인 진도, 과제·시험·설문과
 // 본인 상태). 연결된 과목과 `anon`에서는 샘플 활동을 섞지 않는다. 진행 중·미제출 필터는 서버 상태(phase)만 본다.
-// 강의실에는 그 과목의 최근 공지와 할 일(`/api/me/todo?courseId=`)도 서버에서 받아 보인다. 파일모음은 과목 파일
-// 목록(`GET …/files`)이다. 서버 글은 텍스트로만 넣는다.
+// 파일모음은 과목 파일 목록(`GET …/files`)이다. 서버 글은 텍스트로만 넣는다.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Course } from "../../data.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { Link } from "../../router.tsx";
 import { Badge, Button, EmptyState, ErrorState, LoadingState, Pagination } from "../../ui/kit.tsx";
 import { Icon } from "../../ui/icon.tsx";
-import { CoverImage } from "../../ui/assets.tsx";
 import { hrefFor, find } from "../../manifest.ts";
 import { ApiError } from "../../shared/api.ts";
 import { freshVisit, useRefreshOnFocus, useResource, useWatch } from "../../shared/remote-cache.ts";
-import { backendStatus, courseIdFor, roleIn, serverCourseOf } from "../../shared/backend.ts";
+import { backendStatus, courseIdFor, roleIn } from "../../shared/backend.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
-import { TYPE_COLOR } from "../../shared/format.ts";
+import { CompactActivityRow } from "../../shared/activity-row.tsx";
 import {
   activityParts, loadPart, activitySnapshot, passServerFilter, reloadFailed, serverOwnsCourse, PART_LABEL,
   type ActivityPart, type ActivityRow, type ActivitySnapshot,
@@ -23,8 +21,7 @@ import {
 import { rememberCourseFiles } from "../../shared/course-pdfs-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
 import { SaveToStudy } from "../../shared/save-to-study.tsx";
-import { noticeLists, listKey as noticeListKey, noticeMessage } from "../../shared/notices-remote.ts";
-import { useCourseTodo, reloadCourseTodo, todoHref, todoLabel, todoKind, ddayAt, koDateTime, koDate, homeMessage } from "../../shared/home-remote.ts";
+import { todoLabel, koDateTime } from "../../shared/home-remote.ts";
 import { serverActivityHref } from "../../shared/activity-links.ts";
 import { windowText, lectureMessage, PROGRESS_STATE, ACTIVITY_PHASE, type CourseWeek } from "../../shared/lectures-remote.ts";
 import { materialMessage, courseFiles, filesKey, loadMoreFiles, type CourseFiles, type MaterialFile } from "../../shared/materials-remote.ts";
@@ -33,13 +30,11 @@ import { quizMessage, PHASE as QUIZ_PHASE, ATTEMPT_STATUS } from "../../shared/q
 import { surveyMessage, PHASE as SURVEY_PHASE, STATE as SURVEY_STATE } from "../../shared/surveys-remote.ts";
 import { pickWeek, roomFilter, toggleWeek, type HeadFn, type SearchBoxFn } from "./course.tsx";
 import { RetryButton } from "./groups-server.tsx";
+import { RoomLayout, CoursePlanLink, CourseActivitySection, CourseEmpty } from "./room-view.tsx";
 
 const PAGE = 8;
-const STRIP_NOTICES = 3;
-const STRIP_TODOS = 5;
 
-const TYPE_LABEL: Record<string, string> = { video: "영상", material: "자료", report: "과제", test: "시험", survey: "설문" };
-const ROOM_TYPES: [string, string][] = [["video", "영상"], ["material", "자료"], ["report", "과제"], ["test", "시험"], ["survey", "설문"]];
+const TYPE_LABEL: Record<string, string> = { video: "영상", material: "자료", report: "과제", test: "시험", survey: "설문", zoom: "Zoom", post: "글" };
 
 const MESSAGE: Record<string, (error: unknown) => string> = {
   weeks: lectureMessage, progress: lectureMessage, materials: materialMessage,
@@ -158,21 +153,17 @@ function stateText(row: ActivityRow, instructor: boolean): string {
   return "이 화면에서 열 수 없는 활동";
 }
 
-/** 활동 한 줄. 볼 화면이 있으면 링크, 없으면 비활성 줄이다. */
+function viewType(row: ActivityRow): string {
+  return row.type === "other" ? row.kind : row.type;
+}
+
+/** 서버 상태의 긴 설명은 title에 보존하고 목업의 짧은 3열 행으로 표시한다. */
 function rowNode(row: ActivityRow, kj: string): ReactNode {
-  const type = row.type === "other" ? "post" : row.type;
-  const label = row.type === "other" ? todoLabel(row.kind) : TYPE_LABEL[row.type];
-  const period = periodOf(row);
-  const children = (
-    <>
-      <span className="swatch" style={{ background: TYPE_COLOR[type as keyof typeof TYPE_COLOR] || "var(--surface-2)" }} />
-      <span><b>{row.title}</b><div className="tiny">{[label, `${row.weekNo}주`, period].filter(Boolean).join(" · ")}</div></span>
-      <span className="tiny">{row.done ? <span className="check" aria-hidden="true">✓ </span> : null}{stateText(row, instructorIn(kj))}</span>
-    </>
-  );
-  return row.href
-    ? <Link key={row.key} className="activity" data-type={type} data-row={row.key} data-activity={row.key} href={row.href}>{children}</Link>
-    : <div key={row.key} className="activity" data-type={type} data-row={row.key} data-activity={row.key} aria-disabled="true">{children}</div>;
+  const type = viewType(row);
+  const label = TYPE_LABEL[type] || todoLabel(row.kind);
+  const state = stateText(row, instructorIn(kj));
+  const detail = [label, row.weekNo == null ? "" : `${row.weekNo}주`, periodOf(row), state].filter(Boolean).join(" · ");
+  return <CompactActivityRow key={row.key} id={row.key} type={type} title={row.title} label={label} href={row.href} done={row.done} status={row.type === "other" ? "열 수 없음" : state.split(" · ")[0]} detail={detail} />;
 }
 
 /** 실패한 부분 목록 안내와 다시 받기. 받아 둔 내용이 있으면 그것은 그대로 보인다. */
@@ -198,127 +189,13 @@ function loginPanel(text: string): ReactNode {
 
 // ---------- 강의실 ----------
 
-function NoticeStrip({ kj, courseId }: { kj: string; courseId: number | string }) {
-  const key = noticeListKey(courseId, "", 1, STRIP_NOTICES);
-  const load = () => void noticeLists.load(key, courseId, "", 1, STRIP_NOTICES);
-  const entry = useResource(noticeLists, key, load);
-  useEffect(() => {
-    if (freshVisit("course-room-notices", key) === "entry" || !noticeLists.peek(key)) void noticeLists.load(key, courseId, "", 1, STRIP_NOTICES);
-  });
-  const data = entry && entry.data;
-  let body: ReactNode;
-  if (!data) {
-    body = !entry || !entry.error
-      ? <LoadingState title="공지를 불러오는 중입니다" />
-      : <ErrorState title="공지를 불러오지 못했습니다" body={noticeMessage(entry.error)} actions={<RetryButton reload={load} />} />;
-  } else {
-    const items = Array.isArray(data.items) ? data.items : [];
-    body = (
-      <>
-        {entry.error ? <p className="err" role="alert">{noticeMessage(entry.error)}</p> : null}
-        {items.length ? items.map((notice) => (
-          <Link key={notice.noticeId} className="crs-strip-row" href={hrefFor(find("44d_room_notice_view_pop"), { kj, id: String(notice.noticeId) })}>
-            {notice.read ? <span className="crs-strip-dot read" aria-hidden="true" /> : <span className="crs-strip-dot" role="img" aria-label="읽지 않음" />}
-            <span className="crs-strip-title">{notice.pinned ? <Badge tone="neutral">고정</Badge> : null}<b>{notice.title}</b></span>
-            <span className="tiny">{koDate(notice.publishedAt)}</span>
-          </Link>
-        )) : <p className="tiny">등록된 공지가 없습니다.</p>}
-      </>
-    );
-  }
-  return (
-    <section className="crs-strip" aria-label="최근 공지">
-      <div className="crs-strip-h"><h2>공지</h2><Link href={hrefFor(find("44_room_notice_list"), { kj })} className="more-link">전체 보기</Link></div>
-      <div className="crs-strip-body" aria-live="polite">{body}</div>
-    </section>
-  );
-}
-
-/** 이 과목의 할 일(`GET /api/me/todo?courseId=`의 첫 쪽과 남은 수). 전체 목록은 할 일 팝업이다. */
-function TodoStrip({ courseId }: { courseId: number | string }) {
-  const entry = useCourseTodo(courseId);
-  const data = entry && entry.data;
-  let body: ReactNode;
-  if (!data) {
-    body = !entry || !entry.error
-      ? <LoadingState title="할 일을 불러오는 중입니다" />
-      : <ErrorState title="할 일을 불러오지 못했습니다" body={homeMessage(entry.error)} actions={<RetryButton reload={() => reloadCourseTodo(courseId)} />} />;
-  } else {
-    body = (
-      <>
-        {entry.error ? <p className="err" role="alert">{homeMessage(entry.error)}</p> : null}
-        {data.items.length ? data.items.slice(0, STRIP_TODOS).map((item) => {
-          const href = todoHref(item, null);
-          const due = ddayAt(item.closeAt, data.serverTime);
-          const children = (
-            <>
-              <span className="crs-kind">{todoLabel(item.type)}</span>
-              <span className="crs-strip-title"><b>{item.title}</b></span>
-              <span className="tiny">{[due, koDateTime(item.closeAt)].filter(Boolean).join(" · ")}</span>
-            </>
-          );
-          return href
-            ? <Link key={item.activityId} className="crs-strip-row" href={href} data-todo={todoKind(item.type)}>{children}</Link>
-            : <div key={item.activityId} className="crs-strip-row" data-todo={todoKind(item.type)}>{children}</div>;
-        }) : <p className="tiny">남은 할 일이 없습니다.</p>}
-      </>
-    );
-  }
-  return (
-    <section className="crs-strip" aria-label="이 과목의 할 일">
-      <div className="crs-strip-h">
-        <h2>{"할 일 "}<span className="count-num">{data ? String(data.total) : ""}</span></h2>
-        <Link href={hrefFor(find("09_home_todo_more"))} className="more-link">모두 보기</Link>
-      </div>
-      <div className="crs-strip-body" aria-live="polite">{body}</div>
-    </section>
-  );
-}
-
-function heroOf(course: Course, kj: string, rows: ActivityRow[]): ReactNode {
-  const server = serverCourseOf(kj);
-  const name = server ? server.name : course.ko;
-  const meta = server
-    ? [server.term && server.term.name, [server.code, server.section].filter(Boolean).join("-")].filter(Boolean).join(" · ")
-    : "";
+function roomTags(course: Course, rows: ActivityRow[]): string[] {
   const tags: string[] = [];
-  if (server && server.type === "NONREGULAR") tags.push("비교과");
-  if (rows.some((row) => row.type === "video")) tags.push("온라인");
-  if (server && Array.isArray(server.schedules) && server.schedules.some((slot) => slot.room)) tags.push("대면");
-  if (server && server.credit) tags.push(`${server.credit}학점`);
-  const next = rows.find((row) => row.href && row.missing) || rows.find((row) => row.href && row.ongoing && !row.done);
-  return (
-    <article className={`crs-hero ${course.gradient || "g3"}`}>
-      <CoverImage course={course} width={1110} height={188} />
-      <div className="crs-hero-copy">
-        <p className="crs-kicker">{server && server.term ? server.term.name : ""}</p>
-        <div className="course-name">
-          <h1 className="course-title">{name}</h1>
-          <span className="course-prof">{server && Array.isArray(server.instructors) ? server.instructors.join(", ") : ""}</span>
-        </div>
-        {meta ? <p className="crs-hero-meta">{meta}</p> : null}
-        <div className="crs-tags">{tags.map((tag) => <span key={tag} className="crs-tag">{tag}</span>)}</div>
-      </div>
-      {next && next.href ? <Link href={next.href} className="btn btn-ondark">이어서 학습하기</Link> : null}
-    </article>
-  );
-}
-
-function chip(key: string, label: string, kind: "type" | "status", on: boolean): ReactNode {
-  return (
-    <button key={key} type="button" className={`chip ${kind === "type" ? key : ""}${on ? " on" : ""}`.trim()} aria-pressed={on ? "true" : "false"} onClick={() => roomFilter(kind, key)}>
-      {label}
-    </button>
-  );
-}
-
-function planLink(kj: string): ReactNode {
-  return (
-    <Link className="crs-plan" href={hrefFor(find("40b_room_lecplan_pop"), { kj })}>
-      <span className="crs-plan-label"><Icon name="file" /><span>강의계획서</span></span>
-      <Icon name="chev" />
-    </Link>
-  );
+  if (course.kind === "special") tags.push("비교과");
+  if (rows.some((row) => row.type === "video" || row.kind === "zoom")) tags.push("온라인");
+  if (course.room) tags.push("대면");
+  if (course.credit) tags.push(`${course.credit}학점`);
+  return tags;
 }
 
 /** 백엔드 모드의 강의실 본문(40·72). */
@@ -326,8 +203,8 @@ export function remoteRoom(screen: Screen, ctx: ScreenCtx, course: Course): Reac
   if (backendStatus() === "anon") {
     return (
       <section className="crs" data-area="course">
-        {planLink(course.id)}
-        {loginPanel("ASTRA 서버에 로그인하면 이 과목의 주차와 활동, 공지, 할 일을 서버에서 불러옵니다.")}
+        <CoursePlanLink courseId={course.id} />
+        {loginPanel("ASTRA 서버에 로그인하면 이 과목의 주차와 활동을 서버에서 불러옵니다.")}
       </section>
     );
   }
@@ -344,18 +221,18 @@ function RemoteRoom({ screen, ctx, course }: { screen: Screen; ctx: ScreenCtx; c
   const type: string = screen.focus === "video" ? "video" : (draft.roomType || "");
   const status: string = draft.roomStatus || "";
   const closed = new Set<number>(draft.closedWeeks || []);
-  const server = serverCourseOf(kj);
-  const unit = server && server.type === "NONREGULAR" ? "회차" : "주";
+  const unit = course.kind === "special" ? "회차" : "주";
   const snapshot = activitySnapshot(parts, kj, { instructor });
   const { rows, weeks } = snapshot;
-  const present = new Set(rows.map((row) => row.type));
-  const week = ctx.state.week || 1;
+  const present = [...new Set([...rows.map(viewType), ...(type ? [type] : [])])];
+  const week = weeks.some((entry) => entry.weekNo === ctx.state.week) ? ctx.state.week : weeks[0]?.weekNo || 1;
+  const reload = () => parts.forEach((entry) => void loadPart(entry));
 
   let body: ReactNode;
   if (snapshot.denied) body = <EmptyState title="이 과목의 활동을 볼 수 없습니다" body="수강 중인 과목인지 확인해 주세요." />;
   else if (snapshot.pending && !rows.length) body = <LoadingState title="주차와 활동을 불러오는 중입니다" />;
   else {
-    const shown = rows.filter((row) => (!type || row.type === type) && (!status || passServerFilter(row, status)));
+    const shown = rows.filter((row) => (!type || viewType(row) === type) && (!status || passServerFilter(row, status)));
     const byWeek = new Map<number, ActivityRow[]>();
     for (const row of shown) {
       const n = Number(row.weekNo);
@@ -363,18 +240,10 @@ function RemoteRoom({ screen, ctx, course }: { screen: Screen; ctx: ScreenCtx; c
     }
     const sections = [...byWeek.keys()].sort((a, b) => a - b).map((n) => {
       const entry = weeks.find((item: CourseWeek) => item.weekNo === n);
-      const isClosed = closed.has(n);
       return (
-        <section key={n} className={`crs-week${isClosed ? "" : " open"}${week === n ? " current" : ""}`}>
-          <button type="button" className="crs-week-h" aria-expanded={isClosed ? "false" : "true"} onClick={() => toggleWeek(n)}>
-            <span className="crs-week-label">
-              <strong>{`${n}${unit}${entry && entry.title ? ` ${entry.title}` : ""}`}</strong>
-              <span>{weekRange(entry)}</span>
-            </span>
-            <Icon name="chev" />
-          </button>
-          {isClosed ? null : <div className="crs-week-b">{(byWeek.get(n) || []).map((row) => rowNode(row, kj))}</div>}
-        </section>
+        <CourseActivitySection key={n} week={{ number: n, title: entry?.title || "", range: weekRange(entry) }} unit={unit} current={week === n} closed={closed.has(n)} onToggle={() => toggleWeek(n)}>
+          {(byWeek.get(n) || []).map((row) => rowNode(row, kj))}
+        </CourseActivitySection>
       );
     });
     body = (
@@ -382,45 +251,37 @@ function RemoteRoom({ screen, ctx, course }: { screen: Screen; ctx: ScreenCtx; c
         {failureNotes(snapshot, parts)}
         {sections}
         {sections.length ? null : rows.length
-          ? <EmptyState title="해당하는 활동이 없습니다" body="다른 종류나 진행 상태를 선택해 보세요." />
-          : snapshot.pending ? <LoadingState title="주차와 활동을 불러오는 중입니다" /> : <EmptyState title="등록된 활동이 없습니다" body="교수님이 활동을 공개하면 주차별로 표시됩니다." />}
+          ? <CourseEmpty title="해당하는 활동이 없습니다" body="다른 종류나 진행 상태를 선택해 보세요." onReload={reload} />
+          : snapshot.pending ? <LoadingState title="주차와 활동을 불러오는 중입니다" /> : <CourseEmpty title="등록된 활동이 없습니다" body="교수님이 활동을 공개하면 주차별로 표시됩니다." onReload={reload} />}
       </>
     );
   }
 
+  const next = rows.find((row) => row.href && row.missing) || rows.find((row) => row.href && row.ongoing && !row.done);
   return (
-    <section className="crs" aria-label="ASTRA 서버 강의실" data-area="course">
-      <div className="crs-srv-hero">{heroOf(course, kj, rows)}</div>
-      {planLink(kj)}
-      <div className="crs-strips">
-        {courseId == null ? null : <NoticeStrip kj={kj} courseId={courseId} />}
-        {courseId == null ? null : <TodoStrip courseId={courseId} />}
-      </div>
-      <div className="crs-filters">
-        <div className="crs-filter-row" role="toolbar" aria-label="활동 종류">
-          {ROOM_TYPES.filter(([key]) => present.has(key) || type === key).map(([key, label]) => chip(key, label, "type", type === key))}
-        </div>
-        <div className="crs-filter-row" role="toolbar" aria-label="진행 상태">
-          {chip("ongoing", "진행중", "status", status === "ongoing")}
-          {chip("missing", "미제출", "status", status === "missing")}
-        </div>
-      </div>
-      <div className="crs-progress" role="tablist" aria-label={`${unit}차`} hidden={!weeks.length}>
-        {weeks.map((entry) => {
-          const n = entry.weekNo;
-          const tracked = rows.filter((row) => row.weekNo === n && ["video", "report", "test", "survey"].includes(row.type));
-          const done = tracked.filter((row) => row.done).length;
-          const markText = !tracked.length || !done ? "" : done === tracked.length ? "✓" : `${done}/${tracked.length}`;
-          return (
-            <button key={n} type="button" className={`crs-wk${week === n ? " on" : ""}`} aria-pressed={week === n ? "true" : "false"} aria-label={`${n}${unit}${entry.title ? ` ${entry.title}` : ""}`} onClick={() => pickWeek(n)}>
-              <span>{String(n)}</span>
-              <span className="crs-wk-mark">{markText || " "}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="crs-srv-weeks" aria-live="polite">{body}</div>
-    </section>
+    <RoomLayout
+      courseId={kj}
+      term={course.term || ""}
+      title={course.ko}
+      instructor={course.instructor}
+      meta={[course.en, course.time, course.code].filter(Boolean).join(" · ")}
+      tags={roomTags(course, rows)}
+      nextHref={next?.href}
+      types={present.map((key) => [key, TYPE_LABEL[key] || todoLabel(key)])}
+      type={type}
+      status={status}
+      weeks={weeks.map((entry) => {
+        const tracked = rows.filter((row) => row.weekNo === entry.weekNo && ["video", "report", "test", "survey"].includes(row.type));
+        const done = tracked.filter((row) => row.done).length;
+        return { number: entry.weekNo, title: entry.title || "", mark: !done ? "" : done === tracked.length ? "✓" : `${done}/${tracked.length}` };
+      })}
+      week={week}
+      unit={unit}
+      onFilter={roomFilter}
+      onWeek={pickWeek}
+    >
+      {body}
+    </RoomLayout>
   );
 }
 
@@ -455,16 +316,15 @@ function RemoteActivityList({ screen, ctx, kj, filter }: { screen: Screen; ctx: 
         {!slice.length
           ? snapshot.pending
             ? <LoadingState title="학습활동을 불러오는 중입니다" />
-            : <EmptyState title="해당하는 활동이 없습니다" body={filter === "all" ? "교수님이 활동을 공개하면 이 목록에 표시됩니다." : "다른 필터를 선택해 보세요."} />
+            : <CourseEmpty title="해당하는 활동이 없습니다" body={filter === "all" ? "교수님이 활동을 공개하면 이 목록에 표시됩니다." : "다른 필터를 선택해 보세요."} onReload={() => parts.forEach((entry) => void loadPart(entry))} />
           : (
             <>
               {weeks.map((n) => {
                 const entry = snapshot.weeks.find((item: CourseWeek) => item.weekNo === n);
                 return (
-                  <section key={n} className="crs-week open">
-                    <h2 className="crs-rail-week">{[`${n}주`, weekRange(entry)].filter(Boolean).join("  ")}</h2>
+                  <CourseActivitySection key={n} week={{ number: n, range: weekRange(entry) }}>
                     {slice.filter((row) => Number(row.weekNo) === n).map((row) => rowNode(row, kj))}
-                  </section>
+                  </CourseActivitySection>
                 );
               })}
               <Pagination page={current} pages={pages} hrefForPage={pageHref} />
@@ -473,7 +333,7 @@ function RemoteActivityList({ screen, ctx, kj, filter }: { screen: Screen; ctx: 
       </>
     );
   }
-  return <div className="crs-srv-list" aria-live="polite" aria-label="ASTRA 서버 학습활동">{content}</div>;
+  return <>{content}</>;
 }
 
 // ---------- 파일모음 ----------

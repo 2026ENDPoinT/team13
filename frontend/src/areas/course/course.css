@@ -21,6 +21,10 @@
 .activity:hover { border-color: var(--accent); text-decoration: none; }
 .activity:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .activity.selected { background: var(--highlight); }
+.activity-copy { min-width: 0; }
+.activity-copy b, .activity-copy .tiny, .activity-status { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-status { max-width: 120px; }
+.activity[aria-disabled="true"] { cursor: default; }
 .swatch { width: 44px; height: 36px; border-radius: var(--radius-sm); }
 .check { color: var(--success); font-weight: var(--weight-bold); }
 
@@ -80,6 +84,8 @@
   background: var(--surface); border: var(--border-w) solid var(--border); color: var(--text);
 }
 .crs-hero h1 { margin: var(--space-1) 0; font-size: var(--text-2xl); line-height: var(--leading-2xl); }
+.crs-hero-copy { min-width: 0; flex: 1 1 240px; }
+.crs-hero .course-title, .crs-hero .course-prof, .crs-hero-meta { overflow-wrap: anywhere; }
 .crs-kicker, .crs-hero-meta { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); }
 .crs-kicker { color: var(--muted); }
 .crs-hero-meta { color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -112,13 +118,13 @@
 }
 
 .crs-progress {
-  display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: var(--space-1);
+  display: flex; gap: var(--space-1); overflow-x: auto; overscroll-behavior-x: contain;
   background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-2); max-width: 100%;
 }
 .crs-wk {
   appearance: none; border: 0; border-bottom: 2px solid transparent; background: transparent;
-  color: var(--text-2); min-width: 0; min-height: var(--hit); padding: var(--space-1) 0 var(--space-2);
+  color: var(--text-2); min-width: 32px; flex: 1 0 32px; min-height: var(--hit); padding: var(--space-1) 0 var(--space-2);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   font-weight: var(--weight-bold); font-size: var(--text-sm); line-height: var(--leading-sm); font-family: inherit;
 }
@@ -334,31 +340,7 @@
 .crs-members li + li { margin-top: var(--space-1); }
 
 /* Backend classroom, activity list and files (areas/course/activities-server.js). */
-.crs-strips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); min-width: 0; }
-.crs-strip {
-  display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-4);
-  background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
-}
-.crs-strip-h { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
-.crs-strip-h h2 { margin: 0; font-size: var(--text-md); line-height: var(--leading-md); }
-.crs-strip-h .more-link { margin-top: 0; }
-.crs-strip-body { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
-.crs-strip-body .tiny, .crs-strip-body p { margin: 0; }
-.crs-strip-row {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-2); align-items: center;
-  min-height: var(--hit); color: inherit; text-decoration: none; min-width: 0;
-}
-a.crs-strip-row:hover .crs-strip-title b { color: var(--accent); }
-.crs-strip-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.crs-strip-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--weight-semibold); }
-.crs-strip-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--accent); }
-.crs-strip-dot.read { background: transparent; }
 .crs-srv-fail { display: flex; flex-direction: column; gap: var(--space-2); }
 .crs-srv-fail p, .crs-srv-fail ul { margin: 0; }
-.crs-srv-weeks, .crs-srv-list { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .crs-file-main { min-width: 0; }
 .crs-file-activity { overflow-wrap: anywhere; }
-@media (max-width: 767px) {
-  .crs-strips { grid-template-columns: minmax(0, 1fr); }
-  .crs-strip-row { min-height: var(--hit-touch); }
-}

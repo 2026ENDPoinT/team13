@@ -19,6 +19,7 @@ import { remoteRoom, remoteActivityList, remoteFiles, serverOwnsActivities } fro
 import { remoteQnaBoard, remoteOpenBoard } from "./boards-server.tsx";
 import { remoteGrades } from "./grades-server.tsx";
 import { remoteGroups } from "./groups-server.tsx";
+import { RoomLayout, CourseActivitySection, CourseEmpty } from "./room-view.tsx";
 
 /** The title row: `count` is a badge (string/number) or a ready node; `actions` go to the right. */
 export type HeadFn = (title: string, iconName: string, count: ReactNode, ...actions: ReactNode[]) => ReactNode;
@@ -276,17 +277,7 @@ const head: HeadFn = (title, iconName, count, ...actions) => {
 };
 
 function quiet(title: string, body: string, kind: string, action?: ReactNode): ReactNode {
-  return (
-    <div className="empty crs-empty" role="status">
-      <div className="crs-empty-art" aria-hidden="true"><Icon name="layers" /></div>
-      <strong>{title}</strong>
-      {body ? <p>{body}</p> : null}
-      <div className="btn-row">
-        {action}
-        <Button kind="ghost" onClick={() => courseReload(kind)}>다시 불러오기</Button>
-      </div>
-    </div>
-  );
+  return <CourseEmpty title={title} body={body} action={action} onReload={() => courseReload(kind)} />;
 }
 
 function weekMark(list: { week: number; status: string }[], week: number): string {
@@ -307,7 +298,7 @@ function roomCourse(screen: Screen, ctx: ScreenCtx): Course {
 
 function renderRoom(screen: Screen, ctx: ScreenCtx): ReactNode {
   const course = roomCourse(screen, ctx);
-  // 백엔드 모드: 연결된 과목은 서버 주차·활동·공지·할 일만 그린다(areas/course/activities-server.js).
+  // 연결된 과목은 서버 주차·활동만 목업과 같은 표현 컴포넌트에 전달한다.
   if (backendStatus() !== "off") {
     return serverOwnsActivities(course) ? remoteRoom(screen, ctx, course) : <section className="crs" data-area="course">{absentState("강의실")}</section>;
   }
@@ -329,68 +320,32 @@ function renderRoom(screen: Screen, ctx: ScreenCtx): ReactNode {
   }
   if (course.credit) tags.push(`${course.credit}학점`);
   const presentTypes = new Set<string>(all.map((item) => item.type));
-  const planHref = hrefFor(find("40b_room_lecplan_pop"), { kj: course.id });
   const closed = new Set<number>(draft.closedWeeks || []);
   const weeks = [...new Set(shown.map((item) => item.week))].sort((a, b) => a - b);
   return (
-    <section className="crs" data-area="course">
-      <article className="crs-hero">
-        <div className="crs-hero-copy">
-          <p className="crs-kicker">{termLabel(course.term)}</p>
-          <div className="course-name">
-            <h1 className="course-title">{course.ko}</h1>
-            <span className="course-prof">{course.instructor}</span>
-          </div>
-          <p className="crs-hero-meta">{[course.en, course.time, course.code].filter(Boolean).join(" · ")}</p>
-          <div className="crs-tags">{tags.map((tag) => <span key={tag} className="crs-tag">{tag}</span>)}</div>
-        </div>
-        {next ? <Link href={activityHref(next, course.id)} className="btn btn-primary">이어서 학습하기</Link> : null}
-      </article>
-      <Link className="crs-plan" href={planHref}>
-        <span className="crs-plan-label"><Icon name="file" /><span>강의계획서</span></span>
-        <Icon name="chev" />
-      </Link>
-      <div className="crs-filters">
-        <div className="crs-filter-row" role="toolbar" aria-label="활동 종류">
-          {ROOM_TYPES.filter(([key]) => presentTypes.has(key)).map(([key, label]) => (
-            <button key={key} type="button" className={`chip ${key}${type === key ? " on" : ""}`} aria-pressed={type === key ? "true" : "false"} onClick={() => roomFilter("type", key)}>{label}</button>
-          ))}
-        </div>
-        <div className="crs-filter-row" role="toolbar" aria-label="진행 상태">
-          {[["ongoing", "진행중"], ["missing", "미제출"]].map(([key, label]) => (
-            <button key={key} type="button" className={`chip${status === key ? " on" : ""}`} aria-pressed={status === key ? "true" : "false"} onClick={() => roomFilter("status", key)}>{label}</button>
-          ))}
-        </div>
-      </div>
-      <div className="crs-progress" role="tablist" aria-label="주차">
-        {Array.from({ length: weekCount }, (_, index) => {
-          const n = index + 1;
-          const markText = weekMark(all, n);
-          return (
-            <button key={n} type="button" className={`crs-wk${week === n ? " on" : ""}`} aria-pressed={week === n ? "true" : "false"} aria-label={`${n}${unit}`} onClick={() => pickWeek(n)}>
-              <span>{String(n)}</span>
-              <span className="crs-wk-mark">{markText || " "}</span>
-            </button>
-          );
-        })}
-      </div>
-      {!weeks.length ? quiet("해당하는 활동이 없습니다", "다른 종류나 진행 상태를 선택해 보세요.", "room") : weeks.map((n) => {
-        const items = shown.filter((item) => item.week === n);
-        const isClosed = closed.has(n);
-        return (
-          <section key={n} className={`crs-week${isClosed ? "" : " open"}${week === n ? " current" : ""}`}>
-            <button type="button" className="crs-week-h" aria-expanded={isClosed ? "false" : "true"} onClick={() => toggleWeek(n)}>
-              <span className="crs-week-label">
-                <strong>{`${n}${unit}`}</strong>
-                <span>{weekRange(n)}</span>
-              </span>
-              <Icon name="chev" />
-            </button>
-            {isClosed ? null : <div className="crs-week-b">{items.map((item) => <Row key={item.id}>{activityRow(item, ctx, course.id)}</Row>)}</div>}
-          </section>
-        );
-      })}
-    </section>
+    <RoomLayout
+      courseId={course.id}
+      term={termLabel(course.term)}
+      title={course.ko}
+      instructor={course.instructor}
+      meta={[course.en, course.time, course.code].filter(Boolean).join(" · ")}
+      tags={tags}
+      nextHref={next ? activityHref(next, course.id) : null}
+      types={ROOM_TYPES.filter(([key]) => presentTypes.has(key) || type === key)}
+      type={type}
+      status={status}
+      weeks={Array.from({ length: weekCount }, (_, index) => ({ number: index + 1, mark: weekMark(all, index + 1) }))}
+      week={week}
+      unit={unit}
+      onFilter={roomFilter}
+      onWeek={pickWeek}
+    >
+      {!weeks.length ? quiet("해당하는 활동이 없습니다", "다른 종류나 진행 상태를 선택해 보세요.", "room") : weeks.map((n) => (
+        <CourseActivitySection key={n} week={{ number: n, range: weekRange(n) }} unit={unit} current={week === n} closed={closed.has(n)} onToggle={() => toggleWeek(n)}>
+          {shown.filter((item) => item.week === n).map((item) => <Row key={item.id}>{activityRow(item, ctx, course.id)}</Row>)}
+        </CourseActivitySection>
+      ))}
+    </RoomLayout>
   );
 }
 
@@ -417,10 +372,9 @@ function renderActivityList(screen: Screen, ctx: ScreenCtx): ReactNode {
   else if (!slice.length) content = quiet("해당하는 활동이 없습니다", "다른 필터를 선택해 보세요.", "activity-list");
   else {
     content = weeks.map((n) => (
-      <section key={n} className="crs-week open">
-        <h2 className="crs-rail-week">{`${n}주  ${weekRange(n)}`}</h2>
+      <CourseActivitySection key={n} week={{ number: n, range: weekRange(n) }}>
         {slice.filter((item) => item.week === n).map((item) => <Row key={item.id}>{activityRow(item, ctx, course.id)}</Row>)}
-      </section>
+      </CourseActivitySection>
     ));
   }
   return (

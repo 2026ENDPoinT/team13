@@ -21,7 +21,7 @@ export function courseGradient(courseId: number | string | null | undefined): st
   return `g${Number.isFinite(id) ? (Math.abs(Math.trunc(id)) % 8) + 1 : 1}`;
 }
 
-// Local covers only: keep imported templates without loading school-hosted images.
+// Imported templates and courses without a template share the mock UI's local image set.
 export interface CourseCover {
   gradient: string;
   cover?: string;
@@ -38,8 +38,7 @@ const COVERS: CourseCover[] = [
 ];
 
 export function courseCover(remote: Pick<MyCourse, "courseId" | "coverTemplate">): CourseCover {
-  const template = String(remote.coverTemplate || "");
-  if (!template) return { gradient: courseGradient(remote.courseId) };
+  const template = String(remote.coverTemplate || remote.courseId);
   const number = /(\d+)$/.exec(template);
   let index = number ? Number(number[1]) : 0;
   if (!number) for (const ch of template) index = (index * 31 + ch.charCodeAt(0)) >>> 0;

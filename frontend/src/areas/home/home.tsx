@@ -10,22 +10,21 @@ import type { Activity, AppState } from "../../data.ts";
 import { hrefFor, screens, find } from "../../manifest.ts";
 import { routeFor } from "../../shared/routes.ts";
 import { dday, typeLabel, boardRows, activityHref, openTodos, myDayGroups, TODAY } from "../../shared/format.ts";
-import type { MyDayGroup } from "../../shared/format.ts";
 import { readQuery, writeQuery, pageSearch } from "../../shared/query.tsx";
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { renderCourseStudy } from "./course-study.tsx";
 import { studyRoot, sampleSummary } from "./study-files.tsx";
 import { renderRecording } from "./recording.tsx";
 import { commandBar, focusCommand, planPreview } from "./command-bar.tsx";
-import { backendStatus, backendState, subscribe as onBackendChange } from "../../shared/backend.ts";
-import { profiles, peekAccount } from "../../shared/account-remote.ts";
+import { backendStatus, subscribe as onBackendChange } from "../../shared/backend.ts";
 import { courseCards, specialCard, termLabel } from "./course-cards.tsx";
-import { serverHomeCourses, serverAsideTodo, homeLoginPanel } from "./home-server.tsx";
+import { serverHomeCourses, serverAsideTodo, homeLoginPanel, serverHomeGreeting, serverMyDay } from "./home-server.tsx";
 import { serverCatalog, serverCourseList, serverCatalogDetail, catalogLoginPanel } from "./catalog-server.tsx";
-import { serverHomeCalendar, serverTodayClasses } from "./calendar-server.tsx";
+import { serverTodayClasses } from "./calendar-server.tsx";
 import { remoteCommunityBoard } from "./community-server.tsx";
 import { serverCommunitySurveys } from "./surveys-server.tsx";
 import { serverSiteNotices } from "./site-notices-server.tsx";
+import { SummaryCard } from "./summary-card.tsx";
 
 const DOW = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -123,28 +122,13 @@ function HeroModeToggle() {
 export function homeHero(ctx: ScreenCtx): ReactNode {
   const enter = !heroPlayed;
   heroPlayed = true;
-  if (backendStatus() === "ready") {
-    const me = backendState().me;
-    const profile = peekAccount(profiles)?.data;
-    const ownProfile = profile && me && String(profile.userId) === String(me.userId) ? profile : null;
-    const name = (me && me.name) || (ownProfile && ownProfile.name) || "사용자";
-    return (
-      <div className={`home-hero${enter ? " enter" : ""}`}>
-        <div className="home-hero-copy">
-          <div className="hero-greet">
-            <h1>{`${name}님, 안녕하세요.`}</h1>
-            <p>수강과목과 서버에 등록된 학습 일정을 확인하세요.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  const soon = myDayGroups(ctx.state).soon.items.length;
+  const ready = backendStatus() === "ready";
+  const soon = ready ? 0 : myDayGroups(ctx.state).soon.items.length;
   const soonHref = hrefFor(find("01_pop_todo"), { "todo-view": "soon" });
   return (
     <div className={`home-hero${enter ? " enter" : ""}${heroFull ? " is-full" : ""}`}>
       <div className="home-hero-copy">
-        <div className="hero-greet">
+        {ready ? serverHomeGreeting() : <div className="hero-greet">
           {soon
             ? (
               <h1 className="hero-oneline">
@@ -155,34 +139,12 @@ export function homeHero(ctx: ScreenCtx): ReactNode {
             )
             : <h1>{`${student.name}님, 급한 할 일은 없네요!`}</h1>}
           <p>{`${parseISO(TODAY).getFullYear()}년 ${longDate(TODAY)}`}</p>
-        </div>
+        </div>}
         {commandBar(expandHero)}
       </div>
       {planPreview()}
       <HeroModeToggle />
     </div>
-  );
-}
-
-function SummaryCard({ kind, sub, group, unit, linkText }: { kind: string; sub: string; group: MyDayGroup; unit: string; linkText: string }) {
-  const href = hrefFor(find("01_pop_todo"), { "todo-view": kind });
-  return (
-    <article className={`summary-card summary-${kind}`}>
-      <div className="summary-card-heading">
-        <h3>{group.label}</h3>
-        <span className="summary-date">{sub}</span>
-      </div>
-      <div className="summary-card-content">
-        <p className="summary-value">
-          <span className="summary-number">{String(group.items.length)}</span>
-          <span className="summary-unit">{unit}</span>
-        </p>
-        <Link className="summary-link" href={href}>
-          <span>{linkText}</span>
-          <span className="summary-chevron" aria-hidden="true"><Icon name="chev" /></span>
-        </Link>
-      </div>
-    </article>
   );
 }
 
@@ -192,37 +154,28 @@ function myDay(state: AppState): ReactNode {
   return (
     <section className="my-day" aria-label="나의 하루">
       <div className="summary-strip">
-        <SummaryCard kind="due" sub={due.at ? `${longDate(due.at.slice(0, 10))} ${due.at.slice(11, 16)}까지` : "예정된 마감 없음"} group={due} unit="건" linkText="할 일 보기" />
-        <SummaryCard kind="report" sub={firstReport ? `가장 빠른 마감 ${shortDate((firstReport.due || "").slice(0, 10))}` : "남은 과제 없음"} group={report} unit="건" linkText="과제 보기" />
-        <SummaryCard kind="week" sub={`${week.week}주차`} group={week} unit="개" linkText="자료 보기" />
+        <SummaryCard kind="due" label={due.label} value={String(due.items.length)} sub={due.at ? `${longDate(due.at.slice(0, 10))} ${due.at.slice(11, 16)}까지` : "예정된 마감 없음"} unit="건" linkText="할 일 보기" />
+        <SummaryCard kind="report" label={report.label} value={String(report.items.length)} sub={firstReport ? `가장 빠른 마감 ${shortDate((firstReport.due || "").slice(0, 10))}` : "남은 과제 없음"} unit="건" linkText="과제 보기" />
+        <SummaryCard kind="week" label={week.label} value={String(week.items.length)} sub={`${week.week}주차`} unit="개" linkText="자료 보기" />
       </div>
     </section>
   );
 }
 
 function renderHome(ctx: ScreenCtx): ReactNode {
-  const params = (ctx && ctx.params) || new URLSearchParams();
-  // Backend `ready`: keep the server calendar and every imported course, including past terms.
-  if (backendStatus() === "ready") {
-    return (
-      <section className="home-main" data-area="home">
-        {serverHomeCalendar(params)}
-        <h2 className="section-label">수강과목</h2>
-        {serverHomeCourses()}
-      </section>
-    );
-  }
-  const enrolled = courses
+  const ready = backendStatus() === "ready";
+  const enrolled = ready ? [] : courses
     .filter((c) => c.kind === "regular" && c.enrolled && c.term === "2026-2")
     .sort((a, b) => COURSE_ORDER.indexOf(a.id) - COURSE_ORDER.indexOf(b.id));
   return (
     <section className="home-main" data-area="home">
-      {myDay(ctx.state)}
+      {ready ? serverMyDay() : myDay(ctx.state)}
       <h2 className="section-label">수강과목</h2>
-      <p className="term">2학기</p>
-      {/* Before sign-in, the login strip remains above the sample cards. */}
-      {backendStatus() === "anon" ? homeLoginPanel(false) : null}
-      {courseCards(enrolled, "home")}
+      {ready ? serverHomeCourses() : <>
+        <p className="term">2학기</p>
+        {backendStatus() === "anon" ? homeLoginPanel(false) : null}
+        {courseCards(enrolled, "home")}
+      </>}
     </section>
   );
 }

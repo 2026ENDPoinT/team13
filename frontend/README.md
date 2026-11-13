@@ -30,6 +30,18 @@ npm run test:mutation  # 변이 테스트(Stryker, 10분 이상)
 | `GEMINI_MODEL` | 비서 모델 이름. 기본 `gemini-3.5-flash-lite` |
 | `ASTRA_PUBLIC_HOSTS` | 추가로 허용할 공개 호스트 이름(쉼표 구분) |
 
+## 로그인 홈 UI와 서버 데이터
+
+- 목업과 e-Class 로그인 홈은 같은 히어로·명령 입력창·전체화면 전환·나의 하루 카드·수강과목 카드 구성을 사용한다. 예전 `cal=month` 주소로 접속해도 홈을 월간 달력으로 대체하지 않는다.
+- 로그인 후 이름·할 일·시간표·수강과목·진도는 서버 응답만 사용한다. 학습실 입장 링크는 해당 서버 과목의 `kj`를 유지하며, 자료·폴더·녹음 API는 기존 연결을 그대로 사용한다.
+- 나의 하루와 필터 팝업은 `/api/me/todo`의 동일한 목록과 서버 시각을 기준으로 계산한다. 이번 주 자료는 이번 주 마감인 미완료 영상·자료다. 다음 쪽이 남으면 `N+`와 `불러온 목록 기준`을 표시하고 팝업의 `더 보기`로 이어서 조회한다. 미수신·오류·기준 시각 미제공을 샘플이나 0건으로 대체하지 않는다.
+- 로그인 히어로의 추천·자동완성은 실제 서버 과목과 활동을 연다. `할 일 목록 보여줘`는 서버 목록을 표시하며, 목업의 자동 계획 실행이나 과제 제출을 서버 기능인 것처럼 제공하지 않는다.
+- 강의실도 목업·로그인 화면이 같은 `RoomLayout`을 사용한다. 평면 과목 헤더·강의계획서·종류/상태 필터·주차 막대·활동 행·빈 화면을 공유하고, 서버 전용 배너·커버·공지/할 일 묶음을 본문에 추가하지 않는다.
+- 로그인 강의실의 주차 수·완료 표시·진도·제출 상태·상세 링크는 서버 응답을 사용한다. 좌측 주차/공지 숫자와 우측 오늘 수업/할 일도 서버 값이며, 미수신 값을 목업 숫자로 채우지 않는다. 계정/로그아웃은 기존 상단 메뉴를 쓰고 본문에 별도 인증 행을 붙이지 않는다.
+
+회귀 검증: `npx vitest run tests/integration/home-layout.test.ts tests/integration/server-hero-commands.test.ts tests/integration/assistant-resolve.test.ts`.
+강의실·공통 셸 회귀 검증: `npx vitest run tests/integration/course-room-layout.test.ts tests/integration/server-chrome.test.ts tests/integration/backend-prompt-layout.test.ts`.
+
 ## 구조
 
 | 경로 | 내용 |

@@ -1,22 +1,24 @@
-// Home pieces read from the ASTRA backend while the connection is `ready`: course cards with
-// unread notice counts, the latest notices, the to-do column and the full to-do dialog.
+// 홈은 목업과 같은 구성으로 그리고, 로그인 상태의 값과 이동 대상은 ASTRA 서버에서 읽는다.
 // Server text is only ever rendered as text.
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { Link } from "../../router.tsx";
+import { Link, GoButton } from "../../router.tsx";
 import { Icon } from "../../ui/icon.tsx";
-import { Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
+import { Button, EmptyState } from "../../ui/kit.tsx";
 import { hrefFor, find } from "../../manifest.ts";
 import { typeIcon } from "../../shared/format.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
 import {
   homeEntry, useHome, reloadHome, useTodo, reloadTodo, loadMoreTodo,
-  memberCourses, keyOfCourse, todoKind, todoLabel, todoHref, ddayAt, koDateTime, koDate, homeMessage,
+  memberCourses, todoKind, todoLabel, todoHref, ddayAt, koDateTime, homeMessage, wallMs, wallParts,
 } from "../../shared/home-remote.ts";
-import type { HomeData, TodoItem } from "../../shared/home-remote.ts";
+import type { HomeData, TodoItem, TodoList } from "../../shared/home-remote.ts";
 import type { Entry } from "../../shared/remote-cache.ts";
 import { courseCards, type CourseStats } from "./course-cards.tsx";
 import { serverCourseViews } from "../../shared/course-view.ts";
-import { siteNoticeStrip, offerEntryNotices } from "./site-notices-server.tsx";
+import { offerEntryNotices } from "./site-notices-server.tsx";
+import { backendState } from "../../shared/backend.ts";
+import { profiles, peekAccount } from "../../shared/account-remote.ts";
+import { SummaryCard } from "./summary-card.tsx";
 import type { Course } from "../../data.ts";
 
 
@@ -46,7 +48,84 @@ function waiting<T>(entry: Entry<T> | null): boolean {
   return !entry || (!entry.data && !entry.error);
 }
 
-/** Course cards of every server course the user belongs to (server facts only) and the latest notices. */
+const DAY = 86400000;
+const DAY_LABELS = { due: "가장 가까운 마감", soon: "사흘 안 마감", report: "제출할 과제", week: "이번 주 학습 자료" };
+type DayScope = keyof typeof DAY_LABELS;
+
+/** 조회한 서버 목록만 분류한다. 다음 쪽이 남으면 전체 개수로 표시하지 않는다. */
+function dayGroups(data: TodoList) {
+  const now = wallMs(data.serverTime);
+  const date = wallParts(data.serverTime);
+  const today = date ? Date.UTC(date.y, date.m - 1, date.d) : NaN;
+  const week = date ? today - date.dow * DAY : NaN;
+  const upcoming = data.items.filter((item) => wallMs(item.closeAt) >= now);
+  const nearest = upcoming.reduce((at, item) => Math.min(at, wallMs(item.closeAt)), Infinity);
+  return {
+    due: upcoming.filter((item) => wallMs(item.closeAt) === nearest),
+    soon: upcoming.filter((item) => wallMs(item.closeAt) < today + 4 * DAY),
+    report: data.items.filter((item) => todoKind(item.type) === "report"),
+    week: data.items.filter((item) => ["video", "material"].includes(todoKind(item.type))
+      && wallMs(item.closeAt) >= week && wallMs(item.closeAt) < week + 7 * DAY),
+  };
+}
+
+function dayCount(data: TodoList | null | undefined, items: TodoItem[] | undefined): string {
+  if (!data || !items) return "—";
+  return data.nextCursor ? (items.length ? `${items.length}+` : "—") : String(items.length);
+}
+
+export function serverHomeGreeting(): ReactNode {
+  return <ServerHomeGreeting />;
+}
+
+function ServerHomeGreeting() {
+  const entry = useTodo();
+  const data = entry?.data;
+  const me = backendState().me;
+  const profile = peekAccount(profiles)?.data;
+  const name = me?.name || (profile && String(profile.userId) === String(me?.userId) ? profile.name : null) || "사용자";
+  const soon = data ? dayGroups(data).soon : [];
+  const date = wallParts(data?.serverTime);
+  return (
+    <div className="hero-greet">
+      {soon.length
+        ? <h1 className="hero-oneline">
+          {`${name}님. 마감이 얼마 남지 않은 일이 `}
+          <GoButton className="hero-count" href={hrefFor(find("01_pop_todo"), { "todo-view": "soon" })} title="사흘 안 마감 목록 열기">{`${dayCount(data, soon)}개`}</GoButton>
+          {" 남아있습니다."}
+        </h1>
+        : <h1>{data && !data.nextCursor && date ? `${name}님, 급한 할 일은 없네요!` : `${name}님, 안녕하세요.`}</h1>}
+      <p>{date ? `${date.y}년 ${date.m}월 ${date.d}일 ${"일월화수목금토"[date.dow]}요일` : "서버 학습 일정을 확인하세요."}</p>
+    </div>
+  );
+}
+
+export function serverMyDay(): ReactNode {
+  return <ServerMyDay />;
+}
+
+function ServerMyDay() {
+  const entry = useTodo();
+  const data = entry?.data;
+  const groups = data ? dayGroups(data) : null;
+  const partial = data?.nextCursor ? " · 불러온 목록 기준" : "";
+  const dateKnown = Boolean(wallParts(data?.serverTime));
+  const count = (kind: DayScope) => dayCount(data, kind === "report" || dateKnown ? groups?.[kind] : undefined);
+  return (
+    <section className="my-day" aria-label="나의 하루">
+      <div className="summary-strip">
+        <SummaryCard kind="due" label={DAY_LABELS.due} value={count("due")} sub={`${groups?.due[0] ? `${koDateTime(groups.due[0].closeAt)}까지` : data && dateKnown && !data.nextCursor ? "예정된 마감 없음" : "서버 마감 일정"}${partial}`} unit="건" linkText="할 일 보기" />
+        <SummaryCard kind="report" label={DAY_LABELS.report} value={count("report")} sub={`${groups?.report[0]?.closeAt ? `가장 빠른 마감 ${koDateTime(groups.report[0].closeAt)}` : data && !data.nextCursor ? "남은 과제 없음" : "서버 과제 목록"}${partial}`} unit="건" linkText="과제 보기" />
+        <SummaryCard kind="week" label={DAY_LABELS.week} value={count("week")} sub={`이번 주 마감${partial}`} unit="개" linkText="자료 보기" />
+      </div>
+      {!data ? <p className="note" role={entry?.error ? "alert" : "status"}>
+        {entry?.error ? <>{homeMessage(entry.error)} <RetryButton reload={reloadTodo} /></> : "학습 현황을 불러오는 중입니다."}
+      </p> : null}
+    </section>
+  );
+}
+
+/** 모든 서버 수강과목을 기존 홈 카드로 표시한다. 과거 학기도 누락하지 않는다. */
 export function serverHomeCourses(): ReactNode {
   return <ServerHomeCourses />;
 }
@@ -80,51 +159,13 @@ function ServerHomeCourses() {
           </Fragment>
         ))
         : <EmptyState title="수강 중인 과목이 없습니다" body="ASTRA 서버에 이 계정의 과목이 없습니다." />}
-      {data
-        ? <>{latestNotices(data)}{siteNoticeStrip(data)}</>
-        : waiting(entry)
-          ? <LoadingState title="공지와 학습 현황을 불러오는 중입니다" />
-          : <ErrorState title="학습 현황을 불러오지 못했습니다" body={homeMessage(entry?.error)} actions={<RetryButton reload={reloadHome} />} />}
+      {!data && !waiting(entry)
+        ? <p className="note" role="alert">{homeMessage(entry?.error)} <RetryButton reload={reloadHome} /></p>
+        : null}
     </div>
   );
 }
 
-function latestNotices(data: HomeData): ReactNode {
-  const items = Array.isArray(data.notices) ? data.notices : [];
-  return (
-    <section className="home-notices" aria-label="최근 공지">
-      <h2 className="section-label">최근 공지</h2>
-      {items.length
-        ? (
-          <ul className="ntf-list">
-            {items.map((notice) => {
-              const kj = keyOfCourse(data, notice.courseId);
-              const href = kj ? hrefFor(find("44d_room_notice_view_pop"), { kj, id: String(notice.noticeId) }) : null;
-              const className = `ntf-row${notice.read ? " read" : ""}`;
-              const body = (
-                <>
-                  {notice.read
-                    ? <span className="ntf-dot" aria-hidden="true" />
-                    : <span className="ntf-dot" role="img" aria-label="읽지 않은 공지" />}
-                  <span className="ntf-copy">
-                    <b>{notice.pinned ? `[고정] ${notice.title}` : notice.title}</b>
-                    <span className="ntf-src">{notice.courseName}</span>
-                    <span className="ntf-when"><span>{koDate(notice.publishedAt)}</span></span>
-                  </span>
-                </>
-              );
-              return (
-                <li key={notice.noticeId}>
-                  {href ? <Link className={className} href={href}>{body}</Link> : <div className={className}>{body}</div>}
-                </li>
-              );
-            })}
-          </ul>
-        )
-        : <p className="note">게시된 공지가 없습니다.</p>}
-    </section>
-  );
-}
 
 function TodoCard({ item, data, serverTime }: { item: TodoItem; data: HomeData; serverTime: unknown }) {
   const href = todoHref(item, data);
@@ -134,7 +175,7 @@ function TodoCard({ item, data, serverTime }: { item: TodoItem; data: HomeData; 
       <div>
         <div className="todo-k">{todoLabel(item.type)}</div>
         <b>{item.title}</b>
-        <div className="tiny">{`${item.courseName} (${item.courseCode})`}</div>
+        <div className="tiny">{[item.courseName, item.courseCode ? `(${item.courseCode})` : ""].filter(Boolean).join(" ")}</div>
         <div className="tiny">{`마감 ${koDateTime(item.closeAt)}`}</div>
       </div>
       <span className="due">{ddayAt(item.closeAt, serverTime)}</span>
@@ -157,16 +198,14 @@ function ServerAsideTodo({ moreHref }: { moreHref: string }) {
   const items = Array.isArray(todo.items) ? todo.items : [];
   return (
     <>
-      <div className="aside-h"><h2>할일</h2><span className="count-num">{data ? String(Number(todo.total) || 0) : ""}</span></div>
-      <div className="home-server-todo">
+      <div className="aside-h"><h2>할일</h2><span className="count-num">{Number.isInteger(todo.total) && Number(todo.total) >= 0 ? String(todo.total) : ""}</span></div>
         {waiting(entry)
           ? <p className="tiny" role="status">할 일을 불러오는 중입니다.</p>
           : !data
-            ? <p className="tiny" role="alert">{homeMessage(entry?.error)}</p>
+            ? <p className="tiny" role="alert">{homeMessage(entry?.error)} <RetryButton reload={reloadHome} /></p>
             : items.length
-              ? items.map((item) => <TodoCard key={item.activityId} item={item} data={data} serverTime={todo.serverTime || data.serverTime} />)
+              ? items.slice(0, 4).map((item) => <TodoCard key={item.activityId} item={item} data={data} serverTime={todo.serverTime || data.serverTime} />)
               : <p className="tiny">마감이 남은 할 일이 없습니다.</p>}
-      </div>
       <Link className="more-link" href={moreHref}>모두 보기</Link>
     </>
   );
@@ -197,14 +236,16 @@ function TaskRow({ item, serverTime }: { item: TodoItem; serverTime: unknown }) 
 }
 
 /** Body of the to-do dialog: every open item, nearest deadline first, 20 at a time. */
-export function serverTodoList(): ReactNode {
-  return <ServerTodoList />;
+export function serverTodoList(scope = ""): ReactNode {
+  return <ServerTodoList scope={scope} />;
 }
 
-function ServerTodoList() {
+function ServerTodoList({ scope }: { scope: string }) {
   const entry = useTodo();
   const data = entry && entry.data;
   let status: ReactNode;
+  const scoped = Object.hasOwn(DAY_LABELS, scope) ? scope as DayScope : null;
+  const items = data ? (scoped ? dayGroups(data)[scoped] : data.items) : [];
   let alert = false;
   if (!data) {
     alert = Boolean(entry && entry.error);
@@ -213,14 +254,15 @@ function ServerTodoList() {
     alert = Boolean(entry.error);
     status = entry.error
       ? homeMessage(entry.error)
-      : data.items.length ? `마감이 남은 할 일 ${data.total}개 중 ${data.items.length}개` : "마감이 남은 할 일이 없습니다.";
+      : scoped ? `${DAY_LABELS[scoped]} · 불러온 목록 ${items.length}개${data.nextCursor ? " · 다음 목록이 있습니다." : ""}`
+        : data.items.length ? `마감이 남은 할 일 ${data.total}개 중 ${data.items.length}개` : "마감이 남은 할 일이 없습니다.";
   }
   const loading = Boolean(entry && entry.loading);
   return (
     <div className="tasks">
       <p className="task-empty" role={alert ? "alert" : "status"} aria-live="polite">{status}</p>
       <ul className="task-list">
-        {data ? data.items.map((item) => <li key={item.activityId}><TaskRow item={item} serverTime={data.serverTime} /></li>) : null}
+        {items.map((item) => <li key={item.activityId}><TaskRow item={item} serverTime={data?.serverTime} /></li>)}
       </ul>
       <div className="btn-row">
         {data && data.nextCursor
