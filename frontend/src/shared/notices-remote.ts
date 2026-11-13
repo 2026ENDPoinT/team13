@@ -1,10 +1,14 @@
 // Course notices on the ASTRA backend (`/api/courses/{courseId}/notices`). Reading a
 // notice never marks it read: the detail view sends `read` once when it is opened and
 // `confirm` only from the confirm button. Lists and details stay in memory only.
+// A student's list also carries notices imported from the school's e-Class after the native ones
+// (`origin: "school"`, `noticeId: "school-<n>"`, `expired`, `schoolUrl`; the detail adds `files`). Opening one reads it
+// from the school, which marks it read there, so STack never sends `read` or `confirm` for it.
 import { apiGet, apiSend, ApiError, newRequestKey } from "./api.ts";
 import { subscribe } from "./backend.ts";
 import { createResource, retryLater } from "./remote-cache.ts";
 import { followNoticeRead } from "./home-remote.ts";
+import type { SchoolFile } from "./school-content.tsx";
 
 export const NOTICE_PAGE = 8;
 
@@ -12,7 +16,7 @@ type Id = string | number;
 
 /** One notice as a list row or detail. */
 export interface CourseNotice {
-  noticeId: number;
+  noticeId: number | string;
   courseId?: number;
   courseName?: string;
   title: string;
@@ -29,6 +33,13 @@ export interface CourseNotice {
   readCount?: number;
   confirmCount?: number;
   version?: number;
+  /** Imported from the school's e-Class (then `noticeId` is `school-<n>`). */
+  origin?: "school";
+  /** The school shows the notice as past its display period. */
+  expired?: boolean;
+  schoolUrl?: string | null;
+  /** Attachments of a school notice's detail. */
+  files?: SchoolFile[];
 }
 
 /** One page of `GET …/notices`. */
@@ -41,7 +52,7 @@ export interface NoticePage {
 
 /** `POST …/read` and `…/confirm` result. */
 export interface NoticeReadState {
-  noticeId: number;
+  noticeId: number | string;
   read: boolean;
   confirmed: boolean;
 }
@@ -94,18 +105,34 @@ subscribe((next) => {
   readSent.clear();
 });
 
+/** A school notice id (`school-<n>`): read only by opening it, never marked through STack. */
+export function isSchoolNotice(noticeId: unknown): noticeId is string {
+  return typeof noticeId === "string" && /^school-[1-9]\d{0,17}$/.test(noticeId);
+}
+
+/** Opening a school notice marked it read at the school: show it read in the cached lists too (no request). */
+export function rememberSchoolNoticeOpened(courseId: Id, noticeId: string): void {
+  remember(courseId, { noticeId, read: true, confirmed: false });
+}
+
+/** A notice written in STack (numeric `noticeId`), the only kind an instructor's list edits. */
+export function isNativeNotice(notice: CourseNotice): notice is CourseNotice & { noticeId: number } {
+  return typeof notice.noticeId === "number";
+}
+
 /**
- * Marks a notice read when its detail is opened. Sends at most once per session. The unread counts that other screens
- * read from the course records (left menu, course cards) are re-read right after (`followNoticeRead`).
+ * Marks a notice read when its detail is opened. Sends at most once per session; never for a school notice. The unread
+ * counts that other screens read from the course records (left menu, course cards) are re-read right after (`followNoticeRead`).
  */
 export async function markNoticeRead(courseId: Id, noticeId: Id): Promise<NoticeReadState | null> {
+  if (isSchoolNotice(noticeId)) return null;
   const key = noticeKey(courseId, noticeId);
   if (readSent.has(key)) return null;
   readSent.add(key);
   try {
     const state = await apiSend<NoticeReadState>("POST", `${one(courseId, noticeId)}/read`);
     remember(courseId, state);
-    if (state && state.read) void followNoticeRead(state.noticeId);
+    if (state && state.read && typeof state.noticeId === "number") void followNoticeRead(state.noticeId);
     return state;
   } catch (error) {
     readSent.delete(key);
@@ -113,7 +140,9 @@ export async function markNoticeRead(courseId: Id, noticeId: Id): Promise<Notice
   }
 }
 
+/** `POST …/confirm` for a native notice. A school notice has no confirm in STack. */
 export async function confirmNotice(courseId: Id, noticeId: Id): Promise<NoticeReadState> {
+  if (isSchoolNotice(noticeId)) throw new Error("학교 공지는 STack에서 확인 표시를 하지 않습니다.");
   const state = await apiSend<NoticeReadState>("POST", `${one(courseId, noticeId)}/confirm`);
   remember(courseId, state);
   return state;
@@ -184,11 +213,12 @@ export function noticeMessage(error: unknown): string {
   }
 }
 
-/** "고정", "임시", "예약" labels for a notice row or detail. */
-export function noticeFlags(notice: Pick<CourseNotice, "pinned" | "publishedAt" | "published">): string[] {
+/** "고정", "임시", "예약", "기간 지남" labels for a notice row or detail. */
+export function noticeFlags(notice: Pick<CourseNotice, "pinned" | "publishedAt" | "published" | "expired">): string[] {
   const flags: string[] = [];
   if (notice.pinned) flags.push("고정");
   if (!notice.publishedAt) flags.push("임시");
   else if (!notice.published) flags.push("예약");
+  if (notice.expired) flags.push("기간 지남");
   return flags;
 }
