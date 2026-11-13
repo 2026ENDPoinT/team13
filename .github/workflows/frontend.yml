@@ -1,0 +1,69 @@
+name: Frontend CI
+
+# frontend/ 는 타입 검사, 단위·통합 테스트(커버리지 임계값), 프로덕션 빌드, 서버 문법 검사를 돈다.
+# 변이 테스트(Stryker)는 오래 걸리므로 수동 실행(workflow_dispatch, mutation=true)에서만 돈다.
+on:
+  push:
+    branches: [main, dev]
+    paths: ["frontend/**"]
+  pull_request:
+    paths: ["frontend/**"]
+  workflow_dispatch:
+    inputs:
+      mutation:
+        description: "변이 테스트(Stryker)도 돌린다(10분 이상)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  check:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npx vite build
+      - run: node --check server.mjs
+      - run: test -f dist/index.html
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: frontend/coverage/
+
+  mutation:
+    name: Mutation test
+    if: github.event_name == 'workflow_dispatch' && inputs.mutation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run test:mutation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: frontend/reports/mutation/
