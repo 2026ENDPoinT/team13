@@ -51,6 +51,25 @@ class CourseRosterQueries implements CourseRosters {
 	}
 
 	/**
+	 * 과목마다 {@link #entries}의 사람 수(검색어 없는 수강생 명단의 total). 수강생이 없는 과목은 결과에 없다. 과목 수와 관계없이
+	 * 쿼리 한 번이고, 과목이 없으면 쿼리하지 않는다.
+	 */
+	Map<Long, Integer> counts(Collection<Long> courseIds) {
+		Map<Long, Integer> counts = new HashMap<>();
+		if (courseIds.isEmpty()) {
+			return counts;
+		}
+		this.jdbc.sql("SELECT e.course_id, COUNT(DISTINCT e.user_id) FROM course_enrollments e WHERE e.course_id IN (:courses)"
+				+ " AND e.enrollment_status = 'ENROLLED' AND e.enrollment_role IN ('STUDENT', 'AUDITOR') AND "
+				+ MembershipRule.studentOf("e.course_id", "e.user_id") + " GROUP BY e.course_id")
+			.param("courses", courseIds)
+			.query((rs) -> {
+				counts.put(rs.getLong(1), rs.getInt(2));
+			});
+		return counts;
+	}
+
+	/**
 	 * {@link #students}와 같은 사람과 그 수강 근거. 한 사람이 수강 행을 여럿 가지면 학사 원장, 비정규, 청강 순으로 하나를 고른다
 	 * ({@link EnrollmentRecords#enrolledOf}와 같은 순서). 사용자 ID 오름차순이다.
 	 */
