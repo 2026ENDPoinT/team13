@@ -86,6 +86,7 @@ function viewOf(remote: MyCourse, kj: string): Course {
     lectureType: remote.lectureType || "",
     schedules: remote.schedules || [],
     instructors: remote.instructors || [],
+    learners: remote.learners ?? undefined,
     term: String(termName(remote.term)),
     kind: remote.type === "NONREGULAR" ? "special" : "regular",
     enrolled: true,

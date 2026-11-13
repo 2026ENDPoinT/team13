@@ -135,7 +135,7 @@ function syllabus(ctx: ScreenCtx): ReactNode {
         ["담당 교수", course.instructor],
         ["소속", professor.dept],
         ["수업 형태", special ? "온라인" : "대면 · 온라인"],
-        ["수강 인원", `${course.learners}명`],
+        ...(course.learners != null ? [["수강 인원", `${course.learners}명`] as [string, string]] : []),
       ])}
       <h3>과목 개요</h3>
       <p className="crs-prose">{overview}</p>

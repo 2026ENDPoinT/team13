@@ -409,7 +409,7 @@ function courseCard(c: Course, unread?: number): ReactNode {
       <Link className="course-card-main" href={href}>
         <div className={`cover ${c.gradient}`}><CoverImage course={c} /><b>{c.cardTitle || c.ko}</b><span>{c.code}</span></div>
         <div className="meta">
-          <div>{`${c.learners}명`}</div>
+          {c.learners != null ? <div>{`${c.learners}명`}</div> : null}
           <div>{c.time}</div>
           {unread ? <div className="pf-unread">{`안 읽은 공지 ${unread}`}</div> : null}
         </div>
@@ -522,7 +522,7 @@ function room(screen: Screen, ctx: ScreenCtx): ReactNode {
   if (serverRoom(course)) return <section data-area="professor">{banner}{modeTabs}{serverRoomView(mode, ctx, course, { stat, chipRow, finder })}</section>;
   const widgets = (
     <div className="stat-row">
-      {stat("수강생", String(course.learners))}
+      {course.learners != null ? stat("수강생", String(course.learners)) : null}
       {stat("활동", String(mine.length))}
       {stat("진도", `${course.progress}%`, <div className="bar" aria-hidden="true"><i style={{ width: `${course.progress}%` }} /></div>)}
       {stat("마감", dday(due && due.due) || "없음")}

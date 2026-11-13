@@ -51,6 +51,8 @@ export interface MyCourse {
   term?: CourseTerm | null;
   schedules?: CourseSchedule[] | null;
   instructors?: string[] | null;
+  /** Learner count: an integer for courses the caller teaches, null for student courses. */
+  learners?: number | null;
 }
 
 export interface BackendSnapshot {

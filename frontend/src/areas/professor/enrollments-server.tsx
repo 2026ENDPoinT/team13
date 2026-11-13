@@ -7,15 +7,15 @@ import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNo
 import { Button, EmptyState, LoadingState, ErrorState, Pagination, Badge, Table } from "../../ui/kit.tsx";
 import { navigate } from "../../router.tsx";
 import { getState, render } from "../../store.ts";
-import { courses, type Course } from "../../data.ts";
+import { courseById, type Course } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { ApiError } from "../../shared/api.ts";
-import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
+import { backendStatus, courseIdFor, kjOf, roleIn, subscribe } from "../../shared/backend.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { useResource, type Entry } from "../../shared/remote-cache.ts";
 import {
   myCourses, enrollmentRequests, requestKey, decideEnrollment, isConflict, enrollmentMessage,
-  REQUEST_PAGE, DECISION_REASON_MAX, STATUS_LABEL, KIND_LABEL, scheduleText, dotDateTime, termName,
+  REQUEST_PAGE, DECISION_REASON_MAX, STATUS_LABEL, KIND_LABEL, dotDateTime,
   courseRosters, rosterKey, rosterFilter, rosterQuery, ROSTER_PAGE, ROSTER_SORT_LABEL, ROSTER_ROLE_LABEL,
   type EnrollmentRequest, type CourseStudent, type MyCourseItem, type RosterFilter,
 } from "../../shared/catalog-remote.ts";
@@ -28,7 +28,7 @@ function Retry({ reload }: { reload: () => void }) {
 
 const waiting = <T,>(entry: Entry<T> | null): boolean => !entry || (!entry.data && !entry.error);
 
-/** 강의과목(pf_courses): 담당 과목. 샘플 화면이 있는 과목은 그 카드(`card(local, 0)`)로, 없는 과목은 정보만 보인다. */
+/** 강의과목(pf_courses): 담당 과목을 교수 홈과 같은 서버 과목 보기(`courseById(kjOf(remote))`)의 카드로 보인다. */
 export function serverTaughtCourses(card: (course: Course, unread: number) => ReactNode): ReactNode {
   return <TaughtCourses card={card} />;
 }
@@ -50,23 +50,7 @@ function TaughtCourses({ card }: { card: (course: Course, unread: number) => Rea
         <>
           <p className="pf-sub" role="status">{`담당 과목 ${taught.length}개`}</p>
           <div className="cards">
-            {taught.map((remote) => {
-              const kj = "key" in remote ? String(remote.key) : "";
-              const local = courses.find((course) => course.id === kj);
-              if (local) return <Fragment key={remote.courseId}>{card(local, 0)}</Fragment>;
-              return (
-                <article key={remote.courseId} className="course-card srv-card">
-                  <div className="course-card-main">
-                    <div className={`cover g${(Number(remote.courseId) % 8) + 1}`}><b>{remote.name}</b><span>{[remote.code, remote.section].filter(Boolean).join("-")}</span></div>
-                    <div className="meta">
-                      <div>{[termName(remote.term), remote.type === "NONREGULAR" ? "비정규" : "정규"].filter(Boolean).join(" · ")}</div>
-                      <div>{scheduleText(remote.schedules)}</div>
-                      <div className="tiny">이 샘플에 강의실 화면이 없는 과목입니다.</div>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
+            {taught.map((remote) => <Fragment key={remote.courseId}>{card(courseById(kjOf(remote)), 0)}</Fragment>)}
           </div>
         </>
       );

@@ -1,7 +1,8 @@
 // 외부 AI 처리 동의 on the professor's material screen (backend `ready`): the deployment's provider
 // terms (`GET /api/llm/policy`), my consent per scope for this course with grant (acknowledgement
 // when the terms say cross-border transfer or training use) and revoke, re-consent when the terms
-// changed (`current: false` or 409 `llm_policy_changed`), and the course's LLM usage. Summary
+// changed (`current: false` or 409 `llm_policy_changed`), and the course's LLM usage. An instructor
+// who may not consent (`canGrant: false`, a teaching assistant) sees the state read-only except revoke. Summary
 // jobs refused with 409 `llm_consent_required` / 503 `llm_disabled` point here.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, LoadingState, ErrorState } from "../../ui/kit.tsx";
@@ -10,7 +11,7 @@ import { courseIdFor, roleIn } from "../../shared/backend.ts";
 import { useResource } from "../../shared/remote-cache.ts";
 import {
   SCOPES, POLICY, policies, consents, usages, loadPolicy, reloadConsents, grantConsent, revokeConsent,
-  isConsentRequired, isLlmDisabled, isPolicyChanged, consentMessage, retentionText, tokensText,
+  isConsentRequired, isLlmDisabled, isPolicyChanged, mayGrant, DECIDER_ONLY, consentMessage, retentionText, tokensText,
   type LlmConsent, type LlmPolicy,
 } from "../../shared/llm-remote.ts";
 
@@ -103,11 +104,16 @@ function ConsentSection({ courseId }: { courseId: number | string }) {
     } else {
       const u = usage && usage.data;
       const rows = (Array.isArray(mine.data) ? mine.data : []).filter((item) => SCOPES[item.scope]);
+      // A teaching assistant (`canGrant: false`) sees the state without consent buttons or the "terms changed" label;
+      // an old consent of theirs can still be revoked (the backend keeps revoke for every instructor).
+      const decider = mayGrant(mine.data);
       body = (
         <>
-          <p className="pf-sub">동의하면 이 과목 자료의 쪽 이미지와 텍스트(쪽별 요약), 쪽 텍스트와 게시한 해설·학생 질문(학습 대화)이 아래 제공자로 전송됩니다. 전자우편, 전화번호, 학번 형식의 숫자는 보내기 전에 가리지만 이름과 쪽 이미지 속 글자는 가리지 못합니다. 학생 이름이 든 자료는 요청 전에 확인하세요.</p>
+          {decider
+            ? <p className="pf-sub">동의하면 이 과목 자료의 쪽 이미지와 텍스트(쪽별 요약), 쪽 텍스트와 게시한 해설·학생 질문(학습 대화)이 아래 제공자로 전송됩니다. 전자우편, 전화번호, 학번 형식의 숫자는 보내기 전에 가리지만 이름과 쪽 이미지 속 글자는 가리지 못합니다. 학생 이름이 든 자료는 요청 전에 확인하세요.</p>
+            : <p className="pf-sub" role="note">{`${DECIDER_ONLY} 아래는 내 계정의 동의 상태입니다. 예전에 남긴 동의는 철회만 할 수 있습니다.`}</p>}
           {terms}
-          {p.acknowledgementRequired ? (
+          {decider && p.acknowledgementRequired ? (
             <label className="choice pf-check">
               <input ref={ack} type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} />
               <span>국외 이전과 제공자의 학습 이용 가능성을 확인했습니다</span>
@@ -117,6 +123,7 @@ function ConsentSection({ courseId }: { courseId: number | string }) {
             <ScopeRow
               key={item.scope}
               item={item}
+              decider={decider}
               policy={p}
               courseId={courseId}
               acknowledged={acknowledged}
@@ -141,6 +148,7 @@ function ConsentSection({ courseId }: { courseId: number | string }) {
 
 interface ScopeRowProps {
   item: LlmConsent;
+  decider: boolean;
   policy: LlmPolicy;
   courseId: number | string;
   acknowledged: boolean;
@@ -149,13 +157,15 @@ interface ScopeRowProps {
   focusAck: () => void;
 }
 
-function ScopeRow({ item, policy, courseId, acknowledged, say, onPolicyChanged, focusAck }: ScopeRowProps) {
+function ScopeRow({ item, decider, policy, courseId, acknowledged, say, onPolicyChanged, focusAck }: ScopeRowProps) {
   const [granting, setGranting] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [armed, setArmed] = useState(false);
   const live = useRef(true);
   useEffect(() => () => { live.current = false; }, []);
-  const state = !item.granted ? "동의하지 않음" : item.current ? "동의함" : "처리 조건이 바뀌어 다시 동의해야 합니다";
+  const state = !item.granted ? "동의하지 않음"
+    : !decider ? "예전에 남긴 동의(효력 없음)"
+    : item.current ? "동의함" : "처리 조건이 바뀌어 다시 동의해야 합니다";
 
   async function grant() {
     if (granting) return;
@@ -201,7 +211,7 @@ function ScopeRow({ item, policy, courseId, acknowledged, say, onPolicyChanged, 
       <b>{SCOPES[item.scope]}</b>
       <span className="pf-meta">{state}</span>
       <div className="pf-actions">
-        {!item.granted || !item.current ? (
+        {decider && (!item.granted || !item.current) ? (
           <Button kind="primary" disabled={granting} aria-busy={granting ? "true" : undefined} onClick={() => { void grant(); }}>
             {granting ? "보내는 중…" : item.granted ? "다시 동의" : "동의"}
           </Button>

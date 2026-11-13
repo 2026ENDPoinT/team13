@@ -403,6 +403,8 @@ export function summaryMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return error instanceof Error && error.message ? error.message : "요약 요청을 처리하지 못했습니다.";
   if (error.code === "llm_consent_required") return "이 과목의 외부 AI 처리(쪽별 요약 생성)에 동의하지 않아 요약을 만들 수 없습니다.";
   if (error.code === "llm_disabled") return "이 서비스에서는 외부 AI 기능을 쓰지 않습니다.";
+  // 403 from a backend that lets only the course's professor (or manager) start and retry summary jobs (ADR-0032).
+  if (error.code === "llm_decider_required") return "쪽별 요약 생성과 다시 시도는 이 과목의 담당 교수나 비정규 담당자만 할 수 있습니다. 조교 계정으로는 요약을 만들 수 없습니다.";
   if (error.code === "idempotency_in_progress") return "같은 요약 요청을 처리하고 있습니다. 잠시 후 진행 상황을 새로 불러오세요.";
   if (error.code === "idempotency_conflict") return "앞서 보낸 요청과 내용이 달라 처리하지 않았습니다. 다시 시도하세요.";
   switch (error.status) {

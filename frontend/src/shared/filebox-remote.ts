@@ -293,5 +293,10 @@ export function fileboxMessage(error: unknown): string {
 export const PURPOSE_LABEL: Readonly<Record<string, string>> = {
   lecture_material: "강의 자료",
   assignment_submission: "과제 제출",
-  notice_attachment: "공지 첨부",
+  post_attachment: "게시글 첨부",
+  lecture_video: "강의 영상",
+  community_notice: "알림마당 공지 첨부",
+  community_material: "알림마당 자료실 첨부",
+  inquiry_attachment: "1:1 문의 첨부",
+  message_attachment: "쪽지 첨부",
 };

@@ -126,6 +126,8 @@ export interface NumberedPage<T> {
 /** `GET /api/me/courses`의 줄. */
 export interface MyCourseItem {
   courseId: number | string;
+  /** Legacy KJKEY; equals a sample course id for sample-keyed courses. */
+  key?: string | null;
   code?: string | null;
   name: string;
   section?: string | null;
