@@ -21,7 +21,7 @@ import { koDateTime } from "../../shared/home-remote.ts";
 import { downloadControl } from "../../shared/uploads-remote.tsx";
 import { serverPreview } from "../../shared/preview-remote.tsx";
 import { courseById, type Course } from "../../data.ts";
-import { getState, save, render } from "../../store.ts";
+import { getState, render } from "../../store.ts";
 import { showErrors } from "../../forms.ts";
 import { Link } from "../../router.tsx";
 import { Button, Field, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
@@ -554,16 +554,18 @@ export function registrationPicked(kj: string): boolean {
 /**
  * `pf-save` (material form) with file box picks: one server material with every clean pick
  * (`saveRemoteMaterialFromUploads`). `say` sets the form's status line; the caller keeps its controls
- * disabled and its button labelled "서버에 등록하는 중…" while this runs.
+ * disabled and its button labelled "서버에 등록하는 중…" while this runs. True once the material was created:
+ * the caller then clears its form and repaints.
  */
-export async function saveRegistrationFromFilebox({ title, file }: { title: string; file: File | null }, say: (text: string) => void): Promise<void> {
+export async function saveRegistrationFromFilebox({ title, file }: { title: string; file: File | null }, say: (text: string) => void): Promise<boolean> {
   const state = getState();
   const kj = state.courseId;
   const memo = registrationOf(kj);
-  if (memo.busy) return;
+  if (memo.busy) return false;
   const fail = (errors: Record<string, string>) => {
     say(Object.values(errors).join(". "));
     showErrors(errors);
+    return false;
   };
   if (!title) return fail({ title: "자료명을 입력하세요" });
   if (file) return fail({ file: "직접 고른 파일과 파일함 파일은 따로 등록하세요. 한쪽을 비운 뒤 다시 등록하세요." });
@@ -587,12 +589,12 @@ export async function saveRegistrationFromFilebox({ title, file }: { title: stri
       : "파일함 파일로 자료를 등록했습니다";
     const backendCourseId = courseIdFor(kj);
     if (backendCourseId != null) forgetMaterialList(backendCourseId);
-    save();
-    render();
+    return true;
   } catch (error) {
     const message = (error instanceof Error && error.message) || "자료를 등록하지 못했습니다. 잠시 후 다시 시도하세요.";
     say(message);
     showErrors({ file: message });
+    return false;
   } finally {
     memo.busy = false;
     if (memo.repaint) memo.repaint();

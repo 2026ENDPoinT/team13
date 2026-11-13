@@ -10,7 +10,8 @@ import {
   memo, useCallback, useEffect, useId, useMemo, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from "react";
-import { inline, markdown, pageFile, type PageSummary, type SummaryBeat, type SummarySlide } from "./page-summary.tsx";
+import { inline, markdown, PageImage, type PageSummary, type SummaryBeat, type SummarySlide } from "./page-summary.tsx";
+import { sharedRefresh } from "./page-image-retry.ts";
 
 /** LessonViewer `ModuleStudyStatus`. */
 export type LessonStudyStatus = "none" | "running" | "ready" | "failed";
@@ -228,14 +229,17 @@ function LessonBody({ doc }: { doc: LessonDoc }) {
 
   const items = useMemo(() => buildItems(count, story, slideAt, mode, summarized), [count, story, slideAt, mode, summarized]);
 
-  // 쪽 이미지가 실패하면(이미지 쿠키 만료) 출처를 한 번만 다시 받아 모든 쪽이 같은 새 주소를 쓴다.
-  const refreshing = useRef<Promise<string | null> | null>(null);
-  const refresh = useCallback((): Promise<string | null> => {
-    if (!source || source.kind !== "images" || !source.refresh) return Promise.resolve(null);
-    const load = source.refresh;
-    refreshing.current ??= Promise.resolve().then(load).catch(() => null);
-    return refreshing.current;
-  }, [source]);
+  // 쪽 이미지가 실패하면(이미지 쿠키 만료) 출처를 다시 받아 쿠키를 새로 받고 이미지를 다시 그린다. 동시에 실패한 쪽은 한 번의 요청을 같이 쓴다.
+  // 화면이 그릴 때마다 doc을 새로 만들어도 이미지 주소가 같으면 같은 함수를 쓰도록 주소에만 묶고, 다시 받는 함수는 최신 것을 읽는다.
+  const imageBase = source && source.kind === "images" ? source.base : null;
+  const reload = useRef<(() => Promise<string | null>) | undefined>(undefined);
+  useEffect(() => {
+    reload.current = source && source.kind === "images" ? source.refresh : undefined;
+  });
+  const refresh = useMemo(
+    () => (imageBase === null ? () => Promise.resolve(null) : sharedRefresh(() => (reload.current ? reload.current() : imageBase))),
+    [imageBase],
+  );
 
   const changeMode = useCallback((next: Mode) => {
     setMode(next);
@@ -557,9 +561,9 @@ const SlideRow = memo(function SlideRow({ page, slide, review, source, summarize
     <article className={`lv-slide tag-${tag || "none"}`} data-page={page} aria-label={`${page}쪽`}>
       <div className="lv-gutter"><span className="lv-pno">{`p.${page}`}</span></div>
       {source ? (
-        <button type="button" className="lv-shot" aria-label={`${page}쪽 크게 보기`} onClick={() => onZoom(page)}>
-          <PageView source={source} page={page} refresh={refresh} />
-        </button>
+        <div className="lv-shot">
+          <PageView source={source} page={page} refresh={refresh} zoom={{ label: `${page}쪽 크게 보기`, open: () => onZoom(page) }} />
+        </div>
       ) : null}
       {source && summarized ? <Splitter split={split} /> : null}
       {summarized ? (
@@ -585,34 +589,41 @@ const SlideRow = memo(function SlideRow({ page, slide, review, source, summarize
   );
 });
 
-/** 원본 한 쪽: 서버 쪽 이미지 또는 글로 된 쪽(샘플). 버튼 안에 들어가므로 글 쪽도 span만 쓴다. */
-function PageView({ source, page, refresh }: { source: LessonSource; page: number; refresh: () => Promise<string | null> }) {
+interface Zoom {
+  label: string;
+  open: () => void;
+}
+
+function ZoomButton({ zoom, children }: { zoom: Zoom | undefined; children: ReactNode }) {
+  if (!zoom) return children;
+  return <button type="button" className="lv-zoom" aria-label={zoom.label} onClick={zoom.open}>{children}</button>;
+}
+
+/**
+ * 원본 한 쪽: 서버 쪽 이미지 또는 글로 된 쪽(샘플). `zoom`이 있으면 쪽을 크게 보기 버튼으로 감싼다.
+ * 이미지를 끝내 못 불러오면 크게 보기 대신 안내와 다시 불러오기 버튼을 보인다(버튼 안에 버튼을 두지 않는다).
+ */
+function PageView({ source, page, refresh, zoom }: { source: LessonSource; page: number; refresh: () => Promise<string | null>; zoom?: Zoom }) {
   if (source.kind === "images") {
     const style = source.aspect ? { aspectRatio: String(source.aspect) } : undefined;
-    return <span className="lv-sheet" style={style}><PageImage base={source.base} page={page} refresh={refresh} /></span>;
+    return (
+      <PageImage
+        key={source.base} base={source.base} page={page} refresh={refresh} alt={`${page}쪽 원본`}
+        errorClass="lv-sheet lv-page-error page-image-failed"
+        wrap={(image) => <ZoomButton zoom={zoom}><span className="lv-sheet" style={style}>{image}</span></ZoomButton>}
+      />
+    );
   }
   const item = source.pages.find((row) => row.page === page);
   return (
-    <span className="lv-sheet lv-paper">
-      <span className="lv-paper-title">{item ? item.title : ""}</span>
-      <span className="lv-paper-text">{item ? item.text : ""}</span>
-      <span className="lv-paper-no" aria-hidden="true">{page}</span>
-    </span>
+    <ZoomButton zoom={zoom}>
+      <span className="lv-sheet lv-paper">
+        <span className="lv-paper-title">{item ? item.title : ""}</span>
+        <span className="lv-paper-text">{item ? item.text : ""}</span>
+        <span className="lv-paper-no" aria-hidden="true">{page}</span>
+      </span>
+    </ZoomButton>
   );
-}
-
-/** A page image that retries once after the shared source refetch, then says it could not load. */
-function PageImage({ base, page, refresh }: { base: string; page: number; refresh: () => Promise<string | null> }) {
-  const [src, setSrc] = useState(() => pageFile(base, page));
-  const [failed, setFailed] = useState(false);
-  const retried = useRef(false);
-  const onError = () => {
-    if (retried.current) return setFailed(true);
-    retried.current = true;
-    void refresh().then((next) => (next ? setSrc(pageFile(next, page)) : setFailed(true)));
-  };
-  if (failed) return <span className="lv-page-error">{`${page}쪽 이미지를 불러오지 못했습니다.`}</span>;
-  return <img src={src} alt={`${page}쪽 원본`} loading="lazy" decoding="async" onError={onError} />;
 }
 
 // ---------- 원본·설명 너비 ----------
