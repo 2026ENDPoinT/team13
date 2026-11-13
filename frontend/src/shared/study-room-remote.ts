@@ -115,16 +115,25 @@ export const courseViews = createResource<StudyCourseView, [courseId: Id]>(async
 export const viewKey = (courseId: Id): string => String(courseId);
 
 /**
- * The course view of `courseId`, loaded now (a fresh answer, shared with a load already running).
+ * The course view of `courseId`, loaded now. `fresh`: never reuse a load that started before the caller's last
+ * write (it waits for that one, then asks again); otherwise a load already running is shared.
  * Throws the load error; a 404 marks the endpoints missing (callers then use the browser store).
  */
-export async function loadCourseView(courseId: Id): Promise<StudyCourseView> {
+export async function loadCourseView(courseId: Id, fresh = false): Promise<StudyCourseView> {
   const key = viewKey(courseId);
-  await courseViews.load(key, courseId);
+  if (fresh) await reloadAfterWrite(key, courseId);
+  else await courseViews.load(key, courseId);
   const entry = courseViews.peek(key);
   if (entry && entry.error) throw entry.error;
   if (!entry || !entry.data) throw new ApiError(0, { detail: "학습실 정보를 받지 못했습니다." });
   return entry.data;
+}
+
+/** A load that starts after now: a load already in flight may have read the state before a write. */
+async function reloadAfterWrite(key: string, courseId: Id): Promise<void> {
+  const running = courseViews.peek(key)?.loading;
+  if (running) await running;
+  await courseViews.load(key, courseId);
 }
 
 /** Cached view, or null; starts a load when nothing is cached for it yet. */
@@ -162,9 +171,9 @@ courseViews.subscribe((key) => {
   else serverCourseKeys.clear();
 });
 
-/** Reloads the view after a write; errors stay in the cache entry. */
+/** Reloads the view after a write (never reusing a load that started before it); errors stay in the cache entry. */
 export function refreshCourseView(courseId: Id): Promise<void> {
-  return courseViews.load(viewKey(courseId), courseId);
+  return reloadAfterWrite(viewKey(courseId), courseId);
 }
 
 // ---------- writes ----------
@@ -216,7 +225,7 @@ export interface UploadInput {
   idempotencyKey: string;
 }
 
-const ALLOWED: Record<string, true> = { webm: true, ogg: true, mp3: true, m4a: true, mp4: true, wav: true, aac: true, flac: true };
+const ALLOWED: Record<string, true> = { webm: true, weba: true, ogg: true, opus: true, mp3: true, m4a: true, mp4: true, wav: true, aac: true, flac: true };
 
 /** The multipart file name: the given name when its extension is one the server takes, else `recording.<ext>`. */
 export function uploadName(fileName: string | null | undefined, extension: string): string {
@@ -251,17 +260,36 @@ export function getServerRecording(id: Id): Promise<ServerRecording> {
 }
 
 /** Every recording of mine across courses, with the usage. */
-export async function allServerRecordings(): Promise<{ recordings: ServerRecording[]; usage: StudyUsage | null }> {
+async function allServerRecordings(): Promise<{ recordings: ServerRecording[]; usage: StudyUsage | null }> {
   const body = await apiGet<{ recordings?: ServerRecording[]; usage?: StudyUsage | null } | null>(`${BASE}/recordings`);
   const usage = (body && body.usage) || null;
   if (usage) lastUsage = usage;
   return { recordings: list<ServerRecording>(body && body.recordings), usage };
 }
 
+/** `GET …/recordings` (every course, including courses I no longer take), keyed "all". */
+export const myRecordings = createResource<{ recordings: ServerRecording[]; usage: StudyUsage | null }, []>(allServerRecordings);
+
+/**
+ * The signed-in user as the server sees it now (`GET /api/me`, never the cached connection state): another tab
+ * may have signed out or in as someone else on the shared cookie. null when signed out.
+ */
+export async function signedInUserId(): Promise<string | null> {
+  try {
+    const me = await apiGet<{ userId?: number | string | null } | null>("/api/me");
+    return me && me.userId != null ? String(me.userId) : null;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return null;
+    throw error;
+  }
+}
+
 /** `DELETE …/recordings/{id}` with the version the screen read. */
 export async function deleteServerRecording(recording: { id: Id; version: number; courseId: Id }): Promise<void> {
   await apiSend<null>("DELETE", `${BASE}/recordings/${encodeURIComponent(recording.id)}`, undefined, { ifMatch: recording.version });
   void refreshCourseView(recording.courseId);
+  // The study-room home lists recordings of courses I no longer take from this listing.
+  myRecordings.drop(() => true);
 }
 
 /** Playback and download address (owner-only, ranged; the session cookie authenticates it). */
@@ -303,6 +331,9 @@ export function studyRoomMessage(error: unknown): string {
     case "content_mismatch": return "파일 내용이 확장자와 맞지 않습니다. 다른 오디오 파일을 선택하세요.";
     case "empty_file": return "비어 있는 파일은 저장할 수 없습니다. 소리가 있는 오디오 파일을 선택하세요.";
     case "idempotency_conflict": return "같은 요청이 다른 내용으로 처리 중입니다. 화면을 새로 불러오세요.";
+    case "idempotency_in_progress": return "같은 요청을 아직 처리하고 있습니다. 잠시 후 다시 시도하세요.";
+    case "recording_deleted": return "이 녹음은 서버에서 이미 지웠습니다(다른 기기나 탭에서). 이 브라우저의 사본은 그대로 두었습니다. 필요 없으면 직접 지우세요.";
+    case "folder_deleted": return "이 폴더는 서버에서 이미 지웠습니다(다른 기기나 탭에서). 이 브라우저의 폴더와 그 안의 항목은 그대로 두었습니다.";
     default: break;
   }
   switch (error.status) {

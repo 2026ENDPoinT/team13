@@ -11,10 +11,12 @@ import { ApiError } from "../../shared/api.ts";
 import {
   activeRecording, getRecording, importRecording, formatDuration, recordingExtension, onRecordingEvent,
   startRecording, pauseRecording, resumeRecording, stopRecording, deleteRecording, moveRecordingToAccount, WARN_SHARE,
+  unsavedAudio, onUnsavedChange, forgetUnsaved,
   type ActiveRecording, type LocalRecording, type RecordingRecord, type RecordingSource,
 } from "../../shared/course-recordings.ts";
 import { backendState, backendSettled } from "../../shared/backend.ts";
-import { useStudyRoomStore } from "../../shared/study-folders.ts";
+import { useStudyRoomStore, leftByOthers } from "../../shared/study-folders.ts";
+import { saveBlob } from "../../shared/uploads-remote.tsx";
 import { serverStudyCourse, studyRoomOnServer, peekCourseView, studyRoomMessage, formatBytes, usageText } from "../../shared/study-room-remote.ts";
 import { folderHref } from "./study-files.tsx";
 import { serverStudyLecture } from "./study-server.tsx";
@@ -65,7 +67,7 @@ function TranscriptNote({ source, onServer }: { source?: RecordingSource; onServ
       </div>
     );
   }
-  return <p className="rec-note">{`전사(글자 변환)는 아직 연결되지 않았습니다. 녹음 파일만 ${storedWhere(onServer)}.`}</p>;
+  return <p className="rec-note">{`전사(글자 변환)는 아직 연결되지 않았습니다. 녹음 파일은 ${storedWhere(onServer)}.`}</p>;
 }
 
 // MediaRecorder WebM files carry no duration, so the player shows 0:00 and cannot seek.
@@ -157,12 +159,34 @@ function SetupView({ course }: { course: Course }) {
         ))}
       </div>
       <p className="err" role="alert" hidden={!error}>{error}</p>
+      <UnsavedList />
       <p className="rec-note">{`녹음 전 교수님의 허락을 받아 주세요. 오디오는 ${storedWhere(server != null)}. 자동 전사는 연결되지 않았습니다.`}</p>
       {server != null ? <ServerUsage courseId={server} /> : null}
       <input
-        ref={fileInput} type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm,.aac,.flac" hidden aria-label="저장할 오디오 파일 선택"
+        ref={fileInput} type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.opus,.webm,.weba,.aac,.flac" hidden aria-label="저장할 오디오 파일 선택"
         onChange={() => void onFile()}
       />
+    </div>
+  );
+}
+
+/** Recordings that neither this browser's storage nor the server took: in this page's memory until saved as a file. */
+function UnsavedList() {
+  const [, setVersion] = useState(0);
+  useEffect(() => onUnsavedChange(() => setVersion((n) => n + 1)), []);
+  const items = unsavedAudio();
+  if (!items.length) return null;
+  return (
+    <div className="rec-transcript-status" role="alert">
+      <strong>아직 저장되지 않은 녹음</strong>
+      <p>브라우저 저장소와 서버 모두에 저장하지 못한 녹음입니다. 이 페이지를 닫으면 사라지니 파일로 내려받으세요.</p>
+      {items.map((item) => (
+        <div key={item.id} className="btn-row">
+          <span>{item.title}</span>
+          <Button kind="secondary" onClick={() => saveBlob(item.blob, item.fileName)}>내려받기</Button>
+          <Button kind="ghost" onClick={() => forgetUnsaved(item.id)}>내려받았으면 목록에서 지우기</Button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -181,7 +205,7 @@ function LiveView({ live }: { live: ActiveRecording }) {
     }, 500);
     return () => window.clearInterval(tick);
   }, []);
-  const onServer = serverStudyCourse(live.courseId) != null;
+  const onServer = serverStudyCourse(live.courseId) != null && !live.browserOnly;
   const near = now.limitBytes != null && now.bytes >= now.limitBytes * WARN_SHARE;
   return (
     <div className={`rec-panel rec-live${live.paused ? " paused" : ""}`}>
@@ -208,12 +232,15 @@ function LiveView({ live }: { live: ActiveRecording }) {
         </Button>
       </div>
       <p className="rec-note">다른 화면으로 이동해도 녹음은 계속됩니다. 저장하기 전에 이 탭을 닫으면 녹음이 사라집니다.</p>
+      {live.browserOnly && studyRoomOnServer()
+        ? <p className="rec-note">이 브라우저에만 있는 폴더에서 시작한 녹음이라 이 브라우저에만 저장됩니다. 서버로 옮기려면 저장한 뒤 ‘내 계정으로 옮기기’를 누르세요.</p>
+        : null}
       <TranscriptNote onServer={onServer} />
     </div>
   );
 }
 
-function DeleteButton({ record, course, onStale }: { record: RecordingRecord; course: Course; onStale: () => void }) {
+function DeleteButton({ record, course, onStale }: { record: RecordingRecord; course: Course | null; onStale: () => void }) {
   const [armed, setArmed] = useState(false);
   const [deleting, setDeleting] = useState(false);
   return (
@@ -227,7 +254,7 @@ function DeleteButton({ record, course, onStale }: { record: RecordingRecord; co
         setDeleting(true);
         deleteRecording(record).then(() => {
           getState().toast = "녹음을 삭제했습니다";
-          navigate(folderHref(course.id));
+          navigate(course ? folderHref(course.id) : hrefFor(find("study_home")));
         }, (error: unknown) => {
           setDeleting(false);
           setArmed(false);
@@ -248,10 +275,16 @@ function MoveToAccount({ record, course }: { record: LocalRecording; course: Cou
   const [moving, setMoving] = useState(false);
   const [error, setError] = useState(record.uploadError || "");
   const name = backendState().me?.name;
+  const account = `지금 로그인한 계정${name ? `(${name})` : ""}`;
+  const others = leftByOthers(record.ownerUserId);
   return (
     <div className="rec-transcript-status" role="note">
-      <strong>이 브라우저에만 저장된 녹음</strong>
-      <p>{`옮기면 지금 로그인한 계정${name ? `(${name})` : ""}의 학습실에 저장되고, 서버가 받은 뒤에만 이 브라우저에서 지워집니다. 이 컴퓨터를 다른 사람과 함께 쓴다면 내 녹음인지 확인한 뒤 옮기세요.`}</p>
+      <strong>{others ? "이 브라우저에 남아 있던 녹음" : "이 브라우저에만 저장된 녹음"}</strong>
+      <p>
+        {others
+          ? `로그아웃한 상태였거나 다른 계정으로 로그인했을 때 이 브라우저에 저장된 녹음입니다. 이 컴퓨터를 함께 쓰는 다른 사람이 남긴 것일 수 있습니다. 내 녹음이 맞을 때만 옮기세요. 옮기면 ${account}의 학습실에 저장되고, 서버가 받은 뒤에만 이 브라우저에서 지워집니다.`
+          : `옮기면 ${account}의 학습실에 저장되고, 서버가 받은 뒤에만 이 브라우저에서 지워집니다.`}
+      </p>
       {error ? <p className="err" role="alert">{`지난번에 옮기지 못한 이유: ${error}`}</p> : null}
       <Button
         kind="secondary" disabled={moving}
@@ -271,7 +304,7 @@ function MoveToAccount({ record, course }: { record: LocalRecording; course: Cou
           });
         }}
       >
-        {moving ? "옮기는 중…" : error ? "다시 옮기기" : "내 계정으로 옮기기"}
+        {moving ? "옮기는 중…" : error ? (others ? "다시 옮기기" : "다시 올리기") : "내 계정으로 옮기기"}
       </Button>
     </div>
   );
@@ -279,7 +312,8 @@ function MoveToAccount({ record, course }: { record: LocalRecording; course: Cou
 
 type Playback = { kind: "loading" } | { kind: "missing" } | { kind: "failed"; message: string } | { kind: "ready"; record: RecordingRecord };
 
-function PlaybackView({ course, id }: { course: Course; id: string }) {
+function PlaybackView({ course, id }: { course: Course | null; id: string }) {
+  const kj = course ? course.id : "";
   const [playback, setPlayback] = useState<Playback>({ kind: "loading" });
   const [url, setUrl] = useState("");
   const [reads, setReads] = useState(0);
@@ -290,14 +324,14 @@ function PlaybackView({ course, id }: { course: Course; id: string }) {
     if (!settled) return;
     let live = true;
     getRecording(id).then((record) => {
-      if (live) setPlayback(record && record.courseId === course.id ? { kind: "ready", record } : { kind: "missing" });
+      if (live) setPlayback(record && record.courseId === kj ? { kind: "ready", record } : { kind: "missing" });
     }).catch((error: unknown) => {
       if (live) setPlayback({ kind: "failed", message: error instanceof ApiError ? studyRoomMessage(error) : "" });
     });
     return () => {
       live = false;
     };
-  }, [id, course.id, reads, onServer, settled]);
+  }, [id, kj, reads, onServer, settled]);
   const record = playback.kind === "ready" ? playback.record : null;
   useEffect(() => {
     if (!record) return;
@@ -324,8 +358,8 @@ function PlaybackView({ course, id }: { course: Course; id: string }) {
     return (
       <div className="rec-panel">
         <ErrorState
-          title="녹음을 찾을 수 없습니다" body={serverStudyCourse(course.id) != null ? "삭제되었거나 이 과목의 녹음이 아닙니다." : "삭제되었거나 다른 브라우저에서 만든 녹음입니다."}
-          actions={<Link href={folderHref(course.id)} className="btn btn-secondary">폴더로</Link>}
+          title="녹음을 찾을 수 없습니다" body={!course || serverStudyCourse(course.id) != null ? "삭제되었거나 이 과목의 녹음이 아닙니다." : "삭제되었거나 다른 브라우저에서 만든 녹음입니다."}
+          actions={<Link href={course ? folderHref(course.id) : hrefFor(find("study_home"))} className="btn btn-secondary">{course ? "폴더로" : "학습실로"}</Link>}
         />
       </div>
     );
@@ -350,7 +384,7 @@ function PlaybackView({ course, id }: { course: Course; id: string }) {
       <p className="rec-meta">{`${sourceLabel(ready.source)} · ${formatDuration(ready.durationMs)} · ${dateTime.format(new Date(ready.createdAt))}`}</p>
       {state === "scanning" ? <p className="rec-note" role="status">바이러스 검사 중입니다. 검사가 끝나면 재생하고 내려받을 수 있습니다.</p> : null}
       {state === "rejected" ? <p className="err" role="alert">검사에서 악성 코드가 발견되어 재생하거나 내려받을 수 없습니다. 이 녹음을 삭제하세요.</p> : null}
-      {!ready.remote && serverStudyCourse(course.id) != null ? <MoveToAccount record={ready} course={course} /> : null}
+      {course && !ready.remote && serverStudyCourse(course.id) != null ? <MoveToAccount record={ready} course={course} /> : null}
       {url ? <PlayableAudio url={url} title={ready.title} /> : null}
       <div className="btn-row">
         {url ? <a className="btn btn-secondary" href={url} download={fileName}>다운로드</a> : null}
@@ -367,6 +401,17 @@ export function renderRecording(ctx: ScreenCtx): ReactNode {
   if (server) return server;
   const params = ctx.params || new URLSearchParams();
   const courseId = params.get("kj");
+  const rec = params.get("rec");
+  // A server recording of a course I no longer take (listed on the study-room home) has no `kj`.
+  if (!courseId && rec && (!backendSettled() || studyRoomOnServer())) {
+    return (
+      <section className="study rec" data-area="home">
+        <p className="term"><Link href={hrefFor(find("study_home"))}>학습실</Link>{" · 지금 듣지 않는 과목"}</p>
+        <h1><Icon name="mic" /><span>녹음 파일</span></h1>
+        {backendSettled() ? <PlaybackView key={rec} course={null} id={rec} /> : <div className="rec-panel" aria-busy="true"><LoadingState title="녹음을 불러오는 중입니다" /></div>}
+      </section>
+    );
+  }
   const course = courseById(courseId);
   if (!courseId || course.missing || course.id !== courseId) {
     return (
@@ -379,7 +424,7 @@ export function renderRecording(ctx: ScreenCtx): ReactNode {
       </section>
     );
   }
-  return <Recording course={course} id={params.get("rec")} />;
+  return <Recording course={course} id={rec} />;
 }
 
 function Recording({ course, id }: { course: Course; id: string | null }) {
@@ -389,7 +434,6 @@ function Recording({ course, id }: { course: Course; id: string | null }) {
     const off = onRecordingEvent((event) => {
       if (event.type === "saved" && event.record.courseId === course.id) {
         off();
-        if (event.warning) toast(event.warning);
         navigate(hrefFor(find("study_lecture"), { kj: course.id, rec: event.record.id }));
       } else if (event.type === "error") {
         off();

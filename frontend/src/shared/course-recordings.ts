@@ -1,16 +1,20 @@
 // Lecture audio recorded or imported by the student. Backend `ready`: stored on the server in the student's own
 // study room (study-room-remote.ts) and played or downloaded from its content address. Otherwise kept only in this
 // browser's IndexedDB. Recordings are never transcribed or sent to a model in either mode.
+// Audio is never dropped: a finished recording is kept in IndexedDB until the server answered 201 for it, and when
+// even IndexedDB refuses it the audio stays in memory and is offered as a download (`unsavedAudio`).
 import {
   serverStudyCourse, studyRoomOnServer, loadCourseView, isMissingEndpoint, uploadRecording, uploadName, getServerRecording,
   deleteServerRecording, contentUrl, studyUsage, studyRoomMessage, formatBytes, putPlacement, refreshCourseView,
-  type ServerRecording, type RecordingState,
+  signedInUserId, type ServerRecording, type RecordingState,
 } from "./study-room-remote.ts";
 import {
-  placeLocally, localPlacements, localFolder, browserFolders, moveFolderToAccount, forgetMoved,
+  placeLocally, localPlacements, localFolder, browserFolders, moveFolderToAccount, forgetMoved, leftByOthers,
 } from "./study-folders.ts";
 import { ApiError } from "./api.ts";
-import { kjOfCourseId } from "./backend.ts";
+import { backendSettled, connect, currentUserId, kjOfCourseId, subscribe as onBackendChange } from "./backend.ts";
+import { saveBlob } from "./uploads-remote.tsx";
+import { toast } from "../store.ts";
 
 const DATABASE = "astra-course-recordings";
 const VERSION = 1;
@@ -18,10 +22,13 @@ const STORE = "recordings";
 const MIME_TYPES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
 // 48 kbit/s Opus keeps a 75-minute lecture near 27 MB, well under the server's 50 MB file limit.
 const AUDIO_BITS_PER_SECOND = 48000;
-// Share of the server file limit at which the recorder stops and saves by itself (the screen warns earlier).
+// Share of the server file limit at which the recorder stops and saves by itself.
 const STOP_SHARE = 0.97;
-/** Share of the server file limit at which the recorder screen starts warning. */
+/** Share of the server file limit at which the recorder warns (toast and recorder screen). */
 export const WARN_SHARE = 0.85;
+
+const ACCOUNT_CHANGED = "로그아웃했거나 다른 계정으로 바뀌어 녹음을 서버에 올리지 않고 이 브라우저에 보관했습니다. 녹음한 계정으로 다시 로그인한 뒤 ‘내 계정으로 옮기기’로 옮길 수 있습니다.";
+const MOVE_STOPPED = "로그인한 계정이 바뀌었거나 로그아웃되어 옮기기를 멈췄습니다. 남은 항목은 이 브라우저에 그대로 있습니다.";
 
 export type RecordingSource = "mic" | "tab" | "audio";
 
@@ -43,6 +50,10 @@ export interface LocalRecording extends RecordingFields {
   blob: Blob;
   /** Why the last move to the account failed (shown with the retry control); the record stays until a 201. */
   uploadError?: string;
+  /** The account signed in when it was recorded or imported while `ready` (none when made signed out). */
+  ownerUserId?: string;
+  /** The server folder it was recorded in; it goes there when it moves (the course root if that folder is gone). */
+  pendingFolderId?: string;
 }
 
 /** A recording on the server. `id` is the server id as a string; `url` plays and downloads it. */
@@ -58,7 +69,7 @@ export type RecordingRecord = LocalRecording | RemoteRecording;
 
 export type RecordingEvent =
   | { type: "change" }
-  /** `warning`: saved, but kept in this browser because the server refused it, or stopped at the size limit. */
+  /** `warning`: saved, but kept in this browser (with the reason), or stopped at the size limit. */
   | { type: "saved"; record: RecordingRecord; warning?: string }
   | { type: "error"; error: unknown };
 
@@ -71,23 +82,41 @@ export interface ActiveRecording {
   bytes: number;
   /** The server's file limit when the recording goes to the server, else null. */
   limitBytes: number | null;
+  /** True when it is saved only in this browser (recorded in a browser-only folder, or nobody signed in). */
+  browserOnly: boolean;
+}
+
+/** Audio that neither IndexedDB nor the server took; kept in memory for this page and offered as a download. */
+export interface UnsavedAudio {
+  id: string;
+  courseId: string;
+  title: string;
+  fileName: string;
+  blob: Blob;
 }
 
 interface Session {
   courseId: string;
   source: RecordingSource;
   folderId: string | null;
+  /** The signed-in user when it started (null signed out); only that account may receive it. */
+  ownerUserId: string | null;
+  /** Whether the backend connection had settled at the start (before that, the first answer sets the owner). */
+  settled: boolean;
   recorder: MediaRecorder;
   stream: MediaStream;
   chunks: Blob[];
   bytes: number;
   limitBytes: number | null;
   limitReached: boolean;
+  warned: boolean;
+  /** Set when the account changed during the recording: it was stopped and stays in this browser. */
+  accountChanged: boolean;
   startedAt: Date;
   pausedTotal: number;
   pausedAt: number;
   stoppedAt: number;
-  done?: Promise<RecordingRecord>;
+  done?: Promise<RecordingRecord | null>;
 }
 
 function errorName(error: unknown): string {
@@ -159,16 +188,44 @@ async function localRecordingsOf(courseId: string): Promise<LocalRecording[]> {
   return withStore("readonly", (store) => asRecords(store.index("courseId").getAll(courseId)));
 }
 
-function putLocalRecording(record: LocalRecording): Promise<IDBValidKey> {
-  return withStore("readwrite", (store) => store.put(record));
-}
-
 function deleteLocalRecording(id: string): Promise<undefined> {
   return withStore("readwrite", (store) => store.delete(id));
 }
 
-/** A server recording in the screens' record shape; `kj` is the app course it is shown under. */
-function fromServer(recording: ServerRecording, kj: string): RemoteRecording {
+/**
+ * Applies `change` to the IndexedDB record `id` only if it still exists, read and written in one transaction: another
+ * tab may have moved it, or the user deleted it, while this one was uploading.
+ */
+async function updateLocalIfPresent(id: string, change: Partial<LocalRecording>): Promise<LocalRecording | null> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    let updated: LocalRecording | null = null;
+    try {
+      const transaction = db.transaction(STORE, "readwrite");
+      const store = transaction.objectStore(STORE);
+      const read = store.get(id) as IDBRequest<LocalRecording | undefined>;
+      read.onsuccess = () => {
+        if (!read.result) return;
+        updated = { ...read.result, ...change };
+        store.put(updated);
+      };
+      transaction.oncomplete = () => {
+        db.close();
+        resolve(updated);
+      };
+      transaction.onabort = () => {
+        db.close();
+        reject(storageError(transaction.error));
+      };
+    } catch (error) {
+      db.close();
+      reject(storageError(error));
+    }
+  });
+}
+
+/** A server recording in the screens' record shape; `kj` is the app course it is shown under ("" for a course I left). */
+export function fromServer(recording: ServerRecording, kj: string): RemoteRecording {
   return {
     id: String(recording.id),
     remote: true,
@@ -188,9 +245,8 @@ function fromServer(recording: ServerRecording, kj: string): RemoteRecording {
 }
 
 /**
- * Newest first. Server course: its server recordings, then any recording still only in this browser for the course
- * (one the server refused during the import, or a save that fell back to the browser) so it can be played,
- * downloaded or deleted.
+ * Newest first. Server course: its server recordings, then every recording still only in this browser for the course
+ * (screens set apart the ones `leftByOthers`), so each can be played, downloaded, moved or deleted.
  */
 export async function listRecordings(courseId: string | null | undefined): Promise<RecordingRecord[]> {
   const kj = String(courseId || "");
@@ -209,7 +265,10 @@ export async function listRecordings(courseId: string | null | undefined): Promi
 
 const SERVER_ID = /^[1-9][0-9]*$/;
 
-/** A server id (digits) while the study room is on the server; otherwise an IndexedDB id. undefined when it is gone. */
+/**
+ * A server id (digits) while the study room is on the server; otherwise an IndexedDB id. undefined when it is gone.
+ * A server recording of a course I no longer take has `courseId` "".
+ */
 export async function getRecording(id: string | null | undefined): Promise<RecordingRecord | undefined> {
   const key = String(id || "");
   if (studyRoomOnServer() && SERVER_ID.test(key)) {
@@ -258,9 +317,11 @@ interface SaveInput {
   title?: string;
   fileName?: string;
   folderId?: string | null;
+  ownerUserId?: string | null;
+  pendingFolderId?: string | null;
 }
 
-async function saveLocal({ courseId, source, blob, durationMs, startedAt, title, fileName }: SaveInput): Promise<LocalRecording> {
+async function saveLocal({ courseId, source, blob, durationMs, startedAt, title, fileName, ownerUserId, pendingFolderId }: SaveInput): Promise<LocalRecording> {
   const record: LocalRecording = {
     id: crypto.randomUUID(),
     courseId,
@@ -272,6 +333,8 @@ async function saveLocal({ courseId, source, blob, durationMs, startedAt, title,
     createdAt: startedAt.toISOString(),
     blob,
     ...(fileName ? { fileName } : {}),
+    ...(ownerUserId ? { ownerUserId } : {}),
+    ...(pendingFolderId ? { pendingFolderId } : {}),
   };
   await withStore("readwrite", (store) => store.put(record));
   return record;
@@ -283,79 +346,148 @@ function recordedAt(createdAt: string): string {
   return new Date(Number.isFinite(time) ? Math.min(time, Date.now()) : Date.now()).toISOString();
 }
 
-/** Sends a new recording to the server (`folderId` places it in the same request). The key makes a retry safe. */
+const sleep = (ms: number) => new Promise<void>((resolve) => { window.setTimeout(resolve, ms); });
+
+/**
+ * Sends a new recording to the server (`folderId` places it in the same request). The key makes a retry safe;
+ * `idempotency_in_progress` (the same key still being processed) is asked again shortly.
+ */
 async function saveRemote(server: number | string, input: SaveInput, idempotencyKey: string): Promise<RemoteRecording> {
-  const recording = await uploadRecording({
-    courseId: server,
-    blob: input.blob,
-    fileName: uploadName(input.fileName, recordingExtension(input.blob.type || "audio/webm")),
-    title: input.title || recordingTitle(input.startedAt),
-    source: input.source,
-    durationMs: input.durationMs,
-    recordedAt: recordedAt(input.startedAt.toISOString()),
-    folderId: input.folderId,
-    idempotencyKey,
-  });
-  return fromServer(recording, input.courseId);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const recording = await uploadRecording({
+        courseId: server,
+        blob: input.blob,
+        fileName: uploadName(input.fileName, recordingExtension(input.blob.type || "audio/webm")),
+        title: input.title || recordingTitle(input.startedAt),
+        source: input.source,
+        durationMs: input.durationMs,
+        recordedAt: recordedAt(input.startedAt.toISOString()),
+        folderId: input.folderId,
+        idempotencyKey,
+      });
+      return fromServer(recording, input.courseId);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "idempotency_in_progress" && attempt < 4) {
+        await sleep(1500);
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+/** Whether the server's signed-in user is still `userId` (asked now, not the cached connection). Resyncs on a change. */
+async function stillSignedInAs(userId: string | null): Promise<boolean> {
+  if (!userId) return false;
+  let now: string | null;
+  try {
+    now = await signedInUserId();
+  } catch {
+    return false;
+  }
+  if (now === userId) return true;
+  // Another tab signed out or in as someone else on the shared cookie: let the app follow.
+  void connect();
+  return false;
+}
+
+// ---------- audio no store took ----------
+
+const unsaved: UnsavedAudio[] = [];
+const unsavedListeners = new Set<() => void>();
+
+/** Audio kept only in this page's memory (IndexedDB and the server both refused it). */
+export const unsavedAudio = (): readonly UnsavedAudio[] => unsaved;
+
+export function onUnsavedChange(listener: () => void): () => void {
+  unsavedListeners.add(listener);
+  return () => {
+    unsavedListeners.delete(listener);
+  };
+}
+
+/** Removes one in-memory recording after the user saved it as a file. */
+export function forgetUnsaved(id: string): void {
+  const index = unsaved.findIndex((item) => item.id === id);
+  if (index >= 0) unsaved.splice(index, 1);
+  if (!unsaved.length && !session) window.removeEventListener("beforeunload", warnUnload);
+  for (const listener of [...unsavedListeners]) listener();
+}
+
+function keepInMemory(input: SaveInput): UnsavedAudio {
+  const title = input.title || recordingTitle(input.startedAt);
+  const item: UnsavedAudio = {
+    id: crypto.randomUUID(), courseId: input.courseId, title, blob: input.blob,
+    fileName: `${title.replace(/[\\/:*?"<>|]/g, "-")}.${recordingExtension(input.blob.type || "audio/webm")}`,
+  };
+  unsaved.push(item);
+  // Leaving the page would lose it: the browser asks first, and the file is offered right away.
+  window.addEventListener("beforeunload", warnUnload);
+  saveBlob(item.blob, item.fileName);
+  for (const listener of [...unsavedListeners]) listener();
+  return item;
 }
 
 // ---------- moving browser recordings to the account ----------
-
-const sleep = (ms: number) => new Promise<void>((resolve) => { window.setTimeout(resolve, ms); });
 
 export interface MoveResult {
   /** The server record after a 201, else the browser record (with its `uploadError`). */
   record: RecordingRecord;
   /** Why it stayed in this browser, or undefined when it moved. */
   error?: string;
+  /** The signed-in account changed or the session ended: a batch must stop; the record's reason was not touched. */
+  stop?: boolean;
+}
+
+interface MoveOptions {
+  /** Browser folder id -> server folder id, shared by a batch. */
+  folderIds?: Map<string, string>;
+  /** The account the move was started for; checked against the server right before the upload. */
+  userId?: string | null;
 }
 
 /**
- * Moves one browser recording to the signed-in account: its browser folder first (when it sits in one), then
- * `POST …/recordings` with `Idempotency-Key: import-rec-<localId>`; `folderIds` (browser folder id -> server id) is
- * shared by a batch. The browser copy is deleted only after the server answered 201 (or replayed it); on any
- * failure it stays with the reason in `uploadError`.
+ * Moves one browser recording to the signed-in account (an explicit action, or the automatic upload right after a
+ * recording). A recording in a browser folder takes that folder along (`POST …/folders`, key `import-folder-<id>`);
+ * one with `pendingFolderId` goes into that server folder if it still exists. The upload uses the key
+ * `import-rec-<localId>`. The browser copy is deleted only after the server answered 201 (or replayed it); on a
+ * refusal it stays with the reason in `uploadError`, written only if the record still exists.
  */
-export async function moveRecordingToAccount(record: LocalRecording, folderIds: Map<string, string> = new Map()): Promise<MoveResult> {
-  const server = serverStudyCourse(record.courseId);
+export async function moveRecordingToAccount(record: LocalRecording, { folderIds = new Map(), userId = currentUserId() }: MoveOptions = {}): Promise<MoveResult> {
   const keep = async (error: unknown): Promise<MoveResult> => {
-    const message = error instanceof ApiError && (error.status === 410 || error.code === "recording_deleted")
-      ? "서버에서 이미 지운 녹음입니다. 필요 없으면 이 브라우저의 사본도 지우세요."
-      : studyRoomMessage(error);
-    const kept: LocalRecording = { ...record, uploadError: message };
-    await putLocalRecording(kept).catch(() => {});
-    return { record: kept, error: message };
+    const message = studyRoomMessage(error);
+    const kept = await updateLocalIfPresent(record.id, { uploadError: message }).catch(() => null);
+    return { record: kept || { ...record, uploadError: message }, error: message };
   };
+  if (!(await stillSignedInAs(userId))) return { record, error: MOVE_STOPPED, stop: true };
+  const server = serverStudyCourse(record.courseId);
   if (server == null) return keep(new Error("이 과목은 ASTRA 서버에 없어 옮길 수 없습니다."));
-  const placedIn = localPlacements()[record.id] || "";
-  // A browser folder is moved first; a server folder id is used as it is; a folder that no longer exists is ignored.
-  let folderId: string | null = /^[1-9][0-9]*$/.test(placedIn) ? placedIn : null;
-  const browserFolder = placedIn ? localFolder(placedIn) : null;
-  if (browserFolder) {
-    // The server folder must exist before the upload names it (the key's fingerprint covers folderId).
-    try {
+  const browserFolder = localFolder(localPlacements()[record.id] || "");
+  let folderId: string | null = null;
+  try {
+    if (browserFolder) {
+      // The server folder must exist before the upload names it (the key's fingerprint covers folderId).
       folderId = folderIds.get(browserFolder.id) ?? await moveFolderToAccount(browserFolder);
       folderIds.set(browserFolder.id, folderId);
-    } catch (error) {
-      return keep(error);
+    } else if (record.pendingFolderId) {
+      const view = await loadCourseView(server, true);
+      folderId = view.folders.some((folder) => String(folder.id) === record.pendingFolderId) ? record.pendingFolderId : null;
     }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return { record, error: MOVE_STOPPED, stop: true };
+    return keep(error);
   }
   const input: SaveInput = {
     courseId: record.courseId, source: record.source, blob: record.blob, durationMs: record.durationMs,
     startedAt: new Date(recordedAt(record.createdAt)), title: record.title, fileName: record.fileName, folderId,
   };
-  let moved: RemoteRecording | null = null;
-  for (let attempt = 0; !moved; attempt += 1) {
-    try {
-      moved = await saveRemote(server, input, `import-rec-${record.id}`);
-    } catch (error) {
-      // The same key is still being processed (another tab, or an earlier try): ask again shortly.
-      if (error instanceof ApiError && error.code === "idempotency_in_progress" && attempt < 4) {
-        await sleep(1500);
-        continue;
-      }
-      return keep(error);
-    }
+  let moved: RemoteRecording;
+  try {
+    moved = await saveRemote(server, input, `import-rec-${record.id}`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return { record, error: MOVE_STOPPED, stop: true };
+    return keep(error);
   }
   try {
     await deleteLocalRecording(record.id);
@@ -367,31 +499,36 @@ export async function moveRecordingToAccount(record: LocalRecording, folderIds: 
 }
 
 /**
- * Moves everything of this browser that belongs to the server courses of the account (only `kj` when given):
- * browser folders in their order, their recordings, and course PDFs placed in them. Folders of courses the
- * server does not know, browser-only PDFs and anything that failed stay here. Resolves a summary sentence.
+ * Moves this browser's items of the account's server courses (only `kj` when given): `others` false takes the
+ * signed-in user's own items, true the ones `leftByOthers` (the user confirmed they are theirs). Browser folders go
+ * in their order, then their recordings, then course PDFs placed in them. The server user is checked before every
+ * step; on a change or a 401 the run stops and leaves the rest as it is. Resolves a summary sentence.
  */
-export async function moveAllToAccount(kj?: string): Promise<string> {
-  const mine = (courseId: string) => (kj == null || courseId === kj) && serverStudyCourse(courseId) != null;
+export async function moveAllToAccount(kj: string | undefined, others: boolean): Promise<string> {
+  const userId = currentUserId();
+  const mine = (courseId: string, owner: string | undefined) => (kj == null || courseId === kj) && serverStudyCourse(courseId) != null && leftByOthers(owner) === others;
   const folderIds = new Map<string, string>();
   const movedFolders: string[] = [];
-  let folderErrors = 0;
-  let folderError = "";
+  const folderErrors: string[] = [];
+  let stopped = false;
   const placed = localPlacements();
-  for (const folder of browserFolders().filter((item) => mine(item.courseId))) {
+  for (const folder of browserFolders().filter((item) => mine(item.courseId, item.ownerUserId))) {
+    if (!(await stillSignedInAs(userId))) { stopped = true; break; }
     try {
       folderIds.set(folder.id, await moveFolderToAccount(folder));
       movedFolders.push(folder.id);
     } catch (error) {
-      folderErrors += 1;
-      folderError = studyRoomMessage(error);
+      if (error instanceof ApiError && error.status === 401) { stopped = true; break; }
+      folderErrors.push(studyRoomMessage(error));
     }
   }
-  const records = (await listLocalRecordings()).filter((record) => mine(record.courseId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const records = stopped ? [] : (await listLocalRecordings()).filter((record) => mine(record.courseId, record.ownerUserId))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   let moved = 0;
   const errors: string[] = [];
   for (const record of records) {
-    const result = await moveRecordingToAccount(record, folderIds);
+    const result = await moveRecordingToAccount(record, { folderIds, userId });
+    if (result.stop) { stopped = true; break; }
     if (result.error) errors.push(result.error);
     else moved += 1;
   }
@@ -399,24 +536,32 @@ export async function moveAllToAccount(kj?: string): Promise<string> {
   for (const [itemId, folderId] of Object.entries(placed)) {
     const file = /^srv-([1-9][0-9]*)$/.exec(itemId);
     const target = folderIds.get(folderId);
-    if (!file || !target) continue;
+    const folder = localFolder(folderId);
+    if (stopped || !file || !target || !folder) continue;
+    if (!(await stillSignedInAs(userId))) { stopped = true; break; }
     try {
       await putPlacement("course-files", file[1], target, 0);
       handled.push(itemId);
     } catch (error) {
-      // 404 (file gone or no longer readable) and 409 (already placed): nothing to move.
-      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) handled.push(itemId);
+      if (error instanceof ApiError && error.status === 401) { stopped = true; break; }
+      // 409: placed already — the browser placement goes only when the server shows it in that same folder.
+      if (error instanceof ApiError && error.status === 409) {
+        const server = serverStudyCourse(folder.courseId);
+        const view = server != null ? await loadCourseView(server, true).catch(() => null) : null;
+        if (view && view.placements.some((item) => item.kind === "course_file" && String(item.itemId) === file[1] && String(item.folderId) === target)) handled.push(itemId);
+      }
     }
   }
   forgetMoved(handled, movedFolders);
-  for (const view of new Set(records.map((record) => record.courseId))) {
-    const server = serverStudyCourse(view);
+  for (const courseId of new Set([...records.map((record) => record.courseId), ...browserFolders().map((folder) => folder.courseId)])) {
+    const server = serverStudyCourse(courseId);
     if (server != null) void refreshCourseView(server);
   }
   const done = [movedFolders.length && `폴더 ${movedFolders.length}개`, moved && `녹음 ${moved}개`].filter(Boolean).join("와 ");
   const notes = [done ? `${done}를 내 계정으로 옮겼습니다.` : ""];
-  if (folderErrors) notes.push(`폴더 ${folderErrors}개는 옮기지 못했습니다. ${folderError}`);
+  if (folderErrors.length) notes.push(`폴더 ${folderErrors.length}개는 옮기지 못했습니다. ${[...new Set(folderErrors)].join(" ")}`);
   if (errors.length) notes.push(`녹음 ${errors.length}개는 이 브라우저에 남겨 두었습니다. ${[...new Set(errors)].join(" ")}`);
+  if (stopped) notes.push(MOVE_STOPPED);
   return notes.filter(Boolean).join(" ") || "옮길 항목이 없습니다.";
 }
 
@@ -454,7 +599,11 @@ function captureError(error: unknown, source: RecordingSource): Error {
 let session: Session | null = null;
 const listeners = new Set<(event: RecordingEvent) => void>();
 
+// Whatever screen is open (a student follows the lecture in the PDF viewer), the app's toast tells what happened to
+// the recording: a warning near the size limit, a stop, a save that stayed in this browser, a failure.
 function emit(event: RecordingEvent): void {
+  if (event.type === "saved" && event.warning) toast(event.warning);
+  if (event.type === "error") toast(event.error instanceof Error ? event.error.message : String(event.error));
   for (const listener of listeners) listener(event);
 }
 
@@ -466,9 +615,36 @@ export function onRecordingEvent(listener: (event: RecordingEvent) => void): () 
   };
 }
 
+// Signing out, or another account signing in (here or in another tab, seen when the connection is checked), stops
+// the recording; it is kept in this browser for the account that started it.
+onBackendChange((next) => {
+  const current = session;
+  if (!current) return;
+  const user = next.status === "ready" && next.me ? String(next.me.userId) : null;
+  if (user === current.ownerUserId) return;
+  if (!current.settled) {
+    // Started before the first connection answer: that answer tells whose recording it is.
+    current.settled = next.settled;
+    current.ownerUserId = user;
+    return;
+  }
+  current.accountChanged = true;
+  if (current.recorder.state !== "inactive") {
+    current.stoppedAt = Date.now();
+    current.recorder.stop();
+  }
+});
+
+/** A stable `Idempotency-Key` for importing this file as this user: picking the same file again after a lost answer replays. */
+async function importKey(file: File, userId: string): Promise<string> {
+  const text = new TextEncoder().encode(`${userId}|${file.name}|${file.size}|${file.lastModified}`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", text));
+  return `import-file-${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 48)}`;
+}
+
 /** Import a local audio file into the study room (server while `ready`, else this browser). */
 export async function importRecording({ courseId, file }: { courseId: string; file: File | null | undefined }): Promise<RecordingRecord> {
-  const types: Record<string, string> = { mp3: "audio/mpeg", m4a: "audio/mp4", mp4: "audio/mp4", wav: "audio/wav", ogg: "audio/ogg", webm: "audio/webm", aac: "audio/aac", flac: "audio/flac" };
+  const types: Record<string, string> = { mp3: "audio/mpeg", m4a: "audio/mp4", mp4: "audio/mp4", wav: "audio/wav", ogg: "audio/ogg", opus: "audio/ogg", webm: "audio/webm", weba: "audio/webm", aac: "audio/aac", flac: "audio/flac" };
   const extension = String(file?.name || "").split(".").pop()?.toLowerCase() || "";
   if (!file?.size) throw new Error("비어 있는 파일은 저장할 수 없습니다. 소리가 있는 오디오 파일을 선택하세요.");
   if (file.type.startsWith("video/") || (!file.type.startsWith("audio/") && !types[extension])) {
@@ -518,15 +694,18 @@ export async function importRecording({ courseId, file }: { courseId: string; fi
     };
     audio.src = url;
   });
+  const userId = currentUserId();
   const input: SaveInput = {
-    courseId, source: "audio", blob, durationMs, startedAt: new Date(),
+    // The file's own time, so picking the same file again sends the same request (the key covers recordedAt).
+    courseId, source: "audio", blob, durationMs, startedAt: new Date(Math.min(file.lastModified || Date.now(), Date.now())),
     title: file.name.replace(/\.[^.]+$/, "") || file.name,
     fileName: file.name,
+    ownerUserId: userId,
   };
   let record: RecordingRecord;
-  if (server != null) {
+  if (server != null && userId) {
     try {
-      record = await saveRemote(server, input, crypto.randomUUID());
+      record = await saveRemote(server, input, await importKey(file, userId));
     } catch (error) {
       // The user still has the file: report and let them choose another or free space.
       throw new ApiErrorMessage(error);
@@ -542,11 +721,16 @@ function elapsed(s: Session, now: number = Date.now()): number {
   return now - s.startedAt.getTime() - s.pausedTotal - (s.pausedAt ? now - s.pausedAt : 0);
 }
 
+/** True when a recording started now in `courseId` (inside `folderId`) is saved only in this browser. */
+export function recordsInBrowserOnly(courseId: string, folderId: string | null | undefined): boolean {
+  return serverStudyCourse(courseId) == null || Boolean(folderId && localFolder(folderId));
+}
+
 export function activeRecording(): ActiveRecording | null {
   if (!session) return null;
   return {
     courseId: session.courseId, source: session.source, paused: Boolean(session.pausedAt), elapsedMs: elapsed(session),
-    bytes: session.bytes, limitBytes: session.limitBytes,
+    bytes: session.bytes, limitBytes: session.limitBytes, browserOnly: recordsInBrowserOnly(session.courseId, session.folderId),
   };
 }
 
@@ -557,7 +741,7 @@ function warnUnload(event: BeforeUnloadEvent): void {
 
 /**
  * Must be called from a click handler: browsers only open the mic or tab picker for a user gesture.
- * `folderId`: the open folder the recording is saved into.
+ * `folderId`: the open folder the recording is saved into. A browser-only folder keeps it browser-only.
  */
 export async function startRecording({ courseId, source, folderId = null }: { courseId: string; source: "mic" | "tab"; folderId?: string | null }): Promise<void> {
   if (session) throw new Error("이미 녹음 중입니다. 지금 녹음을 저장한 뒤 새로 시작하세요.");
@@ -584,9 +768,10 @@ export async function startRecording({ courseId, source, folderId = null }: { co
   const mimeType = MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
   const recorder = new MediaRecorder(new MediaStream(audio), mimeType ? { mimeType, audioBitsPerSecond: AUDIO_BITS_PER_SECOND } : { audioBitsPerSecond: AUDIO_BITS_PER_SECOND });
   const chunks: Blob[] = [];
-  const server = serverStudyCourse(courseId);
+  const server = recordsInBrowserOnly(courseId, folderId) ? null : serverStudyCourse(courseId);
   const current: Session = {
-    courseId, source, folderId, recorder, stream, chunks, bytes: 0, limitBytes: server != null ? studyUsage()?.maxFileBytes ?? null : null, limitReached: false,
+    courseId, source, folderId, ownerUserId: currentUserId(), settled: backendSettled(), recorder, stream, chunks, bytes: 0,
+    limitBytes: server != null ? studyUsage()?.maxFileBytes ?? null : null, limitReached: false, warned: false, accountChanged: false,
     startedAt: new Date(), pausedTotal: 0, pausedAt: 0, stoppedAt: 0,
   };
   // The file limit is known once this course's study room was read; read it now when it was not (the mic is already open).
@@ -599,14 +784,19 @@ export async function startRecording({ courseId, source, folderId = null }: { co
     if (!event.data.size) return;
     chunks.push(event.data);
     current.bytes += event.data.size;
+    if (!current.limitBytes) return;
+    if (!current.warned && current.bytes >= current.limitBytes * WARN_SHARE) {
+      current.warned = true;
+      toast(`녹음 파일이 서버 한도(${formatBytes(current.limitBytes)})에 가까워졌습니다. 한도에 닿으면 녹음을 멈추고 저장합니다.`);
+    }
     // Stop and save before the file would pass the server's limit instead of failing after the lecture.
-    if (current.limitBytes && current.bytes >= current.limitBytes * STOP_SHARE && recorder.state !== "inactive") {
+    if (current.bytes >= current.limitBytes * STOP_SHARE && recorder.state !== "inactive") {
       current.limitReached = true;
       current.stoppedAt = Date.now();
       recorder.stop();
     }
   });
-  const done = new Promise<RecordingRecord>((resolve, reject) => {
+  const done = new Promise<RecordingRecord | null>((resolve, reject) => {
     // Fires for an explicit stop and when the recorder stops itself because its tracks ended.
     recorder.addEventListener("stop", () => finish(current).then(resolve, reject), { once: true });
   });
@@ -625,29 +815,71 @@ export async function startRecording({ courseId, source, folderId = null }: { co
   emit({ type: "change" });
 }
 
-async function finish(current: Session): Promise<RecordingRecord> {
+/**
+ * Stores a finished recording: IndexedDB first, then (study room on the server, recorded by the account still signed
+ * in, not in a browser-only folder) the upload, which deletes the browser copy after 201. If IndexedDB refuses it the
+ * in-memory audio is uploaded with its own stable key; if that fails too it stays in memory and is offered as a file.
+ * Resolves the stored record, or null when only the in-memory copy is left.
+ */
+async function finish(current: Session): Promise<RecordingRecord | null> {
   const durationMs = elapsed(current, current.stoppedAt || Date.now());
   current.stream.getTracks().forEach((track) => track.stop());
   if (session === current) session = null;
   try {
     const blob = new Blob(current.chunks, { type: current.recorder.mimeType || current.chunks[0]?.type || "audio/webm" });
     if (!blob.size) throw new Error("녹음된 소리가 없어 저장하지 않았습니다.");
-    const limitNote = current.limitReached && current.limitBytes
-      ? `녹음 파일이 서버 한도(${formatBytes(current.limitBytes)})에 가까워져 녹음을 멈추고 저장했습니다. 이어서 녹음하려면 새로 시작하세요.`
-      : "";
-    // Always stored in this browser first: on the server it goes only after the server answered 201.
-    const local = await saveLocal({ courseId: current.courseId, source: current.source, blob, durationMs, startedAt: current.startedAt });
-    if (current.folderId) placeLocally(local.id, current.folderId);
-    if (serverStudyCourse(current.courseId) == null) {
-      emit({ type: "saved", record: local, ...(limitNote ? { warning: limitNote } : {}) });
+    const notes: string[] = [];
+    if (current.limitReached && current.limitBytes) notes.push(`녹음 파일이 서버 한도(${formatBytes(current.limitBytes)})에 가까워져 녹음을 멈추고 저장했습니다. 이어서 녹음하려면 새로 시작하세요.`);
+    if (current.accountChanged) notes.push(ACCOUNT_CHANGED);
+    const browserFolder = current.folderId ? localFolder(current.folderId) : null;
+    const server = serverStudyCourse(current.courseId);
+    const owner = current.ownerUserId;
+    const upload = server != null && owner != null && !browserFolder && !current.accountChanged;
+    const input: SaveInput = {
+      courseId: current.courseId, source: current.source, blob, durationMs, startedAt: current.startedAt,
+      // Any folder that is not a browser folder is a server folder (even if the session ended meanwhile): it is kept
+      // on the record, never in the browser placement map.
+      ownerUserId: owner, pendingFolderId: !browserFolder ? current.folderId : null,
+    };
+    let local: LocalRecording | null = null;
+    let storeError: unknown = null;
+    try {
+      local = await saveLocal(input);
+      // A browser folder (every folder in offline mode) keeps its recording in this browser.
+      if (browserFolder) placeLocally(local.id, browserFolder.id);
+    } catch (error) {
+      storeError = error;
+    }
+    if (local && !upload) {
+      emit({ type: "saved", record: local, ...(notes.length ? { warning: notes.join(" ") } : {}) });
       return local;
     }
-    const moved = await moveRecordingToAccount(local);
-    const warning = [limitNote, moved.error ? `서버에 저장하지 못해 이 브라우저에 보관했습니다. ${moved.error}` : ""].filter(Boolean).join(" ");
-    emit({ type: "saved", record: moved.record, ...(warning ? { warning } : {}) });
-    return moved.record;
+    if (upload && !(await stillSignedInAs(owner))) {
+      if (local) {
+        emit({ type: "saved", record: local, warning: [...notes, ACCOUNT_CHANGED].join(" ") });
+        return local;
+      }
+    } else if (upload && local) {
+      const moved = await moveRecordingToAccount(local, { userId: owner });
+      if (moved.error) notes.push(`서버에 저장하지 못해 이 브라우저에 보관했습니다. ${moved.error}`);
+      emit({ type: "saved", record: moved.record, ...(notes.length ? { warning: notes.join(" ") } : {}) });
+      return moved.record;
+    } else if (upload) {
+      // IndexedDB refused it (e.g. QuotaExceededError): send the audio from memory with a key fixed for it.
+      try {
+        const record = await saveRemote(server!, { ...input, folderId: current.folderId }, `rec-${crypto.randomUUID()}`);
+        emit({ type: "saved", record, ...(notes.length ? { warning: notes.join(" ") } : {}) });
+        return record;
+      } catch (error) {
+        storeError = new ApiErrorMessage(error);
+      }
+    }
+    const kept = keepInMemory(input);
+    const reason = storeError instanceof Error ? storeError.message : "";
+    emit({ type: "error", error: new Error(`녹음을 저장할 곳이 없어 "${kept.fileName}" 파일로 내려받게 했습니다. 이 페이지를 닫기 전에 파일이 저장됐는지 확인하세요. ${reason}`.trim()) });
+    return null;
   } finally {
-    window.removeEventListener("beforeunload", warnUnload);
+    if (!unsaved.length) window.removeEventListener("beforeunload", warnUnload);
   }
 }
 
@@ -666,7 +898,7 @@ export function resumeRecording(): void {
   emit({ type: "change" });
 }
 
-export function stopRecording(): Promise<RecordingRecord> {
+export function stopRecording(): Promise<RecordingRecord | null> {
   const current = session;
   if (!current || !current.done) return Promise.reject(new Error("진행 중인 녹음이 없습니다."));
   if (current.recorder.state !== "inactive") {

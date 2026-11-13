@@ -5,7 +5,7 @@
 // An item with no placement sits in the course root.
 import { useSyncExternalStore } from "react";
 import { ApiError } from "./api.ts";
-import { courseIdFor } from "./backend.ts";
+import { courseIdFor, currentUserId } from "./backend.ts";
 import {
   courseViews, peekCourseView, cachedViews, createServerFolder, putPlacement, refreshCourseView, loadCourseView,
   serverStudyCourse, studyRoomOnServer, studyRoomMessage, isMissingEndpoint, type ServerFolder, type PlacementKind,
@@ -21,6 +21,8 @@ export interface StudyFolder {
   createdAt: string;
   version?: number;
   local?: true;
+  /** The account signed in when a browser folder was made while `ready` (none for folders made signed out). */
+  ownerUserId?: string;
 }
 
 /** What localStorage holds under `astra-study-folders`. */
@@ -81,16 +83,27 @@ export const localFolders = (courseId: string): StudyFolder[] => read().folders.
 /** Every folder of this browser, all courses, in their order. */
 export const browserFolders = (): StudyFolder[] => read().folders;
 
-/** Server folders first (server order), then this browser's folders of the course marked `local`. */
+/**
+ * While the study room is on the server: true for a browser item (folder or recording) that is not the signed-in
+ * user's — made by another account, or signed out — so screens show it apart, as possibly someone else's.
+ */
+export function leftByOthers(ownerUserId: string | undefined): boolean {
+  return studyRoomOnServer() && ownerUserId !== (currentUserId() ?? undefined);
+}
+
+/** Server folders first (server order), then the signed-in user's own browser folders of the course marked `local`. */
 export function listFolders(courseId: string): StudyFolder[] {
   const server = serverStudyCourse(courseId);
   if (server == null) return localFolders(courseId);
   const { view } = peekCourseView(server);
   return [
     ...(view ? view.folders.map((folder) => fromServer(folder, courseId)) : []),
-    ...localFolders(courseId).map((folder): StudyFolder => ({ ...folder, local: true })),
+    ...localFolders(courseId).filter((folder) => !leftByOthers(folder.ownerUserId)).map((folder): StudyFolder => ({ ...folder, local: true })),
   ];
 }
+
+/** Browser folders of the course that `leftByOthers` sets apart (empty unless the study room is on the server). */
+export const foldersLeftByOthers = (courseId: string): StudyFolder[] => localFolders(courseId).filter((folder) => leftByOthers(folder.ownerUserId));
 
 export const getFolder = (id: string, courseId: string): StudyFolder | null => listFolders(courseId).find((folder) => folder.id === id) || null;
 
@@ -122,7 +135,8 @@ export async function createFolder(courseId: string, name: string | null | undef
   if (data.folders.some((folder) => folder.courseId === courseId && folder.name === label)) {
     throw new Error("같은 이름의 폴더가 이미 있습니다.");
   }
-  const folder: StudyFolder = { id: crypto.randomUUID(), courseId, name: label, createdAt: new Date().toISOString() };
+  const owner = currentUserId();
+  const folder: StudyFolder = { id: crypto.randomUUID(), courseId, name: label, createdAt: new Date().toISOString(), ...(owner ? { ownerUserId: owner } : {}) };
   data.folders.push(folder);
   write(data);
   return folder;
@@ -169,7 +183,7 @@ export async function placeItem(itemId: string, folderId: string | null | undefi
       await putPlacement(item.kind, item.id, folderId, placementVersion(item.placementKind, item.id));
     } catch (error) {
       if (!(error instanceof ApiError && error.code === "version_conflict") || !course) throw error;
-      await loadCourseView(course.courseId);
+      await loadCourseView(course.courseId, true);
       await putPlacement(item.kind, item.id, folderId, placementVersion(item.placementKind, item.id));
     }
   } catch (error) {
@@ -195,14 +209,22 @@ export const localPlacements = (): Record<string, string> => read().placement;
 export async function moveFolderToAccount(folder: StudyFolder): Promise<string> {
   const courseId = courseIdFor(folder.courseId);
   if (courseId == null) throw new Error("이 과목은 ASTRA 서버에 없어 폴더를 옮길 수 없습니다.");
-  try {
-    return String((await createServerFolder(courseId, folder.name, `import-folder-${folder.id}`)).id);
-  } catch (error) {
-    if (error instanceof ApiError && error.code === "name_conflict") {
-      const same = (await loadCourseView(courseId)).folders.find((item) => item.name === folder.name);
-      if (same) return String(same.id);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return String((await createServerFolder(courseId, folder.name, `import-folder-${folder.id}`)).id);
+    } catch (error) {
+      // The first request with this key is still running (another tab): ask again with the same key.
+      if (error instanceof ApiError && error.code === "idempotency_in_progress" && attempt < 3) {
+        await new Promise<void>((resolve) => { window.setTimeout(resolve, 1500); });
+        continue;
+      }
+      if (error instanceof ApiError && error.code === "name_conflict") {
+        const same = (await loadCourseView(courseId, true)).folders.find((item) => item.name === folder.name);
+        if (same) return String(same.id);
+      }
+      // 410 `folder_deleted`: made by an earlier move and deleted on the server since; the browser folder stays.
+      throw error;
     }
-    throw error;
   }
 }
 

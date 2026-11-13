@@ -7,10 +7,10 @@ import { Icon } from "../../ui/icon.tsx";
 import { Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { readQuery, pageSearch } from "../../shared/query.tsx";
 import { listCoursePdfs, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
-import { backendStatus, backendState, courseIdFor, subscribe as onBackendChange } from "../../shared/backend.ts";
-import { listRecordings, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, type RecordingRecord } from "../../shared/course-recordings.ts";
-import { listFolders, createFolder, placements, useStudyRoomStore, type StudyFolder } from "../../shared/study-folders.ts";
-import { serverStudyCourse, studyRoomMessage, studyUsage, usageText } from "../../shared/study-room-remote.ts";
+import { backendStatus, backendState, courseIdFor, kjOfCourseId, subscribe as onBackendChange } from "../../shared/backend.ts";
+import { listRecordings, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, fromServer, type RecordingRecord } from "../../shared/course-recordings.ts";
+import { listFolders, createFolder, placements, useStudyRoomStore, leftByOthers, foldersLeftByOthers, type StudyFolder } from "../../shared/study-folders.ts";
+import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings } from "../../shared/study-room-remote.ts";
 import { serverCourseViews } from "../../shared/course-view.ts";
 import { thumbnailImage } from "../../shared/preview-remote.tsx";
 import { ApiError } from "../../shared/api.ts";
@@ -38,7 +38,8 @@ export function studyCourses(): Course[] {
 const courseName = (course: Course | null | undefined) => course && !course.missing ? course.cardTitle || course.ko : "과목 정보 없음";
 export const folderHref = (courseId: string, folderId?: string): string => hrefFor(find("study_home"), { kj: courseId, f: folderId });
 const pdfHref = (record: CoursePdfRecord) => hrefFor(find("study_home"), { kj: record.courseId, doc: record.id });
-export const recordingHref = (courseId: string, id?: string): string => hrefFor(find("study_lecture"), id ? { kj: courseId, rec: id } : { kj: courseId });
+// A recording of a course I no longer take has no `kj`: its page is addressed by `rec` alone.
+export const recordingHref = (courseId: string, id?: string): string => hrefFor(find("study_lecture"), { kj: courseId || undefined, rec: id });
 const sampleHref = (item: StudyMaterial) => hrefFor(find("study_summary"), { m: item.id });
 // A course linked on the server (backend `ready`) shows server files only, never the samples.
 const serverOwned = (courseId: string) => backendStatus() === "ready" && Boolean(courseIdFor(courseId));
@@ -325,15 +326,25 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   const creator = makeCreator({ say, nameFolder: () => setNaming(true) });
   const shown = data || { pdfs: [], recordings: [] };
   const placed = placements();
-  const here = (id: string) => (placed[id] || "") === folderId;
-  const pdfs = shown.pdfs.filter((record) => here(record.id));
-  const recordings = shown.recordings.filter((record) => here(record.id));
-  const folders = folder ? [] : listFolders(course.id);
-  const countIn = (id: string) => [...shown.pdfs, ...shown.recordings].filter((record) => placed[record.id] === id).length;
+  const courseFolders = listFolders(course.id);
+  const known = new Set(courseFolders.map((item) => item.id));
+  // An item whose folder cannot be found here (deleted, another account's, or a server folder while signed out) sits in the root.
+  const folderOfItem = (record: { id: string; pendingFolderId?: string }) => {
+    const target = placed[record.id] || record.pendingFolderId || "";
+    return known.has(target) ? target : "";
+  };
+  // Browser recordings that are not the signed-in user's: shown apart at the course root, never mixed with theirs.
+  const othersRecordings = shown.recordings.filter((record) => !record.remote && leftByOthers(record.ownerUserId));
+  const ownRecordings = shown.recordings.filter((record) => record.remote || !leftByOthers(record.ownerUserId));
+  const pdfs = shown.pdfs.filter((record) => folderOfItem(record) === folderId);
+  const recordings = ownRecordings.filter((record) => folderOfItem(record) === folderId);
+  const folders = folder ? [] : courseFolders;
+  const countIn = (id: string) => [...shown.pdfs, ...ownRecordings].filter((record) => folderOfItem(record) === id).length;
   const onServer = serverStudyCourse(course.id) != null;
-  // Items still only in this browser while the study room is on the server: offered for an explicit move (course root).
-  const localRecordings = folder ? 0 : shown.recordings.filter((record) => !record.remote).length;
+  // The signed-in user's items still only in this browser: offered for an explicit move (course root).
+  const localRecordings = folder ? 0 : ownRecordings.filter((record) => !record.remote).length;
   const localFolderCount = folder ? 0 : folders.filter((item) => item.local).length;
+  const othersFolders = folder || !onServer ? [] : foldersLeftByOthers(course.id);
   const accountName = backendState().me?.name || "";
   const status = failed != null
     ? backendStatus() === "ready"
@@ -343,6 +354,16 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
       ? [folders.length && `폴더 ${folders.length}개`, `PDF ${pdfs.length}개`, `녹음 ${recordings.length}개`, onServer && usageText(studyUsage())].filter(Boolean).join(" · ")
       : "PDF와 녹음을 불러오는 중입니다";
   const courseId = !folder && serverOwned(course.id) ? courseIdFor(course.id) : null;
+  const moveAll = (others: boolean) => {
+    setMoving(true);
+    say("이 브라우저의 학습실 자료를 내 계정으로 옮기고 있습니다.");
+    moveAllToAccount(course.id, others).then((text) => say(text), (error: unknown) => say(error instanceof Error ? error.message : String(error), true))
+      .finally(() => {
+        setMoving(false);
+        notifyStudyChanged();
+      });
+  };
+  const account = `지금 로그인한 계정${accountName ? `(${accountName})` : ""}`;
 
   return (
     // The area stops being busy after the first answer, so screen readers announce the failure text.
@@ -351,21 +372,8 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
       <p className={`course-study__notice${notice.isError ? " is-error" : ""}`} role="status" aria-live="polite" hidden={!notice.text}>{notice.text}</p>
       {onServer && data && (localRecordings || localFolderCount) ? (
         <div className="course-study__notice" role="note">
-          <p>{`이 브라우저에만 저장된 ${[localFolderCount && `폴더 ${localFolderCount}개`, localRecordings && `녹음 ${localRecordings}개`].filter(Boolean).join("와 ")}가 있습니다. 옮기면 지금 로그인한 계정${accountName ? `(${accountName})` : ""}에 저장되고, 서버가 받은 항목만 이 브라우저에서 지워집니다. 이 컴퓨터를 다른 사람과 함께 쓴다면 내 녹음인지 확인한 뒤 옮기세요.`}</p>
-          <Button
-            kind="secondary" disabled={moving}
-            onClick={() => {
-              setMoving(true);
-              say("이 브라우저의 학습실 자료를 내 계정으로 옮기고 있습니다.");
-              moveAllToAccount(course.id).then((text) => say(text), (error: unknown) => say(error instanceof Error ? error.message : String(error), true))
-                .finally(() => {
-                  setMoving(false);
-                  notifyStudyChanged();
-                });
-            }}
-          >
-            {moving ? "옮기는 중…" : "모두 내 계정으로 옮기기"}
-          </Button>
+          <p>{`이 브라우저에만 저장된 내 ${[localFolderCount && `폴더 ${localFolderCount}개`, localRecordings && `녹음 ${localRecordings}개`].filter(Boolean).join("와 ")}가 있습니다. 옮기면 ${account}에 저장되고, 서버가 받은 항목만 이 브라우저에서 지워집니다.`}</p>
+          <Button kind="secondary" disabled={moving} onClick={() => moveAll(false)}>{moving ? "옮기는 중…" : "모두 내 계정으로 옮기기"}</Button>
         </div>
       ) : null}
       <div className="study-grid">
@@ -394,6 +402,16 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
           </>
         ) : null}
       </div>
+      {onServer && data && !folder && (othersRecordings.length || othersFolders.length) ? (
+        <section className="study-section" aria-label="이 브라우저에 남아 있던 항목">
+          <h2>이 브라우저에 남아 있던 항목</h2>
+          <p className="tiny">{`로그아웃한 상태였거나 다른 계정으로 로그인했을 때 이 브라우저에 저장된 ${[othersFolders.length && `폴더 ${othersFolders.length}개`, othersRecordings.length && `녹음 ${othersRecordings.length}개`].filter(Boolean).join("와 ")}입니다. 이 컴퓨터를 함께 쓰는 다른 사람이 남긴 것일 수 있습니다. 내 것이 맞을 때만 ${account}으로 옮기세요. 녹음을 눌러 듣고, 내려받고, 옮기거나 지울 수 있습니다.`}</p>
+          <Button kind="ghost" disabled={moving} onClick={() => moveAll(true)}>{moving ? "옮기는 중…" : "내 것이 맞으면 모두 내 계정으로 옮기기"}</Button>
+          <div className="study-grid">
+            {othersRecordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
+          </div>
+        </section>
+      ) : null}
       {courseId != null ? <LectureSection course={course} courseId={courseId} /> : null}
     </div>
   );
@@ -462,6 +480,29 @@ function SearchResults({ q }: { q: string }) {
   );
 }
 
+/**
+ * Server recordings of courses I no longer take (`GET …/recordings`): they count toward the usage line, so they
+ * are listed here with the usual card (play, download and delete on the recording page).
+ */
+function LeftCourseRecordings() {
+  const entry = useResource(myRecordings, "all", () => void myRecordings.load("all"));
+  const onServer = studyRoomOnServer();
+  useEffect(() => {
+    if (onServer) void myRecordings.visit("study-left-courses", "all");
+  });
+  const rows = onServer && entry && entry.data ? entry.data.recordings.filter((recording) => !kjOfCourseId(recording.courseId)) : [];
+  if (!rows.length) return null;
+  return (
+    <section className="study-section" aria-label="지금 듣지 않는 과목의 녹음">
+      <h2>지금 듣지 않는 과목의 녹음</h2>
+      <p className="tiny">수강을 마치거나 취소한 과목에서 저장한 녹음입니다. 녹음 저장 공간 사용량에 들어갑니다.</p>
+      <div className="study-grid">
+        {rows.map((recording) => <RecordingCard key={`rec-${recording.id}`} record={fromServer(recording, "")} showCourse={false} />)}
+      </div>
+    </section>
+  );
+}
+
 export function studyRoot(ctx: ScreenCtx): ReactNode {
   const scope = "home:study";
   const q = readQuery(ctx.state, scope).trim().toLowerCase();
@@ -473,7 +514,12 @@ export function studyRoot(ctx: ScreenCtx): ReactNode {
       </div>
       {q
         ? <SearchResults key={q} q={q} />
-        : <div className="study-grid">{studyCourses().map((course) => <FolderCard key={course.id} course={course} />)}</div>}
+        : (
+          <>
+            <div className="study-grid">{studyCourses().map((course) => <FolderCard key={course.id} course={course} />)}</div>
+            <LeftCourseRecordings />
+          </>
+        )}
     </section>
   );
 }

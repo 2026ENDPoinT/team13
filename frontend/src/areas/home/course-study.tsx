@@ -11,7 +11,7 @@ import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { summaryView } from "../../shared/page-summary.tsx";
 import { createCoursePdfViewer } from "../../shared/document-viewer.tsx";
 import { getFolder, folderOf, folderState, useStudyRoomStore, type StudyFolder } from "../../shared/study-folders.ts";
-import { serverStudyCourse, studyRoomMessage } from "../../shared/study-room-remote.ts";
+import { serverStudyCourse, studyRoomMessage, refreshCourseView } from "../../shared/study-room-remote.ts";
 import { courseFiles, folderHref } from "./study-files.tsx";
 import { createNewMenu } from "./study-new.tsx";
 import { serverPreview } from "../../shared/preview-remote.tsx";
@@ -188,6 +188,8 @@ export function renderCourseStudy(ctx: ScreenCtx): ReactNode {
 
 function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
   useStudyRoomStore();
+  // A folder made in another tab or device is not in the cached view: it is read again once before "not found".
+  const [rechecked, setRechecked] = useState(false);
   const courseId = ctx.params.get("kj") || "";
   const course = courseById(courseId);
   const docId = ctx.params.get("doc");
@@ -216,12 +218,21 @@ function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
     );
   }
   const folder = folderId ? getFolder(folderId, course.id) : null;
+  const server = serverStudyCourse(course.id);
+  if (folderId && !folder && server != null && !rechecked) {
+    return (
+      <section className="course-study" data-area="home">
+        <h1>{`${course.cardTitle || course.ko} 학습실`}</h1>
+        <FolderRecheck courseId={server} onDone={() => setRechecked(true)} />
+      </section>
+    );
+  }
   if (folderId && !folder) {
     return (
       <section className="course-study" data-area="home">
         <h1>{`${course.cardTitle || course.ko} 학습실`}</h1>
         <ErrorState
-          title="폴더를 찾을 수 없습니다" body={serverStudyCourse(course.id) != null ? "삭제되었거나 이 과목의 폴더가 아닙니다." : "삭제되었거나 다른 브라우저에서 만든 폴더입니다."}
+          title="폴더를 찾을 수 없습니다" body={server != null ? "삭제되었거나 이 과목의 폴더가 아닙니다." : "삭제되었거나 다른 브라우저에서 만든 폴더입니다."}
           actions={<Link href={folderHref(courseId)} className="btn btn-secondary">학습실로</Link>}
         />
       </section>
@@ -232,7 +243,7 @@ function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
       <header className="course-study__header">
         <div className="course-study__heading">
           <h1>{`${course.cardTitle || course.ko} 학습실`}</h1>
-          {folder ? <p className="course-study__crumb"><Link href={folderHref(courseId)}>전체</Link>{` / ${folder.name}`}</p> : null}
+          {folder ? <p className="course-study__crumb"><Link href={folderHref(courseId)}>전체</Link>{` / ${folder.name}${folder.local && server != null ? " (이 브라우저에만 저장)" : ""}`}</p> : null}
         </div>
         {docId ? back : null}
       </header>
@@ -240,6 +251,16 @@ function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
       {docId ? <DocumentContent course={course} docId={docId} /> : <FolderFiles course={course} folder={folder} />}
     </section>
   );
+}
+
+/** Loading state while the course's study room is read again (a fresh load, not one started before). */
+function FolderRecheck({ courseId, onDone }: { courseId: number | string; onDone: () => void }) {
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    void refreshCourseView(courseId).finally(() => done.current());
+  }, [courseId]);
+  return <LoadingState title="폴더를 불러오는 중입니다" />;
 }
 
 function FolderFiles({ course, folder }: { course: Course; folder: StudyFolder | null }) {
