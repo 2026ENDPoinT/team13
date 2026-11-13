@@ -188,8 +188,9 @@ def check_llm_relay(problems):
         result = run('docker', 'run', '--rm', '--network', f'container:{container}', 'curlimages/curl:8.11.1',
                      '-fsS', '-m', '5', '-o', '/dev/null', 'http://127.0.0.1:18090/healthz')
         if result.returncode != 0:
+            # 설정이 그대로면 `up -d` 는 relay 를 다시 만들지 않는다. 죽은 api·worker 의 네트워크에 붙은 relay 는 강제로 새로 만들어야 한다.
             problems[f'http:llm-relay:{container}'] = (f'{container} 안에서 LLM 게이트웨이에 닿지 않음 '
-                                                       '(cd ~/projects/eclass-backend/app && docker compose up -d)')
+                                                       '(cd ~/projects/eclass-backend/app && docker compose up -d --force-recreate llm-relay-api llm-relay-worker)')
 
 
 def check_backups(problems, now):
