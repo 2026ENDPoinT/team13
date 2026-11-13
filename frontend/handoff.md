@@ -1,5 +1,33 @@
 # Handoff
 
+## 2026-11-14 녹음 파일 화면: 삭제를 휴지통 아이콘으로, 다운로드 왼쪽에
+
+### 작업 내용
+- 다운로드 메뉴 맨 아래 "삭제"를 없애고, 머리 오른쪽 다운로드 버튼 왼쪽에 휴지통 아이콘 버튼(`rs-actions`)을 뒀다. 한 번 누르면 "한 번 더 누르면 삭제" 빨간 테두리 상태가 되고(다른 곳 누름·Esc·4초에 되돌아감), 다시 누르면 지운다. 삭제 로직(`deleteRecording`, 409 다시 읽기)은 그대로.
+- `ui/icon.tsx`에 `trash` 아이콘 추가.
+
+### 변경 파일
+- `src/areas/home/recording.tsx`(DownloadMenu), `src/areas/home/recording-study.css`, `src/ui/icon.tsx`
+
+### 검증
+- `npm run typecheck`·`npm test` 통과. 브라우저(로그인 서버 모드)에서 녹음 저장 → 휴지통이 다운로드 왼쪽에 보임 → 한 번 누르면 확인 상태 → 한 번 더 누르면 삭제되고 폴더로 이동.
+
+### 남은 작업
+- 없음.
+
+## 2026-11-14 조사: 백엔드 연결 시 홈 명령줄이 자유 대화를 못 하는 이유
+
+### 작업 내용
+- 코드 변경 없음(조사만).
+- `command-bar.tsx` `submitCommand`의 `backendStatus() === "ready"` 분기는 강의실 이름, `serverActionForCommand` 고정 문장, `TODO_COMMAND`만 처리하고 나머지는 고정 안내 문장으로 `return`한다. `/api/assistant`(`run.ts` `ask`)는 백엔드 미연결 분기에서만 부른다. 도크(`submitDock`)도 같은 함수를 쓴다. 분기 도입 커밋은 `24b775e`.
+- STack-Backend(`4b4fefe`)에는 홈 명령/자유 대화 API가 없다. LLM은 `summary` 모듈의 자료 1개 기준 학습 대화(`/api/courses/{courseId}/study-chats`, ADR-0032)와 쪽별 요약뿐이고, 교수자 동의·게시 요약·`astra.llm.enabled`가 필요하다.
+
+### 변경 파일
+- `handoff.md`
+
+### 남은 작업
+- 자유 대화가 필요하면 (a) 서버 분기에서도 `/api/assistant`로 넘기되 서버 데이터(과목·할 일)를 문맥으로 주는 방식, 또는 (b) 백엔드에 범용 비서 API 추가 중 결정.
+
 ## 2026-11-14 학교 e-Class 자료 PDF 첨부에 "학습실에 저장" 업로드 아이콘
 
 ### 작업 내용

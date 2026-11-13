@@ -4,7 +4,11 @@
 .rs-head h1 { margin: 0 0 var(--space-1); }
 .rs-head p { margin: 0; }
 /* 머리 오른쪽 다운로드 아이콘 버튼과 메뉴(메뉴 모양은 course-study.css의 .study-new-menu를 같이 쓴다). */
+.rs-actions { display: flex; align-items: center; gap: var(--space-2); }
 .rs-menu { position: relative; }
+.rs-menu-btn.is-danger { color: var(--danger); }
+.rs-menu-btn.is-armed { width: auto; gap: var(--space-2); padding: 0 var(--space-4); border-color: var(--danger); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-semibold); white-space: nowrap; }
+.rs-menu-btn:disabled { opacity: var(--disabled); cursor: not-allowed; }
 .rs-menu-btn {
   display: inline-flex; align-items: center; justify-content: center; width: var(--hit-touch); height: var(--hit-touch);
   border: var(--border-w) solid var(--border); border-radius: var(--radius-full); background: var(--surface); color: var(--text); cursor: pointer;
@@ -13,7 +17,6 @@
 .rs-menu .study-new-menu { left: auto; right: 0; top: calc(100% + var(--space-1)); }
 .rs-menu a.study-new-item { text-decoration: none; }
 .rs-menu .study-new-item.is-disabled { color: var(--muted); cursor: not-allowed; }
-.rs-menu .study-new-item.is-danger { color: var(--danger); }
 .rs-notice { max-width: 720px; margin: 0 0 var(--space-4); }
 
 .rs {
