@@ -1,0 +1,4 @@
+[submodule "backend/reference"]
+	path = backend/reference
+	url = https://github.com/STack-Corp/ASTRA-Reference.git
+	branch = main

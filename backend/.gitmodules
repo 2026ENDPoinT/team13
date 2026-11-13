@@ -1,4 +1,0 @@
-[submodule "reference"]
-	path = reference
-	url = ../ASTRA-Reference.git
-	branch = main
