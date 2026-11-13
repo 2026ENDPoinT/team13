@@ -89,7 +89,7 @@ STack-Backend 에 새 환경 변수가 생기면 Hermes `~/projects/eclass-backe
 백엔드의 `ASTRA_LLM_BASE_URL` 은 `http://127.0.0.1:18090/v1` 입니다. 백엔드는 LLM 주소로 http 를 loopback 에만 허용하므로 api·worker 와 네트워크를 함께 쓰는 `llm-relay-api`·`llm-relay-worker`(socat)가 host 의 게이트웨이(`172.24.0.1:18090`, astra-egress 브리지, iptables 로 그 브리지에서만 허용)로 넘깁니다.
 
 - 1순위: 헤르메스 플러그인 `antigravity-agy` 의 transport 로 로그인된 `agy` CLI 를 요청마다 실행해 Antigravity 구독의 **Gemini 4 Hydrogen**(`gemini-4-hydrogen-medium`)을 부릅니다. 도구 호출 지원, 텍스트만.
-- 2순위: agy 가 실패하면(쿼터·로그아웃·150초 초과·오류) 같은 요청을 Hive API 의 DeepSeek v4.1 Flash 로 보냅니다.
+- 2순위: Gemini 가 안 되면 바로 Hive API 의 DeepSeek v4.1 Flash 로 보냅니다. agy 오류·로그아웃·쿼터 초과·60초 무응답이면 그 요청을, agy 동시 실행 자리(2개)가 없으면 기다리지 않고 넘깁니다. 실패 뒤에는 agy 를 건너뛰고 곧바로 DeepSeek 로 보냅니다(일반 실패 1분, 쿼터·로그아웃 15분). 상태는 `curl 172.24.0.1:18090/healthz` 의 `primary_paused`.
 - 설정은 `~/.config/agy-llm-gateway/env`(600: 게이트웨이 토큰 = 백엔드 `ASTRA_LLM_API_KEY`, Hive key). 기록은 `journalctl -u agy-llm-gateway`(요청마다 경로·시간·토큰 수, 본문 없음).
 - `docker compose up --no-deps api` 처럼 api·worker 만 다시 만들면 중계가 옛 네트워크에 남아 LLM 이 끊깁니다. 항상 `docker compose up -d`(jenkins-deploy 와 같음)로 올립니다.
 - 교수자 고지(`ASTRA_LLM_POLICY_*`)는 Google Gemini 4 Hydrogen(Antigravity), 장애 시 Hive DeepSeek 로 적혀 있습니다(`gemini-agy-2026-11-14`).
