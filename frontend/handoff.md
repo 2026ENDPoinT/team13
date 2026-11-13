@@ -1,5 +1,28 @@
 # Handoff
 
+## 2026-11-14 학습실 "PDF·문서 업로드": 학생은 내 학습실 문서로, 교수는 그대로
+
+### 작업 내용
+- 원인: 학습실 업로드가 학생에게도 `lecture_material` 업로드 + `POST /api/courses/{id}/materials`(교수용 강의자료 등록)를 보내 학생은 늘 실패하고 기본 문장("자료를 서버에 등록하지 못했습니다")이 나왔다.
+- `shared/study-documents.ts`(새): `uploadsToStudyRoom(kj)`는 `ready`이고 `/api/me/courses`의 그 과목 `role`이 `STUDENT`일 때만 참이다. 그때 `study-new.tsx`는 `POST /api/me/study-room/courses/{id}/documents`(multipart `file`·`title`·`folderId`·`key`, 같은 값을 `Idempotency-Key`에도)로 올린다. 키는 사용자·과목·폴더·파일 이름·크기·수정 시각·제목의 SHA-256이라 응답을 잃은 뒤 같은 파일을 다시 고르면 서버가 재생한다. 410(지운 문서의 키)이면 `-again` 키, 그다음 임의 키. 교수(`INSTRUCTOR`)와 서버 없는 학습실은 이전 경로 그대로.
+- 지금 운영 백엔드처럼 과목 view에 `documents`가 없거나(또는 학습실 view가 404) 학생 업로드는 아무것도 보내지 않고 "이 서버는 아직 학습실에 PDF를 저장하는 기능을 지원하지 않습니다…"로 실패한다(`DOCUMENTS_UNSUPPORTED`).
+- `study-room-remote.ts`: 과목 view에 `documents`(없으면 null), 배치 `kind: "document"`, `PlacementKind` `documents`, `deletePlacement`(과목 첫 화면으로), 사용량 문구 "학습실 저장 공간"(녹음+PDF 합계). `study-folders.ts`: `doc-<id>` 배치 읽기·`placeItem`, `unplaceItem`.
+- 학습실 화면: 내 PDF 카드(`doc-<id>`, "내 PDF"/"검사 중"/"검사 거부")가 과목 첫 화면과 폴더에 나온다. 검사 중이 있으면 과목 view를 `Retry-After`(없으면 10초) 간격으로 최대 30번 다시 읽는다. 문서 화면(`study-document.tsx`, 새)은 검사 중이면 같은 간격으로 `GET …/documents/{id}`를 다시 묻다 `ready`가 되면 `/documents/{id}/content`를 받아 이 브라우저에서 쪽 텍스트를 뽑고(`ensureCoursePdfText`) 기존 PDF 뷰어로 연다. 거부면 열 수 없다는 문장. 이름 바꾸기(PATCH `{title, version}`), 폴더 옮기기(`placements/documents`, 과목 첫 화면은 DELETE), 삭제(`?version=`)를 둔다. 409 `version_conflict`는 녹음과 같은 문장으로 알리고 다시 읽는다.
+- 내 PDF에는 자료 요약·미리보기 화면(서버 페이지 이미지)·요약 섹션이 없다(모델로 보내는 기능 없음). 문서 화면에 "AI 요약·질문 같은 외부 AI 기능에는 쓰이지 않습니다"를 적었다.
+- 오류 문장: 저장 공간 가득(응답 본문 또는 과목 view의 사용량 "1.9GB / 2GB 사용 중"), 너무 큼(`maxDocumentFileBytes`), PDF 아님(415/422), 요청 많음(429 `Retry-After`), 로그인 필요(401), PDF 개수 한도(`too_many_documents`), 검사 중(`file_scanning`), 거부(`content_rejected`).
+
+### 변경 파일
+- `src/shared/study-documents.ts`(새), `src/areas/home/study-document.tsx`(새), `src/shared/study-room-remote.ts`, `src/shared/study-folders.ts`, `src/shared/course-pdfs.ts`, `src/shared/document-viewer.tsx`, `src/areas/home/study-new.tsx`, `src/areas/home/study-files.tsx`, `src/areas/home/course-study.tsx`, `src/areas/home/course-study.css`, `src/areas/home/recording.tsx`(문구)
+- 테스트 `tests/integration/study-documents.test.ts`(새), `tests/integration/study-folders-place.test.ts`(view 모양에 `documents`)
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 1471개 통과(새 19개), `npm run build` 통과(청크 크기 경고만).
+- 옛 백엔드: STack-Backend `origin/main`(86d88d4) run-only(18590) + 프런트 4197, 학생 21101234(박민준)로 `bi` 학습실에서 PDF 업로드 → "이 서버는 아직 학습실에 PDF를 저장하는 기능을 지원하지 않습니다…", 브라우저 요청은 학습실 과목 view GET뿐, 백엔드 로그의 POST는 dev-login 하나뿐.
+- 새 백엔드: `origin/STAC-000-study-room-docs`(345b6e2) run-only(18580, 스캐너 없음이라 올리자마자 `ready`), 같은 학생: 과목 첫 화면 업로드 → 카드 "내 PDF", 사용량 1KB/2GB → 뷰어에서 1쪽 그림·개요("Root note page one")·주요 단어, 자료 요약·미리보기 버튼 없음. 이름 바꾸기(version 1→2), 새 폴더 "중간고사" 안에서 업로드(배치 `document`/folder 1), 첫 화면 PDF를 폴더로 옮기기·다시 과목 첫 화면으로, 다른 탭에서 바꾼 뒤 이름 바꾸기 → 충돌 문장 + 새 제목 다시 읽음 → 다시 저장 성공, 삭제 → 목록에서 사라지고 GET 404. 검사 중은 페이지 `fetch`를 감싸 15초 동안 `scanning`으로 바꿔 확인: 카드 "검사 중", 문서 화면 "바이러스 검사 중…" → 10초 간격 GET 두 번 뒤 자동으로 열림.
+- 교수 P-1042(박은주)로 같은 `bi` 학습실 업로드: `/api/uploads` → `POST /api/courses/1/materials`, "ASTRA 서버 자료" 카드(이전과 같음).
+
+### 남은 작업
+- 실제 바이러스 스캐너가 있는 환경의 `scanning` → `ready`는 위의 가짜 응답으로만 봤다. 저장 공간 가득·너무 큼·429는 Vitest로만 확인.
 ## 2026-11-14 학교 e-Class 자료 PDF 첨부에 "학습실에 저장" 업로드 아이콘
 
 ### 작업 내용

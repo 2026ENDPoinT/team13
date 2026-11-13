@@ -42,6 +42,7 @@ export function StudyDocumentContent({ course, docId, renderCard, renderOriginal
   const documentId = docId.slice("doc-".length);
   const [view, setView] = useState<View>({ kind: "loading", text: "PDF를 불러오는 중입니다" });
   const [round, setRound] = useState(0);
+  const [message, setMessage] = useState<Notice>({ text: "", isError: false });
 
   useEffect(() => {
     let live = true;
@@ -148,20 +149,28 @@ export function StudyDocumentContent({ course, docId, renderCard, renderOriginal
   }
   return (
     <div className="course-study__content" aria-busy={view.kind === "loading" ? "true" : undefined}>
-      {record ? <DocumentActions record={record} onRenamed={renamed} onStale={reload} /> : null}
+      {record ? <DocumentActions record={record} onRenamed={renamed} onStale={reload} say={setMessage} /> : null}
+      {/* Outside the actions: a conflict reloads the document, and its sentence must stay while that happens. */}
+      <p className={`course-study__notice${message.isError ? " is-error" : ""}`} role="status" aria-live="polite" hidden={!message.text}>{message.text}</p>
       {body}
     </div>
   );
 }
 
+interface Notice {
+  text: string;
+  isError: boolean;
+}
+
 /** Rename, move to another folder (or the course root) and delete, with the version the screen read. */
-function DocumentActions({ record, onRenamed, onStale }: { record: StudyDocRecord; onRenamed: (next: StudyDocRecord) => void; onStale: () => void }) {
+function DocumentActions({ record, onRenamed, onStale, say: setMessage }: {
+  record: StudyDocRecord; onRenamed: (next: StudyDocRecord) => void; onStale: () => void; say: (notice: Notice) => void;
+}) {
   useStudyRoomStore();
   const kj = record.courseId;
   const [mode, setMode] = useState<"" | "rename" | "move">("");
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
-  const [message, setMessage] = useState({ text: "", isError: false });
   const [title, setTitle] = useState(record.title);
   const where = serverFolderOf(kj, record.id);
   const folders = listFolders(kj).filter((folder) => !folder.local);
@@ -259,7 +268,6 @@ function DocumentActions({ record, onRenamed, onStale }: { record: StudyDocRecor
           <Button kind="ghost" disabled={busy} onClick={() => setMode("")}>취소</Button>
         </form>
       ) : null}
-      <p className={`course-study__notice${message.isError ? " is-error" : ""}`} role="status" aria-live="polite" hidden={!message.text}>{message.text}</p>
     </div>
   );
 }
