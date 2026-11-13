@@ -33,10 +33,10 @@ import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.SchoolCourse;
  * 학번·학교 비밀번호 로그인 뒤 학교 강의실의 주차·학습활동 목록을 가져온다(ADR-0042). 로그인 transaction이 commit되고
  * {@code catalog}가 과목과 수강을 맞춘 다음 같은 thread에서 받는다.
  * <ul>
- * <li>학교 session은 로그인 요청 안에만 있으므로 그 session으로 과목마다 강의실 화면을 차례로 읽는다(과목이 session에 묶이는 구조라
- * 동시에 읽지 않는다). 읽은 과목은 바로 저장한다.</li>
+ * <li>로그인으로 열린 학교 session으로 과목마다 강의실 화면을 차례로 읽는다(과목이 session에 묶이는 구조라 동시에 읽지 않는다). 읽은
+ * 과목은 바로 저장한다.</li>
  * <li>로그인 응답은 {@code wait}까지만 기다린다. 나머지는 이 component의 thread가 이어서 읽고, 전체는 {@code budget}을 넘지 않는다.
- * 끝나면(실패해도) 학교 session을 버린다. 학교 session은 이 작업의 메모리에만 있다.</li>
+ * 학교 session은 닫지 않는다. identity가 STack session에 붙여 두고 그 session이 끝날 때 닫는다(ADR-0043).</li>
  * <li>과목 하나가 실패하면 로그(과목 ID와 이유 코드뿐)만 남기고 다음 과목으로 간다. 가져오기는 로그인을 실패시키지 않는다.</li>
  * <li>같은 학생이 {@code interval} 안에 다시 로그인하면 학교 강의실을 읽지 않는다. 동시에 도는 가져오기가 {@code concurrency}를 넘으면 그
  * 로그인은 가져오지 않는다.</li>
@@ -71,7 +71,7 @@ class SchoolActivityImport implements DisposableBean {
 	@Order(SchoolLoginSucceeded.LEARNING_ORDER)
 	public void on(SchoolLoginSucceeded event) {
 		SchoolCourseRooms rooms = event.rooms();
-		if (!this.properties.enabled() || rooms == null || event.courses().isEmpty() || !rooms.claim()) {
+		if (!this.properties.enabled() || rooms == null || event.courses().isEmpty()) {
 			return;
 		}
 		long started = System.nanoTime();
@@ -80,7 +80,7 @@ class SchoolActivityImport implements DisposableBean {
 			job = this.executor.submit(() -> run(event.userId(), event.courses(), rooms, started));
 		}
 		catch (RejectedExecutionException ex) {
-			rooms.close();
+			// 학교 session은 STack session에 붙어 있으므로 닫지 않는다.
 			log.warn("School activity import skipped: reason=busy");
 			return;
 		}
@@ -161,7 +161,7 @@ class SchoolActivityImport implements DisposableBean {
 			log.warn("School activity import failed: type={}", ex.getClass().getSimpleName());
 		}
 		finally {
-			rooms.close();
+			// 학교 session은 닫지 않는다(STack session에 붙어 있다).
 			if (claimed) {
 				try {
 					this.store.finish(userId, read, failed);

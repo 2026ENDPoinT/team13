@@ -32,7 +32,13 @@ enum UploadPurpose {
 	INQUIRY_ATTACHMENT("inquiry_attachment", false, null),
 
 	/** 쪽지 첨부. 과목이 없다. 판정은 communication이 한다. */
-	MESSAGE_ATTACHMENT("message_attachment", false, null);
+	MESSAGE_ATTACHMENT("message_attachment", false, null),
+
+	/**
+	 * 학교 e-Class에서 받아 둔 과목 파일(ADR-0043). 학생이 STack에서 학교 자료의 파일을 열 때 서버가 받아 저장한다. 누구도 이 용도로
+	 * 올릴 수 없다.
+	 */
+	SCHOOL_FILE("school_file", true, null, true);
 
 	private final String code;
 
@@ -41,10 +47,18 @@ enum UploadPurpose {
 	/** 과목 용도에서 null이면 과목 구성원 누구나 */
 	private final CourseRole requiredRole;
 
+	/** 서버만 쓰는 용도. 업로드 요청으로는 받지 않는다 */
+	private final boolean internal;
+
 	UploadPurpose(String code, boolean courseScoped, CourseRole requiredRole) {
+		this(code, courseScoped, requiredRole, false);
+	}
+
+	UploadPurpose(String code, boolean courseScoped, CourseRole requiredRole, boolean internal) {
 		this.code = code;
 		this.courseScoped = courseScoped;
 		this.requiredRole = requiredRole;
+		this.internal = internal;
 	}
 
 	String code() {
@@ -56,9 +70,9 @@ enum UploadPurpose {
 		return this.courseScoped;
 	}
 
-	/** 그 과목에서 이 역할이면 이 용도로 올릴 수 있는지. 과목 밖 용도는 언제나 false다. */
+	/** 그 과목에서 이 역할이면 이 용도로 올릴 수 있는지. 과목 밖 용도와 서버만 쓰는 용도는 언제나 false다. */
 	boolean allows(CourseRole role) {
-		return this.courseScoped && (this.requiredRole == null || this.requiredRole == role);
+		return this.courseScoped && !this.internal && (this.requiredRole == null || this.requiredRole == role);
 	}
 
 	/** multipart가 아니라 본문 스트림으로 받는 용도인지. */
