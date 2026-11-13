@@ -202,6 +202,24 @@ class QuizGradeItemTests extends QuizTestSupport {
 		assertThat(this.releasedGrades.releasedSince(this.studentId, courses, since, t.plusHours(1), 10)).isEmpty();
 	}
 
+	@Test
+	void instructorQuizViewsCarryTheGradeItemIdAndStudentViewsDoNot() throws Exception {
+		long id = quiz("");
+		long itemId = gradeItemOfQuiz(id);
+		this.professor.get(quizzes(this.course))
+			.andExpect(jsonPath("$[0].quizId").value(id))
+			.andExpect(jsonPath("$[0].gradeItemId").value(itemId));
+		this.professor.get(quiz(this.course, id)).andExpect(jsonPath("$.quiz.gradeItemId").value(itemId));
+		// 그 ID로 항목 점수표를 바로 연다.
+		this.professor.get(gradebook(this.course) + "/items/" + itemId)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.item.quizId").value(id));
+		this.student.get(quizzes(this.course))
+			.andExpect(jsonPath("$[0].quizId").value(id))
+			.andExpect(jsonPath("$[0].gradeItemId").doesNotExist());
+		this.student.get(quiz(this.course, id)).andExpect(jsonPath("$.quiz.gradeItemId").doesNotExist());
+	}
+
 	/** 학생이 응시해 제출한다. 선택 문항만 답한다. allRight면 5점, 아니면 2점이다(배점 10). */
 	private void take(Client client, long quizId, boolean allRight) throws Exception {
 		long a = start(client, quizId);

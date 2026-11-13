@@ -3,14 +3,14 @@ package com.stackcorp.astra.communication;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import com.stackcorp.astra.communication.Authors.Author;
+import com.stackcorp.astra.communication.Authors.Known;
 import com.stackcorp.astra.communication.BoardAccess.Viewer;
 import com.stackcorp.astra.communication.CommentRepository.CommentRow;
 import com.stackcorp.astra.identity.api.Actor;
-import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
@@ -36,7 +36,7 @@ class BoardCommentService {
 
 	private final BoardAccess access;
 
-	private final UserNames userNames;
+	private final Authors authors;
 
 	private final RateLimiter rateLimiter;
 
@@ -44,12 +44,12 @@ class BoardCommentService {
 
 	private final AuditLog audit;
 
-	BoardCommentService(CommentRepository comments, BoardPostRepository posts, BoardAccess access, UserNames userNames,
+	BoardCommentService(CommentRepository comments, BoardPostRepository posts, BoardAccess access, Authors authors,
 			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit) {
 		this.comments = comments;
 		this.posts = posts;
 		this.access = access;
-		this.userNames = userNames;
+		this.authors = authors;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 		this.audit = audit;
@@ -138,9 +138,9 @@ class BoardCommentService {
 	}
 
 	private List<CommentView> views(Viewer viewer, List<CommentRow> rows) {
-		Map<Long, String> names = this.userNames
-			.namesOf(rows.stream().filter((r) -> !r.deleted()).map(CommentRow::authorId).distinct().toList());
-		return rows.stream().map((row) -> CommentView.of(row, viewer, names)).toList();
+		Known known = this.authors.of(viewer.userId(),
+				rows.stream().filter((r) -> !r.deleted()).map(CommentRow::authorId).toList());
+		return rows.stream().map((row) -> CommentView.of(row, viewer, known.author(row.authorId()))).toList();
 	}
 
 	private static String validated(String body) {
@@ -176,24 +176,26 @@ class BoardCommentService {
 	}
 
 	/**
+	 * @param authorId 작성자 사용자 ID. 지운 댓글이거나 계정이 없으면 빠진다. 아바타는 {@code GET /api/users/{authorId}/avatar}
+	 * @param authorHasPhoto 요청한 사람이 작성자의 아바타 사진을 받을 수 있으면 true. 지운 댓글이면 빠진다
 	 * @param edited 작성 뒤 본문을 고친 적이 있으면 true(version이 1보다 크다). updatedAt은 고치기 전에는 null이다
 	 * @param deleted 지운 댓글. 살아 있는 답글이 있어 자리만 남는다. 본문, 작성자, version, edited는 빠진다
 	 * @param canEdit 작성자 본인이면 true
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
-	record CommentView(long commentId, Long parentCommentId, String authorName, Boolean mine, String body,
-			Integer version, Boolean edited, LocalDateTime createdAt, LocalDateTime updatedAt, boolean deleted,
-			Boolean canEdit, Boolean canDelete) {
+	record CommentView(long commentId, Long parentCommentId, Long authorId, String authorName, Boolean authorHasPhoto,
+			Boolean mine, String body, Integer version, Boolean edited, LocalDateTime createdAt,
+			LocalDateTime updatedAt, boolean deleted, Boolean canEdit, Boolean canDelete) {
 
-		static CommentView of(CommentRow row, Viewer viewer, Map<Long, String> names) {
+		static CommentView of(CommentRow row, Viewer viewer, Author author) {
 			if (row.deleted()) {
-				return new CommentView(row.commentId(), row.parentCommentId(), null, null, null, null, null,
+				return new CommentView(row.commentId(), row.parentCommentId(), null, null, null, null, null, null, null,
 						row.createdAt(), null, true, null, null);
 			}
 			boolean mine = row.authorId() == viewer.userId();
-			return new CommentView(row.commentId(), row.parentCommentId(), names.get(row.authorId()), mine, row.body(),
-					row.version(), row.version() > 1, row.createdAt(), row.updatedAt(), false, mine,
-					mine || viewer.manager());
+			return new CommentView(row.commentId(), row.parentCommentId(), author.id(), author.name(),
+					author.hasPhoto(), mine, row.body(), row.version(), row.version() > 1, row.createdAt(),
+					row.updatedAt(), false, mine, mine || viewer.manager());
 		}
 
 	}

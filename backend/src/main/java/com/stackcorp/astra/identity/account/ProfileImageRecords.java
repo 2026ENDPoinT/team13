@@ -2,8 +2,10 @@ package com.stackcorp.astra.identity.account;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -168,6 +170,18 @@ class ProfileImageRecords implements ProfileImages {
 				 WHERE p.user_id = :user AND p.avatar_type = 'IMAGE' AND i.image_status = 'ACTIVE'
 				""").param("user", userId).query((rs, n) -> new Current(rs.getLong(1), rs.getString(2), rs.getString(3)))
 			.optional();
+	}
+
+	@Override
+	public Set<Long> withCurrent(Collection<Long> userIds) {
+		if (userIds.isEmpty()) {
+			return Set.of();
+		}
+		return Set.copyOf(this.jdbc.sql("""
+				SELECT p.user_id
+				  FROM user_profiles p JOIN profile_images i ON i.profile_image_id = p.profile_image_id
+				 WHERE p.user_id IN (:users) AND p.avatar_type = 'IMAGE' AND i.image_status = 'ACTIVE'
+				""").param("users", userIds).query(Long.class).list());
 	}
 
 	@Override

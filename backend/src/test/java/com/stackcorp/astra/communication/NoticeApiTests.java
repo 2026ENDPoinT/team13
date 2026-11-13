@@ -81,6 +81,8 @@ class NoticeApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.published").value(true))
 			.andExpect(jsonPath("$.pinned").value(false))
 			.andExpect(jsonPath("$.authorName").value("테스트 PROFESSOR"))
+			.andExpect(jsonPath("$.authorId").value(this.prof))
+			.andExpect(jsonPath("$.authorHasPhoto").value(false))
 			.andExpect(jsonPath("$.version").value(1))
 			.andExpect(jsonPath("$.readCount").value(0)));
 		long id = created.get("noticeId").asLong();
@@ -96,6 +98,11 @@ class NoticeApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.items[0].readCount").doesNotExist());
 		// 상세를 여러 번 열어도 읽음, 조회수가 바뀌지 않는다(SC-04).
 		this.student.get(notice(this.course, id)).andExpect(status().isOk());
+		// 담당자가 사진을 올리면 같은 과목 학생에게 사진 유무가 보인다.
+		this.data.photo(this.prof);
+		this.student.get(notice(this.course, id))
+			.andExpect(jsonPath("$.authorId").value(this.prof))
+			.andExpect(jsonPath("$.authorHasPhoto").value(true));
 		this.student.get(notice(this.course, id))
 			.andExpect(jsonPath("$.body").value("<b>10월 21일</b>\n본관 101호"))
 			.andExpect(jsonPath("$.read").value(false))

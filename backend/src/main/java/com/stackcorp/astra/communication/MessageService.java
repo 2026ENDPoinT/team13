@@ -18,6 +18,7 @@ import com.stackcorp.astra.catalog.api.MemberCourses;
 import com.stackcorp.astra.catalog.api.NotificationKind;
 import com.stackcorp.astra.catalog.api.Notifications;
 import com.stackcorp.astra.catalog.api.Notifications.DirectNotification;
+import com.stackcorp.astra.communication.Authors.Known;
 import com.stackcorp.astra.communication.MessageRepository.InboxRow;
 import com.stackcorp.astra.communication.MessageRepository.MessageRow;
 import com.stackcorp.astra.communication.MessageRepository.Position;
@@ -87,6 +88,8 @@ class MessageService {
 
 	private final UserNames userNames;
 
+	private final Authors authors;
+
 	private final UserSearch userSearch;
 
 	private final RateLimiter rateLimiter;
@@ -104,15 +107,16 @@ class MessageService {
 	private final DraftService draftService;
 
 	MessageService(MessageRepository messages, DraftRepository drafts, CourseMemberships memberships, CourseMates mates,
-			MemberCourses memberCourses, UserNames userNames, UserSearch userSearch, RateLimiter rateLimiter,
-			Idempotency idempotency, AuditLog audit, ReadCommitted readCommitted, Notifications notifications,
-			BoardFiles files, DraftService draftService) {
+			MemberCourses memberCourses, UserNames userNames, Authors authors, UserSearch userSearch,
+			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit, ReadCommitted readCommitted,
+			Notifications notifications, BoardFiles files, DraftService draftService) {
 		this.messages = messages;
 		this.drafts = drafts;
 		this.memberships = memberships;
 		this.mates = mates;
 		this.memberCourses = memberCourses;
 		this.userNames = userNames;
+		this.authors = authors;
 		this.userSearch = userSearch;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
@@ -216,8 +220,8 @@ class MessageService {
 		// 쪽지는 과목 관계가 끊겨도 받은함에 남으므로 알림에 과목을 묶지 않는다(ADR-0027).
 		this.notifications.send(new DirectNotification(NotificationKind.MESSAGE_RECEIVED, recipients, null, messageId,
 				out.title()));
-		Map<Long, String> names = this.userNames.namesOf(recipients);
-		return new SentReceipt(messageId, now, recipients.stream().map((id) -> new Person(id, names.get(id))).toList());
+		Known known = this.authors.of(senderId, recipients);
+		return new SentReceipt(messageId, now, recipients.stream().map((id) -> Person.of(known, id)).toList());
 	}
 
 	// ---- 받은함
@@ -237,9 +241,9 @@ class MessageService {
 				snapshot, size + 1);
 		List<InboxRow> page = rows.size() > size ? rows.subList(0, size) : rows;
 		String next = rows.size() > size ? encode(page.getLast().sentAt(), page.getLast().messageId(), snapshot) : null;
-		Map<Long, String> names = this.userNames.namesOf(page.stream().map(InboxRow::senderId).distinct().toList());
+		Known known = this.authors.of(userId, page.stream().map(InboxRow::senderId).toList());
 		List<InboxItem> items = page.stream()
-			.map((r) -> new InboxItem(r.messageId(), r.title(), new Person(r.senderId(), names.get(r.senderId())),
+			.map((r) -> new InboxItem(r.messageId(), r.title(), Person.of(known, r.senderId()),
 					r.courseId(), r.sentAt(), r.readAt() != null))
 			.toList();
 		return new InboxPage(snapshot, items, this.messages.inboxCount(userId, read, title, snapshot),
@@ -251,8 +255,8 @@ class MessageService {
 	ReceivedView received(long userId, long messageId) {
 		var received = this.messages.received(userId, messageId).orElseThrow(ApiException::notFound);
 		MessageRow m = received.message();
-		String sender = this.userNames.namesOf(List.of(m.senderId())).get(m.senderId());
-		return new ReceivedView(m.messageId(), m.title(), m.body(), m.sentAt(), new Person(m.senderId(), sender),
+		Known known = this.authors.of(userId, List.of(m.senderId()));
+		return new ReceivedView(m.messageId(), m.title(), m.body(), m.sentAt(), Person.of(known, m.senderId()),
 				course(userId, m.courseId()), m.originKind(), this.files.of(m.attachmentGroupId()),
 				received.readAt() != null, received.readAt());
 	}
@@ -327,11 +331,10 @@ class MessageService {
 				size + 1);
 		List<SentRow> page = rows.size() > size ? rows.subList(0, size) : rows;
 		String next = rows.size() > size ? encode(page.getLast().sentAt(), page.getLast().messageId(), snapshot) : null;
-		Map<Long, String> names = this.userNames
-			.namesOf(page.stream().map(SentRow::firstRecipientId).distinct().toList());
+		Known known = this.authors.of(userId, page.stream().map(SentRow::firstRecipientId).toList());
 		List<SentItem> items = page.stream()
 			.map((r) -> new SentItem(r.messageId(), r.title(), r.courseId(), r.sentAt(),
-					new Person(r.firstRecipientId(), names.get(r.firstRecipientId())), r.recipientCount(), r.readCount(),
+					Person.of(known, r.firstRecipientId()), r.recipientCount(), r.readCount(),
 					r.recalledCount()))
 			.toList();
 		return new SentPage(snapshot, items, this.messages.sentCount(userId, title, snapshot), next);
@@ -610,8 +613,16 @@ class MessageService {
 			List<Long> exceptIds) {
 	}
 
-	/** 사람. 화면 표시용 이름만 준다. 학번 같은 학사 식별자는 주지 않는다(EP-0237). */
-	record Person(long userId, String name) {
+	/**
+	 * 사람. 화면 표시용 이름만 준다. 학번 같은 학사 식별자는 주지 않는다(EP-0237).
+	 * @param hasPhoto 요청한 사람이 {@code GET /api/users/{userId}/avatar}로 사진을 받을 수 있으면 true(ADR-0038)
+	 */
+	record Person(long userId, String name, boolean hasPhoto) {
+
+		static Person of(Known known, long userId) {
+			return new Person(userId, known.names().get(userId), known.photos().contains(userId));
+		}
+
 	}
 
 	/**

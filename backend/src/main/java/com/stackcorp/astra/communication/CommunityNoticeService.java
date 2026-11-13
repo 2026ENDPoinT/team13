@@ -9,13 +9,13 @@ import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import com.stackcorp.astra.communication.Authors.Author;
 import com.stackcorp.astra.communication.CommunityNoticeRepository.NoticeInput;
 import com.stackcorp.astra.communication.CommunityNoticeRepository.NoticeRow;
 import com.stackcorp.astra.communication.CommunityRepository.AudienceCount;
 import com.stackcorp.astra.communication.CommunityRepository.Group;
 import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
-import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
@@ -57,7 +57,7 @@ class CommunityNoticeService {
 
 	private final BoardFiles files;
 
-	private final UserNames userNames;
+	private final Authors authors;
 
 	private final RateLimiter rateLimiter;
 
@@ -70,7 +70,7 @@ class CommunityNoticeService {
 	private final SiteNoticeNotifications alerts;
 
 	CommunityNoticeService(CommunityNoticeRepository notices, BoardPostRepository posts, CommunityBoards boards,
-			CommunityOperators operators, PostReactions reactions, BoardFiles files, UserNames userNames,
+			CommunityOperators operators, PostReactions reactions, BoardFiles files, Authors authors,
 			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit, TransactionTemplate transaction,
 			SiteNoticeNotifications alerts) {
 		this.notices = notices;
@@ -79,7 +79,7 @@ class CommunityNoticeService {
 		this.operators = operators;
 		this.reactions = reactions;
 		this.files = files;
-		this.userNames = userNames;
+		this.authors = authors;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 		this.audit = audit;
@@ -217,7 +217,9 @@ class CommunityNoticeService {
 		NoticeRow row = this.notices
 			.find(actor.userId(), CommunityService.audiences(actor, operator), operator, now, postId)
 			.orElseThrow(ApiException::notFound);
-		String author = this.userNames.namesOf(List.of(row.authorId())).get(row.authorId());
+		// 운영자 계정이 누구인지는 운영자끼리만 안다. 다른 사람에게는 이름만 준다.
+		Author author = operator ? this.authors.one(actor.userId(), row.authorId())
+				: this.authors.nameOnly(row.authorId());
 		return NoticeView.of(row, author, this.files.of(row.attachmentGroupId()), now, operator);
 	}
 
@@ -286,20 +288,24 @@ class CommunityNoticeService {
 	}
 
 	/**
+	 * @param authorId 공지를 쓴 운영자의 사용자 ID. 알림마당 운영자(canManage)에게만 주고 다른 사람에게는 null이다. 공지는 전교가 보고,
+	 * 운영자 계정은 전체 공지와 알림을 보낼 수 있어 어느 계정이 운영자인지 드러내지 않는다(ADR-0035, ADR-0038)
 	 * @param authorName 공지를 쓴 운영자(원본 REG_USER_NM)
+	 * @param authorHasPhoto 요청한 사람이 작성자의 아바타 사진을 받을 수 있으면 true. authorId가 null이면 false
 	 * @param attachments 내려받기는 {@code GET /api/files/{fileId}/content}
 	 * @param canManage 알림마당 운영자면 true
 	 */
 	record NoticeView(long noticeId, String title, String body, String audience, boolean pinned,
-			LocalDateTime publishedAt, boolean published, String authorName, int viewCount, boolean read,
-			List<AttachedFile> attachments, int version, LocalDateTime createdAt, LocalDateTime updatedAt,
-			boolean canManage) {
+			LocalDateTime publishedAt, boolean published, Long authorId, String authorName, boolean authorHasPhoto,
+			int viewCount, boolean read, List<AttachedFile> attachments, int version, LocalDateTime createdAt,
+			LocalDateTime updatedAt, boolean canManage) {
 
-		static NoticeView of(NoticeRow row, String authorName, List<AttachedFile> attachments, LocalDateTime now,
+		static NoticeView of(NoticeRow row, Author author, List<AttachedFile> attachments, LocalDateTime now,
 				boolean operator) {
 			return new NoticeView(row.noticeId(), row.title(), row.body(), audienceName(row.audience()), row.pinned(),
-					row.publishedAt(), isPublished(row.publishedAt(), now), authorName, row.viewCount(), row.read(),
-					attachments, row.version(), row.createdAt(), row.updatedAt(), operator);
+					row.publishedAt(), isPublished(row.publishedAt(), now), author.id(), author.name(),
+					author.hasPhoto(), row.viewCount(), row.read(), attachments, row.version(), row.createdAt(),
+					row.updatedAt(), operator);
 		}
 
 	}

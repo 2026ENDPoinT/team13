@@ -66,6 +66,20 @@ public final class TestData {
 	}
 
 	/**
+	 * 처리를 마친 현재 아바타 사진을 둔다(ADR-0038). 행만 만들고 객체는 두지 않는다. 사진 유무 플래그를 보는 테스트용이다.
+	 */
+	public void photo(long userId) {
+		long imageId = insert("""
+				INSERT INTO profile_images (user_id, storage_key, mime_type, content_sha256, image_status)
+				VALUES (:u, :key, 'image/jpeg', REPEAT('a', 64), 'ACTIVE')
+				""", Map.of("u", userId, "key", "avatars/" + UUID.randomUUID() + ".jpg"));
+		this.jdbc.sql("""
+				INSERT INTO user_profiles (user_id, avatar_type, profile_image_id) VALUES (:u, 'IMAGE', :i)
+				ON DUPLICATE KEY UPDATE avatar_type = 'IMAGE', profile_image_id = :i
+				""").param("u", userId).param("i", imageId).update();
+	}
+
+	/**
 	 * @param openAt null이면 바로 열린 활동
 	 */
 	public long activity(long courseId, String type, boolean published, String openAt, Long attachmentGroupId) {

@@ -4,12 +4,13 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import com.stackcorp.astra.catalog.api.NotificationKind;
 import com.stackcorp.astra.catalog.api.Notifications;
+import com.stackcorp.astra.communication.Authors.Author;
+import com.stackcorp.astra.communication.Authors.Known;
 import com.stackcorp.astra.communication.BoardAccess.Viewer;
 import com.stackcorp.astra.communication.BoardPostRepository.Filter;
 import com.stackcorp.astra.communication.BoardPostRepository.Locked;
@@ -19,7 +20,6 @@ import com.stackcorp.astra.communication.BoardPostRepository.QnaStatus;
 import com.stackcorp.astra.communication.BoardPostRepository.StatusCounts;
 import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
-import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
@@ -61,7 +61,7 @@ class BoardPostService {
 
 	private final BoardFiles files;
 
-	private final UserNames userNames;
+	private final Authors authors;
 
 	private final RateLimiter rateLimiter;
 
@@ -74,14 +74,14 @@ class BoardPostService {
 	private final Notifications notifications;
 
 	BoardPostService(BoardPostRepository posts, CourseBoards boards, PostReactions reactions, BoardAccess access,
-			BoardFiles files, UserNames userNames, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit,
+			BoardFiles files, Authors authors, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit,
 			TransactionTemplate transaction, Notifications notifications) {
 		this.posts = posts;
 		this.boards = boards;
 		this.reactions = reactions;
 		this.access = access;
 		this.files = files;
-		this.userNames = userNames;
+		this.authors = authors;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 		this.audit = audit;
@@ -282,17 +282,15 @@ class BoardPostService {
 	}
 
 	private List<PostItem> items(Viewer viewer, BoardKind kind, List<PostRow> rows) {
-		Map<Long, String> names = this.userNames.namesOf(rows.stream()
-			.filter((r) -> viewer.seesAuthor(r.authorId(), r.anonymous()))
-			.map(PostRow::authorId)
-			.distinct()
-			.toList());
-		return rows.stream().map((row) -> PostItem.of(row, kind, viewer, names)).toList();
+		Known known = this.authors.of(viewer.userId(),
+				rows.stream().map((r) -> viewer.shown(r.authorId(), r.anonymous())).toList());
+		return rows.stream()
+			.map((row) -> PostItem.of(row, kind, viewer, known.author(viewer.shown(row.authorId(), row.anonymous()))))
+			.toList();
 	}
 
 	private PostView view(Viewer viewer, BoardKind kind, PostRow row) {
-		String author = viewer.seesAuthor(row.authorId(), row.anonymous())
-				? this.userNames.namesOf(List.of(row.authorId())).get(row.authorId()) : null;
+		Author author = this.authors.one(viewer.userId(), viewer.shown(row.authorId(), row.anonymous()));
 		return PostView.of(row, kind, viewer, author, this.files.of(row.attachmentGroupId()));
 	}
 
@@ -368,21 +366,26 @@ class BoardPostService {
 	/**
 	 * 목록 항목. 질의응답에만 있는 값(anonymous, secret, solved, faq, answerCount)과 열린게시판에만 있는 값(commentCount)은 다른
 	 * 게시판에서 빠진다.
+	 * @param authorId 작성자 사용자 ID. 볼 수 없는 익명 작성자이거나 계정이 없으면 빠진다. 아바타는
+	 * {@code GET /api/users/{authorId}/avatar}
 	 * @param authorName 볼 수 없는 익명 작성자면 빠진다
+	 * @param authorHasPhoto 요청한 사람이 작성자의 아바타 사진을 받을 수 있으면 true. authorId가 없으면 false
 	 * @param mine 요청한 사람이 쓴 글인지
+	 * @param edited 작성 뒤 고친 적이 있으면 true(version이 1보다 크다). 상세의 edited와 같다
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
-	record PostItem(long postId, String title, String excerpt, String authorName, boolean mine, Boolean anonymous,
-			Boolean secret, Boolean solved, Boolean faq, int viewCount, int likeCount, Integer answerCount,
-			Integer commentCount, LocalDateTime createdAt, boolean read, boolean liked) {
+	record PostItem(long postId, String title, String excerpt, Long authorId, String authorName,
+			boolean authorHasPhoto, boolean mine, Boolean anonymous, Boolean secret, Boolean solved, Boolean faq,
+			int viewCount, int likeCount, Integer answerCount, Integer commentCount, boolean edited,
+			LocalDateTime createdAt, boolean read, boolean liked) {
 
-		static PostItem of(PostRow row, BoardKind kind, Viewer viewer, Map<Long, String> names) {
-			String author = viewer.seesAuthor(row.authorId(), row.anonymous()) ? names.get(row.authorId()) : null;
+		static PostItem of(PostRow row, BoardKind kind, Viewer viewer, Author author) {
 			boolean qna = kind.answers;
-			return new PostItem(row.postId(), row.title(), row.excerpt(), author, row.authorId() == viewer.userId(),
-					qna ? row.anonymous() : null, qna ? row.secret() : null, qna ? row.solved() : null,
-					qna ? row.faq() : null, row.viewCount(), row.likeCount(), qna ? row.answerCount() : null,
-					kind.comments ? row.commentCount() : null, row.createdAt(), row.read(), row.liked());
+			return new PostItem(row.postId(), row.title(), row.excerpt(), author.id(), author.name(),
+					author.hasPhoto(), row.authorId() == viewer.userId(), qna ? row.anonymous() : null,
+					qna ? row.secret() : null, qna ? row.solved() : null, qna ? row.faq() : null, row.viewCount(),
+					row.likeCount(), qna ? row.answerCount() : null, kind.comments ? row.commentCount() : null,
+					row.version() > 1, row.createdAt(), row.read(), row.liked());
 		}
 
 	}
@@ -390,20 +393,23 @@ class BoardPostService {
 	/**
 	 * 글 상세. 요청한 사람이 할 수 있는 일(canEdit 등)을 함께 준다.
 	 * @param attachments 내려받기는 {@code GET /api/courses/{courseId}/files/{fileId}/content}
+	 * @param authorId 작성자 사용자 ID. 볼 수 없는 익명 작성자이거나 계정이 없으면 빠진다
+	 * @param authorHasPhoto 요청한 사람이 작성자의 아바타 사진을 받을 수 있으면 true. authorId가 없으면 false
 	 * @param edited 작성 뒤 고친 적이 있으면 true(version이 1보다 크다). updatedAt은 조회수·추천 같은 집계가 바뀌어도 움직일 수 있다
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
-	record PostView(long postId, String title, String body, String authorName, boolean mine, Boolean anonymous,
-			Boolean secret, Boolean solved, Boolean faq, int viewCount, int likeCount, Integer answerCount,
-			Integer commentCount, List<AttachedFile> attachments, int version, boolean edited, LocalDateTime createdAt,
-			LocalDateTime updatedAt, boolean read, boolean liked, boolean canEdit, boolean canDelete,
-			Boolean canSetSolved, Boolean canSetFaq) {
+	record PostView(long postId, String title, String body, Long authorId, String authorName, boolean authorHasPhoto,
+			boolean mine, Boolean anonymous, Boolean secret, Boolean solved, Boolean faq, int viewCount, int likeCount,
+			Integer answerCount, Integer commentCount, List<AttachedFile> attachments, int version, boolean edited,
+			LocalDateTime createdAt, LocalDateTime updatedAt, boolean read, boolean liked, boolean canEdit,
+			boolean canDelete, Boolean canSetSolved, Boolean canSetFaq) {
 
-		static PostView of(PostRow row, BoardKind kind, Viewer viewer, String authorName, List<AttachedFile> files) {
+		static PostView of(PostRow row, BoardKind kind, Viewer viewer, Author author, List<AttachedFile> files) {
 			boolean mine = row.authorId() == viewer.userId();
 			boolean qna = kind.answers;
 			boolean open = !qna || row.answerCount() == 0;
-			return new PostView(row.postId(), row.title(), row.body(), authorName, mine, qna ? row.anonymous() : null,
+			return new PostView(row.postId(), row.title(), row.body(), author.id(), author.name(), author.hasPhoto(),
+					mine, qna ? row.anonymous() : null,
 					qna ? row.secret() : null, qna ? row.solved() : null, qna ? row.faq() : null, row.viewCount(),
 					row.likeCount(), qna ? row.answerCount() : null, kind.comments ? row.commentCount() : null, files,
 					row.version(), row.version() > 1, row.createdAt(), row.updatedAt(), row.read(), row.liked(),
