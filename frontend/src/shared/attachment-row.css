@@ -1,0 +1,25 @@
+/* 첨부파일 한 줄 (attachment-row.tsx): 왼쪽 파일 형식 아이콘·이름·크기, 오른쪽 아이콘 버튼. */
+.attach-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: center;
+  padding: var(--space-3) var(--space-1); border-bottom: var(--border-w) solid var(--border); min-width: 0;
+}
+.attach-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); min-width: 0; }
+.attach-name { font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.attach-meta { color: var(--text-2); font-size: var(--text-sm); white-space: nowrap; }
+
+.attach-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--space-2); min-width: 0; }
+.attach-actions .icon-btn { background: var(--surface-2); border-radius: var(--radius-sm); }
+.attach-actions .icon-btn:hover { background: var(--border); }
+.attach-actions .icon-btn .ico, .attach-actions .icon-btn svg { width: 20px; height: 20px; }
+.attach-actions .save-study-icon { background: var(--accent-soft); color: var(--accent); }
+.attach-actions .save-study-icon:hover { background: var(--accent-soft); color: var(--accent-press); }
+/* 내려받기 진행·오류 문장은 버튼 아래 한 줄을 쓴다. */
+.attach-actions > :not(.icon-btn) { flex-basis: 100%; text-align: right; }
+.attach-actions > [role="status"]:empty { display: none; }
+
+.attach-type { flex: none; }
+.attach-type__page { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.5; }
+.attach-type__fold { fill: none; stroke: var(--border); stroke-width: 1.5; }
+.attach-type__band { fill: var(--text-2); }
+.attach-type.is-pdf .attach-type__band { fill: color-mix(in srgb, var(--danger) 78%, black); }
+.attach-type__label { fill: #fff; font-size: 7px; font-weight: 700; font-family: inherit; }

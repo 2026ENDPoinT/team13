@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useReducer, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Button, EmptyState, ErrorState, LoadingState, Badge } from "../../ui/kit.tsx";
 import { Link } from "../../router.tsx";
+import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor, offers, roleIn, subscribe } from "../../shared/backend.ts";
 import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
@@ -91,7 +92,7 @@ function LectureDetail({ screen, parts }: { screen: Screen; parts: ActivityParts
     : <ErrorState title="강의를 불러오지 못했습니다" body={lectureMessage(entry.error)} actions={<Retry key={String(entry.error)} reload={load} />} />;
   else if (entry.data.type !== "lecture_weeks") body = <EmptyState title="영상 활동이 아닙니다" body="학습활동 목록에서 다시 선택해 보세요." actions={<Link href={listHref(kj)} className="btn btn-secondary">학습활동 목록</Link>} />;
   else body = <DetailBody data={entry.data} kj={kj} parts={parts} staleError={entry.error} progressEntry={progress} />;
-  return <section className="bleed act-layout is-solo is-open" data-item-open={`srv-${activityId}`}><div className="act-main">{body}</div></section>;
+  return <ActivityShell kj={kj} itemOpen={`srv-${activityId}`} solo>{body}</ActivityShell>;
 }
 
 function DetailBody({ data, kj, parts, staleError, progressEntry }: { data: ActivityDetail; kj: string; parts: ActivityParts; staleError: unknown; progressEntry: Entry<ProgressWeek[]> | null }): ReactNode {

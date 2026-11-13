@@ -244,8 +244,9 @@
 .srv-quiz-options, .srv-survey-texts { display: grid; gap: var(--space-1); margin: 0; padding-inline-start: var(--space-5); }
 .srv-quiz-options li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .srv-quiz-rules { margin: var(--space-3) 0; padding-inline-start: var(--space-5); }
-.srv-quiz-attempts .file-row { overflow-wrap: anywhere; }
+.srv-quiz-attempts .file-row { grid-template-columns: minmax(0, 1fr) auto; overflow-wrap: anywhere; }
 .srv-quiz-attempts .file-row .tiny { display: block; }
+@media (max-width: 767px) { .srv-quiz-attempts .file-row { grid-template-columns: minmax(0, 1fr); } }
 .srv-survey-results { display: grid; gap: var(--space-3); min-width: 0; }
 .srv-survey-bars { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .srv-survey-bars li {

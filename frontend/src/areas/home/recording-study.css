@@ -57,6 +57,11 @@
 .rs-new .ico svg { width: 16px; height: 16px; }
 .rs-player .rec-note { margin-top: var(--space-2); text-align: center; }
 
+/* 녹음 중 카드(recording.tsx LiveView): 플레이어 카드와 같은 모양. 위 제목 줄의 상태 점만 다르다 */
+.rs-player-top h2.rec-state { display: flex; align-items: center; gap: var(--space-2); color: var(--text); }
+.rs-stop { display: flex; margin: var(--space-2) auto 0; }
+.rs-notes { display: grid; gap: var(--space-2); max-width: 760px; margin: var(--space-4) auto 0; }
+
 /* 전사 */
 .rs-transcript { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .rs-transcript.is-empty { flex: none; }

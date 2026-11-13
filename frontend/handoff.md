@@ -1,5 +1,45 @@
 # Handoff
 
+## 2026-11-14 학교 e-Class 자료 PDF 첨부에 "학습실에 저장" 업로드 아이콘
+
+### 작업 내용
+- 문제: 학교에서 가져온 자료의 첨부 줄(`SchoolFileRow`)에는 미리보기·내려받기 아이콘만 있고 "학습실에 저장"이 없었다.
+- 학교 자료(`materialId` 전달) PDF 첨부 줄에 파란 업로드 아이콘을 넣었다. 이미 복사된 파일(번호 id)은 일반 첨부와 같이 `SaveToStudy` 폴더 창을 연다. 아직 복사 전(`school-file-<n>`)이면 누를 때 내용 요청으로 먼저 복사하고(검사 중이면 `Retry-After`대로 다시 시도), 자료 목록에서 같은 이름 파일의 번호 id를 읽어 폴더 창을 바로 연다. 학교 오류(다시 로그인·너무 큼 등)는 내려받기와 같은 안내를 쓴다.
+- 학교 공지 첨부(`notices-server.tsx`)는 그대로 미리보기·내려받기만이다.
+- `SaveToStudy`에 `autoOpen`, `SaveTrigger`에 `disabled`를 추가하고 `SaveTrigger`를 내보냈다.
+
+### 변경 파일
+- `src/shared/school-files.tsx`, `src/shared/save-to-study.tsx`, `src/areas/learning/activity-server.tsx`
+
+### 검증
+- `npm run typecheck`·`npm test` 통과.
+- 학교 자료 응답을 브라우저 요청 가로채기로 흉내 내 확인: 첨부 줄에 미리보기·내려받기·저장 아이콘, 저장 누르면 내용 요청 → 자료 목록 다시 읽기 → 폴더 창 열림(이 로컬 백엔드는 학습실 엔드포인트가 없어 목업 창).
+- 확인 못 함: 실제 학교·학습실 백엔드. 복사된 학교 파일을 서버 학습실 `PUT …/placements/course-files/{fileId}`가 받는지(학교 자료는 학습실 기록이 없다고 `course-pdfs-remote.ts`에 적혀 있다)는 모른다. 받지 않으면 폴더 창에서 서버 오류 문구가 나온다.
+
+### 남은 작업
+- 위 학습실 배치가 실제 백엔드에서 되는지 확인.
+
+## 2026-11-14 활동 상세 왼쪽에 학습활동 목록 패널(원본 e-Class처럼 아이콘과 함께)
+
+### 작업 내용
+- 요청: 자료·영상 등 활동 상세 화면에서 원본 e-Class처럼 왼쪽 패널에 그 과목의 활동 목록이 종류 아이콘과 함께 보이게.
+- 새 `src/shared/activity-rail.tsx`(`ActivityShell`, `ActivityRail`)와 `activity-rail.css`. 상세 옆에 붙박이 패널(1024px 이상, 그 아래는 "학습활동 목록" 접는 줄): 종류 칩(영상·자료·과제·시험·설문)과 진행중·미제출 칩, 왼쪽 주차 번호(누르면 그 주로 이동), 주차별 행(종류 아이콘·종류 이름·완료 ✓·제목·상태), 지금 보는 활동 강조와 처음 그릴 때 그 위치로 스크롤. 학교 e-Class 행은 새 탭 링크로 남는다. 거른 상태는 같은 과목에서 다른 활동으로 옮겨도 유지한다.
+- 상세 5곳(자료·학교 자료, 영상 상세, 과제, 시험, 설문)의 바깥틀을 `ActivityShell`로 바꿨다(`learning/activity-server.tsx`·`lectures-server.tsx`·`assignments-server.tsx`·`quizzes-server.tsx`·`surveys-server.tsx`).
+- 시험 상세 "내 응시" 행(`AttemptRow`)이 아이콘 칸 없는 2칸인데 `.file-row`가 3칸 그리드라 글이 24px 칸에 눌려 글자가 세로로 깨지던 것을 `backend-ui.css`의 `.srv-quiz-attempts .file-row` 칸 수로 고쳤다.
+- 강의실·목록이 쓰던 상태 글·기간·주 범위·구독 훅을 `src/shared/activity-state.ts`로 옮겨 두 곳이 같이 쓴다(`course/activities-server.tsx`는 거기서 가져온다).
+
+### 변경 파일
+- `src/shared/activity-rail.tsx`(새), `src/shared/activity-rail.css`(새), `src/shared/activity-state.ts`(새), `src/app.css`
+- `src/areas/course/activities-server.tsx`, `src/areas/learning/{activity,lectures,assignments,quizzes,surveys}-server.tsx`
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 통과.
+- 백엔드(8080) + 개발자 로그인(Origin을 4190으로 바꿔 주는 임시 프록시 47196 경유, `npm run dev -- --port 47193`)으로 확인: 영상·과제 상세에 패널, 종류 칩으로 거르기, 다른 활동 눌러 이동·강조 이동, 760px에서 접는 줄.
+- 확인 못 함: 샘플(목업) 모드 상세(`learning.tsx`)는 이 패널이 없다. 시험 응시 화면·학교 e-Class 자료 상세·어두운 테마는 화면으로 보지 않았다.
+
+### 남은 작업
+- 샘플 모드 활동 상세에도 같은 패널을 넣을지 결정.
+
 ## 2026-11-14 학교 e-Class 공지: 목록·상세(연 공지만 학교에서 읽기), 첨부, 읽음·확인 안 보냄
 
 ### 작업 내용
@@ -933,3 +973,19 @@
 - 브라우저: 관리형 Chromium 탭 `mock`(1440x900, `persist`). 앱 상태가 `localStorage`에 복원되어 처음엔 마지막 화면(자료 요약)이 열려 홈으로 이동시켰다.
 - 변경 파일: `handoff.md`만. 코드 변경 없음.
 - 남은 작업: 없음.
+
+## 첨부파일 행 개편: 왼쪽 파일 형식 아이콘, 오른쪽 아이콘 버튼 3개
+- 자료 상세의 첨부파일을 한 줄 행으로 바꿨다. 왼쪽에 파일 형식 아이콘(PDF는 빨강 띠)·이름·크기, 오른쪽에 미리보기(돋보기)·내려받기(다운로드)·학습실 저장(파란 업로드 아이콘) 아이콘 버튼만 둔다. 종류·"PDF ·" 접두어는 아이콘으로 옮겼다.
+- 학습실 버튼은 기존 `SaveToStudy`의 `variant="icon"`이다. 누르면 기존 폴더 고르는 창이 열리고 서버 학습실이면 `PUT …/placements/course-files/{fileId}`, 샘플이면 목업 저장이다. 저장되면 아이콘이 체크로 바뀐다.
+- `FileRow`에서 "요약 보기"·"학습실에서 열기" 버튼을 뺐다(요청: 세 버튼만). 아래 "e-Class에서 열기 / 파일모음 / 학습활동 목록" 이동 줄은 그대로 둔다.
+- 학교 e-Class 파일(`SchoolFileRow`)은 미리보기·내려받기 아이콘만 있다. 학습실 버튼은 두지 않았다: 복사 전 ID가 문자열(`school-file-<n>`)이라 학습실 배치 API(숫자 파일 ID, 과목 학습실 view에 있는 PDF만)가 받지 못하고, 학습실에 임의 문서를 올리는 API는 녹음(`…/recordings`)뿐이다. 이 부분은 백엔드 계약이 필요하다.
+- 변경 파일: `src/shared/attachment-row.tsx`·`attachment-row.css`(새), `src/app.css`, `src/shared/save-to-study.tsx`(`SaveTrigger`, `variant`), `src/shared/uploads-remote.tsx`(`downloadControl` 세 번째 인자 `"icon"`), `src/shared/school-files.tsx`, `src/areas/learning/activity-server.tsx`(`FileRow`), `src/areas/learning/learning.tsx`(샘플 `fileRow`).
+- 검증: `npx tsc` 오류 없음, `npx vitest run` 33파일 1452개 통과, 샘플 모드 `m=lecture_material&n=m-1&kj=bi`에서 행 표시와 학습실 저장 창 열림 확인. 백엔드 연결 모드의 실제 화면은 확인하지 못했다.
+- 남은 작업: 학교 파일의 학습실 저장(백엔드 계약 필요), 파일모음(`crs-file`) 행을 같은 아이콘 버튼으로 맞출지 결정. 커밋·푸시는 하지 않았다.
+
+## 홈 명령창 안내 문장 자동 사라짐
+- 홈 히어로·챗봇 도크 명령창의 안내 문장("서버 할 일 목록에서 활동을 선택해 주세요. …" 등 `command-bar.tsx`의 `sayText`)이 5초(`SAY_MS`) 뒤 저절로 지워진다. 그릴 때(`currentSay()`) 새 문장이 보이기 시작하면 타이머를 걸고, 같은 문장은 한 번만 건다. 문장만 지우고 입력값·할 일 목록·계획 미리보기는 그대로 둔다. 그 사이 다른 문장으로 바뀌면 새 문장이 자기 타이머를 가진다.
+- 다른 화면(계정·알림·커뮤니티 등)의 별도 `say` 함수는 바꾸지 않았다.
+- 변경 파일: `src/areas/home/command-bar.tsx`, `tests/integration/server-hero-commands.test.ts`(새 테스트 1개: 5초 직전엔 보이고 5초에 지워지며 목록은 유지).
+- 검증: `npx tsc` 오류 없음, `npx vitest run` 33파일 1453개 통과. 브라우저로는 확인하지 않았다.
+- 남은 작업: 없음. 커밋·푸시는 하지 않았다.

@@ -4,6 +4,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Dialog, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { Link, closeDialog } from "../../router.tsx";
+import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor } from "../../shared/backend.ts";
 import { useResource } from "../../shared/remote-cache.ts";
@@ -103,9 +104,7 @@ function SurveyDetailScreen({ screen, parts }: { screen: Screen; parts: DetailPa
     }
   }
   return (
-    <section className="bleed act-layout is-open" data-item-open={`srv-${surveyId}`}>
-      <div className="act-main">{main}</div>
-    </section>
+    <ActivityShell kj={kj || ""} itemOpen={`srv-${surveyId}`}>{main}</ActivityShell>
   );
 }
 

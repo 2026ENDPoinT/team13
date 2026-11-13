@@ -6,6 +6,7 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Button, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { Link } from "../../router.tsx";
+import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { hrefFor, find } from "../../manifest.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor } from "../../shared/backend.ts";
@@ -17,6 +18,7 @@ import { materialMessage } from "../../shared/materials-remote.ts";
 import { rememberMaterials } from "../../shared/course-pdfs-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
 import { SaveToStudy } from "../../shared/save-to-study.tsx";
+import { AttachmentRow } from "../../shared/attachment-row.tsx";
 import {
   schoolMaterialDetails, schoolDetailKey, schoolFilesOf, schoolProblemOf, SchoolLink, SchoolProblemNote, type SchoolMaterialDetail,
 } from "../../shared/school-content.tsx";
@@ -88,20 +90,15 @@ function Prose({ text }: { text: string | null | undefined }) {
 function FileRow({ kj, courseId, file }: { kj: string; courseId: number | string; file: ActivityFile }) {
   const preview = hrefFor(find("65_file_preview"), { n: `srv-${file.fileId}`, kj });
   return (
-    <article className="file-row srv-material-file" data-file={String(file.fileId)}>
-      <div>
-        <b>{file.name}</b>
-        <p className="tiny">{[String(file.extension || "").toUpperCase(), sizeText(file.sizeBytes)].filter(Boolean).join(" · ")}</p>
-      </div>
-      <div className="btn-row">
-        <Link href={preview} className="btn btn-secondary">미리보기</Link>
-        {downloadControl(courseId, { fileId: file.fileId, name: file.name })}
-        {file.pdf ? <SaveToStudy kj={kj} file={{ fileId: file.fileId, name: file.name }} /> : null}
-        {/* 요약 보기는 학생에게 보이는 요약 게시본이 있을 때(`summaryPublished`)만 둔다. */}
-        {file.pdf && file.summaryPublished ? <Link href={hrefFor(find("study_summary"), { kj, doc: `srv-${file.fileId}` })} className="btn btn-ghost">요약 보기</Link> : null}
-        {file.pdf ? <Link href={hrefFor(find("study_home"), { kj, doc: `srv-${file.fileId}` })} className="btn btn-ghost">학습실에서 열기</Link> : null}
-      </div>
-    </article>
+    <AttachmentRow
+      fileKey={String(file.fileId)}
+      name={file.name}
+      extension={file.extension}
+      meta={sizeText(file.sizeBytes)}
+      preview={preview}
+      download={downloadControl(courseId, { fileId: file.fileId, name: file.name }, "icon")}
+      study={file.pdf ? <SaveToStudy variant="icon" kj={kj} file={{ fileId: file.fileId, name: file.name }} /> : null}
+    />
   );
 }
 
@@ -169,7 +166,7 @@ function SchoolMaterialBody({ data, kj, courseId, parts }: { data: SchoolMateria
       ])}
       <Prose text={data.description} />
       <h2>첨부파일</h2>
-      {files.length ? files.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={data.schoolUrl} />) : <p className="tiny">첨부 파일이 없습니다.</p>}
+      {files.length ? files.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={data.schoolUrl} materialId={data.activityId} />) : <p className="tiny">첨부 파일이 없습니다.</p>}
       <div className="btn-row">
         <SchoolLink url={data.schoolUrl} />
         <Link href={hrefFor(find("46_room_files_list"), { kj })} className="btn btn-secondary">파일모음</Link>
@@ -223,9 +220,7 @@ function MaterialDetail({ screen, parts }: { screen: Screen; parts: ActivityPart
   else if (school) main = <SchoolMaterialLoaded kj={kj} courseId={courseId} activityId={school} parts={parts} />;
   else main = <MaterialLoaded kj={kj} courseId={courseId} activityId={activityId} parts={parts} />;
   return (
-    <section className="bleed act-layout is-open" data-item-open={school || `srv-${activityId}`}>
-      <div className="act-main">{main}</div>
-    </section>
+    <ActivityShell kj={kj} itemOpen={school || `srv-${activityId}`}>{main}</ActivityShell>
   );
 }
 
@@ -275,11 +270,9 @@ function ActivityLink({ screen, parts }: { screen: Screen; parts: ActivityParts 
     shown = <ErrorState title={`${TYPE_NAME[type]}을 찾지 못했습니다`} body={materialMessage(view.error)} actions={<RetryButton reload={() => setAttempt((n) => n + 1)} />} />;
   }
   return (
-    <section className="bleed act-layout is-open">
-      <div className="act-main">
+    <ActivityShell kj={kj}>
         <div className="act-body" aria-live="polite">{parts.typeLine(type)}{shown}</div>
-      </div>
-    </section>
+    </ActivityShell>
   );
 }
 

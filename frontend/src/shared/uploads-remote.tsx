@@ -5,6 +5,7 @@
 // bytes become a short-lived object URL and are never stored.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../ui/kit.tsx";
+import { Icon } from "../ui/icon.tsx";
 import { apiGet, apiSend, apiUpload, apiBlob, ApiError, newRequestKey } from "./api.ts";
 import { retryLater } from "./remote-cache.ts";
 import { schoolProblemOf, whileScanning, SchoolProblemNote } from "./school-content.tsx";
@@ -135,11 +136,11 @@ export function saveBlob(blob: Blob, name: string | null | undefined): void {
  * (`school-file-<n>`) is copied on this first request: while the copy is scanned (409 `file_scanning`) it asks again
  * after each `Retry-After`, a bounded number of times; the other school answers show their own state.
  */
-export function downloadControl(courseId: number | string | null, file: DownloadFile): ReactNode {
-  return <DownloadControl courseId={courseId} file={file} />;
+export function downloadControl(courseId: number | string | null, file: DownloadFile, variant: "button" | "icon" = "button"): ReactNode {
+  return <DownloadControl courseId={courseId} file={file} variant={variant} />;
 }
 
-function DownloadControl({ courseId, file }: { courseId: number | string | null; file: DownloadFile }) {
+function DownloadControl({ courseId, file, variant }: { courseId: number | string | null; file: DownloadFile; variant: "button" | "icon" }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [problem, setProblem] = useState<unknown>(null);
@@ -179,7 +180,9 @@ function DownloadControl({ courseId, file }: { courseId: number | string | null;
   };
   return (
     <>
-      <Button kind="secondary" aria-label={`${file.name} 내려받기`} disabled={busy} onClick={download}>내려받기</Button>
+      {variant === "icon"
+        ? <button type="button" className="icon-btn" aria-label={`${file.name} 내려받기`} title="내려받기" disabled={busy} onClick={download}><Icon name="download" /></button>
+        : <Button kind="secondary" aria-label={`${file.name} 내려받기`} disabled={busy} onClick={download}>내려받기</Button>}
       <span className="tiny" role="status" aria-live="polite">{note}</span>
       {problem ? <SchoolProblemNote error={problem} schoolUrl={file.schoolUrl} retry={download} compact /> : null}
     </>

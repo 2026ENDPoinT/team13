@@ -4,11 +4,11 @@ STack-Corp 레포 3개의 CI와 배포를 `yoobin-desktop-linux`의 Jenkins가 �
 
 | 레포 | CI | 배포 (`main`) |
 |---|---|---|
-| Frontend-final | Jenkins: 모든 브랜치·같은 조직 PR 에서 `npm ci`·`npm run typecheck`·`vite build` (node 22 컨테이너) | Hermes `eclass-frontend`: `dist/` 를 새로 빌드해 바꾸고 viewer·tunnel 재생성 (약 25초) |
-| STack-Backend | GitHub Actions (`.github/workflows/ci.yml`: 빌드·테스트, 스키마 검사, 컨테이너 smoke) | Jenkins 가 그 커밋의 Actions CI 성공을 기다린 뒤 Hermes `eclass-backend`: 이미지 2개 빌드, DB 백업, `compose up --wait` (약 3–10분) |
+| Frontend-final | GitHub Actions (`.github/workflows/test.yml`): PR·main 에서 타입 검사와 `npm test`. 문서·`deploy/` 만 바뀌면 건너뜀. 커버리지 임계값·변이 테스트는 수동 실행 | Jenkins(main 만): Hermes `eclass-frontend` 가 `tsc`·빌드 후 `dist/` 를 바꾸고 viewer·tunnel 재생성 (약 25초, 실패하면 되돌림) |
+| STack-Backend | GitHub Actions (`.github/workflows/ci.yml`): 바뀐 파일에 필요한 작업만. 코드 → 빌드·테스트, 마이그레이션 → 스키마 검사(ERD 스냅샷이 오래되면 경고만), Docker·compose·gradle·resources → 컨테이너 smoke. 문서만 바뀌면 건너뜀 | Jenkins 가 그 커밋의 Actions CI 성공을 기다린 뒤 Hermes `eclass-backend`: 이미지 2개 빌드, DB 백업, `compose up --wait` (약 3–10분) |
 | STack-lessonviewer | Jenkins: `ci/Dockerfile` 이미지(bun + PyMuPDF)에서 `typecheck`·`test`·`build` | Hermes `campus-lessonviewer` |
 
-각 레포 루트의 `Jenkinsfile`이 파이프라인입니다. STack-Backend 잡은 `main` 만 보고(PR 은 Actions 가 검사), Actions CI 가 실패·취소되면 배포하지 않습니다.
+각 레포 루트의 `Jenkinsfile`이 파이프라인입니다. Frontend-final·STack-Backend 잡은 `main` 만 봅니다(PR 은 Actions 가 검사). STack-Backend 는 Actions CI 가 실패·취소되면 배포하지 않습니다. 같은 브랜치·PR 에 새 커밋이 오면 Actions 는 이전 실행을 끊습니다(main 제외).
 
 ```mermaid
 flowchart LR

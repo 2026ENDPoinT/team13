@@ -243,6 +243,26 @@ const ASSISTANT_INTENTS = ['video', 'report', 'test', 'survey', 'material', 'zoo
 // ASSISTANT_TIMEOUT_MS: 그 요청 하나의 제한 시간(기본 7000).
 const GEMINI_API_BASE = String(process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
 const ASSISTANT_TIMEOUT_MS = Number(process.env.ASSISTANT_TIMEOUT_MS) > 0 ? Number(process.env.ASSISTANT_TIMEOUT_MS) : 7000;
+// 비서 요청 한도(분당): 사용자 한 명 10, 모든 사용자 합 ASSISTANT_GLOBAL_PER_MINUTE(기본 60). 합계 한도는 공유 모델 쿼터를 지킨다.
+const ASSISTANT_PER_CLIENT_PER_MINUTE = 10;
+const ASSISTANT_GLOBAL_PER_MINUTE = Number(process.env.ASSISTANT_GLOBAL_PER_MINUTE) > 0 ? Number(process.env.ASSISTANT_GLOBAL_PER_MINUTE) : 60;
+const ASSISTANT_GLOBAL = Symbol('assistant-global');
+
+/**
+ * Who an /api/assistant request counts against. Behind the local tunnel (cloudflared shares this host's loopback) every
+ * socket peer is 127.0.0.1, so the browser address comes from CF-Connecting-IP (Cloudflare sets it and replaces any
+ * client value) or else the last X-Forwarded-For hop. Any other peer is counted by its socket address and its forwarding
+ * headers are ignored.
+ */
+export function assistantClientKey({ remoteAddress, connectingIp, forwardedFor }) {
+  const remote = String(remoteAddress || '');
+  if (!isLoopbackAddress(remote)) return remote;
+  const cf = String((Array.isArray(connectingIp) ? connectingIp[0] : connectingIp) || '').trim();
+  if (cf) return cf;
+  const hops = (Array.isArray(forwardedFor) ? forwardedFor.join(',') : String(forwardedFor || ''))
+    .split(',').map((hop) => hop.trim()).filter(Boolean);
+  return hops.length ? hops[hops.length - 1] : remote;
+}
 
 function sendJson(req, res, status, body, extra = {}) {
   return sendText(req, res, status, JSON.stringify(body), {
@@ -318,16 +338,24 @@ async function assistant(req, res, limits) {
   for (const [ip, limit] of limits) {
     if (limit.reset <= now) limits.delete(ip);
   }
-  // Only the socket address is trusted, not client-provided forwarding headers.
-  const ip = req.socket.remoteAddress;
-  const limit = limits.get(ip) || { count: 0, reset: now + 60_000 };
-  limits.set(ip, limit);
-  limit.count += 1;
-  if (limit.count > 10) {
-    return sendJson(req, res, 429, { error: 'rate_limited' }, {
-      'Retry-After': String(Math.max(1, Math.ceil((limit.reset - now) / 1000))),
-    });
-  }
+  const counter = (k) => {
+    const limit = limits.get(k) || { count: 0, reset: now + 60_000 };
+    limits.set(k, limit);
+    return limit;
+  };
+  const tooMany = (limit) => sendJson(req, res, 429, { error: 'rate_limited' }, {
+    'Retry-After': String(Math.max(1, Math.ceil((limit.reset - now) / 1000))),
+  });
+  const client = counter(assistantClientKey({
+    remoteAddress: req.socket.remoteAddress,
+    connectingIp: req.headers['cf-connecting-ip'],
+    forwardedFor: req.headers['x-forwarded-for'],
+  }));
+  if (client.count >= ASSISTANT_PER_CLIENT_PER_MINUTE) return tooMany(client);
+  const global = counter(ASSISTANT_GLOBAL);
+  if (global.count >= ASSISTANT_GLOBAL_PER_MINUTE) return tooMany(global);
+  client.count += 1;
+  global.count += 1;
   const key = String(process.env.GEMINI_API_KEY || '').trim();
   if (!key) return sendJson(req, res, 503, { error: 'disabled' });
 
