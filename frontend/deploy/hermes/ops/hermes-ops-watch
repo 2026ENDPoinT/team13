@@ -37,7 +37,7 @@ BACKUP_MAX_AGE_S = 26 * 3600
 
 SYSTEM_UNITS = ['docker', 'postgresql@16-main', 'gyeongmae-api', 'gyeongmae-web', 'gyeongmae-bot',
                 'cloudflared-ybkim', 'tailscaled', 'hermes-db-backup.timer', 'hermes-file-backup.timer',
-                'docker-cache-prune.timer']
+                'docker-cache-prune.timer', 'agy-llm-gateway']
 USER_UNITS = ['hermes-gateway']
 # (이름, URL, 정상으로 볼 상태 코드 범위)
 HTTP_CHECKS = [
@@ -47,6 +47,7 @@ HTTP_CHECKS = [
     ('e-class API', 'http://127.0.0.1:18080/api/auth/methods', range(200, 300)),
     ('경매 API', 'http://127.0.0.1:8080/api/health', range(200, 300)),
     ('주식 대시보드', 'http://127.0.0.1:8501/_stcore/health', range(200, 300)),
+    ('e-class LLM 게이트웨이', 'http://172.24.0.1:18090/healthz', range(200, 300)),
 ]
 BACKUP_DIRS = [('DB 백업(gyeongmae)', HOME / 'backups/db/gyeongmae'),
                ('파일 백업(hermes-state)', HOME / 'backups/files/hermes-state')]
