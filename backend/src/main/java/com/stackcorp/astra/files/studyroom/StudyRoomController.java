@@ -11,6 +11,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.stackcorp.astra.files.studyroom.StudyRoomService.CourseView;
+import com.stackcorp.astra.files.studyroom.StudyRoomService.DocumentView;
 import com.stackcorp.astra.files.studyroom.StudyRoomService.FolderView;
 import com.stackcorp.astra.files.studyroom.StudyRoomService.ItemKind;
 import com.stackcorp.astra.files.studyroom.StudyRoomService.NewRecording;
@@ -58,6 +59,8 @@ class StudyRoomController {
 	private static final Pattern VERSION = Pattern.compile("\"(0|[1-9][0-9]{0,8})\"");
 
 	private static final Pattern DURATION = Pattern.compile("[0-9]{1,9}");
+
+	private static final Pattern VERSION_PARAM = Pattern.compile("[1-9][0-9]{0,8}");
 
 	private static final long MAX_DURATION_MS = Duration.ofHours(24).toMillis();
 
@@ -218,10 +221,72 @@ class StudyRoomController {
 		return this.studyRoom.contentHead(actor, positive(recordingId));
 	}
 
+	/**
+	 * 내 PDF 올리기. 201. 본문은 multipart: file(PDF), title(선택, 없으면 파일 이름에서 .pdf를 뺀 값), folderId(선택), key(선택). 멱등
+	 * key는 {@code Idempotency-Key} header나 {@code key} 칸으로 보낸다. 둘 다 보내면 같아야 한다.
+	 */
+	@PostMapping(path = BASE + "/courses/{courseId}/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	ResponseEntity<DocumentView> createDocument(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@RequestParam("file") MultipartFile file, @RequestParam(required = false) String title,
+			@RequestParam(required = false) Long folderId, @RequestParam(name = "key", required = false) String key,
+			@RequestHeader(name = Idempotency.HEADER, required = false) String idempotencyKey) {
+		if (folderId != null && folderId < 1) {
+			throw ApiException.invalid("folderId가 올바르지 않습니다.");
+		}
+		if (key != null && idempotencyKey != null && !key.equals(idempotencyKey)) {
+			throw ApiException.invalid("key와 Idempotency-Key가 다릅니다.");
+		}
+		DocumentView created = this.studyRoom.createDocument(actor, positive(courseId), file, title, folderId,
+				idempotencyKey != null ? idempotencyKey : key);
+		return ResponseEntity.status(HttpStatus.CREATED)
+			.cacheControl(CacheControl.noStore())
+			.eTag(etag(created.version()))
+			.body(created);
+	}
+
+	@GetMapping(BASE + "/documents/{documentId}")
+	ResponseEntity<DocumentView> document(@AuthenticationPrincipal Actor actor, @PathVariable long documentId) {
+		DocumentView document = this.studyRoom.document(actor.userId(), positive(documentId));
+		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).eTag(etag(document.version())).body(document);
+	}
+
+	/** 문서 제목 바꾸기. 본문에 마지막으로 읽은 version을 담는다. */
+	@PatchMapping(BASE + "/documents/{documentId}")
+	ResponseEntity<DocumentView> updateDocument(@AuthenticationPrincipal Actor actor, @PathVariable long documentId,
+			@RequestBody DocumentUpdate body) {
+		if (body.version() == null || body.version() < 1) {
+			throw ApiException.invalid("version이 올바르지 않습니다.");
+		}
+		DocumentView updated = this.studyRoom.updateDocument(actor, positive(documentId), body.version(), body.title());
+		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).eTag(etag(updated.version())).body(updated);
+	}
+
+	/** 문서 지우기. 배치도 함께 지우고 파일 참조를 놓는다. {@code ?version=}에 마지막으로 읽은 version을 담는다. */
+	@DeleteMapping(BASE + "/documents/{documentId}")
+	ResponseEntity<Void> deleteDocument(@AuthenticationPrincipal Actor actor, @PathVariable long documentId,
+			@RequestParam(required = false) String version) {
+		if (version == null || version.isBlank()) {
+			throw new ApiException(HttpStatus.PRECONDITION_REQUIRED, "precondition_required",
+					"version에 마지막으로 읽은 version을 보내야 합니다.");
+		}
+		if (!VERSION_PARAM.matcher(version).matches()) {
+			throw ApiException.invalid("version이 올바르지 않습니다.");
+		}
+		this.studyRoom.deleteDocument(actor, positive(documentId), Integer.parseInt(version));
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 문서 PDF. 검사를 마친 뒤에만 받는다. Range 하나를 받는다(206). 언제나 attachment다. */
+	@GetMapping(BASE + "/documents/{documentId}/content")
+	ResponseEntity<InputStreamResource> documentContent(@AuthenticationPrincipal Actor actor,
+			@PathVariable long documentId, @RequestHeader(name = HttpHeaders.RANGE, required = false) String range) {
+		return this.studyRoom.documentContent(actor, positive(documentId), range);
+	}
+
 	@ExceptionHandler(RangeNotSatisfiable.class)
 	ResponseEntity<ProblemDetail> rangeNotSatisfiable(RangeNotSatisfiable ex) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE,
-				"요청한 구간이 녹음 밖에 있습니다.");
+				"요청한 구간이 내용 밖에 있습니다.");
 		problem.setProperty("code", "range_not_satisfiable");
 		return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
 			.cacheControl(CacheControl.noStore())
@@ -233,6 +298,7 @@ class StudyRoomController {
 		return switch (kind) {
 			case "course-files" -> ItemKind.COURSE_FILE;
 			case "recordings" -> ItemKind.RECORDING;
+			case "documents" -> ItemKind.DOCUMENT;
 			default -> throw ApiException.notFound();
 		};
 	}
@@ -283,6 +349,10 @@ class StudyRoomController {
 	}
 
 	record Title(String title) {
+	}
+
+	/** @param title 새 제목. 없으면 바꾸지 않는다 */
+	record DocumentUpdate(String title, Integer version) {
 	}
 
 	record Place(Long folderId) {

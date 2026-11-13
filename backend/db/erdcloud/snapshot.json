@@ -15124,6 +15124,127 @@
    ]
   },
   {
+   "_id": "PfTwu2kMFdHqTaSRB",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_room_documents",
+   "name": "학습실 문서",
+   "position": {
+    "x": 11430,
+    "y": 50
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "3vKt6ShPs5EzggKLc",
+      "name": "학습실 문서 ID",
+      "pName": "study_room_document_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학습실 문서 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "a2vsH4NiQtct3SQLR",
+     "name": "소유 사용자 ID",
+     "pName": "owner_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "소유 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "FrFzfgBeFMaGew4Su",
+     "name": "과목 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "과목 ID",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "KpGjKePAM4QeJZpTb",
+     "name": "PDF 파일 ID",
+     "pName": "file_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "PDF 파일 ID",
+     "relEntity": "bxoZkn979ue2k9gpi",
+     "relFieldId": "tQ3z9cXG7sFPkGYM7",
+     "relType": "ZERO_OR_ONE"
+    },
+    {
+     "_id": "HkrgPTWBtojFmmPef",
+     "name": "문서 제목",
+     "pName": "document_title",
+     "domain": "",
+     "type": "VARCHAR(300)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "문서 제목",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "XLj6h9o993MPc4njz",
+     "name": "이름 바꾸기·지우기 낙관적 버전",
+     "pName": "document_version",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "1",
+     "isAllowNull": false,
+     "comment": "이름 바꾸기·지우기 낙관적 버전",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "gXqnouEA7PCvzhQFH",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "oAsmqwzwWhv3mcgkX",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "5a9h6RhRpiPnZw5LW",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "study_room_folders",
@@ -15306,7 +15427,7 @@
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "과목 강의자료 파일 ID(녹음이면 NULL)",
+     "comment": "과목 강의자료 파일 ID(녹음·문서면 NULL)",
      "relEntity": "bxoZkn979ue2k9gpi",
      "relFieldId": "tQ3z9cXG7sFPkGYM7",
      "relType": "ZERO_OR_ONE_OR_MANY"
@@ -15319,9 +15440,22 @@
      "type": "BIGINT UNSIGNED",
      "defaultValue": "",
      "isAllowNull": true,
-     "comment": "녹음 ID(강의자료 파일이면 NULL)",
+     "comment": "녹음 ID(강의자료 파일·문서면 NULL)",
      "relEntity": "mghTfTgoNHkh8xbFF",
      "relFieldId": "BCYyrAdt27jKKfy8Z",
+     "relType": "ZERO_OR_ONE"
+    },
+    {
+     "_id": "HEeHjXiWN6FcByDkS",
+     "name": "문서 ID",
+     "pName": "study_room_document_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "문서 ID(강의자료 파일·녹음이면 NULL)",
+     "relEntity": "PfTwu2kMFdHqTaSRB",
+     "relFieldId": "3vKt6ShPs5EzggKLc",
      "relType": "ZERO_OR_ONE"
     },
     {
@@ -15395,13 +15529,13 @@
    "fields": [
     {
      "_id": "kjY4ojSymBR63LaeG",
-     "name": "녹음 파일이 차지하는 바이트",
+     "name": "녹음과 문서 파일이 차지하는 바이트",
      "pName": "used_bytes",
      "domain": "",
      "type": "BIGINT UNSIGNED",
      "defaultValue": "0",
      "isAllowNull": false,
-     "comment": "녹음 파일이 차지하는 바이트",
+     "comment": "녹음과 문서 파일이 차지하는 바이트",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
@@ -15415,6 +15549,19 @@
      "defaultValue": "0",
      "isAllowNull": false,
      "comment": "녹음 수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "yoh98uynwoxFQSN4R",
+     "name": "문서 수",
+     "pName": "document_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "문서 수",
      "relEntity": null,
      "relFieldId": null,
      "relType": null
