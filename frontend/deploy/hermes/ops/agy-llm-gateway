@@ -52,9 +52,9 @@ FALLBACK_MODEL = ENV['FALLBACK_MODEL']
 FALLBACK_KEY = ENV['FALLBACK_API_KEY']
 HOST, PORT = ENV.get('LISTEN', '172.24.0.1:18090').rsplit(':', 1)
 MAX_BODY = 16 * 2**20
-# agy 는 헤르메스 에이전트와 같은 Antigravity 구독 쿼터(5시간·주간)를 쓴다. 동시에 2개까지만 띄우고,
-# 자리가 없으면 기다리지 않고 바로 폴백으로 보낸다.
-AGY_SLOTS = threading.BoundedSemaphore(int(ENV.get('AGY_CONCURRENCY', '2')))
+# agy 는 헤르메스 에이전트와 같은 Antigravity 구독 쿼터(5시간·주간)를 쓴다. 동시에 AGY_CONCURRENCY(기본 8)개까지 띄우고,
+# 자리가 없으면 기다리지 않고 바로 폴백으로 보낸다(DeepSeek 쪽 동시 수는 백엔드 ASTRA_LLM_MAX_CONCURRENCY 가 정한다).
+AGY_SLOTS = threading.BoundedSemaphore(int(ENV.get('AGY_CONCURRENCY', '8')))
 client = transport.Client(timeout=AGY_TIMEOUT)
 
 
@@ -153,6 +153,15 @@ JSON_RULE = '\n\n# 출력 형식\nJSON 객체 하나만 출력한다. 설명, �
 
 def quick_json(body):
     return (body.get('response_format') or {}).get('type') == 'json_object' and not body.get('tools')
+
+
+def has_images(body):
+    for m in body.get('messages') or []:
+        content = m.get('content') if isinstance(m, dict) else None
+        if isinstance(content, list) and any(isinstance(p, dict) and p.get('type') in ('image_url', 'image', 'input_image')
+                                             for p in content):
+            return True
+    return False
 
 
 def json_messages(messages):
@@ -363,6 +372,10 @@ class Handler(BaseHTTPRequestHandler):
         if quick_json(body) and isinstance(body.get('messages'), list):
             return self.quick(body)
         started = time.monotonic()
+        if has_images(body):
+            # agy 플러그인은 글자만 넘기고 이미지를 "[image omitted …]" 로 바꾼다. 그대로 보내면 그림을 못 본 답이 오류 없이
+            # 돌아오므로, 이미지가 든 요청(ASTRA_LLM_VISION=true 의 녹음·문서 쪽 이미지)은 이미지를 읽는 DeepSeek 로 바로 보낸다.
+            return self.fallback(body, started, 'images', REQUEST_BUDGET, 10.0, 'vision')
         try:
             data = via_agy(body)
             usage = data.get('usage') or {}
