@@ -27,11 +27,15 @@ class QnaApiTests extends BoardTestSupport {
 
 	@Test
 	void studentAsksInstructorAnswersAndTheAnsweredQuestionIsLocked() throws Exception {
+		// 익명 작성자의 사진 유무도 이름과 같이 숨긴다.
+		this.data.photo(this.stu);
 		long id = created(this.student
 			.postJson(qna(this.course), "{\"title\":\"  조인 질문 \",\"body\":\"<b>LEFT JOIN</b>\\n차이\",\"anonymous\":true}")
 			.andExpect(header().string("Cache-Control", "no-store"))
 			.andExpect(jsonPath("$.title").value("조인 질문"))
 			.andExpect(jsonPath("$.authorName").value("테스트 STUDENT"))
+			.andExpect(jsonPath("$.authorId").value(this.stu))
+			.andExpect(jsonPath("$.authorHasPhoto").value(true))
 			.andExpect(jsonPath("$.anonymous").value(true))
 			.andExpect(jsonPath("$.secret").value(false))
 			.andExpect(jsonPath("$.solved").value(false))
@@ -48,6 +52,8 @@ class QnaApiTests extends BoardTestSupport {
 			.andExpect(jsonPath("$.items[0].postId").value(id))
 			.andExpect(jsonPath("$.items[0].anonymous").value(true))
 			.andExpect(jsonPath("$.items[0].mine").value(false))
+			.andExpect(jsonPath("$.items[0].authorHasPhoto").value(false))
+			.andExpect(jsonPath("$.items[0].edited").value(false))
 			.andExpect(jsonPath("$.items[0].excerpt").value("<b>LEFT JOIN</b> 차이"))
 			.andReturn()
 			.getResponse()
@@ -64,13 +70,17 @@ class QnaApiTests extends BoardTestSupport {
 		assertThat(detail).doesNotContain("테스트", "authorName", "authorId");
 		this.professor.get(question(this.course, id))
 			.andExpect(jsonPath("$.authorName").value("테스트 STUDENT"))
+			.andExpect(jsonPath("$.authorId").value(this.stu))
+			.andExpect(jsonPath("$.authorHasPhoto").value(true))
 			.andExpect(jsonPath("$.canEdit").value(false))
 			.andExpect(jsonPath("$.canDelete").value(true))
 			.andExpect(jsonPath("$.canSetFaq").value(true));
 
 		long answer = created(this.professor.postJson(question(this.course, id) + "/answers", "{\"body\":\"ON 조건 차이\"}")
 			.andExpect(jsonPath("$.instructor").value(true))
-			.andExpect(jsonPath("$.authorName").value("테스트 PROFESSOR")), "answerId");
+			.andExpect(jsonPath("$.authorName").value("테스트 PROFESSOR"))
+			.andExpect(jsonPath("$.authorId").value(this.prof))
+			.andExpect(jsonPath("$.authorHasPhoto").value(false)), "answerId");
 		this.classmate.get(question(this.course, id) + "/answers")
 			.andExpect(jsonPath("$.items.length()").value(1))
 			.andExpect(jsonPath("$.items[0].answerId").value(answer))

@@ -38,6 +38,11 @@ class BoardAccess {
 			return !anonymous || this.manager || authorId == this.userId;
 		}
 
+		/** 이 사람에게 드러내는 작성자 ID. 이름과 같은 규칙이고, 볼 수 없는 익명 작성자면 null이다. */
+		Long shown(long authorId, boolean anonymous) {
+			return seesAuthor(authorId, anonymous) ? authorId : null;
+		}
+
 	}
 
 }

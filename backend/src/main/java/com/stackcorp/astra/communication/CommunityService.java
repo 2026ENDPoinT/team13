@@ -2,6 +2,7 @@ package com.stackcorp.astra.communication;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -14,6 +15,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.stackcorp.astra.catalog.api.NotificationKind;
 import com.stackcorp.astra.catalog.api.Notifications;
 import com.stackcorp.astra.catalog.api.Notifications.DirectNotification;
+import com.stackcorp.astra.communication.Authors.Author;
+import com.stackcorp.astra.communication.Authors.Known;
 import com.stackcorp.astra.communication.BoardPostRepository.NewText;
 import com.stackcorp.astra.communication.CommunityRepository.AudienceCount;
 import com.stackcorp.astra.communication.CommunityRepository.Group;
@@ -23,7 +26,6 @@ import com.stackcorp.astra.communication.CommunityRepository.MaterialRow;
 import com.stackcorp.astra.communication.CommunityRepository.ReplyRow;
 import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
-import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.identity.api.UserRole;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
@@ -75,7 +77,7 @@ class CommunityService {
 
 	private final BoardFiles files;
 
-	private final UserNames userNames;
+	private final Authors authors;
 
 	private final RateLimiter rateLimiter;
 
@@ -88,7 +90,7 @@ class CommunityService {
 	private final Notifications notifications;
 
 	CommunityService(CommunityRepository community, BoardPostRepository posts, CommunityBoards boards,
-			CommunityOperators operators, PostReactions reactions, BoardFiles files, UserNames userNames,
+			CommunityOperators operators, PostReactions reactions, BoardFiles files, Authors authors,
 			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit, TransactionTemplate transaction,
 			Notifications notifications) {
 		this.community = community;
@@ -97,7 +99,7 @@ class CommunityService {
 		this.operators = operators;
 		this.reactions = reactions;
 		this.files = files;
-		this.userNames = userNames;
+		this.authors = authors;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 		this.audit = audit;
@@ -242,11 +244,9 @@ class CommunityService {
 		List<InquiryRow> rows = this.community.inquiries(author, answered, title, cursor, size + 1);
 		List<InquiryRow> page = rows.subList(0, Math.min(size, rows.size()));
 		Long next = rows.size() > size ? rows.get(size - 1).postId() : null;
-		Map<Long, String> names = all
-				? this.userNames.namesOf(page.stream().map(InquiryRow::authorId).distinct().toList()) : Map.of();
-		List<InquiryItem> items = page.stream()
-			.map((r) -> InquiryItem.of(r, all ? names.get(r.authorId()) : null))
-			.toList();
+		// 문의한 사람은 운영자가 all=true로 볼 때만 드러낸다.
+		Known known = this.authors.of(actor.userId(), all ? page.stream().map(InquiryRow::authorId).toList() : List.of());
+		List<InquiryItem> items = page.stream().map((r) -> InquiryItem.of(r, known.author(r.authorId()))).toList();
 		return new InquiryPage(items, counts, next, operator);
 	}
 
@@ -346,22 +346,23 @@ class CommunityService {
 		InquiryRow row = this.community.inquiry(operator ? null : actor.userId(), postId)
 			.orElseThrow(ApiException::notFound);
 		List<ReplyRow> replies = this.community.replies(postId, MAX_REPLIES);
-		List<Long> people = replies.stream().map(ReplyRow::authorId).collect(Collectors.toList());
-		people.add(row.authorId());
-		Map<Long, String> names = this.userNames.namesOf(people.stream().distinct().toList());
+		// 문의한 사람은 본인과 운영자만 보므로 ID까지 준다. 답한 운영자의 ID는 운영자에게만 준다(알림마당 공지와 같은 규칙).
+		List<Long> repliers = replies.stream().map(ReplyRow::authorId).toList();
+		List<Long> shown = new ArrayList<>(operator ? repliers : List.of());
+		shown.add(row.authorId());
+		Known known = this.authors.of(actor.userId(), shown, repliers);
 		List<Long> groups = replies.stream().map(ReplyRow::attachmentGroupId).filter(Objects::nonNull)
 			.collect(Collectors.toList());
 		if (row.attachmentGroupId() != null) {
 			groups.add(row.attachmentGroupId());
 		}
 		Map<Long, List<AttachedFile>> attached = this.files.list(groups);
-		return new InquiryView(row.postId(), row.title(), row.body(), names.get(row.authorId()),
+		Author asker = known.author(row.authorId());
+		return new InquiryView(row.postId(), row.title(), row.body(), asker.id(), asker.name(), asker.hasPhoto(),
 				row.authorId() == actor.userId(), row.answered(), row.answeredAt(), row.createdAt(),
 				files(attached, row.attachmentGroupId()),
-				replies.stream()
-					.map((r) -> new ReplyView(r.replyId(), names.get(r.authorId()), r.body(),
-							files(attached, r.attachmentGroupId()), r.createdAt()))
-					.toList(),
+				replies.stream().map((r) -> ReplyView.of(r, known.author(r.authorId()),
+						files(attached, r.attachmentGroupId()))).toList(),
 				operator);
 	}
 
@@ -465,14 +466,18 @@ class CommunityService {
 	record MaterialPage(List<MaterialItem> items, MaterialCounts counts, Long nextCursor, boolean canManage) {
 	}
 
-	/** @param authorName 운영자가 all=true로 본 목록에만 있다 */
+	/**
+	 * @param authorId 문의한 사람의 사용자 ID. 운영자가 all=true로 본 목록에만 있다
+	 * @param authorName 운영자가 all=true로 본 목록에만 있다
+	 * @param authorHasPhoto 요청한 사람이 문의한 사람의 아바타 사진을 받을 수 있으면 true. authorId가 없으면 false
+	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
-	record InquiryItem(long postId, String title, String authorName, boolean answered, LocalDateTime answeredAt,
-			int answerCount, LocalDateTime createdAt) {
+	record InquiryItem(long postId, String title, Long authorId, String authorName, boolean authorHasPhoto,
+			boolean answered, LocalDateTime answeredAt, int answerCount, LocalDateTime createdAt) {
 
-		static InquiryItem of(InquiryRow row, String authorName) {
-			return new InquiryItem(row.postId(), row.title(), authorName, row.answered(), row.answeredAt(),
-					row.answerCount(), row.createdAt());
+		static InquiryItem of(InquiryRow row, Author author) {
+			return new InquiryItem(row.postId(), row.title(), author.id(), author.name(), author.hasPhoto(),
+					row.answered(), row.answeredAt(), row.answerCount(), row.createdAt());
 		}
 
 	}
@@ -483,17 +488,30 @@ class CommunityService {
 	}
 
 	/**
+	 * @param authorId 문의한 사람의 사용자 ID. 문의는 쓴 사람과 운영자만 본다. 계정이 없으면 null
+	 * @param authorHasPhoto 요청한 사람이 문의한 사람의 아바타 사진을 받을 수 있으면 true
 	 * @param mine 요청한 사람이 쓴 문의인지
 	 * @param attachments 내려받기는 {@code GET /api/files/{fileId}/content}
 	 * @param canAnswer 알림마당 운영자면 true
 	 */
-	record InquiryView(long postId, String title, String body, String authorName, boolean mine, boolean answered,
-			LocalDateTime answeredAt, LocalDateTime createdAt, List<AttachedFile> attachments, List<ReplyView> replies,
-			boolean canAnswer) {
+	record InquiryView(long postId, String title, String body, Long authorId, String authorName,
+			boolean authorHasPhoto, boolean mine, boolean answered, LocalDateTime answeredAt, LocalDateTime createdAt,
+			List<AttachedFile> attachments, List<ReplyView> replies, boolean canAnswer) {
 	}
 
-	record ReplyView(long replyId, String authorName, String body, List<AttachedFile> attachments,
-			LocalDateTime createdAt) {
+	/**
+	 * @param authorId 답한 운영자의 사용자 ID. 알림마당 운영자(canAnswer)에게만 주고 문의한 사람에게는 null이다. 어느 계정이 운영자인지는
+	 * 운영자끼리만 안다(알림마당 공지의 authorId와 같은 규칙)
+	 * @param authorHasPhoto 요청한 사람이 답한 사람의 아바타 사진을 받을 수 있으면 true. authorId가 null이면 false
+	 */
+	record ReplyView(long replyId, Long authorId, String authorName, boolean authorHasPhoto, String body,
+			List<AttachedFile> attachments, LocalDateTime createdAt) {
+
+		static ReplyView of(ReplyRow row, Author author, List<AttachedFile> attachments) {
+			return new ReplyView(row.replyId(), author.id(), author.name(), author.hasPhoto(), row.body(), attachments,
+					row.createdAt());
+		}
+
 	}
 
 }

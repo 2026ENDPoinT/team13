@@ -9,9 +9,12 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.stackcorp.astra.catalog.api.CourseMates;
+import com.stackcorp.astra.files.api.AvatarPhotos;
 import com.stackcorp.astra.files.api.ContentScanner;
 import com.stackcorp.astra.files.api.ContentScanner.Infected;
 import com.stackcorp.astra.files.api.ContentScanner.Unavailable;
@@ -42,11 +46,11 @@ import com.stackcorp.astra.shared.ApiException;
  * <li>처리(worker): 다른 업로드와 같은 악성코드 검사기(ADR-0018)를 거친 뒤 격리한 converter가 256px JPEG로 다시 만든다. 검사기가
  * 없는 배포는 형식 검사만 거친다(ADR-0010 6번). 원본은 내보내지 않고 처리 뒤 지운다.</li>
  * <li>보기: 본인이거나, 폐강하지 않은 과목을 함께 듣거나 가르치는 사람만 본다(catalog CourseMates). 그 밖에는 사진이 없는 것과 같은
- * 404다.</li>
+ * 404다. 목록 화면은 같은 규칙을 {@link AvatarPhotos}로 여러 사람에게 한 번에 묻는다.</li>
  * </ul>
  */
 @Service
-class AvatarImages {
+class AvatarImages implements AvatarPhotos {
 
 	/** 올리는 원본의 크기 상한. converter도 같은 상한을 본다. */
 	static final int MAX_BYTES = 5 << 20;
@@ -148,6 +152,24 @@ class AvatarImages {
 			throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "찾을 수 없습니다.", PROCESSING_RETRY_AFTER);
 		}
 		throw ApiException.notFound();
+	}
+
+	@Override
+	public Set<Long> visibleTo(long viewerId, Collection<Long> userIds) {
+		if (userIds.isEmpty()) {
+			return Set.of();
+		}
+		Set<Long> withPhoto = this.images.withCurrent(Set.copyOf(userIds));
+		List<Long> others = withPhoto.stream().filter((id) -> id != viewerId).toList();
+		if (others.isEmpty()) {
+			return withPhoto;
+		}
+		Set<Long> visible = new HashSet<>();
+		if (withPhoto.contains(viewerId)) {
+			visible.add(viewerId);
+		}
+		this.mates.of(viewerId, null, others).forEach((mate) -> visible.add(mate.userId()));
+		return visible;
 	}
 
 	/**

@@ -103,11 +103,16 @@ class MessageApiTests extends IntegrationTest {
 
 	@Test
 	void instructorSendsToStudentsAndReadingIsAnExplicitCommand() throws Exception {
+		// 사진 유무는 같은 과목 사람끼리만 true다(아바타 경로와 같은 규칙).
+		this.data.photo(this.prof);
+		this.data.photo(this.stu1);
 		JsonNode sent = ApiClient.json(send(this.professor, compose("중간고사 안내", "10월 21일\n본관 101호", this.course,
 				this.stu1, this.stu2), "send-1")
 			.andExpect(status().isCreated())
 			.andExpect(header().string("Cache-Control", "no-store"))
-			.andExpect(jsonPath("$.recipients.length()").value(2)));
+			.andExpect(jsonPath("$.recipients.length()").value(2))
+			.andExpect(jsonPath("$.recipients[?(@.userId == " + this.stu1 + ")].hasPhoto").value(contains(true)))
+			.andExpect(jsonPath("$.recipients[?(@.userId == " + this.stu2 + ")].hasPhoto").value(contains(false))));
 		long id = sent.get("messageId").asLong();
 
 		this.student1.get("/api/messages/inbox")
@@ -117,6 +122,7 @@ class MessageApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.unreadCount").value(1))
 			.andExpect(jsonPath("$.items[0].messageId").value(id))
 			.andExpect(jsonPath("$.items[0].sender.userId").value(this.prof))
+			.andExpect(jsonPath("$.items[0].sender.hasPhoto").value(true))
 			.andExpect(jsonPath("$.items[0].read").value(false))
 			.andExpect(jsonPath("$.nextCursor").doesNotExist());
 		// 상세를 여러 번 열어도 읽음이 남지 않는다(SC-04).
@@ -124,7 +130,8 @@ class MessageApiTests extends IntegrationTest {
 		this.student1.get(inbox(id))
 			.andExpect(jsonPath("$.body").value("10월 21일\n본관 101호"))
 			.andExpect(jsonPath("$.read").value(false))
-			.andExpect(jsonPath("$.course.courseId").value(this.course));
+			.andExpect(jsonPath("$.course.courseId").value(this.course))
+			.andExpect(jsonPath("$.sender.hasPhoto").value(true));
 		this.student1.get("/api/messages/unread-count").andExpect(jsonPath("$.unreadCount").value(1));
 
 		// 읽음은 처음 한 번만 바뀌고 응답에 서버의 안 읽은 수가 있다(COMM-02).
@@ -144,7 +151,8 @@ class MessageApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.total").value(1))
 			.andExpect(jsonPath("$.items[0].recipientCount").value(2))
 			.andExpect(jsonPath("$.items[0].readCount").value(1))
-			.andExpect(jsonPath("$.items[0].firstRecipient.userId").value(Math.min(this.stu1, this.stu2)));
+			.andExpect(jsonPath("$.items[0].firstRecipient.userId").value(Math.min(this.stu1, this.stu2)))
+			.andExpect(jsonPath("$.items[0].firstRecipient.hasPhoto").value(this.stu1 < this.stu2));
 		this.professor.get(sentPath(id))
 			.andExpect(jsonPath("$.recipients.length()").value(2))
 			.andExpect(jsonPath("$.recipients[?(@.userId == " + this.stu2 + ")].readAt").value(contains(nullValue())));

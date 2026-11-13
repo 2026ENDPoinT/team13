@@ -6,11 +6,11 @@ import java.util.List;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
+import com.stackcorp.astra.communication.Authors.Author;
 import com.stackcorp.astra.communication.NoticeRepository.NoticeInput;
 import com.stackcorp.astra.communication.NoticeRepository.NoticeItemRow;
 import com.stackcorp.astra.communication.NoticeRepository.NoticeRow;
 import com.stackcorp.astra.identity.api.Actor;
-import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
@@ -47,7 +47,7 @@ class NoticeService {
 
 	private final CourseMemberships memberships;
 
-	private final UserNames userNames;
+	private final Authors authors;
 
 	private final RateLimiter rateLimiter;
 
@@ -60,13 +60,13 @@ class NoticeService {
 	private final AuditLog audit;
 
 	NoticeService(NoticeRepository notices, CourseBoards boards, PostReactions reactions, CourseMemberships memberships,
-			UserNames userNames, RateLimiter rateLimiter, TransactionTemplate transaction, NoticeNotifications alerts,
+			Authors authors, RateLimiter rateLimiter, TransactionTemplate transaction, NoticeNotifications alerts,
 			Idempotency idempotency, AuditLog audit) {
 		this.notices = notices;
 		this.boards = boards;
 		this.reactions = reactions;
 		this.memberships = memberships;
-		this.userNames = userNames;
+		this.authors = authors;
 		this.rateLimiter = rateLimiter;
 		this.transaction = transaction;
 		this.alerts = alerts;
@@ -96,7 +96,7 @@ class NoticeService {
 	NoticeView get(long userId, long courseId, long noticeId) {
 		boolean manager = role(userId, courseId) == CourseRole.INSTRUCTOR;
 		LocalDateTime now = this.notices.now();
-		return view(visible(userId, courseId, noticeId, manager, now), now);
+		return view(userId, visible(userId, courseId, noticeId, manager, now), now);
 	}
 
 	/**
@@ -121,7 +121,7 @@ class NoticeService {
 					NoticeRow row = visible(userId, courseId, noticeId, true, now);
 					this.alerts.sync(courseId, noticeId, row.title(), row.publishedAt());
 					this.audit.success(userId, actor.sessionId(), CREATE, "post", noticeId, courseId);
-					return view(row, now);
+					return view(userId, row, now);
 				});
 	}
 
@@ -145,7 +145,7 @@ class NoticeService {
 		NoticeRow row = visible(userId, courseId, noticeId, true, now);
 		this.alerts.sync(courseId, noticeId, row.title(), row.publishedAt());
 		this.audit.success(userId, actor.sessionId(), "notice.update", "post", noticeId, courseId);
-		return view(row, now);
+		return view(userId, row, now);
 	}
 
 	@Transactional
@@ -181,9 +181,8 @@ class NoticeService {
 		return this.notices.find(courseId, noticeId, userId, manager, now).orElseThrow(ApiException::notFound);
 	}
 
-	private NoticeView view(NoticeRow row, LocalDateTime now) {
-		String author = this.userNames.namesOf(List.of(row.authorId())).get(row.authorId());
-		return NoticeView.of(row, author, now);
+	private NoticeView view(long viewerId, NoticeRow row, LocalDateTime now) {
+		return NoticeView.of(row, this.authors.one(viewerId, row.authorId()), now);
 	}
 
 	private CourseRole role(long userId, long courseId) {
@@ -219,17 +218,21 @@ class NoticeService {
 
 	/**
 	 * @param published 학생에게 지금 보이는지. 게시 일시가 없거나 미래면 false
+	 * @param authorId 작성자 사용자 ID. 계정이 없으면 null. 아바타는 {@code GET /api/users/{authorId}/avatar}
+	 * @param authorHasPhoto 요청한 사람이 작성자의 아바타 사진을 받을 수 있으면 true
 	 * @param readCount 담당자에게만. 작성자를 뺀 열람자 수. 학생에게는 null
 	 * @param confirmCount 담당자에게만. 작성자를 뺀 확인자 수. 학생에게는 null
 	 */
 	record NoticeView(long noticeId, String title, String body, boolean pinned, LocalDateTime publishedAt,
-			boolean published, String authorName, int viewCount, LocalDateTime createdAt, LocalDateTime updatedAt,
-			int version, boolean read, boolean confirmed, Integer readCount, Integer confirmCount) {
+			boolean published, Long authorId, String authorName, boolean authorHasPhoto, int viewCount,
+			LocalDateTime createdAt, LocalDateTime updatedAt, int version, boolean read, boolean confirmed,
+			Integer readCount, Integer confirmCount) {
 
-		static NoticeView of(NoticeRow row, String authorName, LocalDateTime now) {
+		static NoticeView of(NoticeRow row, Author author, LocalDateTime now) {
 			return new NoticeView(row.noticeId(), row.title(), row.body(), row.pinned(), row.publishedAt(),
-					visibleAt(row.publishedAt(), now), authorName, row.viewCount(), row.createdAt(), row.updatedAt(),
-					row.version(), row.read(), row.confirmed(), row.readCount(), row.confirmCount());
+					visibleAt(row.publishedAt(), now), author.id(), author.name(), author.hasPhoto(), row.viewCount(),
+					row.createdAt(), row.updatedAt(), row.version(), row.read(), row.confirmed(), row.readCount(),
+					row.confirmCount());
 		}
 
 	}

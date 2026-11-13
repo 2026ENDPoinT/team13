@@ -12,13 +12,14 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.stackcorp.astra.catalog.api.NotificationKind;
 import com.stackcorp.astra.catalog.api.Notifications;
 import com.stackcorp.astra.catalog.api.Notifications.DirectNotification;
+import com.stackcorp.astra.communication.Authors.Author;
+import com.stackcorp.astra.communication.Authors.Known;
 import com.stackcorp.astra.communication.BoardAccess.Viewer;
 import com.stackcorp.astra.communication.BoardPostRepository.Locked;
 import com.stackcorp.astra.communication.BoardPostRepository.NewText;
 import com.stackcorp.astra.communication.BoardPostRepository.PostRow;
 import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
-import com.stackcorp.astra.identity.api.UserNames;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.audit.AuditLog;
@@ -48,7 +49,7 @@ class QnaAnswerService {
 
 	private final BoardFiles files;
 
-	private final UserNames userNames;
+	private final Authors authors;
 
 	private final RateLimiter rateLimiter;
 
@@ -58,12 +59,12 @@ class QnaAnswerService {
 
 	private final Notifications notifications;
 
-	QnaAnswerService(BoardPostRepository posts, BoardAccess access, BoardFiles files, UserNames userNames,
+	QnaAnswerService(BoardPostRepository posts, BoardAccess access, BoardFiles files, Authors authors,
 			RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit, Notifications notifications) {
 		this.posts = posts;
 		this.access = access;
 		this.files = files;
-		this.userNames = userNames;
+		this.authors = authors;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 		this.audit = audit;
@@ -190,21 +191,17 @@ class QnaAnswerService {
 	}
 
 	private List<AnswerView> views(Viewer viewer, List<PostRow> rows) {
-		List<Long> authors = rows.stream().map(PostRow::authorId).distinct().toList();
+		List<Long> writers = rows.stream().map(PostRow::authorId).distinct().toList();
 		Map<Long, Boolean> instructors = new HashMap<>();
-		for (long author : authors) {
-			instructors.put(author, this.access.instructor(author, viewer.courseId()));
+		for (long writer : writers) {
+			instructors.put(writer, this.access.instructor(writer, viewer.courseId()));
 		}
-		Map<Long, String> names = this.userNames.namesOf(rows.stream()
-			.filter((r) -> viewer.seesAuthor(r.authorId(), r.anonymous()))
-			.map(PostRow::authorId)
-			.distinct()
-			.toList());
+		Known known = this.authors.of(viewer.userId(),
+				rows.stream().map((r) -> viewer.shown(r.authorId(), r.anonymous())).toList());
 		Map<Long, List<AttachedFile>> attached = this.files
 			.list(rows.stream().map(PostRow::attachmentGroupId).filter(Objects::nonNull).toList());
 		return rows.stream()
-			.map((row) -> AnswerView.of(row, viewer,
-					viewer.seesAuthor(row.authorId(), row.anonymous()) ? names.get(row.authorId()) : null,
+			.map((row) -> AnswerView.of(row, viewer, known.author(viewer.shown(row.authorId(), row.anonymous())),
 					instructors.get(row.authorId()),
 					row.attachmentGroupId() == null ? List.of() : attached.getOrDefault(row.attachmentGroupId(), List.of())))
 			.toList();
@@ -229,21 +226,23 @@ class QnaAnswerService {
 	}
 
 	/**
+	 * @param authorId 작성자 사용자 ID. 볼 수 없는 익명 작성자이거나 계정이 없으면 빠진다. 아바타는
+	 * {@code GET /api/users/{authorId}/avatar}
 	 * @param authorName 볼 수 없는 익명 작성자면 빠진다
+	 * @param authorHasPhoto 요청한 사람이 작성자의 아바타 사진을 받을 수 있으면 true. authorId가 없으면 false
 	 * @param instructor 그 과목 담당자가 쓴 답글인지
 	 * @param edited 작성 뒤 고친 적이 있으면 true(version이 1보다 크다)
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
-	record AnswerView(long answerId, String body, String authorName, boolean mine, boolean anonymous,
-			boolean instructor, List<AttachedFile> attachments, int version, boolean edited, LocalDateTime createdAt,
-			LocalDateTime updatedAt, boolean canEdit, boolean canDelete) {
+	record AnswerView(long answerId, String body, Long authorId, String authorName, boolean authorHasPhoto,
+			boolean mine, boolean anonymous, boolean instructor, List<AttachedFile> attachments, int version,
+			boolean edited, LocalDateTime createdAt, LocalDateTime updatedAt, boolean canEdit, boolean canDelete) {
 
-		static AnswerView of(PostRow row, Viewer viewer, String authorName, boolean instructor,
-				List<AttachedFile> files) {
+		static AnswerView of(PostRow row, Viewer viewer, Author author, boolean instructor, List<AttachedFile> files) {
 			boolean mine = row.authorId() == viewer.userId();
-			return new AnswerView(row.postId(), row.body(), authorName, mine, row.anonymous(), instructor, files,
-					row.version(), row.version() > 1, row.createdAt(), row.updatedAt(), mine,
-					mine || viewer.manager());
+			return new AnswerView(row.postId(), row.body(), author.id(), author.name(), author.hasPhoto(), mine,
+					row.anonymous(), instructor, files, row.version(), row.version() > 1, row.createdAt(),
+					row.updatedAt(), mine, mine || viewer.manager());
 		}
 
 	}

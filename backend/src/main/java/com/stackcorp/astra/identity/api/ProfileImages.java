@@ -1,8 +1,10 @@
 package com.stackcorp.astra.identity.api;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 아바타 사진의 상태(profile_images, user_profiles, ADR-0038). 행과 상태 전이는 identity가 갖고, 사진 바이트의 저장·검사·재인코딩·
@@ -48,6 +50,12 @@ public interface ProfileImages {
 
 	/** 사용자에게 검사·재인코딩을 기다리는 대기(TEMP) 사진이 있는지. */
 	boolean processing(long userId);
+
+	/**
+	 * 이 사용자들 가운데 지금 사진이 있는 사람. {@link #current}가 값을 주는 조건과 같다. 사용자 수와 관계없이 쿼리 한 번이다.
+	 * 누가 볼 수 있는지는 판정하지 않는다.
+	 */
+	Set<Long> withCurrent(Collection<Long> userIds);
 
 	/** 지울 객체가 남은 사진. 버렸거나 실패한 사진의 두 객체와, 현재 사진의 남은 원본이다. */
 	List<Discarded> discarded(int limit);
