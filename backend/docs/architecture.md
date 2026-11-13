@@ -379,7 +379,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `GET /api/courses/{courseId}/files/{fileId}/summary` | 열람 가능한 사람 | 게시본, `pageImageBase`, 쪽 이미지 signed cookie |
 | `DELETE /api/courses/{courseId}/files/{fileId}/summary` | 담당자 | 게시 내리기. 파일 요약과 학습 대화도 닫힌다 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary/overview` | 열람 가능한 사람 | 자료 상세의 파일 요약(게시본의 질문과 흐름, 모델 호출 없음) |
-| `GET /api/llm/policy` | 로그인 사용자 | 제공자 처리 조건, 고지 판, profile 지문, 외부 LLM 사용 여부 |
+| `GET /api/llm/policy` | 로그인 사용자 | 제공자 처리 조건, 고지 판, profile 지문, 외부 LLM 사용 여부. `enabled`는 배포 스위치가 켜져 있고 제공자 key가 설정됐을 때만 `true`이고, `false`면 요약 생성·학습 대화는 503 `llm_disabled` |
 | `GET /api/courses/{courseId}/llm-consents` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 내 범위별 동의. `current`는 동의한 profile이 지금 profile과 같은지다. `canGrant`는 내가 이 과목에서 동의할 수 있는지(결정권자인지)이고, `false`면 남은 동의 행도 효력이 없다 |
 | `PUT /api/courses/{courseId}/llm-consents/{scope}` | 담당자 명단의 그 과목 교수, 비정규 담당자. 다른 담당자(조교)는 403 `llm_decider_required` | 동의(`page_summary`, `study_chat`). 본 고지 판·지문, 국외 이전·학습 이용 확인 |
 | `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 그 과목의 담당자(교수, 조교, 비정규 담당자). 본인의 동의만 | 철회. 대기 작업·질문 취소, 게시본은 유지. 조교도 효력 없는 자기 동의를 거둘 수 있다 |

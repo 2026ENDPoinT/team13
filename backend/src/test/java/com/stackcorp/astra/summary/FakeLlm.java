@@ -7,6 +7,7 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 
@@ -141,7 +142,9 @@ public final class FakeLlm implements LlmClient {
 	@TestConfiguration(proxyBeanMethods = false)
 	public static class Configuration {
 
+		/** {@code astra.test.fake-llm=false}면 만들지 않는다. 제공자(API key)가 없는 배포를 시험한다. */
 		@Bean
+		@ConditionalOnProperty(name = "astra.test.fake-llm", havingValue = "true", matchIfMissing = true)
 		FakeLlm fakeLlm() {
 			return new FakeLlm();
 		}

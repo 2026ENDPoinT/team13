@@ -15,7 +15,8 @@ import com.stackcorp.astra.summary.api.LlmClient;
 @EnableConfigurationProperties(LlmProperties.class)
 class LlmConfiguration {
 
-	// key가 없거나 astra.llm.enabled=false면 bean을 만들지 않는다. 요약 생성과 학습 대화만 쓸 수 없고 앱은 뜬다(ADR-0032).
+	// key가 없거나 astra.llm.enabled=false면 bean을 만들지 않는다. 앱은 뜨고, bean이 없으면 LlmGate가 새 요청을 503 llm_disabled로
+	// 거절하고 처리 조건도 enabled=false로 알린다(ADR-0032 2번).
 	@Bean
 	@Conditional(ApiKeyConfigured.class)
 	LlmClient llmClient(LlmProperties properties) {

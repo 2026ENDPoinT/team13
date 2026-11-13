@@ -2,11 +2,13 @@ package com.stackcorp.astra.summary.policy;
 
 import java.util.Optional;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.summary.api.CourseStaff;
+import com.stackcorp.astra.summary.api.LlmClient;
 
 /**
  * 과목 자료의 내용을 외부 LLM에 보내기 전에 거치는 문(ADR-0032). 다음을 모두 만족해야 열린다.
@@ -17,6 +19,11 @@ import com.stackcorp.astra.summary.api.CourseStaff;
  * </ul>
  * 책임 교수자는 쪽별 요약이면 생성을 요청한 교수자, 학습 대화면 그 파일의 요약을 게시한 교수자다. api는 명령을 받을 때, worker는
  * 모델을 부르기 전마다 다시 확인한다.
+ * <p>
+ * 명령을 받을 때는 제공자가 설정됐는지({@link LlmClient} bean이 있는지, 곧 API key가 있는지)도 본다. 없으면 스위치가 꺼진 것과 같은
+ * 503 {@code llm_disabled}이고 처리 조건도 {@code enabled=false}로 알린다({@link #available}). 제공자에 닿지 못하는 일시 장애는
+ * 설정의 문제가 아니므로 여기서 보지 않는다. 이미 원장에 들어온 작업과 질문은 worker가 {@code not_configured}로 닫으므로
+ * {@link #closed}는 스위치만 본다.
  */
 @Component
 public class LlmGate {
@@ -33,14 +40,24 @@ public class LlmGate {
 
 	private final CourseStaff staff;
 
-	LlmGate(LlmPolicyProperties properties, ConsentRepository consents, CourseStaff staff) {
+	private final ObjectProvider<LlmClient> llm;
+
+	LlmGate(LlmPolicyProperties properties, ConsentRepository consents, CourseStaff staff,
+			ObjectProvider<LlmClient> llm) {
 		this.properties = properties;
 		this.consents = consents;
 		this.staff = staff;
+		this.llm = llm;
 	}
 
+	/** 배포 스위치 {@code astra.llm.enabled}. worker가 이미 받은 작업과 질문을 닫을지 정할 때 쓴다. */
 	public boolean enabled() {
 		return this.properties.enabled();
+	}
+
+	/** 새 요청을 받을 수 있다. 스위치가 켜져 있고 제공자가 설정됐다. {@code GET /api/llm/policy}의 {@code enabled}다. */
+	public boolean available() {
+		return enabled() && this.llm.getIfAvailable() != null;
 	}
 
 	public ProviderProfile profile() {
@@ -48,10 +65,10 @@ public class LlmGate {
 	}
 
 	/**
-	 * @throws ApiException 503 {@code llm_disabled}
+	 * @throws ApiException 503 {@code llm_disabled} 스위치가 꺼졌거나 제공자가 설정되지 않았을 때
 	 */
 	public void requireEnabled() {
-		if (!enabled()) {
+		if (!available()) {
 			throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "llm_disabled", "이 서비스에서는 외부 AI 기능을 쓰지 않습니다.");
 		}
 	}

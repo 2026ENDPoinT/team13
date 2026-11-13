@@ -24,6 +24,7 @@ import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.summary.FakeLlm;
 import com.stackcorp.astra.summary.LlmConsents;
+import com.stackcorp.astra.summary.api.LlmException;
 import com.stackcorp.astra.summary.job.SummaryRunnerDriver;
 
 import tools.jackson.databind.JsonNode;
@@ -101,6 +102,25 @@ class ConsentApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.profileDigest").value(this.consents.profile().digest()))
 			.andExpect(jsonPath("$.scopes.length()").value(2));
 		new ApiClient(this.mvc, null).get("/api/llm/policy").andExpect(status().isUnauthorized());
+	}
+
+	/** 제공자가 설정됐지만 호출이 실패한다(잘못된 key, 재시도하지 않는 AUTH). 그 작업만 실패하고 배포는 꺼진 것으로 보이지 않는다. */
+	@Test
+	void aProviderFailureDoesNotLookLikeADisabledDeployment() throws Exception {
+		this.llm.reset((request) -> {
+			throw new LlmException(LlmException.Code.AUTH, "invalid api key");
+		});
+		grant("page_summary", true).andExpect(status().isOk());
+
+		this.student.get("/api/llm/policy").andExpect(jsonPath("$.enabled").value(true));
+		long job = ApiClient.json(requestJob().andExpect(status().isAccepted())).get("id").asLong();
+		assertThat(SummaryRunnerDriver.runOnce(this.context)).isTrue();
+
+		this.professor.get("/api/courses/" + this.course + "/summary-jobs/" + job)
+			.andExpect(jsonPath("$.state").value("failed"))
+			.andExpect(jsonPath("$.errorCode").value("provider"));
+		this.student.get("/api/llm/policy").andExpect(jsonPath("$.enabled").value(true));
+		requestJob().andExpect(status().isAccepted());
 	}
 
 	@Test
