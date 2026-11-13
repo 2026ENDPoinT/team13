@@ -55,7 +55,7 @@ function Prose({ text }: { text?: string | null }): ReactNode {
 function progressLine(progress: ItemProgress | null | undefined): string {
   if (!progress) return "아직 학습 기록이 없습니다.";
   const required = progress.requiredSec == null ? "인정 기준 없음" : `인정 기준 ${durationText(progress.requiredSec)}`;
-  const met = progress.attendedAt ? ` · ${koDateTime(progress.attendedAt)} 출석 인정` : "";
+  const met = progress.attendedAt ? ` · ${koDateTime(progress.attendedAt)} 기준 충족` : "";
   const status = typeof progress.status === "string" ? progress.status : "";
   return `적립 ${durationText(progress.creditedSec)} / ${required} · ${PROGRESS_STATE[status] || status}${met}`;
 }
@@ -104,12 +104,12 @@ function DetailBody({ data, kj, parts, staleError, progressEntry }: { data: Acti
     <p className="tiny">{`${courseById(kj).ko} · ${data.weekNo}주차 · 콘텐츠 ${items.length}개${data.published ? "" : " · 비공개"}`}</p>
     {staleError ? <p className="err" role="alert">{lectureMessage(staleError)}</p> : null}
     <section className="callout"><h2>주의사항</h2><ul>
-      <li>출석 시간은 ASTRA 서버가 학습 창이 열려 있는 동안의 서버 시각으로 적립합니다. 배속이나 재생 위치를 옮겨도 시간이 줄지 않습니다.</li>
+      <li>학습 인정 시간은 ASTRA 서버가 학습 창이 열려 있는 동안의 서버 시각으로 적립합니다. 배속이나 재생 위치를 옮겨도 시간이 줄지 않습니다.</li>
       <li>한 번에 한 강의만 학습할 수 있습니다. 다른 곳에서 학습을 시작하면 이 화면의 학습이 끝납니다.</li>
-      <li>학습 인정 기간이 끝난 뒤에도 재생할 수 있지만 출석 시간은 쌓이지 않습니다.</li>
+      <li>학습 인정 기간이 끝난 뒤에도 재생할 수 있지만 인정 시간은 쌓이지 않습니다.</li>
       <li>학습을 마칠 때는 학습 창의 학습 종료 버튼을 누르세요.</li>
     </ul></section>
-    {parts.metaTable([["학습 인정 기간", windowText(data)], ["출석 인정", "콘텐츠마다 인정 기준 시간 이상 적립하면 인정됩니다"]])}
+    {parts.metaTable([["학습 인정 기간", windowText(data)], ["학습 인정", "콘텐츠마다 인정 기준 시간 이상 적립하면 그 콘텐츠의 기준을 충족합니다. 출석은 출석부 기록을 따릅니다"]])}
     <Prose text={data.description} /><h2>콘텐츠</h2>
     {progressEntry?.error && !progressEntry.data ? <p className="err" role="alert">진도를 불러오지 못했습니다. {lectureMessage(progressEntry.error)}</p> : null}
     {items.length ? <div className="srv-lecture-items">{items.map((item) => {
@@ -610,10 +610,10 @@ function createController({ kj, courseId, activityId, itemId }: PlayerSpec, vide
 
 function statusText(ctl: Controller): string {
   if (ctl.phase !== "active") return PHASE_TEXT[ctl.phase] || "";
-  if (!ctl.creditable) return "담당자 미리보기입니다. 출석 시간을 적립하지 않습니다.";
-  if (ctl.creditState === "reauth_required") return "학습 인증이 끝나 출석 시간 적립을 멈췄습니다. 재생은 계속할 수 있습니다.";
-  if (ctl.creditOpen === false) return "학습 인정 기간이 끝났습니다. 재생은 계속할 수 있지만 출석 시간은 쌓이지 않습니다.";
-  return "학습 중입니다. 출석 시간은 서버가 적립합니다.";
+  if (!ctl.creditable) return "담당자 미리보기입니다. 인정 시간을 적립하지 않습니다.";
+  if (ctl.creditState === "reauth_required") return "학습 인증이 끝나 인정 시간 적립을 멈췄습니다. 재생은 계속할 수 있습니다.";
+  if (ctl.creditOpen === false) return "학습 인정 기간이 끝났습니다. 재생은 계속할 수 있지만 인정 시간은 쌓이지 않습니다.";
+  return "학습 중입니다. 인정 시간은 서버가 적립합니다.";
 }
 
 
@@ -755,7 +755,7 @@ function ReadyPlayer({ spec, data, item }: { spec: PlayerSpec; data: ActivityDet
   };
   const player = <section ref={root} className="player-page is-open srv-player" data-item-open={`srv-${activityId}`}>
     <div className="player-top"><h1>{`[${data.weekNo}주] ${item.title}`}</h1>
-      <span className={`attend-pill${met ? " ok" : ""}`}>{met ? "출석 인정" : phase === "active" && ctl?.creditable ? "출석 진행" : phase === "active" ? "미리보기" : "학습 중 아님"}</span>
+      <span className={`attend-pill${met ? " ok" : ""}`}>{met ? "인정 기준 충족" : phase === "active" && ctl?.creditable ? "인정 시간 적립 중" : phase === "active" ? "미리보기" : "학습 중 아님"}</span>
     </div>
     <div className="player-stage"><video ref={video} className="lecture-video srv-video" controls playsInline preload="metadata" aria-label={`${data.title} ${item.title}`} onDoubleClick={(event) => { event.preventDefault(); void togglePlayerFullscreen(root.current); }} /></div>
     <div className="player-chrome">

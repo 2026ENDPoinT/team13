@@ -21,6 +21,8 @@ import {
 
 const pf = (screenId: string, extra?: Record<string, string>) => routeFor("professor", "screen", { screenId, ...(extra || {}) });
 const editHref = (kj: string, noticeId: number) => pf("pf_notice_write", { kj, edit: String(noticeId) });
+// Notices created from this screen: after a create it navigates to itself, and the new key gives an empty form.
+let created = 0;
 
 function Retry({ reload }: { reload: () => void }) {
   const [pressed, setPressed] = useState(false);
@@ -93,7 +95,7 @@ export function serverNoticeFields(ctx: ScreenCtx, course: Course, _parts?: unkn
   return (
     <div className="stack">
       {backendPanel()}
-      <NoticeForm key={`${courseId}:${edit || ""}`} course={course} courseId={Number(courseId)} editId={edit} />
+      <NoticeForm key={`${courseId}:${edit || `new:${created}`}`} course={course} courseId={Number(courseId)} editId={edit} />
       <NoticeList course={course} courseId={Number(courseId)} page={page} />
     </div>
   );
@@ -120,7 +122,7 @@ function NoticeForm({ course, courseId, editId }: { course: Course; courseId: nu
   const [latest, setLatest] = useState<CourseNotice | null>(null);
   const live = useRef(true);
   const sheet = useRef<HTMLDivElement>(null);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   useEffect(() => {
     if (!key || !editId) return;
     if (freshVisit("pf-notice-edit", key) === "entry" || !noticeDetails.peek(key)) void noticeDetails.load(key, courseId, editId);
@@ -173,6 +175,7 @@ function NoticeForm({ course, courseId, editId }: { course: Course; courseId: nu
     try {
       if (editId) await updateNotice(courseId, editId, { ...payload, version: version.current.version });
       else await createNotice(courseId, payload);
+      if (!editId) created += 1;
       getState().toast = draft ? "공지를 임시 저장했습니다" : editId ? "공지를 수정했습니다" : "공지를 서버에 등록했습니다";
       navigate(pf("pf_notice_write", { kj: course.id }));
       return;
@@ -319,7 +322,7 @@ function DeleteNotice({ courseId, noticeId, title, after }: { courseId: number; 
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   function press() {
     if (busy) return;
     if (!armed) {

@@ -12,7 +12,7 @@ import { Icon } from "../../ui/icon.tsx";
 import { CoverImage } from "../../ui/assets.tsx";
 import { hrefFor, find } from "../../manifest.ts";
 import { ApiError } from "../../shared/api.ts";
-import { freshVisit, useRefreshOnFocus, useResource } from "../../shared/remote-cache.ts";
+import { freshVisit, useRefreshOnFocus, useResource, useWatch } from "../../shared/remote-cache.ts";
 import { backendStatus, courseIdFor, roleIn, serverCourseOf } from "../../shared/backend.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { TYPE_COLOR } from "../../shared/format.ts";
@@ -83,6 +83,7 @@ function useActivityParts(parts: ActivityPart[], scope: string): void {
   }, [parts]);
   useSyncExternalStore(subscribe, () => parts.map((entry) => entry.resource.version()).join(","));
   useRefreshOnFocus(() => parts.forEach((entry) => void loadPart(entry)));
+  useWatch(parts);
   useEffect(() => {
     const fresh = freshVisit(scope, parts.map((entry) => entry.key).join("|")) === "entry";
     for (const entry of parts) if (fresh || !entry.resource.peek(entry.key)) void loadPart(entry);
