@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../ui/kit.tsx";
 import { apiGet, apiSend, apiUpload, apiBlob, ApiError, newRequestKey } from "./api.ts";
 import { retryLater } from "./remote-cache.ts";
+import { schoolProblemOf, whileScanning, SchoolProblemNote } from "./school-content.tsx";
 
 /** Malware-scan state of an upload: only `clean` uploads can be attached. */
 export type UploadState = "quarantined" | "clean" | "rejected";
@@ -23,6 +24,8 @@ export interface UploadView {
 export interface DownloadFile {
   fileId: number | string;
   name: string;
+  /** For a school file: where it opens on e-Class when STack cannot copy it. */
+  schoolUrl?: string | null;
 }
 
 export const SCAN_POLL_MS = 1500;
@@ -128,7 +131,9 @@ export function saveBlob(blob: Blob, name: string | null | undefined): void {
 
 /**
  * "내려받기" for one attached file: the bytes come through `fileBlob` and leave as a Blob URL.
- * Renders the button followed by its live status line (`span.tiny`) for progress and failures.
+ * Renders the button followed by its live status line (`span.tiny`) for progress and failures. A school file
+ * (`school-file-<n>`) is copied on this first request: while the copy is scanned (409 `file_scanning`) it asks again
+ * after each `Retry-After`, a bounded number of times; the other school answers show their own state.
  */
 export function downloadControl(courseId: number | string | null, file: DownloadFile): ReactNode {
   return <DownloadControl courseId={courseId} file={file} />;
@@ -137,6 +142,7 @@ export function downloadControl(courseId: number | string | null, file: Download
 function DownloadControl({ courseId, file }: { courseId: number | string | null; file: DownloadFile }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [problem, setProblem] = useState<unknown>(null);
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -146,8 +152,12 @@ function DownloadControl({ courseId, file }: { courseId: number | string | null;
   }, []);
   const download = () => {
     setBusy(true);
+    setProblem(null);
     setNote("내려받는 중입니다.");
-    fileBlob(courseId, file.fileId).then((blob) => {
+    whileScanning(() => fileBlob(courseId, file.fileId), {
+      alive: () => live.current,
+      onWait: () => setNote("학교에서 받은 파일을 검사하는 중입니다. 잠시 기다려 주세요."),
+    }).then((blob) => {
       if (!blob) {
         if (live.current) setNote("파일을 찾을 수 없거나 받을 권한이 없습니다.");
         return;
@@ -156,6 +166,11 @@ function DownloadControl({ courseId, file }: { courseId: number | string | null;
       if (live.current) setNote("");
     }, (error: unknown) => {
       if (!live.current) return;
+      if (schoolProblemOf(error)) {
+        setNote("");
+        setProblem(error);
+        return;
+      }
       setNote(error instanceof ApiError && error.status === 429 ? retryLater(error)
         : error instanceof ApiError && error.status === 0 ? error.message : "파일을 내려받지 못했습니다. 잠시 후 다시 시도하세요.");
     }).finally(() => {
@@ -166,6 +181,7 @@ function DownloadControl({ courseId, file }: { courseId: number | string | null;
     <>
       <Button kind="secondary" aria-label={`${file.name} 내려받기`} disabled={busy} onClick={download}>내려받기</Button>
       <span className="tiny" role="status" aria-live="polite">{note}</span>
+      {problem ? <SchoolProblemNote error={problem} schoolUrl={file.schoolUrl} retry={download} compact /> : null}
     </>
   );
 }

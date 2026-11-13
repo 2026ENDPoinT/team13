@@ -75,17 +75,19 @@ export function resolveScreen(pathname: string, params: URLSearchParams): Screen
   // A backend material (`m=lecture_material&n=srv-<activityId>`) or an activity link that only knows the
   // learning activity id (`m=report|test|survey&act=<activityId>`, to-do and notifications).
   const materialId = pathname === activityPath && params.get("m") === "lecture_material" ? lectureIdOf(itemId) : null;
+  // A material imported from the school's e-Class keeps its string id (`m=lecture_material&n=school-<n>`).
+  const schoolMaterial = pathname === activityPath && params.get("m") === "lecture_material" && /^school-[1-9]\d{0,17}$/.test(String(itemId || "")) ? String(itemId) : null;
   const link = pathname === activityPath && !itemId ? activityLinkOf(params) : null;
-  if (materialId || link) {
+  if (materialId || schoolMaterial || link) {
     return {
-      id: materialId ? `srv-material-${materialId}` : `srv-link-${link!.type}-${link!.activityId}`,
-      role: "student", title: materialId ? "자료" : "학습활동", path: activityPath, nav: "activity", kind: "activity",
-      serverMaterial: materialId, serverLink: link, course: courseOf(params), layout: "course",
+      id: materialId ? `srv-material-${materialId}` : schoolMaterial ? `srv-material-${schoolMaterial}` : `srv-link-${link!.type}-${link!.activityId}`,
+      role: "student", title: materialId || schoolMaterial ? "자료" : "학습활동", path: activityPath, nav: "activity", kind: "activity",
+      serverMaterial: materialId, serverSchoolMaterial: schoolMaterial, serverLink: link, course: courseOf(params), layout: "course",
     };
   }
-  // A backend file preview (`preview_form.acl?n=srv-<fileId>`, backend mode) opens the server preview.
+  // A backend file preview (`preview_form.acl?n=srv-<fileId>`, or an uncopied school file `n=school-file-<n>`, backend mode) opens the server preview.
   const previewPath = "/ilos/cls/st/files/preview_form.acl";
-  if (pathname === previewPath && !matched && /^srv-[1-9][0-9]{0,17}$/.test(String(itemId || ""))) {
+  if (pathname === previewPath && !matched && /^(?:srv|school-file)-[1-9][0-9]{0,17}$/.test(String(itemId || ""))) {
     return { id: `srv-preview-${itemId}`, role: "student", title: "미리보기", path: previewPath, nav: "files", kind: "preview", course: courseOf(params), layout: "course" };
   }
   if (!activity || (pathname !== playerPath && pathname !== activityPath)) return matched;
