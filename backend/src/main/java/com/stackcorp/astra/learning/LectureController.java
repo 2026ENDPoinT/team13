@@ -124,7 +124,7 @@ class LectureController {
 		int version = LearningController.expectedVersion(ifMatch);
 		LectureChange change = validated(body);
 		this.rateLimiter.check("lecture-update", actor.userId(), 60, Duration.ofMinutes(10));
-		this.lectures.update(actor.userId(), courseId, activityId, version, change);
+		DeadlockRetry.run(() -> this.lectures.update(actor.userId(), courseId, activityId, version, change));
 		this.audit.success(actor.userId(), actor.sessionId(), "lecture.update", "learning_activity", activityId, courseId);
 		LectureView updated = view(activityId);
 		return ResponseEntity.ok()
@@ -140,7 +140,8 @@ class LectureController {
 		if (!this.access.canManage(actor.userId(), courseId)) {
 			throw ApiException.notFound();
 		}
-		this.lectures.delete(actor.userId(), courseId, activityId, LearningController.expectedVersion(ifMatch));
+		DeadlockRetry.run(() -> this.lectures.delete(actor.userId(), courseId, activityId,
+				LearningController.expectedVersion(ifMatch)));
 		this.audit.success(actor.userId(), actor.sessionId(), "lecture.delete", "learning_activity", activityId, courseId);
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}

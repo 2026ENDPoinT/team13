@@ -57,6 +57,24 @@ class SsoLoginTests extends OidcIntegrationTest {
 	}
 
 	@Test
+	void loginReplacesATokenTheBrowserHadBeforeLogin() throws Exception {
+		String ref = studentNumber();
+		this.data.userWithRef(ref, "STUDENT");
+		Cookie before = new Cookie("XSRF-TOKEN", "token-from-before-login");
+
+		Started started = start("/");
+		MockHttpServletResponse response = callback(IDP.authorize(started.location(), ref), started.cookie(), before)
+			.getResponse();
+
+		assertThat(response.getStatus()).isEqualTo(302);
+		assertThat(response.getCookie("ASTRA_SESSION")).isNotNull();
+		assertThat(response.getHeaders("Set-Cookie").stream().filter((c) -> c.startsWith("XSRF-TOKEN=")))
+			.singleElement()
+			.satisfies((c) -> assertThat(c).startsWith("XSRF-TOKEN=").doesNotContain(before.getValue()));
+		assertThat(response.getCookie("XSRF-TOKEN").getValue()).isNotBlank().isNotEqualTo(before.getValue());
+	}
+
+	@Test
 	void logsInWithCodeFlowAndLandsOnReturnPath(CapturedOutput output) throws Exception {
 		String ref = studentNumber();
 		long userId = this.data.userWithRef(ref, "STUDENT");

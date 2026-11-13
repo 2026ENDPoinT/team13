@@ -58,7 +58,8 @@ pass "GET /api/auth/csrf answers through the api container"
 #      StackBackendApplicationTests.selfOriginCheckIgnoresForwardedHostEvenWhenItMatchesTheOrigin이 확인한다.
 frontend_origin="$(docker compose exec -T api env | sed -n 's/^ASTRA_SESSION_ALLOWED_ORIGINS=//p' | cut -d, -f1 | tr -d '\r ')"
 [[ -n "${frontend_origin}" ]] || fail "api has no ASTRA_SESSION_ALLOWED_ORIGINS"
-xsrf="$(sed -n 's/^[Ss]et-[Cc]ookie: XSRF-TOKEN=\([^;]*\).*/\1/p' <<<"${headers}" | head -n 1 | tr -d '\r')"
+xsrf="$(sed -n -e '/^[Ss]et-[Cc]ookie: XSRF-TOKEN=/{' -e 's/^[Ss]et-[Cc]ookie: XSRF-TOKEN=\([^;]*\).*/\1/p' -e 'q' -e '}' \
+	<<<"${headers}" | tr -d '\r')"
 through_frontend_proxy() {
 	curl --silent --max-time 10 --output "$2" --write-out '%{http_code}' --request POST \
 		--header "Origin: $1" --header 'Sec-Fetch-Site: same-origin' --header "X-Forwarded-Host: ${1#*://}" \
@@ -77,7 +78,8 @@ pass "a mutating request from the allowed origin ${frontend_origin} passes the o
 # 3-2. /doc, /vod 전달 cookie 서명. 이 구성에는 로그인한 사용자와 변환한 문서가 없어 cookie를 받아 /doc를 열어 볼 수 없다.
 #      대신 두 가지를 본다. 떠 있는 api는 ASTRA_DELIVERY_REQUIRED=true로 시작했다. 같은 이미지와 .env에서 서명만 끄면 api가
 #      시작하지 않고 무엇을 넣을지 알린다. 그러므로 1번에서 healthy가 된 api에는 서명기가 있다(ADR-0009 8번).
-docker compose exec -T api env | grep -qx 'ASTRA_DELIVERY_REQUIRED=true' || fail "api does not run with ASTRA_DELIVERY_REQUIRED=true"
+delivery_env="$(docker compose exec -T api env)"
+grep -qx 'ASTRA_DELIVERY_REQUIRED=true' <<<"${delivery_env}" || fail "api does not run with ASTRA_DELIVERY_REQUIRED=true"
 if unsigned="$(timeout 240 docker compose run --rm --no-deps -e ASTRA_DELIVERY_ORIGIN_ENABLED=false api 2>&1)"; then
 	fail "api started without a /doc, /vod cookie signer"
 fi
@@ -143,7 +145,8 @@ in_network_of() {
 probe_from() {
 	in_network_of "$1" timeout 5 bash -c "exec 3<>/dev/tcp/$2/$3" >/dev/null 2>&1
 }
-if docker compose ps --services --status running | grep -qx clamav; then
+running_services="$(docker compose ps --services --status running)"
+if grep -qx clamav <<<"${running_services}"; then
 	probe worker clamav 3310 || fail "worker cannot reach clamav"
 	for client in api freshclam; do
 		if probe_from "${client}" clamav 3310; then
@@ -250,6 +253,8 @@ for service in api worker; do
 	code="$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose ps --all --quiet "${service}")")"
 	[[ "${code}" != 137 ]] || fail "${service} was killed before it finished shutting down"
 done
-docker compose logs --no-color --no-log-prefix api | grep -q 'Graceful shutdown complete' \
-	|| fail "api did not log a completed graceful shutdown"
+# 출력을 다 받은 뒤 찾는다. `logs | grep -q`는 grep이 첫 일치에서 pipe를 닫아 아직 쓰던 docker compose logs가 SIGPIPE로 끝나고,
+# pipefail 때문에 줄이 있어도 실패한다. 이 파일의 다른 확인도 같은 이유로 producer를 pipe 대신 변수로 받는다.
+stop_logs="$(docker compose logs --no-color --no-log-prefix api)"
+grep -q 'Graceful shutdown complete' <<<"${stop_logs}" || fail "api did not log a completed graceful shutdown"
 pass "api and worker stop gracefully"

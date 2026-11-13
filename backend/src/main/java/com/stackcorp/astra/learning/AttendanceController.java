@@ -212,14 +212,16 @@ class AttendanceController {
 			throw ApiException.invalid("makeupOfSessionId가 올바르지 않습니다.");
 		}
 		this.rateLimiter.check("attendance-write", actor.userId(), 120, Duration.ofMinutes(10));
-		SessionView created = this.idempotency.execute(actor.userId(), "attendance_session.create", idempotencyKey,
+		// 출석 반영 다시 판정이 하트비트·일괄 지정과 교착하면 멱등 원장·차시·감사 기록이 함께 되돌아가므로 처음부터 다시 실행한다.
+		SessionView created = DeadlockRetry.run(() -> this.idempotency.execute(actor.userId(),
+				"attendance_session.create", idempotencyKey,
 				List.of(courseId, input, body.makeupOfSessionId() == null ? 0L : body.makeupOfSessionId()),
 				SessionView.class, () -> {
 					long id = this.service.create(actor.userId(), courseId, input, body.makeupOfSessionId());
 					this.audit.success(actor.userId(), actor.sessionId(), "attendance_session.create",
 							"attendance_session", id, courseId);
 					return session(courseId, id);
-				});
+				}));
 		return ResponseEntity.status(HttpStatus.CREATED)
 			.cacheControl(CacheControl.noStore())
 			.eTag(Versions.etag(created.version()))
@@ -239,7 +241,7 @@ class AttendanceController {
 			throw ApiException.invalid("cancelled 값이 필요합니다.");
 		}
 		this.rateLimiter.check("attendance-write", actor.userId(), 120, Duration.ofMinutes(10));
-		this.service.update(actor, courseId, sessionId, version, input, body.cancelled());
+		DeadlockRetry.run(() -> this.service.update(actor, courseId, sessionId, version, input, body.cancelled()));
 		SessionView updated = session(courseId, sessionId);
 		return ResponseEntity.ok()
 			.cacheControl(CacheControl.noStore())
@@ -254,7 +256,7 @@ class AttendanceController {
 		requireInstructor(actor, courseId);
 		int version = Versions.expected(ifMatch);
 		this.rateLimiter.check("attendance-write", actor.userId(), 120, Duration.ofMinutes(10));
-		this.service.delete(actor, courseId, sessionId, version);
+		DeadlockRetry.run(() -> this.service.delete(actor, courseId, sessionId, version));
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 

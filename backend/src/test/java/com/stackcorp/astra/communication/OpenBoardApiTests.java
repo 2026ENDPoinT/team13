@@ -336,6 +336,13 @@ class OpenBoardApiTests extends BoardTestSupport {
 		this.professor.get(comments)
 			.andExpect(jsonPath("$.items[0].authorId").value(this.stu))
 			.andExpect(jsonPath("$.items[0].authorHasPhoto").value(true));
+		// 작성자 본인이 보는 목록과 댓글에서도 자기 사진 유무가 보인다.
+		this.student.get(posts(this.course))
+			.andExpect(jsonPath("$.items[1].authorId").value(this.stu))
+			.andExpect(jsonPath("$.items[1].authorHasPhoto").value(true));
+		this.student.get(comments)
+			.andExpect(jsonPath("$.items[0].authorId").value(this.stu))
+			.andExpect(jsonPath("$.items[0].authorHasPhoto").value(true));
 
 		// 목록의 edited는 상세와 같은 뜻이다.
 		put(this.student, post(this.course, withPhoto), "{\"title\":\"고친 글\",\"version\":1}").andExpect(status().isOk());

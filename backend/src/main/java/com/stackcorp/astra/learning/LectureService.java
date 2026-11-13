@@ -26,6 +26,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 수정과 삭제는 활동 행을 잠근 뒤 client가 본 version과 비교한다(SC-05). 활동과 콘텐츠는 삭제 표시만 하고 학습 기록은 남긴다. 빠진
  * 콘텐츠와 지운 활동의 첨부 그룹은 놓는다(Attachments.release). 마지막 참조를 잃은 영상 파일은 지워지고, files worker가 그 영상의
  * 변환을 취소하고 재생 경로, HLS, key를 거둔다. 권한은 부르는 쪽이 먼저 판정한다.
+ * <p>
+ * 수정과 삭제는 활동 행보다 먼저 옮기기 전과 뒤 주차를 배타 잠금하고, 바꾼 뒤 그 주차의 온라인 학습 출석 반영을 다시 판정한다
+ * ({@link OnlineAttendance}). 남은 콘텐츠를 이미 모두 충족한 학생이 채워진다. 이미 쓴 출석 기록은 지우지 않는다.
  */
 @Service
 class LectureService {
@@ -40,11 +43,15 @@ class LectureService {
 
 	private final CourseWeeks weeks;
 
-	LectureService(JdbcClient jdbc, Attachments attachments, VideoAssets assets, CourseWeeks weeks) {
+	private final OnlineAttendance attendance;
+
+	LectureService(JdbcClient jdbc, Attachments attachments, VideoAssets assets, CourseWeeks weeks,
+			OnlineAttendance attendance) {
 		this.jdbc = jdbc;
 		this.attachments = attachments;
 		this.assets = assets;
 		this.weeks = weeks;
+		this.attendance = attendance;
 	}
 
 	/** @return 만든 활동 ID */
@@ -80,8 +87,10 @@ class LectureService {
 	 */
 	@Transactional
 	void update(long userId, long courseId, long activityId, int expectedVersion, LectureChange change) {
-		Locked current = lock(courseId, activityId, expectedVersion);
+		long from = weekOf(courseId, activityId);
 		long week = this.weeks.weekId(courseId, change.weekNo());
+		this.attendance.lockWeeks(true, List.of(from, week));
+		Locked current = lock(courseId, activityId, expectedVersion, from);
 		Map<Long, Long> live = liveItems(activityId);
 		Set<Long> kept = new HashSet<>();
 		for (KeptItem item : change.keep()) {
@@ -120,6 +129,7 @@ class LectureService {
 			.param("activity", activityId)
 			.param("version", expectedVersion)
 			.update();
+		this.attendance.reconcile(courseId, List.of(from, week), current.sessions());
 	}
 
 	/**
@@ -130,7 +140,9 @@ class LectureService {
 	 */
 	@Transactional
 	void delete(long userId, long courseId, long activityId, int expectedVersion) {
-		lock(courseId, activityId, expectedVersion);
+		long from = weekOf(courseId, activityId);
+		this.attendance.lockWeeks(true, List.of(from));
+		Locked current = lock(courseId, activityId, expectedVersion, from);
 		this.jdbc.sql("""
 				UPDATE learning_activities
 				   SET deleted_at = CURRENT_TIMESTAMP(3), deleted_by = :user, row_version = row_version + 1
@@ -139,6 +151,7 @@ class LectureService {
 		for (Map.Entry<Long, Long> item : liveItems(activityId).entrySet()) {
 			removeItem(item.getKey(), item.getValue());
 		}
+		this.attendance.reconcile(courseId, List.of(from), current.sessions());
 	}
 
 	private void addItems(long userId, long courseId, long activityId, int firstSeq, List<NewItem> items) {
@@ -203,22 +216,36 @@ class LectureService {
 	}
 
 	// 과목의 지우지 않은 영상 활동을 잠근다. 같은 활동을 동시에 고치는 요청은 여기서 차례를 기다리고, 늦은 쪽은 version이 달라 거부된다.
-	private Locked lock(long courseId, long activityId, int expectedVersion) {
+	// 주차 잠금 전에 읽은 주차가 그대로인지도 본다. 그 사이 다른 요청이 옮겼으면 version도 바뀌었으므로 같은 409다.
+	private Locked lock(long courseId, long activityId, int expectedVersion, long weekId) {
 		Locked current = this.jdbc.sql("""
-				SELECT course_week_id, sort_order, row_version FROM learning_activities
+				SELECT course_week_id, sort_order, row_version, attendance_session_id FROM learning_activities
 				 WHERE activity_id = :activity AND course_id = :course AND activity_type = 'lecture_weeks'
 				   AND deleted_at IS NULL
 				   FOR UPDATE
 				""")
 			.param("activity", activityId)
 			.param("course", courseId)
-			.query((rs, n) -> new Locked(rs.getLong(1), rs.getInt(2), rs.getInt(3)))
+			.query((rs, n) -> new Locked(rs.getLong(1), rs.getInt(2), rs.getInt(3), rs.getObject(4, Long.class)))
 			.optional()
 			.orElseThrow(ApiException::notFound);
-		if (current.version() != expectedVersion) {
+		if (current.version() != expectedVersion || current.weekId() != weekId) {
 			throw new ApiException(HttpStatus.CONFLICT, "version_conflict", "그 사이 활동이 바뀌었습니다. 다시 불러온 뒤 고쳐 주세요.");
 		}
 		return current;
+	}
+
+	private long weekOf(long courseId, long activityId) {
+		return this.jdbc.sql("""
+				SELECT course_week_id FROM learning_activities
+				 WHERE activity_id = :activity AND course_id = :course AND activity_type = 'lecture_weeks'
+				   AND deleted_at IS NULL
+				""")
+			.param("activity", activityId)
+			.param("course", courseId)
+			.query(Long.class)
+			.optional()
+			.orElseThrow(ApiException::notFound);
 	}
 
 	private int nextOrder(long week) {
@@ -253,7 +280,13 @@ class LectureService {
 	record KeptItem(long itemId, String title, Integer requiredSec) {
 	}
 
-	private record Locked(long weekId, int sortOrder, int version) {
+	/** @param sessionId 활동이 직접 가리키는 출석 차시. 없으면 null */
+	private record Locked(long weekId, int sortOrder, int version, Long sessionId) {
+
+		List<Long> sessions() {
+			return this.sessionId == null ? List.of() : List.of(this.sessionId);
+		}
+
 	}
 
 }

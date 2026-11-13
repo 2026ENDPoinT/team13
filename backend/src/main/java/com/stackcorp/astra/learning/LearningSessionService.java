@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
@@ -24,6 +25,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import io.micrometer.core.instrument.Counter;
@@ -65,13 +68,15 @@ class LearningSessionService {
 
 	private final LearningAuthGrants grants;
 
+	private final OnlineAttendance attendance;
+
 	private final MeterRegistry meters;
 
 	private final Timer heartbeatGap;
 
 	LearningSessionService(JdbcClient jdbc, TransactionTemplate tx, LearningClock clock,
 			CourseMemberships memberships, DeliveryCookies cookies, LearningSessionProperties properties,
-			LearningAuthGrants grants, MeterRegistry meters) {
+			LearningAuthGrants grants, OnlineAttendance attendance, MeterRegistry meters) {
 		this.jdbc = jdbc;
 		this.tx = tx;
 		this.clock = clock;
@@ -79,6 +84,7 @@ class LearningSessionService {
 		this.cookies = cookies;
 		this.properties = properties;
 		this.grants = grants;
+		this.attendance = attendance;
 		this.meters = meters;
 		this.heartbeatGap = Timer.builder("astra.learning.heartbeat.gap")
 			.description("받아들인 하트비트와 앞 기준 시각(앞 하트비트 또는 시작) 사이의 서버 시각 간격")
@@ -107,15 +113,58 @@ class LearningSessionService {
 	/** 하트비트(EP-0050). seq는 session 안에서 증가하는 순번이다. 위치는 이어보기 힌트로만 저장한다. */
 	Granted<HeartbeatResult> heartbeat(long userId, long loginSessionId, long courseId, long sessionId, long seq,
 			Integer positionSec, Boolean playing) {
-		return this.tx
-			.execute((status) -> doHeartbeat(userId, loginSessionId, courseId, sessionId, seq, positionSec, playing))
+		return retried(() -> this.tx
+			.execute((status) -> doHeartbeat(userId, loginSessionId, courseId, sessionId, seq, positionSec, playing)))
 			.orThrow();
 	}
 
 	/** 명시적 종료(EP-0057, EP-0058). 마지막 기준 시각 뒤 구간을 같은 규칙으로 적립한다. 이미 닫힌 session이면 그 결과를 그대로 돌려준다. */
 	Ended end(long userId, long loginSessionId, long courseId, long sessionId, Integer positionSec, String reason) {
-		return this.tx.execute((status) -> doEnd(userId, loginSessionId, courseId, sessionId, positionSec, reason))
+		return retried(
+				() -> this.tx.execute((status) -> doEnd(userId, loginSessionId, courseId, sessionId, positionSec, reason)))
 			.orThrow();
+	}
+
+	/**
+	 * 교착으로 진 transaction은 전부 되돌아가므로 처음부터 다시 실행한다. 적립은 주차 행을 잠그고 출석 차시를 잠금 읽기로 판정해,
+	 * 차시·영상 활동 명령과 드물게 엇갈릴 수 있다(OnlineAttendance). 활동이 그 사이 다른 주차로 옮겨졌으면 옮긴 주차를 순서를 어겨 잠그지
+	 * 않고 다시 실행한다. 새 transaction은 옮긴 주차를 읽는다. 잠금 시간 초과는 다시 실행하지 않는다. 한 요청이 기다리는 시간은 잠금
+	 * 시간 초과 한 번까지다. 교착은 바로 감지되어 기다림을 늘리지 않는다.
+	 */
+	private <T> T retried(Supplier<T> work) {
+		for (int attempt = 1;; attempt++) {
+			try {
+				return work.get();
+			}
+			catch (PessimisticLockingFailureException | OnlineAttendance.WeekMoved ex) {
+				if (attempt == START_ATTEMPTS || !retryable(ex)) {
+					throw ex;
+				}
+			}
+		}
+	}
+
+	private static boolean retryable(RuntimeException ex) {
+		return ex instanceof OnlineAttendance.WeekMoved
+				|| ex instanceof PessimisticLockingFailureException locking && DeadlockRetry.deadlock(locking);
+	}
+
+	/**
+	 * 지표는 commit한 뒤에만 센다. 교착으로 되돌아가 다시 실행한 시도는 세지 않는다. transaction 밖(lease worker)이면 바로 센다.
+	 */
+	private static void afterCommit(Runnable action) {
+		if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+			action.run();
+			return;
+		}
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+
+			@Override
+			public void afterCommit() {
+				action.run();
+			}
+
+		});
 	}
 
 	/**
@@ -226,7 +275,8 @@ class LearningSessionService {
 					session.creditAuthorizedUntil());
 		}
 		else {
-			this.heartbeatGap.record(Duration.between(session.baseline(), now));
+			Duration gap = Duration.between(session.baseline(), now);
+			afterCommit(() -> this.heartbeatGap.record(gap));
 			beat = session.bound() ? boundBeat(session, loginSessionId, item, access, positionSec, now)
 					: unboundBeat(session, item, access, positionSec, now);
 			this.jdbc.sql("""
@@ -359,8 +409,17 @@ class LearningSessionService {
 		return b != null && b.isBefore(a) ? b : a;
 	}
 
-	/** 원장, 기준 시각, 진도를 한 transaction에서 바꾼다. 같은 session 행 잠금 아래에서만 부른다. */
+	/**
+	 * 원장, 기준 시각, 진도를 한 transaction에서 바꾼다. 같은 session 행 잠금 아래에서만 부른다. 이 적립으로 콘텐츠가 처음 충족되면 진도를
+	 * 쓰기 전에 활동 주차를 공유 잠금하고 충족을 판정한다. 차시·영상 활동 명령이 주차를 배타 잠금하고 출석부를 다시 판정하므로 충족과 그
+	 * 판정이 서로 엇갈리지 않는다. 충족하지 않는 하트비트는 주차도, 충족 판정이 읽는 콘텐츠 행도 잠그지 않는다. 영상 활동 수정은 콘텐츠
+	 * 행을 배타 잠금한 채 진도 행을 공유 잠금으로 읽으므로, 진도 행을 쥔 하트비트가 콘텐츠 행을 기다리면 교착한다.
+	 */
 	private void apply(Session session, Item item, Credit credit, Integer positionSec, LocalDateTime now) {
+		boolean meets = credit.seconds() > 0 && meets(session.userId(), item, credit.seconds());
+		if (meets) {
+			this.attendance.lockWeeks(false, List.of(item.weekId()));
+		}
 		if (credit.seconds() > 0) {
 			this.jdbc.sql("""
 					INSERT INTO learning_credit_ledger (learning_session_id, from_at, to_at, credited_sec, in_period_yn, rule_version)
@@ -382,9 +441,34 @@ class LearningSessionService {
 		if (credit.seconds() > 0 || positionSec != null) {
 			recordProgress(session.userId(), item, credit.seconds(), positionSec, now, session.rule());
 		}
-		if (credit.seconds() > 0) {
+		if (meets) {
 			decide(session.userId(), item, now, session.rule());
 		}
+	}
+
+	/**
+	 * 이 적립으로 콘텐츠가 처음 충족되는지. 출석부를 바꿀 수 있는 하트비트는 이것뿐이라 그때만 진도를 쓰기 전에 활동 주차를 공유 잠금하고
+	 * 충족을 판정한다({@link OnlineAttendance}). 이 사용자의 진도는 이 사용자의 session 행 잠금 아래에서만 바뀌므로 잠그지 않고 읽어도
+	 * 최신이다. 필요 시간은 snapshot 값이라, snapshot 뒤에 담당자가 필요 시간을 낮췄으면 이 하트비트는 충족하지 않은 것으로 보고 다음
+	 * 적립 하트비트가 충족한다(필요 시간을 낮춰도 적립 없이 소급해 충족하지 않는 것과 같은 규칙). 높였으면 이 하트비트는 주차를 잠그고
+	 * 충족 판정이 지금 값으로 거른다.
+	 */
+	private boolean meets(long userId, Item item, int seconds) {
+		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
+		if (required == null) {
+			return false;
+		}
+		return this.jdbc.sql("""
+				SELECT met_at IS NULL AND credited_in_sec + :seconds >= :required FROM online_lecture_item_progress
+				 WHERE user_id = :user AND online_lecture_item_id = :item
+				""")
+			.param("seconds", seconds)
+			.param("required", required)
+			.param("user", userId)
+			.param("item", item.itemId())
+			.query(Boolean.class)
+			.optional()
+			.orElse(seconds >= required);
 	}
 
 	/** @param rule 이 진도를 바꾼 적립 규칙 버전 */
@@ -416,27 +500,30 @@ class LearningSessionService {
 	}
 
 	/**
-	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록한다. 활동의 모든 콘텐츠가 충족되면 활동 완료와 출석부(연결된 차시가 있을 때)에
-	 * 한 번 반영한다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
+	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록하고 출석부 반영을 {@link OnlineAttendance}에 맡긴다. 반영은 잠금 읽기로
+	 * 차시에 걸린 콘텐츠를 모두 충족했는지 다시 보므로, 이 transaction의 snapshot이 그 사이 바뀐 활동을 못 봐도 판정이 맞다. 활동의 모든
+	 * 콘텐츠가 충족되면 활동 완료를 한 번 쓴다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
+	 * <p>
+	 * 필요 시간은 snapshot({@code item})이 아니라 이 UPDATE가 읽는 지금의 콘텐츠 행에서 정한다. 주차 잠금을 기다리는 동안 담당자가
+	 * 필요 시간을 올렸거나 콘텐츠를 뺐으면 그 값으로 판정한다.
 	 */
 	private void decide(long userId, Item item, LocalDateTime now, String rule) {
-		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
-		if (required == null) {
-			return;
-		}
 		int met = this.jdbc.sql("""
-				UPDATE online_lecture_item_progress SET met_at = :now, decided_status = 'met', rule_version = :rule
-				 WHERE user_id = :user AND online_lecture_item_id = :item AND met_at IS NULL AND credited_in_sec >= :required
+				UPDATE online_lecture_item_progress p
+				  JOIN online_lecture_items i ON i.online_lecture_item_id = p.online_lecture_item_id AND i.deleted_at IS NULL
+				   SET p.met_at = :now, p.decided_status = 'met', p.rule_version = :rule
+				 WHERE p.user_id = :user AND p.online_lecture_item_id = :item AND p.met_at IS NULL
+				   AND p.credited_in_sec >= COALESCE(i.required_sec, i.duration_sec)
 				""")
 			.param("now", now)
 			.param("rule", rule)
 			.param("user", userId)
 			.param("item", item.itemId())
-			.param("required", required)
 			.update();
 		if (met == 0) {
 			return;
 		}
+		this.attendance.credit(userId, item.activityId(), item.weekId(), now, rule);
 		boolean complete = this.jdbc.sql("""
 				SELECT NOT EXISTS (
 				  SELECT 1 FROM online_lecture_items i
@@ -451,31 +538,6 @@ class LearningSessionService {
 				INSERT INTO activity_progress (user_id, activity_id, completed_at) VALUES (:user, :activity, :now) AS n
 				ON DUPLICATE KEY UPDATE completed_at = COALESCE(activity_progress.completed_at, n.completed_at)
 				""").param("user", userId).param("activity", item.activityId()).param("now", now).update();
-		if (item.attendanceSessionId() == null) {
-			return;
-		}
-		this.jdbc.sql("""
-				INSERT INTO attendance_records (attendance_session_id, user_id, status, source, progress_percent, decided_at,
-				                                rule_version)
-				VALUES (:attendance, :user, '출석', 'online', 100.00, :now, :rule)
-				ON DUPLICATE KEY UPDATE attendance_record_id = attendance_record_id
-				""")
-			.param("attendance", item.attendanceSessionId())
-			.param("user", userId)
-			.param("now", now)
-			.param("rule", rule)
-			.update();
-		this.jdbc.sql("""
-				UPDATE attendance_records
-				   SET status = '출석', source = 'online', progress_percent = 100.00, decided_at = :now, rule_version = :rule,
-				       row_version = row_version + 1
-				 WHERE attendance_session_id = :attendance AND user_id = :user AND status = '미처리'
-				""")
-			.param("attendance", item.attendanceSessionId())
-			.param("user", userId)
-			.param("now", now)
-			.param("rule", rule)
-			.update();
 	}
 
 	/** 학습 시작은 명시적 POST라 열람 기록과 이어보기 포인터를 여기서 남긴다(SC-04). */
@@ -572,11 +634,11 @@ class LearningSessionService {
 	/** @return count. 사유는 코드가 정한 값(button, unload, forced, superseded, lease_expired)뿐이다 */
 	private int closed(String reason, int count) {
 		if (count > 0) {
-			Counter.builder("astra.learning.sessions.closed")
+			Counter counter = Counter.builder("astra.learning.sessions.closed")
 				.description("닫힌 학습 session 수")
 				.tag("reason", reason)
-				.register(this.meters)
-				.increment(count);
+				.register(this.meters);
+			afterCommit(() -> counter.increment(count));
 		}
 		return count;
 	}
@@ -626,7 +688,7 @@ class LearningSessionService {
 	private Optional<Item> item(long itemId, long courseId) {
 		return this.jdbc.sql("""
 				SELECT i.online_lecture_item_id, i.activity_id, a.course_id, a.published_yn, a.open_at, a.close_at,
-				       a.attendance_session_id, i.content_path, i.duration_sec, i.required_sec
+				       a.course_week_id, i.content_path, i.duration_sec, i.required_sec
 				  FROM online_lecture_items i JOIN learning_activities a ON a.activity_id = i.activity_id
 				 WHERE i.online_lecture_item_id = :item AND a.course_id = :course AND a.deleted_at IS NULL
 				   AND i.deleted_at IS NULL
@@ -635,7 +697,7 @@ class LearningSessionService {
 			.param("course", courseId)
 			.query((rs, n) -> new Item(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getBoolean(4),
 					rs.getObject(5, LocalDateTime.class), rs.getObject(6, LocalDateTime.class),
-					rs.getObject(7, Long.class), rs.getString(8), rs.getObject(9, Integer.class),
+					rs.getLong(7), rs.getString(8), rs.getObject(9, Integer.class),
 					rs.getObject(10, Integer.class)))
 			.optional();
 	}
@@ -649,7 +711,7 @@ class LearningSessionService {
 	}
 
 	private record Item(long itemId, long activityId, long courseId, boolean published, LocalDateTime openAt,
-			LocalDateTime closeAt, Long attendanceSessionId, String contentPath, Integer durationSec,
+			LocalDateTime closeAt, long weekId, String contentPath, Integer durationSec,
 			Integer requiredSec) {
 	}
 

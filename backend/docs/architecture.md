@@ -245,7 +245,7 @@ flowchart LR
 - 과목이 없는 첨부(알림마당 공지·자료·문의, 쪽지)는 과목 없는 용도로 올리고 `GET /api/files/{fileId}/content`로만 연다. 이 경로는 `files.course_id`가 없는 파일만 보고 부모의 `allowedOutsideCourse`에 묻는다. 과목 부모는 이 판정이 언제나 거부이고, 과목 밖 부모는 과목 판정이 언제나 거부다. 쪽지 첨부는 쪽지를 아직 가진 사람(보낸함에서 지우지 않은 발신자, 회수되지 않았고 받은함에서 지우지 않은 수신자)만 읽는다.
 - 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
 - 일시 형식: offset 없는 일시(`openAt`, `closeAt`, `serverTime` 등 `2026-11-12T10:00:00`)는 기관 시간대의 벽시계이고 그대로 주고받는다. 요청의 이런 값에 `Z`나 offset이 붙으면 400이다. 날짜(`2026-11-12`)와 수업 시각(`10:00`)도 기관 시간대 기준이다. `Z`가 붙은 값(`createdAt` 등)은 절대 시각(UTC)이다. 기관 시간대는 `GET /api/auth/methods`의 `timeZone`(IANA ID)이 알린다. 시작할 때 설정, JVM, DB session의 시간대가 다르면 서버가 뜨지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
-- 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 컨트롤러에 닿기 전 filter에서 난 예외와 요청 방화벽이 거부한 요청처럼 servlet container의 `/error`로 가는 오류도 같은 형식이고, code는 상태에 따라 컨트롤러 단계와 같다(500 `internal_error`, 400 `invalid_request`, 404 `not_found` 등). 이미 내보내기 시작한 응답에는 덧붙이지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 예외 메시지, 다른 사용자의 ID를 넣지 않는다(SC-04).
+- 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 컨트롤러에 닿기 전 filter에서 난 예외와 요청 방화벽이 거부한 요청처럼 servlet container의 `/error`로 가는 오류도 같은 형식이고, code는 상태에 따라 컨트롤러 단계와 같다(500 `internal_error`, 400 `invalid_request`, 404 `not_found` 등). multipart 업로드 본문을 나누지 못하면 client가 보낸 형식 오류(boundary가 없다, 끝 boundary 전에 끝났다, 파일 이름에 NUL이 있다, 안쪽 multipart의 boundary 길이가 바깥과 다르다)는 400 `invalid_request`, 크기 초과는 413 `too_large`, 서버가 임시 디스크에 받지 못한 것은 500 `internal_error`다. 이미 내보내기 시작한 응답에는 덧붙이지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 예외 메시지, 다른 사용자의 ID를 넣지 않는다(SC-04).
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
 - `Idempotency-Key`를 받는 명령은 권한 판정과 입력 검사 뒤 멱등 원장을 거친다. 같은 key와 같은 요청이면 처음 응답을, 다른 요청이면 409 `idempotency_conflict`를, 같은 key가 처리 중이면 3초까지 기다린 뒤 409 `idempotency_in_progress`를 돌려준다(SC-05). key는 사용자와 연산마다 따로다. 같은 key에 다른 요청이면 어떤 명령도 처음 만든 객체를 돌려주지 않는다. 자체 key를 두는 업로드(multipart, 스트림, 파일함)도 같은 규칙의 요청 지문(용도, 과목, 이름, 크기, 내용 hash, 폴더)을 저장해 비교한다([ADR-0010](adr/0010-upload-acceptance.md) 10번). key가 반드시 있어야 하는 명령(수강신청, 과제·퀴즈 제출, 설문 완료, 쪽지 보내기·답장·전달, 파일함 ZIP, 학습 대화 질문)은 `shared.idempotency.Idempotency.requireKey` 하나로 검사하고, header가 없으면 400 `idempotency_key_required`, 형식(1~100자의 영문, 숫자, `.` `_` `-`)이 틀리면 400 `invalid_request`다.
 - 상태를 바꾸거나 민감한 연산은 감사 기록(`audit_events`)을 남긴다. 명령의 transaction 안이면 함께 commit하고, 밖이면 기록 실패가 요청을 실패시키지 않는다. 본문, 파일 이름, 자유 텍스트는 남기지 않는다(SC-09). 남기지 않는 것은 읽음·확인 표시, 본인만 보는 임시저장, 학습 session의 시작·하트비트·종료(학습 원장이 기록이다), 미리보기의 변환 대기 응답뿐이다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md) 2번).
@@ -343,7 +343,7 @@ flowchart LR
 | `GET /api/courses/{courseId}/lecture-progress` | 과목 구성원 | 내 콘텐츠별 적립 시간, 출석인정 필요 시간, 충족 시각을 주차별로 |
 | `GET /api/courses/{courseId}/lecture-progress/students?activityId=&page=&size=` | 담당자 | 수강생의 콘텐츠별 진도. 학생은 수강생 명단의 사용자 ID 순으로 쪽을 나눈다(1부터, 크기 1~100, 기본 50, `totalStudents`). `activityId`를 주면 그 영상 활동의 콘텐츠만 열로 낸다. 그 과목의 영상 활동이 아니면 404. 쿼리 수는 쪽과 관계없다 |
 
-lease가 지난 session은 worker가 닫는다(4.3절). 출석인정을 처음 채운 시각을 한 번 기록하고, 활동에 출석 차시가 연결돼 있으면 출석부에 `출석`을 한 번 넣는다. 이후 사건으로 되돌리지 않는다.
+lease가 지난 session은 worker가 닫는다(4.3절). 출석인정을 처음 채운 시각을 한 번 기록하고, 활동의 대상 출석 차시(직접 연결한 차시, 없으면 주차의 유일한 온라인 차시)에 걸린 영상 활동을 모두 충족하면 출석부에 `출석`을 한 번 넣는다. 차시 등록·수정·삭제와 영상 활동 수정·삭제는 그 주차를 다시 판정해 이미 충족한 수강생을 채운다([ADR-0030](adr/0030-attendance-and-smart-rounds.md) 8번). 이후 사건으로 되돌리지 않는다.
 
 HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화면 녹화는 막지 못한다.
 
@@ -549,7 +549,7 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/messages/recipients?courseId=&q=&page=&size=` | 로그인한 사용자(`courseId`는 그 과목 구성원) | 보낼 수 있는 사람만 이름으로 찾는다. 이름과 그 과목의 역할 |
+| `GET /api/messages/recipients?courseId=&q=&page=&size=` | 로그인한 사용자(`courseId`는 그 과목 구성원) | 보낼 수 있는 사람만 이름으로 찾는다. 항목은 `userId`, 이름, 그 과목의 역할, `hasPhoto`(요청한 사람이 `GET /api/users/{userId}/avatar`로 사진을 받을 수 있으면 true, 쪽마다 한 번 판정) |
 | `POST /api/messages` | 로그인한 사용자 | 보내기. `Idempotency-Key` 필수. 범위 밖 받는사람이 있으면 400 `recipient_not_allowed`이고 아무에게도 보내지 않는다. 받는사람 300명, 본문 2000byte까지. `uploadIds`(본인이 `courseId` 없이 `message_attachment`로 올린 업로드 5개까지)를 같은 transaction에서 첨부하고, 쓸 수 없으면 409 `attachment_not_ready`. 쪽지쓰기 초안을 지운다. 201 |
 | `POST /api/messages/inbox/{messageId}/reply` | 그 쪽지를 받은 사람 | 발신자에게 답장. 받는사람은 서버가 정한다. `uploadIds`는 보내기와 같다. `Idempotency-Key` 필수. 201 |
 | `POST /api/messages/inbox/{messageId}/forward` · `/api/messages/sent/{messageId}/forward` | 그 쪽지를 받은 사람 · 보낸 사람 | 전달. 받는사람은 보내기와 같은 범위 판정. 원래 쪽지의 첨부는 옮기지 않고 새 `uploadIds`만 붙인다. `Idempotency-Key` 필수. 201 |
@@ -561,7 +561,7 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 | `GET /api/messages/sent?q=&cursor=&size=` · `GET /api/messages/sent/{messageId}` | 보낸 사람 | 보낸함과 상세(첨부 포함). 수신자별 읽은 시각과 회수 여부 |
 | `POST /api/messages/sent/{messageId}/recall` | 보낸 사람 | 아직 읽지 않은 수신자에게서만 거둔다. 수신자마다 `recalled` 또는 `read`. 몇 번 보내도 같다 |
 | `DELETE /api/messages/sent/{messageId}` · `POST /api/messages/sent/delete` | 보낸 사람 | 보낸함에서만 지운다. 수신자의 받은함은 그대로다. 일괄 규칙은 받은함과 같다(`read` 없음) |
-| `GET` · `PUT` · `DELETE /api/messages/draft` | 로그인한 사용자(본인 초안만) | 쪽지쓰기 임시저장. `PUT {revision, title, body, courseId, recipientIds}`는 저장된 revision보다 클 때만 덮어쓴다. 같은 revision·같은 내용이면 200, 아니면 409 `draft_stale`. `courseId`가 구성원이 아닌 과목이면 404. GET은 과목과 받는사람을 지금 범위로 다시 판정해 `course`, `recipients`(보낼 수 있는 사람만), `droppedRecipients`(뺀 수), `courseDropped`를 준다. 없으면 GET이 204 |
+| `GET` · `PUT` · `DELETE /api/messages/draft` | 로그인한 사용자(본인 초안만) | 쪽지쓰기 임시저장. `PUT {revision, title, body, courseId, recipientIds}`는 저장된 revision보다 클 때만 덮어쓴다. 같은 revision·같은 내용이면 200, 아니면 409 `draft_stale`. `courseId`가 구성원이 아닌 과목이면 404. GET은 과목과 받는사람을 지금 범위로 다시 판정해 `course`, `recipients`(보낼 수 있는 사람만, 받는사람 검색과 같은 모양으로 `hasPhoto` 포함), `droppedRecipients`(뺀 수), `courseDropped`를 준다. 없으면 GET이 204 |
 
 제목과 본문은 일반 텍스트로만 받고 내보낸다. 첨부 파일은 쪽지를 아직 가진 사람만 `GET /api/files/{fileId}/content`로 받는다. 회수되거나 받은함·보낸함에서 지우면 그 사람은 받지 못한다([ADR-0035](adr/0035-community-operators-and-outside-course-files.md)). 받는사람 검색은 범위 안에서만 찾으므로 "없음"과 "보낼 수 없음"을 구별하지 않는다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md) 2·3번).
 
