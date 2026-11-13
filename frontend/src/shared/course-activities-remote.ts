@@ -27,6 +27,24 @@ export function serverOwnsCourse(kj: string | null | undefined): boolean {
 /** 서버 활동 유형(`activity_type`) → 화면 유형(색, 필터 칩). */
 export const VIEW_TYPE: Readonly<Record<string, string>> = { lecture_weeks: "video", lecture_material: "material", report: "report", test: "test", survey: "survey" };
 
+/** 학교 e-Class 주소가 링크가 되는 유일한 출처. 백엔드의 `schoolUrl`은 모두 이 호스트의 to-do 연결 주소다. */
+export const SCHOOL_ORIGIN = "https://eclass.seoultech.ac.kr";
+
+/**
+ * 가져온 학교 활동의 `schoolUrl`이 새 탭 링크가 될 수 있으면 그 주소, 아니면 null. `https:`이고 호스트가 정확히
+ * `eclass.seoultech.ac.kr`(기본 포트, 사용자 정보 없음)일 때만 허용한다. 다른 호스트, `http:`, `javascript:`, 상대 주소는 링크가 아니다.
+ */
+export function schoolHref(url: unknown): string | null {
+  if (typeof url !== "string" || !url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  return parsed.origin === SCHOOL_ORIGIN && !parsed.username && !parsed.password ? parsed.href : null;
+}
+
 /** 부분 목록 이름과 그 실패 문구에 쓰는 한국어 이름. */
 export const PART_LABEL: Readonly<Record<PartName, string>> = {
   weeks: "주차와 영상", materials: "자료", assignments: "과제", quizzes: "시험", surveys: "설문", progress: "영상 진도",
@@ -119,6 +137,8 @@ export interface ActivityRow {
   ongoing: boolean;
   missing: boolean;
   done: boolean;
+  /** 학교 e-Class에서 가져온 행(`origin: "school"`). `href`가 있으면 그 학교 주소이고 새 탭으로 연다. */
+  school?: boolean;
   item: unknown;
   progress?: unknown[] | null;
   files?: unknown[];
@@ -152,7 +172,9 @@ const DONE: Record<"report" | "test" | "survey", readonly (string | undefined)[]
 
 /**
  * 받은 부분 목록으로 만든 활동 행과 상태. 행은 `{ type, kind, key, weekNo, title, openAt, closeAt, phase, href,
- * ongoing, missing, done, item, progress, files }`이고 주차 목록의 순서(활동 ID로 짝짓는다)로 정렬한다.
+ * ongoing, missing, done, school, item, progress, files }`이고 주차 목록의 순서(활동 ID로 짝짓는다)로 정렬한다.
+ * 학교에서 가져온 활동(`origin: "school"`)은 주차 목록에만 오고, 화면 유형 `type`과 본인 `done`·`phase`로 그 유형의 행이 된다.
+ * `href`는 허용한 학교 주소(`schoolHref`)일 때만 있다.
  * `pending`은 아직 응답이 없는 부분, `failures`는 실패한 부분 `[{ name, error }]`, `denied`는 주차 목록이 404다.
  */
 export function activitySnapshot(parts: ActivityPart[], kj: string, { instructor = false }: { instructor?: boolean } = {}): ActivitySnapshot {
@@ -212,9 +234,20 @@ export function activitySnapshot(parts: ActivityPart[], kj: string, { instructor
       done: DONE.survey.includes(item.state), item,
     });
   }
-  // 이 화면에 상세가 없는 유형(Zoom, 토론 등)은 주차 목록에서 제목만 보인다.
+  // 학교에서 가져온 활동은 그 화면 유형의 행이다. 이 화면에 상세가 없는 서버 유형(Zoom, 토론 등)은 주차 목록에서 제목만 보인다.
   for (const week of weeks) {
     for (const activity of Array.isArray(week.activities) ? week.activities : []) {
+      if (activity.origin === "school") {
+        const type = typeof activity.type === "string" && activity.type ? activity.type : "etc";
+        const ongoing = activity.phase === "open";
+        rows.push({
+          type, kind: activity.schoolType || type, key: `school-${String(activity.activityId).replace(/^school-/, "")}`, weekNo: week.weekNo,
+          title: activity.title, openAt: activity.openAt, closeAt: activity.closeAt, phase: activity.phase || null, href: schoolHref(activity.schoolUrl),
+          activityId: activity.activityId, ongoing, done: activity.done === true, school: true, item: activity,
+          missing: ongoing && activity.done === false && type !== "material" && activity.offline !== true,
+        });
+        continue;
+      }
       if (VIEW_TYPE[activity.type]) continue;
       rows.push({
         type: "other", kind: activity.type, key: `other-${activity.activityId}`, weekNo: week.weekNo, title: activity.title,

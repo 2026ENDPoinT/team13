@@ -2,7 +2,8 @@
 // preview). Summary text is model output: it is turned into React elements and
 // text only — never innerHTML. Links are shown as "text (url)" plain text,
 // $…$ math stays literal text.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { imageRefresher, initialPageImage, pageImageStep, type ImageRefresher } from "./page-image-retry.ts";
 
 const TAGS: Record<string, string> = { core: "핵심", support: "보충", background: "배경", meta: "안내" };
 
@@ -168,25 +169,27 @@ function BeatView({ beat }: { beat: SummaryBeat }) {
  * summary: { question, story: Beat[], slides: Slide[], review?, warnings? }
  * options.pageImageBase: "/doc/<hex>/" or null.
  * options.refreshImages(): refetches the summary (renews image cookies) and resolves
- *   to the new base; every image retries once after it.
+ *   to the new base; a failed image reloads after it (see page-image-retry.ts).
  */
 export function summaryView(summary: PageSummary, options: SummaryViewOptions = {}): ReactNode {
   return <SummaryView summary={summary} options={options} />;
 }
 
 function SummaryView({ summary, options }: { summary: PageSummary; options: SummaryViewOptions }) {
-  const refreshing = useRef<Promise<string | null> | null>(null);
   const slides = Array.isArray(summary.slides) ? [...summary.slides].sort((a, b) => a.page - b.page) : [];
   const story = Array.isArray(summary.story) ? summary.story : [];
   const review = summary.review && typeof summary.review === "object" ? summary.review : null;
   const warnings = Array.isArray(summary.warnings) ? summary.warnings.filter((text): text is string => Boolean(text)) : [];
-  const { refreshImages } = options;
-  /** One shared summary refetch for every failing image. */
-  const refreshed = (): Promise<string | null> => {
-    if (!refreshImages) return Promise.resolve(null);
-    refreshing.current ??= Promise.resolve().then(refreshImages).catch(() => null);
-    return refreshing.current;
-  };
+  const { pageImageBase } = options;
+  // Callers pass a fresh closure each render; the shared refetch reads the latest one.
+  const latest = useRef(options);
+  useEffect(() => {
+    latest.current = options;
+  });
+  const [refreshed] = useState(() => imageRefresher(() => {
+    const now = latest.current;
+    return now.refreshImages ? now.refreshImages() : now.pageImageBase ?? null;
+  }));
   const reviewRows = review
     ? Object.entries(review).filter(([, reason]) => reason).sort((a, b) => Number(a[0]) - Number(b[0]))
     : [];
@@ -228,7 +231,12 @@ function SummaryView({ summary, options }: { summary: PageSummary; options: Summ
                   <span className="page-summary__tag">{TAGS[tag]}</span>
                   <h4>{inline(slide.title || "")}</h4>
                 </header>
-                {options.pageImageBase ? <PageImage page={slide.page} base={options.pageImageBase} refreshed={refreshed} /> : null}
+                {pageImageBase ? (
+                  <PageImage
+                    key={pageImageBase} base={pageImageBase} page={slide.page} refresh={refreshed}
+                    alt={`${slide.page}쪽 이미지`} imageClass="page-summary__image" errorClass="page-summary__note page-image-failed"
+                  />
+                ) : null}
                 {markdown(slide.explain || "")}
                 {note ? <p className="page-summary__review" role="note"><strong>검토 필요 · </strong>{note}</p> : null}
               </article>
@@ -240,30 +248,80 @@ function SummaryView({ summary, options }: { summary: PageSummary; options: Summ
   );
 }
 
-/** A page image that retries once after the summary refetch, then says it could not load. */
-function PageImage({ page, base, refreshed }: { page: number; base: string; refreshed: () => Promise<string | null> }) {
-  const [src, setSrc] = useState(() => pageFile(base, page));
-  const [failed, setFailed] = useState(false);
-  const retried = useRef(false);
-  const live = useRef(true);
+interface PageImageProps {
+  base: string;
+  page: number;
+  /** The viewer's shared refetch (reissues the delivery cookie) and its memory of bases that already failed. */
+  refresh: ImageRefresher;
+  alt: string;
+  imageClass?: string;
+  errorClass: string;
+  /** Wraps the loaded image (the lesson viewer puts it in its zoom button); not applied to the failure message. */
+  wrap?: (image: ReactNode) => ReactNode;
+}
+
+/**
+ * A server page image that survives an expired delivery cookie: on error it refetches through `refresh` and remounts
+ * the `<img>` once; if that fails too it says so and offers one manual retry per press (no automatic loop). A page
+ * whose base already failed after a refresh goes straight to the message.
+ *
+ * Focus: the retry button stays the same element while it refetches; when the image comes back focus moves to the
+ * control around it (the zoom button) or to the image, and back to the retry button if it fails again.
+ */
+export function PageImage({ base, page, refresh, alt, imageClass, errorClass, wrap }: PageImageProps) {
+  const [state, dispatch] = useReducer(pageImageStep, base, (start) => initialPageImage(start, refresh.isBroken(start)));
+  // Set by a press of the retry button: focus follows the result until the image loads.
+  const keepFocus = useRef(false);
+  const retryButton = useRef<HTMLButtonElement>(null);
+  const image = useRef<HTMLImageElement>(null);
   useEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-    };
-  }, []);
-  if (failed) return <p className="page-summary__note">{`${page}쪽 이미지를 불러오지 못했습니다.`}</p>;
-  const onError = () => {
-    if (retried.current) {
-      setFailed(true);
-      return;
-    }
-    retried.current = true;
-    void refreshed().then((fresh) => {
-      if (!live.current) return;
-      if (fresh) setSrc(pageFile(fresh, page));
-      else setFailed(true);
+    if (state.phase !== "refreshing") return;
+    let live = true;
+    void refresh.refresh().then((next) => {
+      if (live) dispatch({ type: "refreshed", base: next });
     });
-  };
-  return <img className="page-summary__image" src={src} loading="lazy" alt={`${page}쪽 이미지`} onError={onError} />;
+    return () => {
+      live = false;
+    };
+  }, [state.phase, refresh]);
+  useEffect(() => {
+    if (state.phase === "failed") refresh.markBroken(state.base);
+    if (!keepFocus.current) return;
+    if (state.phase === "failed") retryButton.current?.focus({ preventScroll: true });
+    else if (state.phase === "show") {
+      const img = image.current;
+      const target = img && (img.closest<HTMLElement>("button, a[href]") ?? img);
+      target?.focus({ preventScroll: true });
+    }
+  }, [state.phase, state.attempt, state.base, refresh]);
+  if (state.phase !== "show") {
+    const busy = state.phase === "refreshing";
+    return (
+      <span className={errorClass} role="status">
+        <span>{busy ? `${page}쪽 이미지를 다시 불러오는 중입니다.` : `${page}쪽 이미지를 불러오지 못했습니다.`}</span>
+        <button
+          ref={retryButton} type="button" className="btn btn-ghost" aria-disabled={busy ? "true" : undefined}
+          onClick={() => {
+            if (busy) return;
+            keepFocus.current = true;
+            dispatch({ type: "retry" });
+          }}
+        >
+          {busy ? "불러오는 중…" : "다시 불러오기"}
+        </button>
+      </span>
+    );
+  }
+  const img = (
+    <img
+      ref={image} key={state.attempt} className={imageClass} src={pageFile(state.base, page)} alt={alt}
+      tabIndex={wrap ? undefined : -1} loading="lazy" decoding="async"
+      onLoad={() => {
+        keepFocus.current = false;
+        refresh.markLoaded(state.base);
+      }}
+      onError={() => dispatch({ type: "error", broken: refresh.isBroken(state.base) })}
+    />
+  );
+  return wrap ? wrap(img) : img;
 }

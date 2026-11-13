@@ -1102,9 +1102,13 @@ function noticeFields(err: Record<string, string>, ctx: ScreenCtx, course: Cours
   );
 }
 
+// Materials registered from this form: a successful create bumps it, and the new key gives an empty form (as the notice,
+// assignment and survey create forms do), so a second press cannot register the same title and file again.
+let materialsCreated = 0;
+
 function materialFields(course: Course | null, ctx: ScreenCtx): ReactNode {
   const status = backendStatus();
-  const sheet = <MaterialSheet course={course} ctx={ctx} />;
+  const sheet = <MaterialSheet key={`${course ? course.id : ""}:${materialsCreated}`} course={course} ctx={ctx} />;
   // Mock mode keeps the original single form.
   if (status === "off" || !course) return sheet;
   // Backend mode: the course's external AI consent sits above the server materials (llm-consent-server.tsx).
@@ -1123,6 +1127,8 @@ function MaterialSheet({ course, ctx }: { course: Course | null; ctx: ScreenCtx 
   const [busy, setBusy] = useState("");
   const [line, setLine] = useState("");
   const live = useRef(true);
+  // The busy state only disables the button after React repaints; this blocks a second press in the same moment.
+  const sending = useRef(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -1136,17 +1142,23 @@ function MaterialSheet({ course, ctx }: { course: Course | null; ctx: ScreenCtx 
     : "PDF는 등록 시 실제 페이지와 텍스트를 분석해 이 과목 학습실에 저장합니다. 원본과 분석 결과는 이 브라우저에만 남으며 학교 서버나 다른 기기로 전송되지 않습니다. 스캔 PDF는 OCR 없이 텍스트를 추출할 수 없습니다. 다른 형식은 파일명만 등록됩니다.";
 
   const submit = async () => {
-    if (busy) return;
+    if (busy || sending.current) return;
     const file = fileRef.current?.files?.[0] || null;
     const title = (titleRef.current?.value || "").trim();
     const state = getState();
     if (registrationPicked(state.courseId)) {
+      sending.current = true;
       setBusy("서버에 등록하는 중…");
       try {
-        await saveRegistrationFromFilebox({ title, file }, (say: string) => {
+        const created = await saveRegistrationFromFilebox({ title, file }, (say: string) => {
           if (live.current) setLine(say);
         });
+        if (created) {
+          materialsCreated += 1;
+          commit();
+        }
       } finally {
+        sending.current = false;
         if (live.current) setBusy("");
       }
       return;
@@ -1162,6 +1174,7 @@ function MaterialSheet({ course, ctx }: { course: Course | null; ctx: ScreenCtx 
     const courseId = state.courseId;
     const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
     const remote = isPdf && backendStatus() === "ready";
+    sending.current = true;
     setBusy(remote ? "서버에 올리는 중…" : isPdf ? "PDF 분석 중…" : "등록 중…");
     setLine(remote
       ? "PDF를 ASTRA 서버에 올리고 파일 검사가 끝나면 자료로 등록합니다."
@@ -1181,6 +1194,7 @@ function MaterialSheet({ course, ctx }: { course: Course | null; ctx: ScreenCtx 
           : pdf ? "PDF를 분석해 과목 학습실에 저장했습니다" : "저장했습니다";
       // The server material list under the form reads the new material on this render.
       if (pdf?.remote) forgetMaterialList(pdf.backendCourseId);
+      materialsCreated += 1;
       commit();
     } catch (error) {
       const message = (error instanceof Error && error.message) || "자료를 등록하지 못했습니다. 파일을 확인한 뒤 다시 시도하세요.";
@@ -1189,6 +1203,7 @@ function MaterialSheet({ course, ctx }: { course: Course | null; ctx: ScreenCtx 
         showErrors({ file: message });
       } else toast(message);
     } finally {
+      sending.current = false;
       if (live.current) setBusy("");
     }
   };

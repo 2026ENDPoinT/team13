@@ -1,5 +1,32 @@
 # Handoff
 
+## 2026-11-14 런타임 점검 5 결함 수정(F1·F2·F3·F5·F6·F7)
+
+### 작업 내용
+- F1 쪽 이미지 복구: 이미지가 실패하면(전달 쿠키 만료) 출처를 다시 받아 쿠키를 새로 받고 `<img>`를 key로 다시 만든다(주소가 같아도 다시 요청한다). 자동 재시도는 이미지마다 1번, 그다음은 "N쪽 이미지를 불러오지 못했습니다" + "다시 불러오기"(누를 때마다 한 번만 다시 받는다). 동시에 실패한 쪽은 요청 하나를 같이 쓰고, 끝난 뒤의 실패는 새로 받는다(`page-image-retry.ts`). 레슨 뷰어와 쪽별 요약(`page-summary.tsx`)이 같은 `PageImage`를 쓴다. 레슨 뷰어의 크게 보기 버튼은 이미지 안쪽(`.lv-zoom`)으로 옮겨, 실패 안내의 버튼이 버튼 안에 들어가지 않게 했다.
+- F1 리뷰 후속: 다시 받기는 15초(`REFRESH_TIMEOUT_MS`)에 답이 없으면 실패로 끝나 안내와 버튼을 보이고, 다음 실패는 멈춘 요청을 기다리지 않는다. 다시 받은 뒤에도 실패한 주소는 뷰어가 기억해 나중에 불러오는 쪽은 요약을 다시 받지 않고 바로 안내로 간다(다시 불러오기는 한 번 받고, 이미지가 불러와지면 기억을 지운다). 다시 불러오기를 누르면 버튼이 같은 요소로 남아("불러오는 중…") 포커스가 그대로이고, 이미지가 돌아오면 크게 보기 버튼(쪽별 요약에서는 이미지)으로, 다시 실패하면 버튼으로 간다.
+- F2 자료 등록: 등록에 성공하면 폼을 새 key로 다시 그려 자료명·파일을 비우고, 요청 중 두 번째 누름은 ref로 막는다(파일함 경로 포함). 같은 결함이 있던 교수 그룹 만들기 폼도 같은 방식으로 고쳤다. 공지·과제·설문·시험·차시·성적 항목·강의 등록 폼은 이미 비우거나 수정 화면으로 간다.
+- F3 이어서 녹음: 원래 녹음의 폴더를 시작할 때 읽어 두고, 멈출 때 원래 녹음의 배치가 없으면 그 폴더에 저장한다. 원래 녹음이 이미 지워졌으면(DELETE 404) 그렇다고 알린다.
+- F6 같은 흐름에서 원래 녹음이 바뀌어 409 `version_conflict`이면 "다시 불러왔습니다. 다시 시도하세요" 대신 무엇을 새로 저장했고 무엇을 남겼는지 말한다(`recording-join.ts`).
+- F5 없어진 `?pop=` 창(avatar·files·history 등)은 열지 않고 주소에서 뺀다(`dialog-names.ts`, `applyRoute`). 이름을 모르는 창의 샘플 대화상자는 없앴다.
+- F7 파일함 고르기 창이 비었을 때 없어진 파일함 화면을 가리키지 않고, 기기 파일은 첨부 칸에서 바로 올리라고 말한다. 이 창이 쓰이는 네 곳(과제 제출, 첨부 고르기, 자료 등록, 자료 수정)에는 모두 직접 올리기가 있다.
+
+### 변경 파일
+- `src/shared/page-image-retry.ts`(새), `src/shared/page-summary.tsx`, `src/shared/lesson-viewer.tsx`, `src/shared/lesson-viewer.css`, `src/shared/backend-ui.css`
+- `src/areas/professor/professor.tsx`, `src/areas/professor/materials-server.tsx`, `src/areas/professor/groups-server.tsx`
+- `src/shared/recording-join.ts`(새), `src/shared/course-recordings.ts`
+- `src/shared/dialog-names.ts`(새), `src/router.tsx`, `src/areas/registry.tsx`
+- `src/shared/filebox-attach.tsx`
+- 테스트 `tests/unit/page-image-retry.test.ts`, `dialog-names.test.ts`, `recording-join.test.ts`, `vitest.config.ts`(coverage include)
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 24파일 1390건 통과(리뷰 후속 포함), `npm run build` 통과(청크 크기 경고만).
+- 백엔드 3626189 run-only + 프런트 4193에서 브라우저로 확인: F1 실제 403 `delivery_forbidden`→요약 재조회→같은 주소 200, 나중 실패도 재조회, 계속 실패하면 요청 2번 뒤 안내와 버튼(3초간 추가 요청 없음), 버튼 1번에 요청 1번. F2 한 번에 두 번 눌러도 자료 1개, 폼 비움. 그룹도 1개. F3 원래 녹음 삭제 뒤 새 녹음이 폴더 1에 배치되고 안내. F6 409 안내 문구. F5 일곱 이름 모두 창 없음·주소에서 빠짐, `pop=myinfo`는 열림.
+- 확인 못 함: 쪽별 요약 화면(`course-study.tsx`의 `summaryView`) 이미지 복구는 같은 컴포넌트지만 브라우저로 열어 보지 않았다. F7 빈 파일함 문구는 화면으로 보지 않았다(학생 파일함에 시드 파일이 있다). 리뷰 후속(시간 제한, 실패 주소 기억, 포커스)은 단위 테스트와 typecheck만 했고 브라우저로 다시 보지 않았다.
+
+### 남은 작업
+- 결정 필요: 파일함에 파일을 넣을 화면이 없으므로 "파일함에서 첨부"를 남길지. 지금은 시드 파일과 다른 경로로 들어간 파일만 고를 수 있다.
+
 ## 2026-11-14 로그인은 포커스된 모달 하나로만 (본문·내 메뉴의 로그인 폼 전부 제거)
 
 ### 작업 내용
@@ -67,54 +94,25 @@
 ### 남은 작업
 - 없음.
 
-## 2026-11-14 백엔드 답변: "학습실에 저장"·GPAI 점검과 발표 대본 검토의 질문(코드 변경 없음)
+## 2026-11-14 강의실·학습활동 목록: 학교 e-Class에서 가져온 활동을 실제 행으로(새 탭 링크)
 
 ### 작업 내용
-- 아래 항목 "점검: '학습실에 저장'이 GPAI 금지 사유(시스템 부하)에 걸리는가"와 "발표 대본 구조 검토"의 남은 작업에 있던 질문에 백엔드 쪽이 답한다. 근거(파일·줄)는 백엔드 저장소(`STack-Backend` `main` 3626189)에 있다.
-- (1) `POST /api/auth/eclass-login`은 백엔드에 학교 로그인 주소(`astra.eclass-login.base-url`)가 설정된 경우에만, 그 로그인 요청 안에서만 학교 e-Class에 접속한다. 로그인하고 메인 화면과 내 정보를 읽을 뿐이며, 비밀번호도 학교 세션도 저장하지 않는다. 캐시도, 백그라운드·예약 호출도 없고, 학교가 거절한 로그인은 횟수 제한(15분에 주소당 30회, 학번당 10회)에 걸린다.
-- (2) 강의 자료는 교수가 이 서비스에 올린 파일이다. 학교에서 가져오는 것은 프로필(이름·학과·학년)과 메인 화면의 과목 카드 목록뿐이다.
-- (3) 과목 PDF를 학습실 폴더에 넣는 것(`PUT /api/me/study-room/placements/course-files/{fileId}`)은 DB 쓰기 한 번이고 학교를 부르지 않는다.
-- (4) 지금은 교수 동의 없이 학습실 내용이 모델로 가는 길이 없다. 학생이 학습실에 올릴 수 있는 것은 오디오(녹음)뿐이고 PDF는 거절된다(과목 PDF는 폴더 배치만 된다).
-- (5) 프로젝트 담당자 결정으로 백엔드에서 변경을 진행 중이다: 배포 설정이 있으면 학습실 녹음을 올린 뒤 자동으로 전사(Deepgram)·요약(설정된 모델)해, 이 저장소 README의 "녹음 전사·요약 연동 계약"을 구현한다. 반영되기 전까지 녹음 응답에 `transcription`·`summary` 두 필드는 없다(프런트는 지금처럼 "제공되지 않음"으로 처리하면 된다).
+- 백엔드(`STAC-000-school-activities`, 아직 병합 전)가 `GET /api/courses/{id}/weeks`의 주차 안에 학교에서 가져온 활동을 `origin: "school"`, 문자열 `activityId`(`school-…`), 화면 유형 `type`(`video|material|report|test|survey|zoom|post|…`), `schoolType`, 본인 `done`, `phase`, `attendance`, `learningTimeSec`, `offline`, `schoolUrl`로 붙여 준다. 지금까지는 이 행이 "열 수 없음"이었다.
+- `activitySnapshot`: `origin === "school"` 행은 그 화면 유형의 행이 된다. `done`은 `done === true`, 진행 중은 `phase === "open"`, 미제출은 진행 중이고 `done === false`이며 자료·오프라인 시험이 아닐 때. 주차 표시(영상·과제·시험·설문), 강의실 종류·진행중·미제출 필터, 학습활동 목록 필터(51–56)에 모두 들어간다.
+- 링크 규칙: `schoolUrl`의 origin이 정확히 `https://eclass.seoultech.ac.kr`(기본 포트, 사용자 정보 없음)일 때만 링크다(`schoolHref`). 그 밖(`http:`, 다른·비슷한 호스트, `javascript:`, 상대 주소)은 지금처럼 누를 수 없는 행이고 상세에 "e-Class 주소 없음"이 붙는다.
+- 링크 행은 라우터 `Link`가 아닌 일반 `<a target="_blank" rel="noopener noreferrer">`이다. 유형 옆에 "· e-Class ↗" 표시, 접근 가능한 이름은 "제목, 유형, 상태 — 학교 e-Class에서 열기(새 탭)". 상태는 완료·미완료·구간, 상세에 영상은 `출석 …`·`학습시간 …`, 시험은 "오프라인", 끝에 "e-Class에서 열기".
+- "이어서 학습하기"는 이 서비스의 행이 먼저다. 학교 행만 있는 과목에서만 다음 학교 행을 새 탭 링크로 연다(`RoomLayout.nextExternal`).
+- 다른 주차 목록 독자: `WeekActivity.activityId`를 `number | string`로 넓히고, `lectureRows`(학습실 영상 카드)는 숫자 ID의 네이티브 `lecture_weeks`만, 교수 강의실(`course-room-remote.ts#roomEntry`)은 학교 행을 빼서 공개·삭제 명령 대상이 되지 않게 했다. 할 일·캘린더·홈·파일모음·어시스턴트는 주차 목록을 읽지 않아 바뀌지 않는다. 학교 행이 없는 응답은 그대로다.
 
 ### 변경 파일
-- 없음(handoff.md만)
-
-### 남은 작업
-- 운영 서버에 학교 로그인 주소가 설정되어 있는지는 저장소로 알 수 없다. 배포 담당 확인 필요.
-- (5)가 반영되면 이 문서에 그 PR과 응답 예시를 적는다.
-
-## 2026-11-14 "학습실에 저장" 버튼: 서버 모드에서 실제 폴더 배치(목업 해제)
-
-### 작업 내용
-- 이전 상태: PDF 첨부의 "학습실에 저장"은 어느 화면에서나 목업이었다(이 탭 메모리에만 "저장됨", 창에 목업 문구).
-- 백엔드 `ready`이고 과목이 서버 과목일 때(`serverStudyCourse(kj) != null`): 창이 학생의 **서버 폴더**(이 과목)만 보여 주고, 저장하면 `placeItem('srv-<fileId>', folderId)` → `PUT /api/me/study-room/placements/course-files/{fileId}` `{folderId}` + `If-Match`(과목 첫 화면에 있으면 `"0"`, 폴더에 있으면 그 배치 version)로 실제 배치한다. 목업 문구는 서버 모드에서 나오지 않는다.
-- 버튼은 서버 course view의 배치를 읽어 "학습실에 저장됨 + 폴더 이름"을 보여 준다(새로고침해도 유지). 다시 누르면 창이 course view를 새로 불러온 뒤("학습실에서 지금 위치를 확인하는 중입니다.") 지금 위치를 보여 주고, 다른 폴더로 **옮기기**만 된다. 다른 기기에서 옮긴 결과도 이때 버튼과 창에 반영된다. 새로 불러오기가 실패하면 전에 불러온 내용과 오류 문장, "다시 불러오기"를 보여 준다(저장은 409 경로로 안전).
-- "폴더 없이"는 서버 모드에서 뺐다. 서버 학습실은 이 과목의 읽을 수 있는 PDF를 모두 과목 첫 화면에 이미 보여 주므로 "폴더 없이 저장"은 할 일이 없고, 폴더에서 빼는 함수(`DELETE …/placements/…`)는 study-folders.ts에 아직 없다. 창 문구: "이 과목의 PDF는 학습실 과목 화면에 이미 있습니다. 폴더를 고르면 그 폴더 안에 넣습니다."
-- 창에서 새 폴더를 만들 수 있다(`createFolder`). 만든 폴더는 서버 목록이 다시 불러와지기 전에도 창 목록에 바로 들어가고 선택된다.
-- `placeItem`에 `{ retryOnConflict }`(기본 `true`, 기존 호출 동작 그대로)를 추가했다. 이 버튼은 `false`로 불러, 다른 탭·기기가 먼저 옮겼으면(409 `version_conflict`) 몰래 덮어쓰지 않고 다시 불러온 뒤 "다른 탭이나 기기에서 먼저 바뀌었습니다. 다시 불러왔습니다. 확인한 뒤 다시 시도하세요."를 보여 준다. 학생은 바뀐 "지금 위치"를 보고 다시 고른다.
-- `placeItem`이 404를 받으면 course view를 다시 불러와 그 폴더가 없으면 "이 폴더는 다른 탭이나 기기에서 지웠습니다. 다시 불러왔습니다. 다른 폴더를 고르세요."(`FOLDER_GONE`), 폴더가 있으면 기존 404 문장(지웠거나 수강생이 아님)을 쓴다. 429는 기존 `retryLater` 문장. 학습실 화면의 다른 `placeItem` 호출에도 적용된다.
-- 새 함수 `serverFolderOf(courseId, itemId)`: 서버가 아는 위치(폴더 id, 과목 첫 화면 `""`, 아직 모름 `null`). 이 브라우저의 배치는 읽지 않는다.
-- 백엔드 `off`(샘플)·학습실 엔드포인트가 없는 백엔드: 지금까지의 목업 그대로(코드도 그대로 `MockSaveToStudy`로 옮김). 엔드포인트가 없는 백엔드는 버튼이 과목 view를 읽다 404를 받는 즉시 목업(목업 문구 포함)으로 바뀐다. PDF에만 버튼을 다는 규칙도 그대로.
-
-### 변경 파일
-- `src/shared/save-to-study.tsx`, `src/shared/save-to-study.css`, `src/shared/study-folders.ts`
-- 신규 테스트: `tests/integration/study-folders-place.test.ts`(11건: `serverFolderOf`, If-Match 0/version, 충돌 시 재시도 안 함·다시 불러옴, 기본 재시도, 폴더 지워짐 404, 파일 404, 다시 불러오기 실패, 429)
+- `src/shared/course-activities-remote.ts`(`SCHOOL_ORIGIN`, `schoolHref`, 학교 행 매핑), `src/areas/course/activities-server.tsx`(`schoolState`, 기간, 이어서 학습하기), `src/shared/activity-row.tsx`(`external`), `src/areas/course/room-view.tsx`(`nextExternal`), `src/areas/course/course.css`(`.activity-ext`), `src/shared/lectures-remote.ts`(`WeekActivity` 필드, `lectureRows`), `src/shared/course-room-remote.ts`, `tests/integration/school-activities.test.ts`
 
 ### 검증
-- `npm run typecheck` 통과, `npm test` 1331건 통과.
-- 백엔드 `origin/main`(3626189) `bootTestRun` + `node server.mjs`(ASTRA_API_ORIGIN), ego-browser, 학생 21101234, 과목 bi. 시드에 학생이 읽을 PDF가 없어 P-1042로 7주차 자료(week7.pdf, fileId 8)를 API로 등록했다.
-  - 파일모음: 창(폴더 없음 안내) → 폴더 2개 만들기 → "중간고사"에 저장 → 버튼 "학습실에 저장됨 중간고사"·토스트. 새로고침 후에도 같은 표시.
-  - 자료 상세: 버튼이 같은 위치를 보여 줌, 창의 "옮기기"는 지금 위치에선 비활성, "기말고사"로 옮김 → 서버 placement version 2.
-  - 학습실 `study_form.acl?kj=bi&f=2`: 기말고사 폴더 안에 "7주차 강의자료" PDF 1개.
-  - 충돌: 창을 연 채로 두 번째 세션(curl, 같은 학생)이 `If-Match "2"`로 "복습"에 옮김 → 브라우저에서 "중간고사"로 옮기기 → 충돌 문장, 창·버튼이 "복습"으로 다시 불러와짐 → 다시 옮기기 성공(서버 version 4).
-  - 폴더 지워짐: 두 번째 세션이 폴더를 지운 뒤 그 폴더로 옮기기 → `FOLDER_GONE` 문장, 목록에서 그 폴더가 빠짐.
-  - 샘플(`node server.mjs`, 백엔드 없음): 파일모음 창에 "폴더 없이"와 목업 문구, 저장 → "학습실에 저장됨"·토스트, 이전과 같음.
-  - 리뷰 반영 후 다시 확인: "A"에 저장한 뒤 두 번째 세션이 "B"로 옮김 → 새로고침 없이 창을 열면 "확인하는 중" 다음 "지금 B 폴더에 있습니다", 버튼도 "B"로 바뀜. 창에서 "C"를 만들면 바로 선택되고 "옮기기"가 켜짐 → "C"로 옮김.
-- 확인하지 못한 것: 학습실 엔드포인트가 없는 백엔드에서 목업으로 바뀌는 것(그런 백엔드를 띄우지 않음), 수강 취소된 학생·비공개로 바뀐 자료의 404 문장(테스트로만), 429(테스트로만), 어두운 테마 외 테마·모바일 폭.
+- `origin/main`(bf60783) 위로 rebase한 뒤: `npm run typecheck` 오류 없음, `npm test` 24파일 1373개 통과(새 9개, 기존 테스트 수정 없음), `npm run build` 성공.
+- 브라우저(ego-browser, `server.mjs --port 4194` + `ASTRA_API_ORIGIN`로 띄운 계약 견본 stub): 1·2·9주(9주는 학교에만 있는 주) 행, 종류 칩(영상·과제·자료·시험·Zoom·설문·글), 영상·글·미제출·진행중 필터, 학습활동 목록 영상·과제·미제출 필터에 학교 행이 들어감. 링크 행 `target="_blank"`, `rel="noopener noreferrer"`, 다른 호스트 주소 행은 `div[aria-disabled]`. 학교 행을 누르면 새 탭에 학교 연결 주소가 열리고(`window.opener === null`) 원래 탭은 강의실에 남는다. 학교 로그인 없는 브라우저에서는 학교가 "과목을 선택하세요." 경고 뒤 `/ilos/index.jsp`로 보냈다(견본 SEQ).
 
 ### 남은 작업
-- 폴더에서 빼기: `DELETE /api/me/study-room/placements/course-files/{fileId}`(`If-Match`)를 쓰는 함수를 study-folders.ts에 만들면 창에 "폴더에서 빼기"를 붙일 수 있다.
+- 백엔드 `dev`에 대한 실제 응답 확인은 통과했다(가져온 행이 모두 올바른 속성의 링크, 필터 수가 API와 일치). 백엔드에 전할 것: `phase`가 null이고 `done`이 null인 행(Zoom 등)은 상태가 "e-Class"로만 보인다. `done: null`(가져오기가 못 본 행)과 `false`를 화면에서 구분하지 않는다(미제출에서 빠질 뿐). 학교 연결 주소는 학교 로그인이 없으면 로그인 화면이 아니라 경고 뒤 첫 화면으로 간다.
 
 ## 2026-11-14 홈 추천 문장 버튼 4개: 한 줄 고정 + 세로 가운데 정렬
 
