@@ -101,13 +101,15 @@ tar -C deploy/hermes -cf - ops | ssh hermes 'rm -rf /tmp/ops && tar -C /tmp -xf 
 
 | 타이머 (KST) | 스크립트 | 하는 일 |
 |---|---|---|
-| `hermes-ops-watch.timer` 5분마다 | `hermes-ops-watch` | 디스크 85%, 사용 가능 메모리 1.5GiB·스왑 1GiB 미만, 메모리 예약 95%, 커널 OOM, 컨테이너 멈춤·unhealthy·재시작, 핵심 systemd 유닛, 공개·내부 HTTP(2회 연속 실패), 백업 26시간 경과를 보고 헤르메스 에이전트 텔레그램 봇으로 알림. 같은 문제는 6시간마다 다시 알리고 풀리면 복구 알림 |
+| `hermes-ops-watch.timer` 5분마다 | `hermes-ops-watch` | 디스크 85%, 사용 가능 메모리 1.5GiB·스왑 1GiB 미만, 메모리 예약 95%, 커널 OOM, 컨테이너 멈춤·unhealthy·재시작, 핵심 systemd 유닛, 공개·내부 HTTP(2회 연속 실패), 백업 26시간 경과를 보고 헤르메스 에이전트 텔레그램 봇으로 알림. 같은 문제는 6시간마다 다시 알리고 풀리면 복구 알림. 매 실행 끝에 데스크톱 heartbeat 를 갱신(닿지 않으면 그것도 알림) |
+| (데스크톱 hermes-ml cron) 5분마다 | `hermes-external-watch` | yoobin-desktop 에서 Hermes 를 밖에서 본다: heartbeat 가 15분 넘게 멈추면(서버 정지·네트워크·감시 중단) 알림, 공개 주소 3개 응답 확인. 같은 봇으로 알림 |
 | `hermes-db-backup.timer` 매일 04:30 | `hermes-db-backup` | gyeongmae(호스트 PostgreSQL)·campus-on(PostgreSQL)·e-class(MySQL)를 `~/backups/db/<이름>/` 에 7개씩 |
 | `hermes-file-backup.timer` 매일 05:00 | `hermes-file-backup` | e-class 업로드 저장소(SeaweedFS 버킷 `astra-content`·`astra-delivery`, `aws s3 sync` 증분 미러), 캠퍼스 온 `lesson_data` 볼륨(tar.gz 7개), Hermes `~/.hermes/state.db`(3개), stock-report `agent_console.sqlite3`(7개)를 `~/backups/files/` 에. SQLite 는 온라인 백업 API 로 복사하고 `quick_check` 를 통과한 것만 남김 |
 | `docker-cache-prune.timer` 일요일 05:30 | `docker-cache-prune` | 7일 지난 빌드 캐시와 이름 없는 이미지 정리(볼륨·태그 이미지는 건드리지 않음) |
 
 - 백업은 끝나면 `yoobin-desktop-linux:/home/hermes-ml/hermes-backups/` 로 rsync 합니다(삭제는 전파하지 않음. 사본은 state.db 7일, 나머지 30일 보관).
-- 위 유닛이 실패하면 `hermes-ops-alert@.service`(OnFailure)가 실패 유닛과 로그 끝 몇 줄을 같은 텔레그램 봇으로 보냅니다. 알림 경로 시험: `~/bin/hermes-ops-watch --test`, 점검만: `--dry-run`.
+- 위 유닛이 실패하면 `hermes-ops-alert@.service`(OnFailure)가 실패 유닛과 로그 끝 몇 줄을 같은 텔레그램 봇으로 보냅니다. `hermes-ops-watch` 자체가 실패해도 같은 경로로 알립니다. 알림 경로 시험: `~/bin/hermes-ops-watch --test`, 점검만: `--dry-run`.
+- 바깥 감시 설치(데스크톱, Hermes 를 거쳐 hermes-ml 로): `scp ops/hermes-external-watch hermes:/tmp/hew && ssh hermes 'scp /tmp/hew desktop:/tmp/hew && ssh desktop "install -m 755 /tmp/hew ~/bin/hermes-external-watch"'`. 토큰은 `~hermes-ml/.config/hermes-external-watch/telegram.json`(600), cron 은 `*/5 * * * * flock -n /tmp/hermes-external-watch.lock timeout 120 /usr/bin/python3 $HOME/bin/hermes-external-watch`.
 - 텔레그램 토큰은 `~/.hermes/.env` 의 `TELEGRAM_BOT_TOKEN`, 대화방은 `~/.hermes/state/agent-watch/config.json` 의 `chat_id` 를 그대로 읽습니다(헤르메스 agent-watch 와 같은 봇).
 - 자원 한도: 모든 compose 서비스에 메모리·CPU 한도와 로그 상한(20m×3)이 있습니다(campus-on-demo 는 `compose.override.yaml`). `gyeongmae-api` 는 systemd `MemoryHigh=1280M`, `MemoryMax=1536M`.
 - 디스크·로그: `/etc/docker/daemon.json`(기본 로그 상한, live-restore. 다음 Docker 재시작부터), journald 1G 상한, sysstat 수집.

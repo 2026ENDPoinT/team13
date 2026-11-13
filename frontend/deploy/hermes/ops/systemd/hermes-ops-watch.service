@@ -1,6 +1,7 @@
 [Unit]
 Description=Hermes server watch (disk, memory, OOM, containers, units, HTTP, backups) -> Hermes agent Telegram
 After=network-online.target docker.service
+OnFailure=hermes-ops-alert@%n.service
 
 [Service]
 Type=oneshot
