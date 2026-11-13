@@ -3,7 +3,7 @@
 // text only — never innerHTML. Links are shown as "text (url)" plain text,
 // $…$ math stays literal text.
 import { useEffect, useReducer, useRef, useState, type ReactNode } from "react";
-import { initialPageImage, pageImageStep, sharedRefresh } from "./page-image-retry.ts";
+import { imageRefresher, initialPageImage, pageImageStep, type ImageRefresher } from "./page-image-retry.ts";
 
 const TAGS: Record<string, string> = { core: "핵심", support: "보충", background: "배경", meta: "안내" };
 
@@ -186,7 +186,7 @@ function SummaryView({ summary, options }: { summary: PageSummary; options: Summ
   useEffect(() => {
     latest.current = options;
   });
-  const [refreshed] = useState(() => sharedRefresh(() => {
+  const [refreshed] = useState(() => imageRefresher(() => {
     const now = latest.current;
     return now.refreshImages ? now.refreshImages() : now.pageImageBase ?? null;
   }));
@@ -251,8 +251,8 @@ function SummaryView({ summary, options }: { summary: PageSummary; options: Summ
 interface PageImageProps {
   base: string;
   page: number;
-  /** Reissues the delivery cookie and resolves to the (usually unchanged) base, or null when that failed. */
-  refresh: () => Promise<string | null>;
+  /** The viewer's shared refetch (reissues the delivery cookie) and its memory of bases that already failed. */
+  refresh: ImageRefresher;
   alt: string;
   imageClass?: string;
   errorClass: string;
@@ -262,34 +262,66 @@ interface PageImageProps {
 
 /**
  * A server page image that survives an expired delivery cookie: on error it refetches through `refresh` and remounts
- * the `<img>` once; if that fails too it says so and offers one manual retry per press (no automatic loop).
+ * the `<img>` once; if that fails too it says so and offers one manual retry per press (no automatic loop). A page
+ * whose base already failed after a refresh goes straight to the message.
+ *
+ * Focus: the retry button stays the same element while it refetches; when the image comes back focus moves to the
+ * control around it (the zoom button) or to the image, and back to the retry button if it fails again.
  */
 export function PageImage({ base, page, refresh, alt, imageClass, errorClass, wrap }: PageImageProps) {
-  const [state, dispatch] = useReducer(pageImageStep, base, initialPageImage);
+  const [state, dispatch] = useReducer(pageImageStep, base, (start) => initialPageImage(start, refresh.isBroken(start)));
+  // Set by a press of the retry button: focus follows the result until the image loads.
+  const keepFocus = useRef(false);
+  const retryButton = useRef<HTMLButtonElement>(null);
+  const image = useRef<HTMLImageElement>(null);
   useEffect(() => {
     if (state.phase !== "refreshing") return;
     let live = true;
-    void refresh().then((next) => {
+    void refresh.refresh().then((next) => {
       if (live) dispatch({ type: "refreshed", base: next });
     });
     return () => {
       live = false;
     };
   }, [state.phase, refresh]);
-  if (state.phase === "refreshing") return <span className={errorClass} role="status">{`${page}쪽 이미지를 다시 불러오는 중입니다.`}</span>;
-  if (state.phase === "failed") {
+  useEffect(() => {
+    if (state.phase === "failed") refresh.markBroken(state.base);
+    if (!keepFocus.current) return;
+    if (state.phase === "failed") retryButton.current?.focus({ preventScroll: true });
+    else if (state.phase === "show") {
+      const img = image.current;
+      const target = img && (img.closest<HTMLElement>("button, a[href]") ?? img);
+      target?.focus({ preventScroll: true });
+    }
+  }, [state.phase, state.attempt, state.base, refresh]);
+  if (state.phase !== "show") {
+    const busy = state.phase === "refreshing";
     return (
-      <span className={errorClass} role="alert">
-        <span>{`${page}쪽 이미지를 불러오지 못했습니다.`}</span>
-        <button type="button" className="btn btn-ghost" onClick={() => dispatch({ type: "retry" })}>다시 불러오기</button>
+      <span className={errorClass} role="status">
+        <span>{busy ? `${page}쪽 이미지를 다시 불러오는 중입니다.` : `${page}쪽 이미지를 불러오지 못했습니다.`}</span>
+        <button
+          ref={retryButton} type="button" className="btn btn-ghost" aria-disabled={busy ? "true" : undefined}
+          onClick={() => {
+            if (busy) return;
+            keepFocus.current = true;
+            dispatch({ type: "retry" });
+          }}
+        >
+          {busy ? "불러오는 중…" : "다시 불러오기"}
+        </button>
       </span>
     );
   }
-  const image = (
+  const img = (
     <img
-      key={state.attempt} className={imageClass} src={pageFile(state.base, page)} alt={alt}
-      loading="lazy" decoding="async" onError={() => dispatch({ type: "error" })}
+      ref={image} key={state.attempt} className={imageClass} src={pageFile(state.base, page)} alt={alt}
+      tabIndex={wrap ? undefined : -1} loading="lazy" decoding="async"
+      onLoad={() => {
+        keepFocus.current = false;
+        refresh.markLoaded(state.base);
+      }}
+      onError={() => dispatch({ type: "error", broken: refresh.isBroken(state.base) })}
     />
   );
-  return wrap ? wrap(image) : image;
+  return wrap ? wrap(img) : img;
 }

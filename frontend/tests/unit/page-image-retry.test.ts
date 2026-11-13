@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { AUTO_RETRIES, initialPageImage, pageImageStep, sharedRefresh, type PageImageEvent, type PageImageState } from "../../src/shared/page-image-retry.ts";
+import {
+  AUTO_RETRIES, REFRESH_TIMEOUT_MS, imageRefresher, initialPageImage, pageImageStep, type PageImageEvent, type PageImageState,
+} from "../../src/shared/page-image-retry.ts";
 
 const BASE = "/doc/abc/";
 const run = (events: PageImageEvent[], start: PageImageState = initialPageImage(BASE)): PageImageState =>
@@ -44,14 +46,25 @@ describe("pageImageStep — 쪽 이미지 실패 복구", () => {
     const refreshing = run([{ type: "error" }]);
     expect(pageImageStep(refreshing, { type: "error" })).toBe(refreshing);
   });
+
+  it("다시 받은 뒤에도 실패한 주소(broken)의 다른 쪽은 다시 받지 않고 바로 안내로 간다", () => {
+    expect(initialPageImage(BASE, true)).toEqual({ base: BASE, attempt: 0, phase: "failed", autoUsed: AUTO_RETRIES });
+    expect(run([{ type: "error", broken: true }])).toMatchObject({ phase: "failed", autoUsed: AUTO_RETRIES });
+  });
+
+  it("broken으로 시작한 쪽도 다시 불러오기는 한 번 받아 다시 그린다", () => {
+    const shown = run([{ type: "retry" }, { type: "refreshed", base: BASE }], initialPageImage(BASE, true));
+    expect(shown).toMatchObject({ phase: "show", attempt: 1 });
+    expect(pageImageStep(shown, { type: "error" }).phase).toBe("failed");
+  });
 });
 
-describe("sharedRefresh — 동시에 실패한 쪽은 한 번만 받고, 끝난 뒤의 실패는 새로 받는다", () => {
+describe("imageRefresher — 동시에 실패한 쪽은 한 번만 받고, 끝난 뒤의 실패는 새로 받는다", () => {
   it("진행 중인 요청을 같이 쓴다", async () => {
     // Promise.withResolvers is outside this project's lib (es2023).
     let resolve: (value: string) => void = () => {};
     const load = vi.fn(() => new Promise<string>((done) => { resolve = done; }));
-    const refresh = sharedRefresh(load);
+    const { refresh } = imageRefresher(load);
     const first = refresh();
     const second = refresh();
     await Promise.resolve();
@@ -63,18 +76,61 @@ describe("sharedRefresh — 동시에 실패한 쪽은 한 번만 받고, 끝난
 
   it("앞 요청이 끝난 뒤의 실패는 다시 받는다(쿠키가 또 만료될 수 있다)", async () => {
     const load = vi.fn(async () => BASE);
-    const refresh = sharedRefresh(load);
+    const { refresh } = imageRefresher(load);
     await refresh();
     await refresh();
     expect(load).toHaveBeenCalledTimes(2);
   });
 
   it("던지거나 거절되면 null", async () => {
-    expect(await sharedRefresh(() => { throw new Error("x"); })()).toBeNull();
-    expect(await sharedRefresh(() => Promise.reject(new Error("x")))()).toBeNull();
+    expect(await imageRefresher(() => { throw new Error("x"); }).refresh()).toBeNull();
+    expect(await imageRefresher(() => Promise.reject(new Error("x"))).refresh()).toBeNull();
   });
 
   it("동기 값도 받는다", async () => {
-    expect(await sharedRefresh(() => BASE)()).toBe(BASE);
+    expect(await imageRefresher(() => BASE).refresh()).toBe(BASE);
+  });
+
+  it(`답이 없으면 ${REFRESH_TIMEOUT_MS}ms 뒤 null로 끝나고, 다음 실패는 멈춘 요청을 기다리지 않고 새로 받는다`, async () => {
+    vi.useFakeTimers();
+    try {
+      const load = vi.fn(() => new Promise<string>(() => {}));
+      const { refresh } = imageRefresher(load);
+      const stalled = refresh();
+      await vi.advanceTimersByTimeAsync(REFRESH_TIMEOUT_MS - 1);
+      expect(refresh()).toBe(stalled);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await stalled).toBeNull();
+      const next = refresh();
+      expect(next).not.toBe(stalled);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(load).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(REFRESH_TIMEOUT_MS);
+      expect(await next).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("시간 제한은 따로 줄 수 있고, 제때 온 답에는 영향이 없다", async () => {
+    vi.useFakeTimers();
+    try {
+      const { refresh } = imageRefresher(() => new Promise<string>((done) => setTimeout(() => done(BASE), 50)), 100);
+      const result = refresh();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await result).toBe(BASE);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("다시 받은 뒤에도 실패한 주소를 기억하고, 그 주소의 쪽이 불러와지면 잊는다", () => {
+    const refresher = imageRefresher(() => BASE);
+    expect(refresher.isBroken(BASE)).toBe(false);
+    refresher.markBroken(BASE);
+    expect(refresher.isBroken(BASE)).toBe(true);
+    expect(refresher.isBroken("/doc/other/")).toBe(false);
+    refresher.markLoaded(BASE);
+    expect(refresher.isBroken(BASE)).toBe(false);
   });
 });

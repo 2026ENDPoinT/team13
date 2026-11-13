@@ -11,7 +11,7 @@ import {
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from "react";
 import { inline, markdown, PageImage, type PageSummary, type SummaryBeat, type SummarySlide } from "./page-summary.tsx";
-import { sharedRefresh } from "./page-image-retry.ts";
+import { imageRefresher, type ImageRefresher } from "./page-image-retry.ts";
 
 /** LessonViewer `ModuleStudyStatus`. */
 export type LessonStudyStatus = "none" | "running" | "ready" | "failed";
@@ -229,17 +229,15 @@ function LessonBody({ doc }: { doc: LessonDoc }) {
 
   const items = useMemo(() => buildItems(count, story, slideAt, mode, summarized), [count, story, slideAt, mode, summarized]);
 
-  // 쪽 이미지가 실패하면(이미지 쿠키 만료) 출처를 다시 받아 쿠키를 새로 받고 이미지를 다시 그린다. 동시에 실패한 쪽은 한 번의 요청을 같이 쓴다.
-  // 화면이 그릴 때마다 doc을 새로 만들어도 이미지 주소가 같으면 같은 함수를 쓰도록 주소에만 묶고, 다시 받는 함수는 최신 것을 읽는다.
+  // 쪽 이미지가 실패하면(이미지 쿠키 만료) 출처를 다시 받아 쿠키를 새로 받고 이미지를 다시 그린다. 동시에 실패한 쪽은 한 번의 요청을 같이 쓰고,
+  // 다시 받은 뒤에도 실패한 주소는 기억해 다른 쪽이 따로 다시 받지 않는다(page-image-retry.ts).
+  // 화면이 그릴 때마다 doc을 새로 만들어도 이미지 주소가 같으면 같은 것을 쓰도록 주소에만 묶고, 다시 받는 함수는 최신 것을 읽는다.
   const imageBase = source && source.kind === "images" ? source.base : null;
   const reload = useRef<(() => Promise<string | null>) | undefined>(undefined);
   useEffect(() => {
     reload.current = source && source.kind === "images" ? source.refresh : undefined;
   });
-  const refresh = useMemo(
-    () => (imageBase === null ? () => Promise.resolve(null) : sharedRefresh(() => (reload.current ? reload.current() : imageBase))),
-    [imageBase],
-  );
+  const refresh = useMemo(() => imageRefresher(() => (reload.current ? reload.current() : imageBase)), [imageBase]);
 
   const changeMode = useCallback((next: Mode) => {
     setMode(next);
@@ -551,7 +549,7 @@ interface SlideRowProps {
   source: LessonSource | null;
   summarized: boolean;
   split: SplitHandlers;
-  refresh: () => Promise<string | null>;
+  refresh: ImageRefresher;
   onZoom: (page: number) => void;
 }
 
@@ -603,7 +601,7 @@ function ZoomButton({ zoom, children }: { zoom: Zoom | undefined; children: Reac
  * 원본 한 쪽: 서버 쪽 이미지 또는 글로 된 쪽(샘플). `zoom`이 있으면 쪽을 크게 보기 버튼으로 감싼다.
  * 이미지를 끝내 못 불러오면 크게 보기 대신 안내와 다시 불러오기 버튼을 보인다(버튼 안에 버튼을 두지 않는다).
  */
-function PageView({ source, page, refresh, zoom }: { source: LessonSource; page: number; refresh: () => Promise<string | null>; zoom?: Zoom }) {
+function PageView({ source, page, refresh, zoom }: { source: LessonSource; page: number; refresh: ImageRefresher; zoom?: Zoom }) {
   if (source.kind === "images") {
     const style = source.aspect ? { aspectRatio: String(source.aspect) } : undefined;
     return (
@@ -711,7 +709,7 @@ interface LightboxProps {
   page: number;
   onPage: (page: number) => void;
   onClose: () => void;
-  refresh: () => Promise<string | null>;
+  refresh: ImageRefresher;
 }
 
 function Lightbox({ source, title, slideAt, count, page, onPage, onClose, refresh }: LightboxProps) {
