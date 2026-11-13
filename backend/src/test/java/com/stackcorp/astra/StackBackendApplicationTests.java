@@ -27,10 +27,13 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 배포하는 설정 그대로 실제 port를 열어 실행한다. 관리 port의 health, API port에서 /actuator가 보이지 않는지, 로그 형식을
- * 확인한다(ADR-0019, architecture.md 3.3절과 9절).
+ * 확인한다(ADR-0019, architecture.md 3.3절과 9절). 연결한 쪽(loopback)은 compose 단일 host 구성처럼 믿는 proxy로 둔다. 실행 환경은
+ * Kubernetes로 알아보게 둔다. 그래도 application.properties의 server.forward-headers-strategy=none 때문에 forwarded header를
+ * 요청에 반영하지 않아야 한다.
  */
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
+		properties = { "astra.client-address.trusted-proxies=127.0.0.0/8,::1", "spring.main.cloud-platform=kubernetes" })
 @ExtendWith(OutputCaptureExtension.class)
 class StackBackendApplicationTests {
 
@@ -103,7 +106,8 @@ class StackBackendApplicationTests {
 
 	/**
 	 * 허용 Origin이 비면 OriginCheckFilter는 요청 자신의 origin과 비교한다. 실제 Tomcat이 받는 요청에서 그 origin은 연결의 scheme과
-	 * Host로 정해지고, 앞단이 붙인 X-Forwarded-Host·Proto·Port로 바뀌지 않아야 한다(ADR-0004 4번). 이 header를 믿는 설정
+	 * Host로 정해지고, 앞단이 붙인 X-Forwarded-Host·Proto·Port로 바뀌지 않아야 한다(ADR-0004 4번). 연결한 쪽이 믿는 proxy여도
+	 * 그렇다. 믿는 proxy 설정({@code astra.client-address.trusted-proxies})은 브라우저 주소에만 쓰인다. 이 header를 믿는 설정
 	 * (server.forward-headers-strategy 등)이 생기면 loopback에서 온 이 요청은 https://eclass.example.ac.kr로 보여 통과하고 이 테스트가
 	 * 실패한다. 그래서 proxy 뒤 배포는 허용 Origin을 명시한다.
 	 */

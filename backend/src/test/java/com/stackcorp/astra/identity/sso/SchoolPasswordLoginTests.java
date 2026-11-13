@@ -27,6 +27,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
@@ -203,6 +204,54 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 		this.mvc.perform(login(studentId(), PASSWORD)).andExpect(status().isNoContent());
 	}
 
+	/**
+	 * 앞단 proxy 뒤에서는 모든 연결이 proxy 주소에서 온다. 주소 단위 실패 한도가 proxy 주소로 세면 한 사람의 실패가 모두의 학교
+	 * 로그인을 막는다. 믿는 proxy에서 온 요청은 X-Forwarded-For의 브라우저 주소마다 센다. IPv6는 가입자 하나가 /64를 받아 요청마다
+	 * 주소를 바꿀 수 있으므로 /64 하나를 한 주소로 센다. 기록에는 주소 그대로 남는다.
+	 */
+	@Test
+	void failureLimitCountsEachClientBehindTheTrustedProxy() throws Exception {
+		String proxy = "10.40.2.31";
+		String attacker = randomSlash64();
+		String neighbour = randomSlash64();
+		for (int i = 0; i < SchoolPasswordController.ADDRESS_FAILURES; i++) {
+			this.mvc.perform(behind(proxy, attacker + Integer.toHexString(i + 1), login(studentId(), "wrong")))
+				.andExpect(status().isUnauthorized());
+		}
+		int before = SCHOOL.logins;
+
+		// 같은 /64의 새 주소도 한도를 다 쓴 주소다.
+		this.mvc.perform(behind(proxy, attacker + "beef", login(studentId(), PASSWORD)))
+			.andExpect(status().isTooManyRequests());
+		assertThat(SCHOOL.logins).isEqualTo(before);
+
+		// 같은 proxy를 거친 다른 /64의 사람, 그리고 왼쪽에 공격자 주소를 넣어 보낸 그 사람은 막히지 않는다.
+		MvcResult signedIn = this.mvc.perform(behind(proxy, neighbour + "1", login(studentId(), PASSWORD)))
+			.andExpect(status().isNoContent())
+			.andReturn();
+		this.mvc.perform(behind(proxy, attacker + "1, " + neighbour + "2", login(studentId(), PASSWORD)))
+			.andExpect(status().isNoContent());
+		assertThat(this.jdbc.sql("SELECT ip_address FROM user_sessions WHERE session_token_hash = SHA2(:token, 256)")
+			.param("token", signedIn.getResponse().getCookie("ASTRA_SESSION").getValue())
+			.query(String.class)
+			.single()).isEqualTo(neighbour.replace("::", ":0:0:0:") + "1");
+	}
+
+	// "2001:db8:xxxx:yyyy::" 뒤에 interface 부분을 붙여 쓴다.
+	private static String randomSlash64() {
+		ThreadLocalRandom random = ThreadLocalRandom.current();
+		return "2001:db8:" + Integer.toHexString(random.nextInt(1, 0xffff)) + ":"
+				+ Integer.toHexString(random.nextInt(1, 0xffff)) + "::";
+	}
+
+	private static MockHttpServletRequestBuilder behind(String proxy, String forwardedFor,
+			MockHttpServletRequestBuilder request) {
+		return request.header("X-Forwarded-For", forwardedFor).with((r) -> {
+			r.setRemoteAddr(proxy);
+			return r;
+		});
+	}
+
 	@Test
 	void malformedStudentIdNeverReachesTheSchool() throws Exception {
 		int before = SCHOOL.logins;
@@ -219,8 +268,7 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 			.contains("eclassPassword");
 	}
 
-	private org.springframework.test.web.servlet.RequestBuilder login(String studentId, String password)
-			throws Exception {
+	private MockHttpServletRequestBuilder login(String studentId, String password) throws Exception {
 		Cookie csrf = this.mvc.perform(get("/api/auth/csrf")).andReturn().getResponse().getCookie("XSRF-TOKEN");
 		return post(SchoolPasswordController.PATH).cookie(csrf)
 			.header("X-XSRF-TOKEN", csrf.getValue())

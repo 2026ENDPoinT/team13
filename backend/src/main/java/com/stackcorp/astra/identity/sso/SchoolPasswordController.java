@@ -87,7 +87,8 @@ class SchoolPasswordController {
 			throw ApiException.invalid("학번과 비밀번호를 확인해 주세요.");
 		}
 		String address = this.clientAddresses.of(request);
-		this.rateLimiter.checkFailures("eclass-login", address, ADDRESS_FAILURES);
+		String addressKey = ClientAddresses.limitKey(address);
+		this.rateLimiter.checkFailures("eclass-login", addressKey, ADDRESS_FAILURES);
 		this.rateLimiter.checkFailures("eclass-login-student", studentId, STUDENT_FAILURES);
 		SchoolAccount account;
 		try {
@@ -95,7 +96,7 @@ class SchoolPasswordController {
 		}
 		catch (SchoolLoginException ex) {
 			if (ex.kind() == SchoolLoginException.Kind.REJECTED) {
-				this.rateLimiter.recordFailure("eclass-login", address, WINDOW);
+				this.rateLimiter.recordFailure("eclass-login", addressKey, WINDOW);
 				this.rateLimiter.recordFailure("eclass-login-student", studentId, WINDOW);
 				this.login.rejected(studentId, address);
 				throw new ApiException(HttpStatus.UNAUTHORIZED, "invalid_credentials", "학번 또는 비밀번호가 맞지 않습니다.");
