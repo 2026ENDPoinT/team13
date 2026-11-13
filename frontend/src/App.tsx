@@ -4,6 +4,7 @@ import { closeDialog, currentParams, currentScreen, followBackendRole, GoButton,
 import { routeFor } from "./shared/routes.ts";
 import { observeScreen } from "./shared/assistant/plan.ts";
 import { useSeenWhileOpen } from "./shared/unread-badges.tsx";
+import { EntryLoginDialog, useEntryLogin } from "./shared/entry-login.tsx";
 import { Shell } from "./shell/shell.tsx";
 import { Button, ErrorState } from "./ui/kit.tsx";
 import { Icon } from "./ui/icon.tsx";
@@ -97,6 +98,7 @@ function DialogContent({ name, ctx }: { name: string; ctx: ScreenCtx }): ReactNo
 
 export function App() {
   const state = useAppState();
+  const entryLogin = useEntryLogin();
   const screen = currentScreen();
   const params = currentParams();
   const ctx: ScreenCtx = { state, screen, params };
@@ -126,7 +128,9 @@ export function App() {
   }, []);
 
   const key = `${location.pathname}${location.search}`;
-  const dialog = dialogName ? <DialogContent name={dialogName} ctx={ctx} /> : null;
+  const dialog = entryLogin.open
+    ? <EntryLoginDialog onClose={entryLogin.dismiss} />
+    : dialogName ? <DialogContent name={dialogName} ctx={ctx} /> : null;
   return (
     <>
       <ScreenBoundary resetKey={key}>

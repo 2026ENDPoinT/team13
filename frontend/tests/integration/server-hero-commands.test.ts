@@ -58,7 +58,7 @@ vi.mock("../../src/shared/assistant/plan.ts", () => ({
 }));
 vi.mock("../../src/shared/assistant-tray.tsx", () => ({ foldTray: vi.fn(), focusTray: vi.fn(), openTray: vi.fn(), refreshTray: vi.fn() }));
 
-import { commandBar, planPreview } from "../../src/areas/home/command-bar.tsx";
+import { commandBar, dockStatus, planPreview } from "../../src/areas/home/command-bar.tsx";
 
 const reactGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 reactGlobal.IS_REACT_ACT_ENVIRONMENT = true;
@@ -146,6 +146,7 @@ describe("로그인 서버 히어로 명령", () => {
     expect(control.navigate).toHaveBeenCalledWith("/classroom?kj=c731");
     expect(control.ask).not.toHaveBeenCalled();
     expect(control.execute).not.toHaveBeenCalled();
+    expect(dockStatus().say).toBe("");
   });
 
   it("실제 활동 추천과 직접 입력이 다음 행동과 동일한 서버 상세로 이동한다", () => {
@@ -158,6 +159,7 @@ describe("로그인 서버 히어로 명령", () => {
     key("Enter");
     expect(control.navigate).toHaveBeenLastCalledWith("/ilos/cls/st/activity/activity_form.acl?m=report&n=srv-8401&kj=c731");
     expect(control.ask).not.toHaveBeenCalled();
+    expect(dockStatus().say).toBe("");
   });
 
   it("할 일 추천은 자동 실행 대신 실제 목록·더 보기·활동 이동을 제공한다", () => {

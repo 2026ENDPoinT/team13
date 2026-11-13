@@ -42,6 +42,23 @@
 .backend-login.is-compact .backend-login__field { flex-basis: 100%; }
 .backend-login.is-compact .backend-login__submit { flex: 1 1 100%; }
 
+/* Entry prompt reuses the same authentication form and theme as inline login. */
+.entry-login .modal-back { align-items: center; }
+.entry-login__modal { width: min(420px, 100%); }
+.entry-login__modal .backend-login { padding: 0; margin: 0; border: 0; background: transparent; gap: var(--space-4); }
+.entry-login__modal .backend-login__form { flex-direction: column; align-items: stretch; gap: var(--space-4); }
+.entry-login__modal .backend-login__field,
+.entry-login__modal .backend-login__submit,
+.entry-login__modal .backend-login__note { flex: none; }
+.entry-login__modal .backend-login__field input { width: 100%; min-height: var(--hit-touch); }
+.entry-login__modal .backend-login__submit,
+.entry-login__modal .x { min-height: var(--hit-touch); }
+.entry-login__modal .x { min-width: var(--hit-touch); }
+@media (max-width: 767px) {
+  .entry-login .modal-back { padding: var(--space-4); }
+  .entry-login__modal.modal { min-height: auto; padding-bottom: 0; border: var(--border-w) solid var(--border); border-radius: var(--radius-lg); }
+}
+
 .page-summary {
   display: grid;
   gap: var(--space-5);

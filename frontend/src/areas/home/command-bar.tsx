@@ -523,13 +523,13 @@ async function submitCommand({ acceptRun, command, field: given }: { acceptRun?:
     if (classroom) {
       const course = serverCourseViews().find(({ course }) => course?.id === classroom.courseId)?.course;
       if (course) {
-        sayText = classroom.title;
+        sayText = "";
         navigate(routeFor(currentRole(), "classroom", { kj: course.id, special: course.kind === "special" }));
         return;
       }
     }
     if (action) {
-      sayText = `${action.title} 활동으로 이동해요.`;
+      sayText = "";
       navigate(action.href);
       return;
     }
@@ -598,7 +598,7 @@ async function submitCommand({ acceptRun, command, field: given }: { acceptRun?:
     text,
     navigate: (href) => {
       leaving = true;
-      sayText = answer.say;
+      sayText = "";
       busy = false;
       if (isCurrent()) navigate(href);
       else render();

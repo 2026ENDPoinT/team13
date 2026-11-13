@@ -41,6 +41,9 @@ function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
       live.current = false;
     };
   }, []);
+  useEffect(() => {
+    if (!busy && message?.alert) passwordRef.current?.focus();
+  }, [busy, message]);
   const compactClass = compact ? " is-compact" : "";
   const say = (next: string, alert = false) => setMessage({ text: next, alert });
 
@@ -53,18 +56,16 @@ function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
     ? "이 서버에서 쓸 수 있는 로그인 방법이 없습니다. 관리자에게 문의하세요."
     : UNKNOWN_METHODS;
 
-  const run = (attempt: () => Promise<unknown>, after?: (failed: boolean) => void) => {
+  const run = (attempt: () => Promise<unknown>, after?: () => void) => {
     setBusy(true);
     say("로그인하는 중입니다.");
-    let failed = false;
     attempt().then(() => {
       if (live.current) say("");
     }, (error: unknown) => {
-      failed = true;
       if (live.current) say(error instanceof Error ? error.message : String(error), true);
     }).finally(() => {
       if (live.current) setBusy(false);
-      if (after) after(failed);
+      if (after) after();
     });
   };
 
@@ -73,11 +74,10 @@ function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
     if (busy) return;
     const studentId = studentIdRef.current?.value ?? "";
     const password = passwordRef.current?.value ?? "";
-    run(() => loginWithEclass(studentId, password), (failed) => {
+    run(() => loginWithEclass(studentId, password), () => {
       const input = passwordRef.current;
       if (!input) return;
       input.value = "";
-      if (failed) input.focus();
     });
   };
 
