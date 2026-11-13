@@ -146,19 +146,20 @@ class SchoolContent {
 	}
 
 	/**
-	 * 학교 파일 하나를 연다. 받아 둔 사본이 있으면 그것을, 없으면 학생의 학교 session으로 받아 과목 파일로 저장한 뒤 그것을 준다.
+	 * 학교 파일 하나를 연다. 받아 둔 사본이 있으면 그것을, 없으면 학생의 학교 session으로 받아 과목 파일로 저장한 뒤 그것을 준다. 학생
+	 * 본인이 과제에 낸 파일(주인 있는 파일)은 그 학생에게만 열리고 다른 사람에게는 404다.
 	 * @return 서비스 파일 ID와 지금 열 수 있는지(악성코드 검사 중이면 false)
 	 */
 	OpenedFile open(Actor actor, long courseId, long schoolFileId) {
 		requireMember(actor, courseId);
-		SchoolFileStore.Row row = this.files.find(courseId, schoolFileId).orElseThrow(ApiException::notFound);
+		SchoolFileStore.Row row = visible(actor, courseId, schoolFileId);
 		if (row.fileId() != null) {
 			return new OpenedFile(row.fileId(), true);
 		}
 		Object lock = this.copyLocks.computeIfAbsent(schoolFileId, (k) -> new Object());
 		try {
 			synchronized (lock) {
-				row = this.files.find(courseId, schoolFileId).orElseThrow(ApiException::notFound);
+				row = visible(actor, courseId, schoolFileId);
 				if (row.fileId() != null) {
 					return new OpenedFile(row.fileId(), true);
 				}
@@ -168,6 +169,12 @@ class SchoolContent {
 		finally {
 			this.copyLocks.remove(schoolFileId, lock);
 		}
+	}
+
+	private SchoolFileStore.Row visible(Actor actor, long courseId, long schoolFileId) {
+		return this.files.find(courseId, schoolFileId)
+			.filter((r) -> r.visibleTo(actor.userId()))
+			.orElseThrow(ApiException::notFound);
 	}
 
 	private OpenedFile copy(Actor actor, long courseId, SchoolFileStore.Row row) {
@@ -287,7 +294,7 @@ class SchoolContent {
 			.findFirst();
 	}
 
-	private List<ActivityRow> activities(long courseId, String type, Long schoolActivityId) {
+	List<ActivityRow> activities(long courseId, String type, Long schoolActivityId) {
 		return this.jdbc.sql("""
 				SELECT school_activity_id, school_type, school_item_id, week_no, title, open_at, close_at, expired_yn,
 				       attendance_label, school_url
@@ -339,7 +346,7 @@ class SchoolContent {
 	record OpenedFile(long fileId, boolean ready) {
 	}
 
-	private record ActivityRow(long id, String type, String itemId, int weekNo, String title, LocalDateTime openAt,
+	record ActivityRow(long id, String type, String itemId, int weekNo, String title, LocalDateTime openAt,
 			LocalDateTime closeAt, boolean expired, String attendance, String schoolUrl) {
 	}
 

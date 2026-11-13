@@ -1,7 +1,7 @@
 # ADR-0043 학교 강의실 내용을 학생의 학교 session으로 필요할 때 읽고, 연 파일은 과목 파일로 받아 둔다
 
 ## 상태
-채택 (2026-11-14). 1단계(자료와 그 파일), 2단계(강의실 공지와 그 첨부)까지 구현. 과제 상세·영상 상세·강의계획서·출석·성적은 같은 틀로 이어 간다.
+채택 (2026-11-14). 1단계(자료와 그 파일), 2단계(강의실 공지와 그 첨부), 3단계(과제 상세·본인 제출 정보와 할 일)까지 구현. 영상 상세·강의계획서·출석·성적은 같은 틀로 이어 간다.
 
 ## 맥락
 ADR-0042는 학교 강의실의 주차·활동 목록만 옮기고 내용은 학교 e-Class로 보냈다. 소유자는 학생이 학교 강의실에서 보는 내용(자료, 영상, 과제, 공지 등)을 STack 안에서 보이라고 했다. 정해진 것:
@@ -21,11 +21,14 @@ ADR-0042는 학교 강의실의 주차·활동 목록만 옮기고 내용은 학
 6. **파일**: 아직 받지 않은 파일은 `fileId: "school-file-<id>"`다. 학생이 내려받기(`GET …/files/school-file-<id>/content`)나 미리보기(`POST …/files/school-file-<id>/preview-sessions`)로 열면 그 학생의 학교 session으로 받아(`efile_download.acl`, 정책 상한 50 MiB) `files.api.ImportedFiles`로 과목 파일(용도 `school_file`, 업로드와 같은 이름·형식·악성코드 검사와 중복 제거)로 저장하고 첨부 그룹 하나에 붙인 뒤 서비스 파일 경로로 넘긴다(303/307). 그다음 목록은 서비스 파일 ID(숫자)를 준다. 권한은 `learning.SchoolFileAttachmentAccess`(그 과목 구성원 읽기만). 같은 과목의 다른 학생은 학교에 요청하지 않고 사본을 연다. 그 학생의 학교 쪽 읽음·조회수는 바뀌지 않는다. 썸네일·요약 같은 목록이 부르는 경로는 받지 않는다.
 7. **부르지 않는 학교 요청**: `online_view_navi`·`hisno`·`at`·`time`·`status`·`check`·`replace_*`, `online_learning*`, `accessone.hellolms.com`, `secondauth/*`, `activity_continue_update`, `notice_confirm`, 글·댓글·제출 쓰기와 지우기.
 8. **공지**: 학교 공지 목록(`POST /ilos/cls/st/notice/notice_list.acl`, 50개씩 쪽을 이어 읽는다)은 목록 화면이라 학교 쪽 읽음을 바꾸지 않는다(목록을 다시 읽어도 안 읽음 표시 `.is_read.unread`는 그대로이고, 읽음은 상세 `notice_view_pop.acl`에서만 바뀐다). 로그인 때 가져오기(ADR-0042)가 과목마다 강의실 화면 다음에 읽고, 학생이 공지 목록을 열 때 `list-interval`이 지났으면 그 학생의 학교 session으로 다시 읽는다. 공지는 과목마다 `school_notices`(V44)에, 학생 본인의 안 읽음 표시는 `school_notice_states`에 둔다. 학교 목록에서 사라진 공지는 그 첨부와 함께 지운다. 학생의 `GET /api/courses/{courseId}/notices`에 서비스 공지 뒤로 `noticeId: "school-<id>"`로 붙는다(쪽과 total은 두 목록을 이은 것). 상세 `GET /api/courses/{courseId}/notices/school-<id>`는 그 학생의 학교 session으로 학교 상세와 첨부 목록을 읽는다(학교에서 그 학생이 읽은 것으로 바뀐다). "공지를 확인했습니다"(`notice_confirm.acl`)와 댓글은 보내지 않는다. 본문은 글자로 바꿔 주고 저장하지 않는다. 첨부는 자료 파일과 같은 학교 파일(유형 `notice`)이고 같은 경로로 받아 둔다. 파일모음 목록에 공지 첨부가 없으므로 그 목록으로 지우지 않는다. 안 읽은 공지 수(`unreadNotices`)에는 학생 본인의 학교 목록에 안 읽음으로 나오고 STack에서 열지 않은 공지 수를 더한다. 이 수를 위해 공지를 열지 않는다. `communication`은 `learning`에 의존하지 않으므로 `catalog.api.SchoolCourseNotices` port를 `learning`이 구현한다. 학교 화면의 게시일에는 연도가 없어 과목 키의 학년도로 정하고, 표의 칸은 이름이 아니라 날짜로 읽히는지와 위치로 읽는다(같은 과목도 영어로 그려진다).
+9. **과제**: 학생의 `GET /api/courses/{courseId}/assignments`에 서비스 과제 뒤로 로그인 때 가져온 학교 과제 행(`school_activities`의 `report`)을 `assignmentId: "school-<id>"`로 붙인다(학교에 요청하지 않는다. `status`는 본인 완료 표시). 상세 `GET /api/courses/{courseId}/assignments/school-<id>`는 그 학생의 학교 session으로 학교 과제 상세(`report_view_form.acl?RT_SEQ=`)와 상세 화면이 부르는 첨부 목록 두 개(`efile_list.acl`: 첫째 `CONTENT_SEQ`는 과제 첨부, 둘째 스크립트 변수 `content_seq`는 학생 본인 제출 파일)만 읽는다. 상세가 스크립트로 부르는 다른 요청(제출 확인·수정·삭제 창, 평가·상호평가·차트, 질의응답)은 보내지 않는다. 기간은 표에서 날짜로 읽히는 첫째·둘째 칸(공개일, 마감일), 제출 여부와 일시는 `#submit_form .submit_info_box`의 일시로 정하고 학교 상태 표시 글자(`statusLabel`)는 보여 주기만 한다(영어 화면이 있어 칸 이름으로 정하지 않는다). 제출 일시가 마감 뒤면 `late`다. 제출 상태와 낸 글은 저장하지 않는다. 과제 첨부는 과목 공용 학교 파일(유형 `report`)로 자료 파일과 같은 경로로 받아 둔다. 학생 본인이 낸 파일은 주인 있는 학교 파일(유형 `report_submission`, `school_files.owner_user_id`, V45)이다: 목록·열기·받아 둔 사본의 첨부 권한 모두 그 학생에게만 열리고, 파일모음 목록이나 다른 학생의 열기로 지워지지 않으며, 그 학생이 다시 열 때 맞춘다. STack은 학교 과제를 내지 않는다. 서비스의 제출·임시저장 경로와 퀴즈 응시·설문 응답 경로에 학교 ID(`school-<id>`)가 오면 409 `school_submit_at_school`로 거절하고 학생은 `schoolUrl`로 학교에서 낸다.
+10. **할 일**: `GET /api/me/todo`(메인 화면 할 일, `/api/me/todo/count` 포함)에 로그인 때 가져온 학교 과제·시험·설문 중 마감이 있고, 열렸고(`open_at` 없음 또는 지남), 마감 전이고, 학교 화면의 만료·오프라인 시험 표시가 없고, 그 학생의 가져온 완료 표시가 없는 행을 서비스 활동과 한 마감 순서로 섞는다(`activityId: "school-<id>"`, `origin: "school"`, `schoolUrl`, 평가 ID 없음). 과목 수와 관계없이 쿼리 한 번(`learning.api.DueActivities.schoolDue`)이고 학교에 요청하지 않는다. 같은 마감이면 학교 활동이 앞이다(cursor 위치는 음수 ID). 완료 표시는 그 학생이 다시 로그인할 때(ADR-0042) 바뀐다. 학교 과제를 STack에서 열어도 할 일에서 빠지지 않는다.
 
 ## 결과
 - 학교 로그인 학생은 STack 자료 목록에서 학교 자료와 파일을 보고, 자료 본문을 STack에서 읽고, 파일을 STack 미리보기·내려받기로 연다. 학교 서버는 처음 연 학생 한 명에게서만 파일 요청을 받는다.
 - 서버를 다시 띄우거나 학교 session이 끝나면 학생은 다시 로그인해야 자료 본문과 아직 받지 않은 파일을 연다. 목록과 받아 둔 파일은 그대로 열린다.
 - 받아 둔 파일은 저장소(SeaweedFS)를 쓴다. 과목마다 학교 파일모음 크기(관찰: 과목당 수십 개, 파일 27 KB~5 MB)만큼이다. 학교 목록에서 사라지면 지운다.
+- 학교 과제는 STack 과제 목록과 할 일에 나오고 상세·첨부·본인 제출 정보를 STack에서 본다. 제출, 시험 응시, 설문 응답, 학교 평가·상호평가·질의응답은 학교 e-Class(`schoolUrl`)에서 한다.
 - `ppt`·`doc`·`xls`는 받아 두고 내려받을 수 있지만 미리보기 변환 대상이 아니다.
 
 ## 기각한 대안

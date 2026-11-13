@@ -8,6 +8,11 @@ import java.util.List;
  */
 public final class SchoolCourseContent {
 
+	/**
+	 * 학생 본인이 과제에 낸 파일의 {@link SchoolFile#activityType()}. 그 학생에게만 보이는 파일이다(파일모음에도 나오지 않는다).
+	 */
+	public static final String SUBMISSION = "report_submission";
+
 	private SchoolCourseContent() {
 	}
 
@@ -53,6 +58,28 @@ public final class SchoolCourseContent {
 	 */
 	public record SchoolNotice(String itemId, String title, String excerpt, LocalDateTime postedAt, Integer viewCount,
 			boolean read, boolean expired, String url) {
+	}
+
+	/**
+	 * 과제 상세({@code report_view_form.acl})와 로그인한 학생 본인의 제출 정보.
+	 * @param openAt 화면의 공개일. 읽지 못했으면 null
+	 * @param closeAt 화면의 마감일. 읽지 못했으면 null
+	 * @param body 과제 설명을 글자로 바꾼 것. 없으면 null
+	 * @param files 과제 첨부(같은 과목 수강생이 함께 보는 파일). 화면 순서
+	 * @param submissionLabel 학교 화면의 제출 상태 표시(예 {@code 정상제출}). 보여 주기만 하고 판정에 쓰지 않는다. 없으면 null
+	 * @param submittedAt 학생 본인의 제출 일시(제출 정보의 일시). 제출하지 않았으면 null
+	 * @param submissionBody 학생 본인이 글로 낸 내용. 없으면 null
+	 * @param submittedFiles 학생 본인이 낸 파일. 그 학생에게만 보인다
+	 */
+	public record SchoolAssignment(String title, LocalDateTime openAt, LocalDateTime closeAt, String body,
+			List<SchoolFile> files, String submissionLabel, LocalDateTime submittedAt, String submissionBody,
+			List<SchoolFile> submittedFiles) {
+
+		public SchoolAssignment {
+			files = List.copyOf(files);
+			submittedFiles = List.copyOf(submittedFiles);
+		}
+
 	}
 
 	/**

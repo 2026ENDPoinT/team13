@@ -13,6 +13,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.junit.jupiter.api.Test;
 
+import com.stackcorp.astra.identity.api.SchoolCourseContent;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolAssignment;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolPost;
@@ -164,6 +166,61 @@ class SchoolContentPagesTests {
 			assertThat(notice.author()).isEqualTo("텍스트2");
 			assertThat(notice.postedAt()).isEqualTo(LocalDateTime.of(2026, 11, 5, 21, 0));
 		}
+	}
+
+	@Test
+	void assignmentDetailReadsPeriodDescriptionAttachmentsAndTheStudentsOwnSubmission() throws IOException {
+		String html = text("school-report-view.html");
+		List<SchoolFile> files = SchoolContentPages.attachments(page("school-report-attachments.html"), "report",
+				"1000011");
+		List<SchoolFile> submitted = SchoolContentPages.attachments(page("school-report-submitted.html"),
+				SchoolCourseContent.SUBMISSION, "1000011");
+
+		SchoolAssignment report = SchoolContentPages.assignment(Jsoup.parse(html), files, submitted, 2026);
+
+		// 첫 efile_list는 과제 첨부, 둘째(content_seq 변수)는 학생 본인 제출 파일이다.
+		assertThat(SchoolContentPages.contentSeq(html)).isEqualTo("SYNKEY0000014");
+		assertThat(SchoolContentPages.submittedContentSeq(html)).isEqualTo("SYNKEY0000013");
+		assertThat(report.title()).isEqualTo("텍스트1");
+		assertThat(report.openAt()).isEqualTo(LocalDateTime.of(2026, 11, 10, 11, 39));
+		assertThat(report.closeAt()).isEqualTo(LocalDateTime.of(2026, 11, 17, 23, 59));
+		assertThat(report.body()).startsWith("텍스트3\n텍스트4").endsWith("텍스트13");
+		assertThat(report.files()).containsExactly(
+				new SchoolFile("SYNKEY0000015", "1000011", "텍스트1", 2_969L, "report", "1000011"));
+		assertThat(report.submittedAt()).isEqualTo(LocalDateTime.of(2026, 11, 10, 12, 1));
+		assertThat(report.submissionLabel()).isEqualTo("정상제출");
+		assertThat(report.submissionBody()).isNull();
+		assertThat(report.submittedFiles()).extracting(SchoolFile::fileSeq)
+			.containsExactly("SYNKEY0000017", "SYNKEY0000016");
+		assertThat(report.submittedFiles()).allSatisfy(
+				(f) -> assertThat(f.activityType()).isEqualTo(SchoolCourseContent.SUBMISSION));
+	}
+
+	@Test
+	void assignmentNotSubmittedHasNoSubmissionAndLabelsDoNotMatter() throws IOException {
+		String html = text("school-report-view.html")
+			.replace("content_seq = \"SYNKEY0000013\";", "")
+			.replaceAll("(?s)<div class=\"submit_info_box\">.*?</div>\\s*</div>", "</div>")
+			.replace("공개일", "Open Date")
+			.replace("마감일", "Due Date")
+			.replace("배점", "Points");
+
+		SchoolAssignment report = SchoolContentPages.assignment(Jsoup.parse(html), List.of(), List.of(), 2026);
+
+		assertThat(SchoolContentPages.submittedContentSeq(html)).isNull();
+		assertThat(report.openAt()).isEqualTo(LocalDateTime.of(2026, 11, 10, 11, 39));
+		assertThat(report.closeAt()).isEqualTo(LocalDateTime.of(2026, 11, 17, 23, 59));
+		assertThat(report.submittedAt()).isNull();
+		assertThat(report.submissionLabel()).isNull();
+		assertThat(report.submittedFiles()).isEmpty();
+	}
+
+	@Test
+	void aPageThatIsNotAnAssignmentIsNotFound() {
+		assertThatThrownBy(() -> SchoolContentPages.assignment(page("school-notice-list.html"), List.of(), List.of(),
+				2026))
+			.isInstanceOfSatisfying(SchoolLoginException.class,
+					(ex) -> assertThat(ex.kind()).isEqualTo(SchoolLoginException.Kind.NOT_FOUND));
 	}
 
 	private static Document page(String name) {

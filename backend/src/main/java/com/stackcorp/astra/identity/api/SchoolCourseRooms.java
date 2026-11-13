@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolAssignment;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
@@ -65,6 +66,14 @@ public interface SchoolCourseRooms {
 	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 그 공지를 보여 주지 않았다
 	 */
 	SchoolPost notice(String courseKey, String itemId, Duration requestTimeout, Duration remaining);
+
+	/**
+	 * 과제 하나의 상세, 첨부, 그 학생 본인의 제출 정보와 제출 파일({@code report_view_form.acl} 다음 {@code efile_list.acl} 둘). 학교에서
+	 * 조회수나 읽음 표시가 바뀔 수 있다. 제출·수정·삭제 요청은 보내지 않는다.
+	 * @param itemId 학교 과제 번호({@code RT_SEQ}, 강의실 목록 링크의 {@code n})
+	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 그 과제를 보여 주지 않았다
+	 */
+	SchoolAssignment assignment(String courseKey, String itemId, Duration requestTimeout, Duration remaining);
 
 	/**
 	 * 첨부 파일 하나를 받아 {@code target}에 쓴다.

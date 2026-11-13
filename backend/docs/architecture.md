@@ -54,7 +54,7 @@
 | [ADR-0039](adr/0039-institution-wall-clock-time.md) | 일시는 기관 시간대(기본 `Asia/Seoul`)의 벽시계로 두고, DB session과 JVM을 그 시간대에 고정한 뒤 시작할 때 세 값이 같은지 확인한다. `Instant`는 절대 시각이고 기관 시간대는 `GET /api/auth/methods`가 알린다 |
 | [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음은 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 녹음 바이트는 업로드 흐름(용도 `study_recording`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 구간 응답으로 내보낸다 |
 | [ADR-0042](adr/0042-school-activity-import.md) | 학번·학교 비밀번호 로그인 때 그 학생의 학교 session으로 과목마다 학교 강의실 첫 화면을 차례로 읽어 주차·학습활동 목록과 본인 완료 표시를 두고, 학생의 강의실 주차 목록에 `origin: "school"` 행으로 붙인다. 로그인은 짧게만 기다리고 나머지는 뒤에서 이어 가며, 학교 session은 그 작업이 끝나면 버린다. 내용(파일, 영상, 제출물)은 가져오지 않고 학교 e-Class에서 연다 |
-| [ADR-0043](adr/0043-school-content.md) | 학교 로그인으로 열린 학교 session(쿠키)을 STack session에 붙여 메모리에 두고(로그아웃·만료 때 닫는다), 학생이 STack에서 학교 자료·공지를 열 때 그 학생의 학교 session으로 학교 상세를 읽어 서비스 자료·공지 모양으로 준다. 학교 파일(자료·공지 첨부)은 학생이 열 때 받아 과목 파일(용도 `school_file`)로 저장해 같은 과목 구성원이 서비스 파일 경로로 함께 연다. 목록은 학교 쪽 상태를 바꾸지 않는 화면만 읽고(공지의 안 읽은 수도 그 목록에서 센다), 영상 학습창·2차 인증·출석 요청과 공지 확인은 부르지 않는다 |
+| [ADR-0043](adr/0043-school-content.md) | 학교 로그인으로 열린 학교 session(쿠키)을 STack session에 붙여 메모리에 두고(로그아웃·만료 때 닫는다), 학생이 STack에서 학교 자료·공지·과제를 열 때 그 학생의 학교 session으로 학교 상세를 읽어 서비스 자료·공지·과제 모양으로 준다. 학교 파일(자료·공지·과제 첨부)은 학생이 열 때 받아 과목 파일(용도 `school_file`)로 저장해 같은 과목 구성원이 서비스 파일 경로로 함께 연다. 학생 본인이 낸 과제 파일은 주인 있는 학교 파일이라 그 학생만 연다. 목록과 할 일은 학교 쪽 상태를 바꾸지 않는 화면이나 로그인 때 가져온 행만 쓰고(공지의 안 읽은 수도 그 목록에서 센다), 영상 학습창·2차 인증·출석 요청, 공지 확인, 제출은 부르지 않는다 |
 
 ## 2. 부하 가정
 
@@ -166,6 +166,7 @@ flowchart LR
 - 수강생 화면의 학습 열: 최근 학습과 진도율은 `learning`의 기록이고 `catalog`는 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.RosterLearning` port를 정의하고 `learning`이 구현한다. 한 쪽의 사용자 ID를 모아 사용자 수와 관계없이 같은 수의 쿼리로 묻는다.
 - 내 과목의 안 읽은 공지 수: 공지와 읽음 기록은 `communication`의 것이고 `catalog`는 `communication`에 의존하지 않으므로 `catalog`가 `catalog.api.UnreadCourseNotices` port를 정의하고 `communication`이 메인 화면의 `CourseNoticeDigest.unreadCounts`와 같은 집계로 구현한다. 목록의 과목 ID를 모아 과목 수와 관계없이 쿼리 한 번으로 묻는다.
 - 학교 강의실 공지: 학교 공지와 학생의 학교 읽음 표시는 학교 session을 쓰는 `learning`이 두고(ADR-0043), 공지 목록과 안 읽은 공지 수는 `communication`이 낸다. `communication`은 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.SchoolCourseNotices` port를 정의하고 `learning`이 구현한다. 안 읽은 수는 과목 수와 관계없이 쿼리 한 번이다. 학교 공지 상세(`/notices/school-{id}`)는 `learning`의 controller다.
+- 학교 과제: 과제 상세, 첨부, 본인 제출 정보는 학교 session을 쓰는 `learning`이 읽는다(ADR-0043, `/assignments/school-{id}`와 학교 항목 제출 거절은 `learning`의 controller). 서비스 과제 목록은 `assessment`가 내므로 `learning.api.SchoolAssignmentRows` port로 가져온 학교 과제 행을 받아 학생 목록 뒤에 붙인다. 할 일은 `home`이 `learning.api.DueActivities.schoolDue`(가져온 행과 본인 완료 표시, 과목 수와 관계없이 쿼리 한 번)를 서비스 활동과 한 마감 순서로 섞는다.
 - 아바타 사진 유무: 이름 옆에 아바타를 그리는 `communication`·`learning` 응답은 사용자 ID 옆에 사진 유무를 준다. 판정은 `files`가 `files.api.AvatarPhotos`로 내보내고 `files/avatar/AvatarImages`가 아바타 경로와 같은 규칙으로 구현한다. 현재 사진은 `identity.api.ProfileImages.withCurrent`로, 공통 과목은 `catalog.api.CourseMates`로 사람 수와 관계없이 쿼리 두 번 이하에 묻는다.
 
 ### 4.2 모듈 규칙
@@ -504,7 +505,7 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `GET /api/me/home` | 로그인한 사용자 | 6절의 집계. 알림마당 최근 공지 5개(`communityNotices`, 고정 먼저)와 읽지 않은 알림마당 고정 공지 5개까지(`noticesForMe`, 진입 공지 EP-0190)를 기관 역할의 대상으로 더한다. `courses[]`마다 `currentWeek`, `weekCount`, `progressPercent`, `attendance`(6절) |
-| `GET /api/me/todo?courseId=&cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수. 평가 활동에는 `assignmentId`·`quizId`·`surveyId` 중 하나. `courseId`를 주면 그 과목만(내 과목이 아니면 404, 담당 과목이면 비어 있다). cursor는 같은 `courseId`로만 이어 보낸다 |
+| `GET /api/me/todo?courseId=&cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수. 평가 활동에는 `assignmentId`·`quizId`·`surveyId` 중 하나. 학교 e-Class에서 가져온 과제·시험·설문(마감이 있고, 열렸고, 만료·오프라인 표시가 없고, 본인 완료 표시가 없는 것)이 같은 순서로 섞이고 `activityId: "school-<id>"`, `origin: "school"`, `schoolUrl`을 가진다(평가 ID 없음, 학교에 요청하지 않는다). `courseId`를 주면 그 과목만(내 과목이 아니면 404, 담당 과목이면 비어 있다). cursor는 같은 `courseId`로만 이어 보낸다 |
 | `GET /api/me/todo/count?courseId=` | 로그인한 사용자 | `{serverTime, total, truncated}`. 목록과 같은 값을 항목 없이. `courseId`는 목록과 같다 |
 | `GET /api/me/teaching` | 로그인한 사용자. 담당 과목만 센다 | 담당자 메인(교수 홈의 통계 줄, 확인할 일, 다가오는 일정). 원본에 같은 화면이 없는 새 계약이다. `courses[]`는 담당 과목마다 채점 대기 과제 수와 제출 수, 채점 대기 퀴즈 수와 응시 수, 변환 실패·변환 중 영상 콘텐츠 수, 답을 기다리는 질문 수, 처리할 신청 수(처리 권한이 없으면 null). `tasks[]`는 그 행(유형, 과목, 제목, 수, `activityId`·`assignmentId`·`quizId`·`questionId`), `upcoming[]`은 지금부터 14일 안에 시작(`open`)하거나 마감(`close`)하는 담당 과목 활동이고 행은 `GET /api/me/calendar`의 활동과 같은 속성에 `event`, `at`을 더했다. 담당 과목이 없으면(학생) 목록이 모두 비어 있다. 404를 쓰지 않는 것은 `/api/me/home`이 담당 과목에 빈 할 일을 주는 것과 맞춘 것이다 |
 
@@ -520,8 +521,10 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}` | 담당자 | 과제 수정. 읽은 `revision`이 다르면 409 `edit_conflict`. 점수 공개(`scoresReleased`)도 여기서 바꿀 수 있다 |
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}/release` | 담당자 | `{released, revision}`. 과제 전체를 보내지 않고 점수 공개와 거둠만 바꾼다. 읽은 `revision`이 다르면 409 `edit_conflict`, 성공하면 `revision`이 1 오른다. 성적부 공개 명령과 같은 감사 기록(`grade_item.release`·`grade_item.withhold`)과 알림("점수 공개" 보냄·거둠) |
 | `DELETE /api/courses/{courseId}/assignments/{assignmentId}` | 담당자 | 과제 삭제. `If-Match`에 읽은 `revision`(없으면 428, 다르면 409 `edit_conflict`). 활동에 삭제 표시만 남기고 제출물, 버전, 첨부 파일, 임시저장, 점수는 보존한다. 그 commit부터 과제, 제출, 제출 파일, 성적 항목은 누구에게도 없고 보낸 알림을 거둔다. 204 |
-| `GET /api/courses/{courseId}/assignments` | 과목 구성원 | 과제 목록. 담당자는 제출 수, 학생은 공개됐고 시작한 과제와 본인 상태만. 항목마다 `activityId`(주차 목록·할 일·캘린더의 활동 ID) |
+| `GET /api/courses/{courseId}/assignments` | 과목 구성원 | 과제 목록. 담당자는 제출 수, 학생은 공개됐고 시작한 과제와 본인 상태만. 항목마다 `activityId`(주차 목록·할 일·캘린더의 활동 ID). 학생에게는 그 뒤에 학교 e-Class 과제(`assignmentId`·`activityId`: `"school-<id>"`, `origin: "school"`, `schoolUrl`, 본인 완료 표시로 정한 `status`)가 학교 화면 순서로 붙는다 |
 | `GET /api/courses/{courseId}/assignments/{assignmentId}` | 담당자, 볼 수 있는 학생 | 과제, 서버 시각, 제출 구간. 학생에게는 본인 제출 상태, 현재 버전, 임시저장, 공개한 점수만 |
+| `GET /api/courses/{courseId}/assignments/school-{id}` | 학교 로그인한 그 과목 학생 | 학교 과제 상세. 그 학생의 학교 session으로 과제 상세(`report_view_form.acl`)와 과제 첨부·본인 제출 파일 목록(`efile_list.acl` 둘)을 읽는다. 서비스 학생 과제 상세 모양(`assignment`, `phase`, `serverTime`, `submission`)에 `origin`, `schoolUrl`. 과제 첨부는 과목 공용 학교 파일, 본인이 낸 파일은 그 학생만 여는 학교 파일. 학교 session이 없거나 끝났으면 409 `school_signin_required` |
+| `POST …/assignments/school-{id}/submission`, `PUT …/assignments/school-{id}/submission/draft`, `POST …/quizzes/school-{id}/attempts`, `POST …/surveys/school-{id}/completion` | 그 과목 구성원 | 학교 항목은 STack에서 제출·응시·응답하지 않는다. 409 `school_submit_at_school`(`schoolUrl`로 학교에서 한다). 볼 수 없는 항목은 404 |
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}/submission/draft` | 수강생 본인 | 임시저장. 제출로 치지 않는다 |
 | `POST /api/courses/{courseId}/assignments/{assignmentId}/submission` | 수강생 본인 | 최종 제출. `Idempotency-Key`와 `expectedVersion` 필수. `uploadIds`(새 업로드)와 `keepFileIds`(현재 버전의 파일 가운데 이어받을 파일)를 합쳐 5개까지. 새 버전과 첨부를 한 transaction으로 확정하고 receipt를 돌려준다. 앞 버전의 첨부는 그대로 남는다. 이어받을 수 없는 파일이나 쓸 수 없는 업로드는 409 `attachment_not_ready`. 201 |
 | `GET /api/courses/{courseId}/assignments/{assignmentId}/submissions` | 담당자 | 최종 제출한 학생, 접수 시각, 지각, 버전 수, 점수 |

@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -17,6 +18,8 @@ import com.stackcorp.astra.files.api.Attachments.AttachedFile;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.learning.api.ReportActivities.ReportActivity;
 import com.stackcorp.astra.learning.api.ReportActivities.ReportActivityInput;
+import com.stackcorp.astra.learning.api.SchoolAssignmentRows;
+import com.stackcorp.astra.learning.api.SchoolAssignmentRows.SchoolAssignmentRow;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.idempotency.Idempotency;
@@ -64,14 +67,18 @@ class AssignmentController {
 
 	private final Idempotency idempotency;
 
+	private final SchoolAssignmentRows schoolAssignments;
+
 	AssignmentController(AssignmentAccess access, AssignmentService assignments, SubmissionRecords submissions,
-			SubmissionService submissionService, RateLimiter rateLimiter, Idempotency idempotency) {
+			SubmissionService submissionService, RateLimiter rateLimiter, Idempotency idempotency,
+			SchoolAssignmentRows schoolAssignments) {
 		this.access = access;
 		this.assignments = assignments;
 		this.submissions = submissions;
 		this.submissionService = submissionService;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
+		this.schoolAssignments = schoolAssignments;
 	}
 
 	/** 201. {@code Idempotency-Key}를 보내면 같은 key의 재전송은 처음 응답을 다시 받고 과제를 더 만들지 않는다(SC-05). */
@@ -141,8 +148,13 @@ class AssignmentController {
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
 	}
 
+	/**
+	 * 학생에게는 서비스 과제 뒤에 학교 e-Class 강의실에서 가져온 과제(ADR-0043, {@code assignmentId: "school-<id>"},
+	 * {@code origin: "school"})가 학교 화면 순서로 붙는다. 학교 과제 상세는
+	 * {@code GET /api/courses/{courseId}/assignments/school-<id>}(learning)이다.
+	 */
 	@GetMapping("/api/courses/{courseId}/assignments")
-	ResponseEntity<List<AssignmentItem>> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
+	ResponseEntity<List<?>> list(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		CourseRole role = this.access.role(actor.userId(), courseId);
 		LocalDateTime now = this.access.now();
 		List<Assignment> all = this.access.all(courseId);
@@ -156,7 +168,13 @@ class AssignmentController {
 		List<Assignment> visible = all.stream().filter((a) -> a.activity().openToStudents(now)).toList();
 		Map<Long, Submission> mine = this.submissions.ofUser(actor.userId(),
 				visible.stream().map(Assignment::assignmentId).toList());
-		return ok(visible.stream().map((a) -> AssignmentItem.of(a, now, status(mine.get(a.assignmentId())), null)).toList());
+		List<Object> items = new ArrayList<>(
+				visible.stream().map((a) -> AssignmentItem.of(a, now, status(mine.get(a.assignmentId())), null)).toList());
+		if (role == CourseRole.STUDENT) {
+			this.schoolAssignments.of(actor.userId(), courseId, now)
+				.forEach((row) -> items.add(SchoolAssignmentItem.of(row)));
+		}
+		return ok(items);
 	}
 
 	@GetMapping("/api/courses/{courseId}/assignments/{assignmentId}")
@@ -336,6 +354,24 @@ class AssignmentController {
 					activity.openAt(), activity.closeAt(), a.settings().lateUntil(), activity.published(),
 					a.phase(now).code(), status,
 					counts == null ? null : counts.submitted(), counts == null ? null : counts.late());
+		}
+
+	}
+
+	/**
+	 * 학생 목록의 학교 e-Class 과제. {@link AssignmentItem}과 같은 이름의 값에 {@code origin}, {@code schoolUrl}을 더한다. 로그인 때
+	 * 가져온 학교 강의실 행의 값이다(목록을 보여 준다고 학교에 요청하지 않는다).
+	 * @param assignmentId {@code "school-<id>"}. 상세 경로와 주차 목록의 학교 행이 같은 ID를 쓴다
+	 * @param status 그 학생의 학교 강의실 완료 표시가 있으면 submitted, 없으면 not_submitted
+	 */
+	record SchoolAssignmentItem(String assignmentId, String activityId, String origin, int weekNo, String title,
+			LocalDateTime openAt, LocalDateTime closeAt, LocalDateTime lateUntil, boolean published, String phase,
+			String status, String schoolUrl) {
+
+		static SchoolAssignmentItem of(SchoolAssignmentRow row) {
+			return new SchoolAssignmentItem(row.activityId(), row.activityId(), "school", row.weekNo(), row.title(),
+					row.openAt(), row.closeAt(), null, true, row.phase(), row.done() ? "submitted" : "not_submitted",
+					row.schoolUrl());
 		}
 
 	}

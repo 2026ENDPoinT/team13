@@ -13656,6 +13656,19 @@
      "relType": null
     },
     {
+     "_id": "4rsrsE7uRW2gPGzpc",
+     "name": "그 학생에게만 보이는 파일(본인 제출 파일)의 학생 사용자 ID. 과목 공용이면 NULL",
+     "pName": "owner_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "그 학생에게만 보이는 파일(본인 제출 파일)의 학생 사용자 ID. 과목 공용이면 NULL",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
      "_id": "3uwEGNR5EAx88eAsY",
      "name": "학교 화면의 파일 이름",
      "pName": "file_name",
