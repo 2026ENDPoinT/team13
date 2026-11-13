@@ -224,6 +224,12 @@ export async function createServerFolder(courseId: Id, name: string, idempotency
   return folder;
 }
 
+/** `DELETE …/folders/{id}` with the version the view holds; what becomes of the items inside is the server's answer. */
+export async function deleteServerFolder(folder: { id: Id; version: number; courseId: Id }): Promise<void> {
+  await apiSend<null>("DELETE", `${BASE}/folders/${encodeURIComponent(folder.id)}`, undefined, { ifMatch: folder.version });
+  void refreshCourseView(folder.courseId);
+}
+
 export type PlacementKind = "course-files" | "recordings" | "documents";
 
 /** `PUT …/placements/{kind}/{itemId}` with `If-Match: "<version>"` ("0" for an item in the course root). */
