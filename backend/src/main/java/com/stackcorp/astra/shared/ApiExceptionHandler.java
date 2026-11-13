@@ -1,5 +1,8 @@
 package com.stackcorp.astra.shared;
 
+import org.apache.tomcat.util.http.fileupload.FileUploadException;
+import org.apache.tomcat.util.http.fileupload.MultipartStream.MalformedStreamException;
+import org.apache.tomcat.util.http.fileupload.impl.InvalidContentTypeException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -12,6 +15,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import org.springframework.web.util.DisconnectedClientHelper;
 
@@ -61,6 +65,36 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 		}
 		RequestIdFilter.logUnhandled(request, ex);
 		return problem(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error", "요청을 처리하지 못했습니다.").build();
+	}
+
+	/**
+	 * multipart 본문을 나누지 못한 요청(DispatcherServlet이 handler를 찾기 전에 나눈다). client가 보낸 본문이 multipart 형식이 아니면
+	 * 400이다: boundary가 없거나, 끝 boundary 전에 본문이 끝났거나, Content-Type이 받을 수 있는 multipart가 아니다. 임시 디스크에 받지
+	 * 못한 것(spool 위치가 없다, 디스크가 찼다)처럼 서버 쪽 실패는 {@link #unexpected}와 같은 500이다. 크기 초과는
+	 * {@link #handleMaxUploadSizeExceededException}의 413이고, {@code file} part가 없는 것은 handler의 400이다.
+	 */
+	@ExceptionHandler(MultipartException.class)
+	ResponseEntity<ProblemDetail> multipart(MultipartException ex, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+		if (malformedByClient(ex)) {
+			return problem(HttpStatus.BAD_REQUEST, "invalid_request", "multipart 본문 형식이 올바르지 않습니다.").build();
+		}
+		return unexpected(ex, request, response);
+	}
+
+	/**
+	 * Tomcat의 multipart parser가 본문 자체를 거부했는지. 본문을 읽거나 임시 파일에 쓰다 난 입출력 오류는 parser가
+	 * {@code IOFileUploadException}이나 {@code FileUploadException}의 cause로 감싸므로, cause가 없는 parser 오류와 형식 오류
+	 * 예외만 client 탓으로 본다.
+	 */
+	static boolean malformedByClient(Throwable ex) {
+		for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+			if (cause instanceof MalformedStreamException || cause instanceof InvalidContentTypeException
+					|| (cause.getClass() == FileUploadException.class && cause.getCause() == null)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	@Override
