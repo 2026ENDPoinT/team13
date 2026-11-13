@@ -10,7 +10,8 @@ import { backendStatus, backendSettled, connect as connectBackend } from "../../
 import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { summaryView } from "../../shared/page-summary.tsx";
 import { createCoursePdfViewer } from "../../shared/document-viewer.tsx";
-import { getFolder, folderOf, type StudyFolder } from "../../shared/study-folders.ts";
+import { getFolder, folderOf, folderState, useStudyRoomStore, type StudyFolder } from "../../shared/study-folders.ts";
+import { serverStudyCourse, studyRoomMessage } from "../../shared/study-room-remote.ts";
 import { courseFiles, folderHref } from "./study-files.tsx";
 import { createNewMenu } from "./study-new.tsx";
 import { serverPreview } from "../../shared/preview-remote.tsx";
@@ -186,6 +187,7 @@ export function renderCourseStudy(ctx: ScreenCtx): ReactNode {
 }
 
 function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
+  useStudyRoomStore();
   const courseId = ctx.params.get("kj") || "";
   const course = courseById(courseId);
   const docId = ctx.params.get("doc");
@@ -201,12 +203,27 @@ function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
     );
   }
   const folderId = ctx.params.get("f");
+  // Server folders are known once the backend answered and the course's study room was read.
+  const folders = folderId || docId ? folderState(course.id) : { state: "ready" as const, error: null };
+  if (folderId && (!backendSettled() || folders.state !== "ready")) {
+    return (
+      <section className="course-study" data-area="home">
+        <h1>{`${course.cardTitle || course.ko} 학습실`}</h1>
+        {folders.state === "failed"
+          ? <ErrorState title="폴더를 불러오지 못했습니다" body={studyRoomMessage(folders.error)} actions={<Link href={folderHref(courseId)} className="btn btn-secondary">학습실로</Link>} />
+          : <LoadingState title="폴더를 불러오는 중입니다" />}
+      </section>
+    );
+  }
   const folder = folderId ? getFolder(folderId, course.id) : null;
   if (folderId && !folder) {
     return (
       <section className="course-study" data-area="home">
         <h1>{`${course.cardTitle || course.ko} 학습실`}</h1>
-        <ErrorState title="폴더를 찾을 수 없습니다" body="삭제되었거나 다른 브라우저에서 만든 폴더입니다." actions={<Link href={folderHref(courseId)} className="btn btn-secondary">학습실로</Link>} />
+        <ErrorState
+          title="폴더를 찾을 수 없습니다" body={serverStudyCourse(course.id) != null ? "삭제되었거나 이 과목의 폴더가 아닙니다." : "삭제되었거나 다른 브라우저에서 만든 폴더입니다."}
+          actions={<Link href={folderHref(courseId)} className="btn btn-secondary">학습실로</Link>}
+        />
       </section>
     );
   }

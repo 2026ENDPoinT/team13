@@ -7,9 +7,10 @@ import { Icon } from "../../ui/icon.tsx";
 import { Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { readQuery, pageSearch } from "../../shared/query.tsx";
 import { listCoursePdfs, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
-import { backendStatus, courseIdFor } from "../../shared/backend.ts";
-import { listRecordings, activeRecording, onRecordingEvent, formatDuration, type RecordingRecord } from "../../shared/course-recordings.ts";
-import { listFolders, createFolder, placements, type StudyFolder } from "../../shared/study-folders.ts";
+import { backendStatus, backendState, courseIdFor, subscribe as onBackendChange } from "../../shared/backend.ts";
+import { listRecordings, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, type RecordingRecord } from "../../shared/course-recordings.ts";
+import { listFolders, createFolder, placements, useStudyRoomStore, type StudyFolder } from "../../shared/study-folders.ts";
+import { serverStudyCourse, studyRoomMessage, studyUsage, usageText } from "../../shared/study-room-remote.ts";
 import { serverCourseViews } from "../../shared/course-view.ts";
 import { thumbnailImage } from "../../shared/preview-remote.tsx";
 import { ApiError } from "../../shared/api.ts";
@@ -57,6 +58,8 @@ function useStudyRefresh(load: () => void) {
     };
     const timer = window.setInterval(refresh, REFRESH_MS);
     const off = onRecordingEvent(refresh);
+    // The study room moves to the server (or back) when the backend connection settles or the login changes.
+    const offBackend = onBackendChange(refresh);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener(CHANGED, refresh);
@@ -64,6 +67,7 @@ function useStudyRefresh(load: () => void) {
     return () => {
       window.clearInterval(timer);
       off();
+      offBackend();
       window.removeEventListener("focus", refresh);
       window.removeEventListener(CHANGED, refresh);
       document.removeEventListener("visibilitychange", refresh);
@@ -127,12 +131,19 @@ function PdfCard({ record, showCourse }: { record: CoursePdfRecord; showCourse: 
   );
 }
 
+/** Where a recording stands, when it is not simply playable: the server's malware scan, or kept in this browser only. */
+function recordingStatus(record: RecordingRecord): string | null {
+  if (record.remote) return record.state === "scanning" ? "검사 중" : record.state === "rejected" ? "검사 거부" : null;
+  if (backendStatus() !== "ready") return null;
+  return record.uploadError ? `이 브라우저에만 저장 · ${record.uploadError}` : "이 브라우저에만 저장";
+}
+
 function RecordingCard({ record, showCourse }: { record: RecordingRecord; showCourse: boolean }) {
   return (
     <FileCard
       href={recordingHref(record.courseId, record.id)} kind="rec" badge={record.source === "audio" ? "오디오 파일" : record.source === "tab" ? "탭 녹음" : "마이크 녹음"}
       title={record.title} iconName="play"
-      meta={[formatDuration(record.durationMs), showCourse ? courseName(courseById(record.courseId)) : shortDate.format(record.createdAt)]}
+      meta={[recordingStatus(record) || formatDuration(record.durationMs), showCourse ? courseName(courseById(record.courseId)) : shortDate.format(record.createdAt)]}
     />
   );
 }
@@ -228,7 +239,10 @@ function UserFolderCard({ course, folder, count }: { course: Course; folder: Stu
         <span className="sf-open"><Icon name="chev" /></span>
       </span>
       <b className="sf-name" title={folder.name}>{folder.name}</b>
-      <span className="sf-meta"><span className="sf-count">{count ? `${count}개` : "비어 있음"}</span></span>
+      <span className="sf-meta">
+        <span className="sf-count">{count ? `${count}개` : "비어 있음"}</span>
+        {folder.local ? <span>이 브라우저에만 저장</span> : null}
+      </span>
     </Link>
   );
 }
@@ -283,10 +297,12 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   const folderId = folder ? folder.id : "";
   const samples = folder ? [] : samplesOf(course.id);
   const [data, setData] = useState<StudyData | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const [naming, setNaming] = useState(false);
   const [notice, setNotice] = useState({ text: "", isError: false });
   const [, setFolderVersion] = useState(0);
+  const [moving, setMoving] = useState(false);
+  useStudyRoomStore();
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -300,9 +316,9 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
     Promise.all([listCoursePdfs(course.id), listRecordings(course.id)]).then(([pdfs, recordings]) => {
       if (!live.current) return;
       setData({ pdfs, recordings });
-      setFailed(false);
-    }).catch(() => {
-      if (live.current) setFailed(true);
+      setFailed(null);
+    }).catch((error: unknown) => {
+      if (live.current) setFailed(error instanceof ApiError ? studyRoomMessage(error) : "");
     });
   });
 
@@ -314,20 +330,44 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   const recordings = shown.recordings.filter((record) => here(record.id));
   const folders = folder ? [] : listFolders(course.id);
   const countIn = (id: string) => [...shown.pdfs, ...shown.recordings].filter((record) => placed[record.id] === id).length;
-  const status = failed
+  const onServer = serverStudyCourse(course.id) != null;
+  // Items still only in this browser while the study room is on the server: offered for an explicit move (course root).
+  const localRecordings = folder ? 0 : shown.recordings.filter((record) => !record.remote).length;
+  const localFolderCount = folder ? 0 : folders.filter((item) => item.local).length;
+  const accountName = backendState().me?.name || "";
+  const status = failed != null
     ? backendStatus() === "ready"
-      ? "ASTRA 서버에서 PDF 목록을 받지 못했거나 이 브라우저의 녹음을 읽지 못했습니다. 잠시 후 다시 시도해 주세요."
+      ? `ASTRA 서버에서 PDF와 녹음 목록을 받지 못했습니다. ${failed || "잠시 후 다시 시도해 주세요."}`
       : "이 브라우저의 저장소에서 PDF와 녹음을 읽지 못했습니다. 사이트 데이터 접근 설정을 확인해 주세요."
     : data
-      ? [folders.length && `폴더 ${folders.length}개`, `PDF ${pdfs.length}개`, `녹음 ${recordings.length}개`].filter(Boolean).join(" · ")
+      ? [folders.length && `폴더 ${folders.length}개`, `PDF ${pdfs.length}개`, `녹음 ${recordings.length}개`, onServer && usageText(studyUsage())].filter(Boolean).join(" · ")
       : "PDF와 녹음을 불러오는 중입니다";
   const courseId = !folder && serverOwned(course.id) ? courseIdFor(course.id) : null;
 
   return (
     // The area stops being busy after the first answer, so screen readers announce the failure text.
-    <div className="course-study__files" aria-busy={data || failed ? undefined : "true"}>
+    <div className="course-study__files" aria-busy={data || failed != null ? undefined : "true"}>
       <p className="course-study__count" role="status" aria-live="polite">{status}</p>
       <p className={`course-study__notice${notice.isError ? " is-error" : ""}`} role="status" aria-live="polite" hidden={!notice.text}>{notice.text}</p>
+      {onServer && data && (localRecordings || localFolderCount) ? (
+        <div className="course-study__notice" role="note">
+          <p>{`이 브라우저에만 저장된 ${[localFolderCount && `폴더 ${localFolderCount}개`, localRecordings && `녹음 ${localRecordings}개`].filter(Boolean).join("와 ")}가 있습니다. 옮기면 지금 로그인한 계정${accountName ? `(${accountName})` : ""}에 저장되고, 서버가 받은 항목만 이 브라우저에서 지워집니다. 이 컴퓨터를 다른 사람과 함께 쓴다면 내 녹음인지 확인한 뒤 옮기세요.`}</p>
+          <Button
+            kind="secondary" disabled={moving}
+            onClick={() => {
+              setMoving(true);
+              say("이 브라우저의 학습실 자료를 내 계정으로 옮기고 있습니다.");
+              moveAllToAccount(course.id).then((text) => say(text), (error: unknown) => say(error instanceof Error ? error.message : String(error), true))
+                .finally(() => {
+                  setMoving(false);
+                  notifyStudyChanged();
+                });
+            }}
+          >
+            {moving ? "옮기는 중…" : "모두 내 계정으로 옮기기"}
+          </Button>
+        </div>
+      ) : null}
       <div className="study-grid">
         {data ? (
           <>
@@ -338,19 +378,18 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
                 onDone={(name) => {
                   setNaming(false);
                   if (name === null) return;
-                  try {
-                    createFolder(course.id, name);
+                  createFolder(course.id, name).then(() => {
                     say(`"${name.trim()}" 폴더를 만들었습니다.`);
-                  } catch (error) {
+                  }, (error: unknown) => {
                     say(error instanceof Error ? error.message : String(error), true);
-                  }
-                  setFolderVersion((n) => n + 1);
+                  }).finally(() => setFolderVersion((n) => n + 1));
                 }}
               />
             ) : null}
-            {folders.map((item) => <UserFolderCard key={item.id} course={course} folder={item} count={countIn(item.id)} />)}
+            {/* Server folder and recording ids are both small numbers: keys carry the kind. */}
+            {folders.map((item) => <UserFolderCard key={`folder-${item.id}`} course={course} folder={item} count={countIn(item.id)} />)}
             {pdfs.map((record) => <PdfCard key={record.id} record={record} showCourse={false} />)}
-            {recordings.map((record) => <RecordingCard key={record.id} record={record} showCourse={false} />)}
+            {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
             {samples.map((item) => <SampleCard key={item.id} item={item} showCourse={false} />)}
           </>
         ) : null}
@@ -416,7 +455,7 @@ function SearchResults({ q }: { q: string }) {
     <div aria-busy={found ? undefined : "true"}>
       <div className="study-grid">
         {found ? found.pdfs.map((record) => <PdfCard key={record.id} record={record} showCourse />) : null}
-        {found ? found.recordings.map((record) => <RecordingCard key={record.id} record={record} showCourse />) : null}
+        {found ? found.recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse />) : null}
         {samples.map((item) => <SampleCard key={item.id} item={item} showCourse />)}
       </div>
     </div>
