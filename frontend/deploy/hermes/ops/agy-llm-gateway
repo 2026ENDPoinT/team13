@@ -159,19 +159,24 @@ def assistant_messages(body):
     return [{'role': 'system', 'content': system}, {'role': 'user', 'content': prompt}]
 
 
+def prewarm_assistant():
+    """도우미용 agy 하나를 부팅해 둔다(헤르메스 플러그인의 WarmPool, 5분 TTL). 이미 있으면 아무것도 하지 않는다."""
+    system = _assist_system['text']
+    if system is None or breaker.skip() is not None:
+        return
+    try:
+        env = dict(os.environ)
+        resolved = transport.resolve_agy(client.command, env)
+        if resolved is not None:
+            spec = (resolved, transport.native_model(ASSIST_MODEL), transport.system_prompt(system, []), [], env)
+            transport.POOL.prewarm(transport.pool_key(*spec), spec, transport.DEFAULT_PREWARM_TTL, 1)
+    except Exception as error:
+        log(event='assistant_prewarm_failed', error=type(error).__name__)
+
+
 def keep_assistant_warm():
-    """도우미용 agy 하나를 늘 부팅해 둔다(헤르메스 플러그인의 WarmPool, 5분 TTL 마다 새로)."""
     while True:
-        system = _assist_system['text']
-        if system is not None and breaker.skip() is None:
-            try:
-                env = dict(os.environ)
-                resolved = transport.resolve_agy(client.command, env)
-                if resolved is not None:
-                    spec = (resolved, transport.native_model(ASSIST_MODEL), transport.system_prompt(system, []), [], env)
-                    transport.POOL.prewarm(transport.pool_key(*spec), spec, transport.DEFAULT_PREWARM_TTL, 1)
-            except Exception as error:
-                log(event='assistant_prewarm_failed', error=type(error).__name__)
+        prewarm_assistant()
         time.sleep(30)
 
 
@@ -230,6 +235,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, assistant_reply(text, ASSIST_MODEL))
         except Exception as error:
             reason = type(error).__name__
+        finally:
+            # 이 요청이 미리 띄운 agy 를 가져갔으므로 다음 요청을 위해 곧바로 하나를 새로 띄운다.
+            threading.Thread(target=prewarm_assistant, daemon=True).start()
         fb_started = time.monotonic()
         try:
             text = assistant_fallback(messages, ASSIST_BUDGET - (fb_started - started))
