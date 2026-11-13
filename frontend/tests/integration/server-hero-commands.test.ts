@@ -12,11 +12,12 @@ const control = vi.hoisted(() => ({
   home: null as HomeData | null, todo: null as TodoList | null, error: null as unknown,
   listeners: [] as ((next: BackendSnapshot) => void)[],
   repaint: () => {}, navigate: vi.fn(), ask: vi.fn(), askServer: vi.fn(), execute: vi.fn(), loadMore: vi.fn(),
-  run: null as { status: string } | null,
+  run: null as { status: string; owner?: string } | null, createServerRun: vi.fn(),
 }));
 vi.mock("../../src/shared/backend.ts", () => ({
   backendStatus: () => control.status,
   backendState: () => ({ status: control.status, me: { userId: control.userId } }),
+  currentUserId: () => control.status === "ready" ? String(control.userId) : null,
   serverCourses: () => control.status === "ready" ? control.courses.map(({ course, remote }) => ({ kj: course.id, remote })) : [],
   subscribe: (listener: (next: BackendSnapshot) => void) => { control.listeners.push(listener); return () => true; },
 }));
@@ -42,6 +43,7 @@ vi.mock("../../src/shared/home-remote.ts", () => {
 vi.mock("../../src/store.ts", () => ({ render: () => control.repaint() }));
 vi.mock("../../src/router.tsx", () => ({
   navigate: control.navigate,
+  resolveScreen: (pathname: string, params: URLSearchParams) => ({ id: `screen:${pathname}:${params.get("n")}` }),
   Link: ({ children, href, ...props }: { children: ReactNode; href: string }) => createElement("a", { ...props, href, onClick: (event: { preventDefault(): void }) => { event.preventDefault(); control.navigate(href); } }, children),
 }));
 vi.mock("../../src/shared/routes.ts", () => ({
@@ -55,8 +57,12 @@ vi.mock("../../src/shared/assistant/resolve.ts", () => ({
 }));
 vi.mock("../../src/shared/assistant/run.ts", () => ({ ask: control.ask, execute: control.execute }));
 vi.mock("../../src/shared/assistant/server-ask.ts", () => ({ askServer: control.askServer }));
+// The real runState shows a run only to its owner: sample runs (no owner) stay hidden while signed in.
 vi.mock("../../src/shared/assistant/plan.ts", () => ({
-  runState: () => control.run, planGroups: () => [], startRun: vi.fn(), stopRun: vi.fn(),
+  runState: () => control.run && (control.run.owner ?? null) === (control.status === "ready" ? String(control.userId) : null) ? control.run : null,
+  planGroups: () => [], startRun: vi.fn(), stopRun: vi.fn(), createServerRun: control.createServerRun,
+  screenKey: (screenId: string, params: URLSearchParams) => `${screenId}@${params.get("kj") || ""}`,
+  stepInfo: () => ({ type: "video", title: "계획 단계", meta: "", href: "/a", external: false }),
 }));
 vi.mock("../../src/shared/assistant-tray.tsx", () => ({ foldTray: vi.fn(), focusTray: vi.fn(), openTray: vi.fn(), refreshTray: vi.fn() }));
 
@@ -226,6 +232,24 @@ describe("로그인 서버 히어로 명령", () => {
     type("데베 과제 열어줘");
     await act(async () => key("Enter"));
     expect(host.textContent).toContain("AI에 연결하지 못했습니다");
+  });
+
+  it("계획 답은 이 사용자의 계획으로 만들고 계획 카드를 띄운다(단계 키는 그 주소가 여는 화면)", async () => {
+    const video = { id: "srv-12", kind: "video", title: "6주차 강의", course: "기계학습", due: null, href: "/ilos/cls/st/activity/activity_form.acl?m=lecture_weeks&n=srv-12&kj=c3", external: false, mode: "auto" };
+    const quiz = { id: "school-7", kind: "test", title: "학교 퀴즈", course: "기계학습", due: "2026-11-14T23:59:00", href: "https://eclass.seoultech.ac.kr/x", external: true, mode: "confirm" };
+    control.askServer.mockResolvedValue({ ok: true, say: "오늘 할 일 2개예요", actions: [], plan: [video, quiz] });
+    control.createServerRun.mockImplementation(() => { control.run = { status: "ready", owner: "1" }; });
+    type("오늘 할 일 전부 끝낼래");
+    await act(async () => key("Enter"));
+    expect(control.createServerRun).toHaveBeenCalledWith([
+      { ...video, key: "screen:/ilos/cls/st/activity/activity_form.acl:srv-12@c3" },
+      { ...quiz, key: "external:school-7" },
+    ], "1");
+    expect(host.textContent).toContain("계획을 요약했어요");
+    act(paint);
+    expect(host.querySelector(".hero-plan")?.hasAttribute("hidden")).toBe(false);
+    expect(host.querySelector(".hero-plan-accept")).not.toBeNull();
+    expect(control.navigate).not.toHaveBeenCalled();
   });
 
   it("백엔드는 있는데 로그인 전이면 묻지 않고 로그인 안내를 보인다", async () => {

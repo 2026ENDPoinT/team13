@@ -5,7 +5,9 @@
 import { Fragment, useEffect, useReducer, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { Badge, Button, Dialog, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { Icon } from "../../ui/icon.tsx";
-import { Link, closeDialog } from "../../router.tsx";
+import { Link, closeDialog, navigate } from "../../router.tsx";
+import { completeStep, completionToken, screenKey } from "../../shared/assistant/plan.ts";
+import { refreshTray } from "../../shared/assistant-tray.tsx";
 import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { toast } from "../../store.ts";
 import { ApiError } from "../../shared/api.ts";
@@ -667,6 +669,8 @@ function SubmitForm({ courseId, assignmentId, assignmentKey: key, memo, data, lo
     clearTimeout(s.draftTimer);
     s.busy = true;
     say("ASTRA 서버에 제출하고 있습니다.");
+    // 계획의 이 과제 단계: 보낼 때의 선택에 묶는다(다른 단계로 옮긴 뒤 끝난 제출은 그 단계를 끝내지 않는다).
+    const planToken = completionToken(screenKey(`srv-report-${assignmentId}`, new URLSearchParams(location.search)));
     try {
       const receipt = await submitAssignment(courseId, assignmentId, {
         expectedVersion: current.version,
@@ -682,6 +686,7 @@ function SubmitForm({ courseId, assignmentId, assignmentKey: key, memo, data, lo
       toast("과제를 제출했습니다");
       repaint();
       void assignmentDetails.load(key, courseId, assignmentId);
+      if (completeStep(planToken, { navigate, event: "report-submitted" })) refreshTray();
     } catch (error) {
       if (isConflict(error, "version_conflict") || isConflict(error, "deadline_passed") || missing(error)) {
         say(assignmentMessage(error), true);

@@ -36,7 +36,7 @@ describe("askServer", () => {
       text: "기계학습 강의실로 가줘",
       context: { courseId: 731, activityId: "school-12", history: [] },
     });
-    expect(result).toEqual({ ok: true, say: "기계학습 강의실로 갈게요", actions: [{ label: "기계학습", href: "/ilos/cls/st/submain/submain_form.acl?kj=c12", external: false }] });
+    expect(result).toEqual({ ok: true, say: "기계학습 강의실로 갈게요", actions: [{ label: "기계학습", href: "/ilos/cls/st/submain/submain_form.acl?kj=c12", external: false }], plan: null });
   });
 
   it("내 과목이 아닌 kj 는 보내지 않고, n 이 없으면 act 를 쓴다", async () => {
@@ -61,9 +61,23 @@ describe("askServer", () => {
     ]);
   });
 
+  it("계획 답의 단계를 검사해 넘기고, 따라갈 수 없거나 모양이 틀린 단계는 버린다", async () => {
+    const video = { id: "srv-12", kind: "video", title: "6주차 강의", course: "기계학습", due: null, href: "/ilos/cls/st/activity/activity_form.acl?m=lecture_weeks&n=srv-12&kj=c3", external: false, mode: "auto" };
+    const quiz = { id: "school-7", kind: "test", title: "학교 퀴즈", course: "기계학습", due: "2026-11-14T23:59:00", href: SCHOOL, external: true, mode: "confirm" };
+    answer({ say: "오늘 할 일 2개", intent: "plan", plan: { steps: [
+      video, quiz,
+      { ...quiz, id: "school-8", href: "https://evil.example/x" },
+      { ...video, id: "srv-13", mode: "later" },
+      { ...video, id: "srv-14", title: "" },
+    ] } });
+    expect((await askServer("오늘 할 일 전부 끝낼래", signal())).plan).toEqual([video, quiz]);
+    answer({ say: "없음", plan: { steps: [] } });
+    expect((await askServer("오늘 할 일 전부 끝낼래", signal())).plan).toBeNull();
+  });
+
   it("실패는 상태별 문장으로, 모양이 틀린 답은 처리하지 못했다고 한다", async () => {
     control.post.mockResolvedValueOnce({ ok: false, status: 429, retryAfter: 9 });
-    expect(await askServer("x", signal())).toEqual({ ok: false, say: "AI 요청이 많습니다. 9초 뒤 다시 시도하세요", actions: [] });
+    expect(await askServer("x", signal())).toEqual({ ok: false, say: "AI 요청이 많습니다. 9초 뒤 다시 시도하세요", actions: [], plan: null });
     control.post.mockResolvedValueOnce({ ok: false, status: 503, retryAfter: null });
     expect((await askServer("x", signal())).say).toBe("AI 연결이 설정되지 않았습니다");
     control.post.mockResolvedValueOnce({ ok: true, data: { say: 3, actions: [] } });

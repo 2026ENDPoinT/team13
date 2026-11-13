@@ -1,8 +1,9 @@
 import { courses, activities, type Activity } from "../../data.ts";
 import { getState, save, update } from "../../store.ts";
+import { currentUserId } from "../backend.ts";
 import { TODAY, activityById, myDayGroups } from "../format.ts";
-import { todayLectures, hrefFor, isDone, assistantOf, surveyDone } from "./activity-context.ts";
-import type { AssistantCtx, PlanRun, PlanStep } from "./activity-context.ts";
+import { todayLectures, hrefFor, isDone, assistantOf, surveyDone, describe } from "./activity-context.ts";
+import type { AssistantCtx, PlanRun, PlanStep, ServerStepInfo } from "./activity-context.ts";
 
 export type GroupId = "video" | "report" | "other";
 
@@ -28,11 +29,45 @@ export interface CompletionToken {
 export type CompletionEvent = "video-ended" | "report-submitted" | "survey-saved";
 type Navigate = (href: string) => void;
 
-const groupId = (activity: Activity | null | undefined): GroupId => activity?.type === "video" || activity?.type === "report" ? activity.type : "other";
+/** How a step is shown and where it opens, whether it came from the sample data or from the server's plan. */
+export interface StepInfo {
+  type: string;
+  title: string;
+  meta: string;
+  href: string | null;
+  external: boolean;
+}
+
+const typeGroup = (type: string | undefined): GroupId => type === "video" || type === "report" ? type : "other";
+const groupId = (activity: Activity | null | undefined): GroupId => typeGroup(activity?.type);
+const stepGroup = (step: PlanStep): GroupId => typeGroup(step.server ? step.server.kind : activityById(step.activityId)?.type);
 const groupOrder: Record<GroupId, number> = { video: 0, report: 1, other: 2 };
 const terminal = (step: PlanStep): boolean => step.status === "done" || step.status === "skipped";
 const compareActivities = (a: Activity | undefined, b: Activity | undefined): number => groupOrder[groupId(a)] - groupOrder[groupId(b)]
   || (a?.due ? b?.due ? a.due.localeCompare(b.due) : -1 : b?.due ? 1 : 0);
+// The event that proves each native server step finished; other kinds are finished with the plan's own next control.
+const SERVER_EVENT: Record<string, CompletionEvent> = { video: "video-ended", report: "report-submitted", survey: "survey-saved" };
+
+/** "11/14 23:59까지" from a due date-time, or "". */
+function dueText(due: string | null | undefined): string {
+  const match = /^\d{4}-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(due || ""));
+  return match ? `${match[1]}/${match[2]} ${match[3]}:${match[4]}까지` : "";
+}
+
+export function stepInfo(step: PlanStep): StepInfo {
+  if (step.server) {
+    const { kind, title, course, due, href, external } = step.server;
+    return { type: kind, title: course ? `${course} · ${title}` : title, meta: dueText(due), href, external };
+  }
+  const { title, meta } = describe(step.activityId);
+  return { type: activityById(step.activityId)?.type ?? "report", title, meta, href: hrefFor(step.activityId), external: false };
+}
+
+/** A server step the student finishes outside a STack completion event: confirm steps, school items, new-tab steps. */
+export function manualStep(step: PlanStep): boolean {
+  const server = step.server;
+  return Boolean(server && (step.mode === "confirm" || server.external || !SERVER_EVENT[server.kind] || /[?&]n=school-/.test(server.href)));
+}
 
 export function orderPlan(activityIds: readonly string[], activityList: Activity[] = activities): string[] {
   const byId = new Map(activityList.map((activity) => [activity.id, activity]));
@@ -91,8 +126,20 @@ export function runState(): PlanRun | null {
     save();
     return null;
   }
+  // A server run belongs to the signed-in user who asked for it; a sample run only to the sample mode.
+  if ((run.owner ?? null) !== currentUserId()) return null;
   migrateRun(run);
   return run.status === "stopped" ? null : run;
+}
+
+function storeRun(steps: PlanStep[], extra: Partial<PlanRun> = {}): PlanRun {
+  const run: PlanRun = { id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, date: TODAY,
+    steps, cursor: 0, status: "ready", version: 2, selectionVersion: 0, ...extra };
+  update((state) => {
+    if (state.assistant?.date !== TODAY) state.assistant = { date: TODAY, requests: [] };
+    assistantOf(state).run = run;
+  });
+  return run;
 }
 
 export function createRun(activityIds: readonly string[], { preserveOrder = false }: { preserveOrder?: boolean } = {}): PlanRun {
@@ -108,21 +155,32 @@ export function createRun(activityIds: readonly string[], { preserveOrder = fals
   } else ordered = orderPlan(activityIds);
   const steps: PlanStep[] = ordered.map((activityId) => ({ activityId,
     mode: activityById(activityId)?.type === "video" ? "auto" : "confirm", status: "pending" }));
-  const run: PlanRun = { id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, date: TODAY,
-    steps, cursor: 0, status: "ready", version: 2, selectionVersion: 0 };
-  if (preserveOrder) run.customOrder = true;
-  update((state) => {
-    if (state.assistant?.date !== TODAY) state.assistant = { date: TODAY, requests: [] };
-    assistantOf(state).run = run;
-  });
-  return run;
+  return storeRun(steps, preserveOrder ? { customOrder: true } : {});
+}
+
+/** A step of the server's plan, with `key`: the id of the screen its `href` opens (`resolveScreen(...).id`). */
+export interface ServerPlanStep extends ServerStepInfo {
+  mode: "auto" | "confirm";
+  key: string;
+}
+
+/**
+ * The signed-in assistant's plan as today's run for `owner`. The server's order is kept inside each group (영상, 과제,
+ * 기타, as for sample plans); a key seen twice keeps its first step, since a screen can only stand for one step.
+ */
+export function createServerRun(planSteps: readonly ServerPlanStep[], owner: string): PlanRun {
+  const seen = new Set<string>();
+  const steps: PlanStep[] = planSteps.filter((step) => !seen.has(step.key) && Boolean(seen.add(step.key)))
+    .map(({ key, mode, ...server }) => ({ activityId: key, mode, status: "pending" as const, server }));
+  steps.sort((a, b) => groupOrder[stepGroup(a)] - groupOrder[stepGroup(b)]);
+  return storeRun(steps, { owner });
 }
 
 export function planGroups(run: PlanRun | null | undefined): PlanGroup[] {
   const groups: PlanGroup[] = [{ id: "video", label: "영상", steps: [] }, { id: "report", label: "과제", steps: [] },
     { id: "other", label: "기타", steps: [] }];
   run?.steps.forEach((step, index) => {
-    groups[groupOrder[groupId(activityById(step.activityId))]].steps.push({ step, index });
+    groups[groupOrder[stepGroup(step)]].steps.push({ step, index });
   });
   if (run?.customOrder) groups.sort((a, b) => (a.steps[0]?.index ?? Infinity) - (b.steps[0]?.index ?? Infinity));
   return groups.filter((group) => group.id !== "other" || group.steps.length);
@@ -139,14 +197,13 @@ export function currentStep(): CurrentStep | null {
   return step ? { index: run.cursor, ...step } : null;
 }
 
-export function stepHref(activityId: string): string | null {
-  return hrefFor(activityId);
-}
-
+// In-app steps go through the router; new-tab steps (the school's e-Class) open beside the plan, which stays here.
 function navigateCurrent(navigate: Navigate): void {
   const step = currentStep();
-  const href = step && stepHref(step.activityId);
-  if (href) navigate(href);
+  const info = step && stepInfo(step);
+  if (!info?.href) return;
+  if (info.external) window.open(info.href, "_blank", "noopener,noreferrer");
+  else navigate(info.href);
 }
 
 export function startRun({ navigate }: { navigate: Navigate }): void {
@@ -179,12 +236,12 @@ export function reorderStep(runId: string, from: number, to: number): boolean {
   if (!run || run.id !== runId || !["ready", "running", "paused"].includes(run.status)
     || !Number.isInteger(from) || !Number.isInteger(to) || from === to
     || !run.steps[from] || !run.steps[to]) return false;
-  const group = groupId(activityById(run.steps[from].activityId));
-  if (groupId(activityById(run.steps[to].activityId)) !== group) return false;
+  const group = stepGroup(run.steps[from]);
+  if (stepGroup(run.steps[to]) !== group) return false;
   const slots: number[] = [];
   run.steps.forEach((step, index) => {
     if (!terminal(step) && (run.status === "ready" || index !== run.cursor)
-      && groupId(activityById(step.activityId)) === group) slots.push(index);
+      && stepGroup(step) === group) slots.push(index);
   });
   const source = slots.indexOf(from);
   const target = slots.indexOf(to);
@@ -222,13 +279,18 @@ export function completeStep(token: CompletionToken | null | undefined, { naviga
   if (!token || !run || run.status !== "running" || run.id !== token.runId || run.cursor !== token.index
     || run.selectionVersion !== token.selectionVersion
     || run.steps[run.cursor]?.activityId !== token.activityId) return false;
-  const activity = activityById(token.activityId);
+  const step = run.steps[run.cursor];
+  const server = step.server;
+  const activity = server ? undefined : activityById(token.activityId);
   const state = getState();
-  const completed = event === "video-ended" && activity?.type === "video"
-    ? isDone(activity.id) || Boolean(state.player?.watched?.[activity.id])
-    : event === "report-submitted" && activity?.type === "report"
-      ? Boolean(state.submissions?.[activity.id])
-      : event === "survey-saved" && activity?.type === "survey" && surveyDone(state, activity.id);
+  // A native server step is finished by its own STack event (the backend has the record); school and new-tab steps never are.
+  const completed = server
+    ? SERVER_EVENT[server.kind] === event && !server.external && !/[?&]n=school-/.test(server.href)
+    : event === "video-ended" && activity?.type === "video"
+      ? isDone(activity.id) || Boolean(state.player?.watched?.[activity.id])
+      : event === "report-submitted" && activity?.type === "report"
+        ? Boolean(state.submissions?.[activity.id])
+        : event === "survey-saved" && activity?.type === "survey" && surveyDone(state, activity.id);
   if (!completed) return false;
   advance({ navigate });
   return true;
@@ -260,7 +322,18 @@ export function stepStatus(index: number): "pending" | "done" | "skipped" | "run
   return "pending";
 }
 
-export function observeScreen(activityId: string): void {
+/** The key a server step is matched on: the screen id its `href` opens (a lecture's detail and player share one) and the course. */
+export function screenKey(screenId: string, params: URLSearchParams): string {
+  return `${screenId}@${params.get("kj") || ""}`;
+}
+
+/**
+ * Pauses a running plan when the screen is not its current step. Sample steps compare the activity id (`n`); server
+ * steps the `screenKey`. A new-tab step never leaves this screen.
+ */
+export function observeScreen(activityId: string, key: string): void {
   const run = runState();
-  if (run?.status === "running" && run.steps[run.cursor]?.activityId !== activityId) pauseRun();
+  const step = run?.steps[run.cursor];
+  if (run?.status !== "running" || step?.server?.external) return;
+  if (step?.activityId !== (step?.server ? key : activityId)) pauseRun();
 }

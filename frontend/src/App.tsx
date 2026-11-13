@@ -2,7 +2,7 @@ import { Component, useEffect, useLayoutEffect, type ReactNode } from "react";
 import { useAppState, getState, render, save } from "./store.ts";
 import { closeDialog, currentParams, currentScreen, followBackendRole, GoButton, HOME_PATH, navigate } from "./router.tsx";
 import { routeFor } from "./shared/routes.ts";
-import { observeScreen } from "./shared/assistant/plan.ts";
+import { observeScreen, screenKey } from "./shared/assistant/plan.ts";
 import { useSeenWhileOpen } from "./shared/unread-badges.tsx";
 import { EntryLoginDialog, useEntryLogin } from "./shared/entry-login.tsx";
 import { Shell } from "./shell/shell.tsx";
@@ -105,7 +105,7 @@ export function App() {
   const chromeRole: Role = screen.role === "any" ? state.role : screen.role;
   const dialogName = screen.dialog || params.get("pop");
   // 계획 중인 단계와 다른 화면(다른 활동·다른 페이지)이면 계획이 스스로 일시정지한다. 트레이를 그리기 전에 해야 상태가 맞다.
-  observeScreen(params.get("n") || "");
+  observeScreen(params.get("n") || "", screenKey(screen.id, params));
   // 머리말 할 일·쪽지·알림 목록이 열려 있으면 그 배지를 본 것으로 적는다(메시지 창은 셸 밖이라 여기서 한다).
   useSeenWhileOpen(screen, params);
 

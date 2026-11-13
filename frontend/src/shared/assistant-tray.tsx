@@ -10,7 +10,7 @@ import { activityById } from "./format.ts";
 import { describe } from "./assistant/resolve.ts";
 import { choose, requests, isDone } from "./assistant/run.ts";
 import {
-  advance, pauseRun, planGroups, progressCount, reorderStep, resumeRun, runState, selectStep, stepStatus, stopRun,
+  advance, manualStep, pauseRun, planGroups, progressCount, reorderStep, resumeRun, runState, selectStep, stepInfo, stepStatus, stopRun,
 } from "./assistant/plan.ts";
 import type { AssistantRequest, PlanRun } from "./assistant/activity-context.ts";
 import { chatShut, chatUsed, heroInputOut, toggleChatShut } from "./assistant/chat-state.ts";
@@ -91,12 +91,12 @@ function movableSteps(run: PlanRun, index: number): number[] {
 }
 
 function moveStep(runId: PlanRun["id"], from: number, to: number): void {
-  const activityId = runState()?.steps[from]?.activityId;
-  if (!activityId || !reorderStep(runId, from, to)) return;
+  const step = runState()?.steps[from];
+  if (!step || !reorderStep(runId, from, to)) return;
   pickedStepId = "";
   refreshTray();
-  pendingFocus = `reorder-${activityId}`;
-  orderStatus = `${describe(activityId).title}, ${to + 1}번째로 이동`;
+  pendingFocus = `reorder-${step.activityId}`;
+  orderStatus = `${stepInfo(step).title}, ${to + 1}번째로 이동`;
 }
 
 function cancelDrag(): void {
@@ -255,7 +255,7 @@ function ReorderHandle({ run, index }: { run: PlanRun; index: number }): ReactNo
       className={`plan-handle${picked ? " is-picked" : ""}`}
       disabled={!movable}
       data-key={`reorder-${activityId}`}
-      aria-label={`${describe(activityId).title} 순서 변경`}
+      aria-label={`${stepInfo(run.steps[index]).title} 순서 변경`}
       aria-pressed={picked ? "true" : "false"}
       aria-describedby={movable ? "plan-order-help" : undefined}
       title={movable ? "같은 섹션 안에서 드래그 · 배지 두 개를 차례로 클릭 · 방향키로 이동" : "현재·완료 단계는 순서 고정"}
@@ -364,24 +364,29 @@ function stepText(run: PlanRun, index: number, status: string): string {
     return total ? `재생 중 ${clock(positionOf(step.activityId))}/${clock(total)}` : "재생 중";
   }
   if (index === run.cursor && run.status === "paused") return "일시정지";
+  if (step.server) return stepInfo(step).meta;
   if (!activity) return "";
   if (activity.minutes && activity.minutes > 0) return `${activity.minutes}분`;
   return activity.due ? `${activity.due.slice(5, 10).replace("-", "/")}까지` : "";
 }
 
-/** 세부 단계: 영상은 이동·재생·끝까지 시청·다음, 과제는 이동·작성/제출·확인, 그 밖은 이동·확인. */
+/**
+ * 세부 단계: 영상은 이동·재생·끝까지 시청·다음, 과제는 이동·작성/제출·확인, 그 밖은 이동·확인.
+ * 서버 단계는 이 브라우저에 재생 위치·제출 기록이 없으므로 이동만 표시하고 나머지는 단계가 끝날 때 채운다.
+ */
 function subSteps(run: PlanRun, index: number): { label: string; done: boolean }[] {
   const step = run.steps[index];
-  const activity = activityById(step.activityId);
-  const labels = activity && activity.type === "video"
+  const type = step.server ? step.server.kind : activityById(step.activityId)?.type;
+  const labels = type === "video"
     ? ["이동", "재생", "끝까지 시청(90%)", "다음"]
-    : activity && activity.type === "report" ? ["이동", "작성·제출", "확인"] : ["이동", "확인"];
+    : type === "report" ? ["이동", "작성·제출", "확인"] : ["이동", "확인"];
   const status = stepStatus(index);
   if (status === "done" || status === "skipped") {
     return labels.map((label) => ({ label, done: status === "done" }));
   }
   if (index !== run.cursor) return labels.map((label) => ({ label, done: false }));
   const arrived = run.status === "running";
+  if (step.server) return labels.map((label, i) => ({ label, done: i === 0 && arrived }));
   const done = finished(step.activityId);
   const player = getState().player;
   const flags = labels.length === 4
@@ -424,10 +429,11 @@ function StepItem({ run, index, active }: { run: PlanRun; index: number; active:
   const status = stepStatus(index);
   const current = index === run.cursor && run.status !== "done";
   const open = openSteps.has(step.activityId);
-  const confirm = current && run.status === "running" && step.mode === "confirm";
-  const finishedStep = confirm && finished(step.activityId);
+  const confirm = current && run.status === "running" && (step.mode === "confirm" || manualStep(step));
+  // 서버 단계는 끝났는지 이 브라우저가 알 수 없으므로, 학생이 직접 "다음으로"(완료)나 "건너뛰기"를 누른다.
+  const finishedStep = confirm && !step.server && finished(step.activityId);
   const selectable = ["running", "paused"].includes(run.status) && !["done", "skipped"].includes(status);
-  const title = describe(step.activityId).title;
+  const title = stepInfo(step).title;
   const shift = active?.shifts.get(index);
   return (
     <li
@@ -464,9 +470,14 @@ function StepItem({ run, index, active }: { run: PlanRun; index: number; active:
       </div>
       {confirm ? (
         <div className="plan-confirm">
-          {finishedStep
-            ? <button type="button" className="btn btn-secondary" data-key="next" onClick={() => nextPlanStep(false)}><span>다음으로</span></button>
-            : <button type="button" className="btn btn-ghost" data-key="skip" onClick={() => nextPlanStep(true)}><span>건너뛰기</span></button>}
+          {step.server
+            ? <>
+              <button type="button" className="btn btn-secondary" data-key="next" onClick={() => nextPlanStep(false)}><span>다음으로</span></button>
+              <button type="button" className="btn btn-ghost" data-key="skip" onClick={() => nextPlanStep(true)}><span>건너뛰기</span></button>
+            </>
+            : finishedStep
+              ? <button type="button" className="btn btn-secondary" data-key="next" onClick={() => nextPlanStep(false)}><span>다음으로</span></button>
+              : <button type="button" className="btn btn-ghost" data-key="skip" onClick={() => nextPlanStep(true)}><span>건너뛰기</span></button>}
         </div>
       ) : null}
       {open ? <SubList run={run} index={index} /> : null}
