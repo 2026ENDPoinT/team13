@@ -48,5 +48,6 @@ V1에는 `session_step_ups`(session·목적 유일), `secondary_auth_challenges`
 - IdP가 `max_age` 요청에 `auth_time`을 주지 않으면 재인증이 언제나 실패한다. 학교 IdP 등록 때 확인한다.
 - grant 만료(기본 2시간)마다 학생은 재인증해야 한다. 재인증하는 동안의 학습 시간은 적립하지 않는다. 기관 정책으로 grant 시간과 함께 정한다(CHG-05).
 - 재인증 실패는 로그인 실패와 같은 주소 규칙이다. ID token 검증 단계에서 실패하면 로그인 실패와 같은 `/?login=failed`로 간다. 그 단계에서는 재인증인지 알기 전이다.
+- `GET /api/auth/reauth`는 브라우저의 top-level 이동이라 시작하지 못할 때도 problem JSON 대신 3번의 실패 주소(`returnTo`에 `reauth=failed`)로 302를 보낸다. session이 없거나 만료됐을 때, IdP 설정이 없을 때, break-glass session일 때, 사용자당 요청 제한(10분에 10번)을 넘었을 때다. 그래서 이 경로만은 로그인하지 않은 요청도 handler까지 오지만, 검사한 같은 origin 경로로 돌려보내는 일 말고는 하지 않는다. session과 로그인 전용 쿠키를 새로 만들거나 지우지 않고, 만료된 session은 다른 요청과 같이 폐기될 뿐 되살아나지 않는다. 요청 제한은 로그인한 사용자의 시도를 그대로 센다. 만료된 session도 로그인 실패 주소(`/?login=failed`)가 아니라 시작한 경로로 보낸다. 새 탭에서 시작한 학습 인증은 그 경로에서 실패를 처음 탭에 알리고, 계정 화면은 로그인 안내를 그 자리에서 보이기 때문이다.
 - break-glass TOTP 재인증 실패는 로그인 기록(`login_events`)에 실패로 남아 접속이력 화면의 로그인 기록에도 실패 줄로 보인다. 같은 잠금을 쓰기 위해서다.
 - 학습 인증 설정을 바꾸면 켠 뒤 시작한 session부터 v2가 된다. 진행 중인 session은 시작할 때의 규칙을 끝까지 쓴다.

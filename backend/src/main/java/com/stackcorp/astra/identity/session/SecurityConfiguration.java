@@ -39,6 +39,10 @@ class SecurityConfiguration {
 				// 학교 IdP 로그인 시작·callback과 로그인 수단 조회(ADR-0017). 모두 GET이고 DB 상태를 바꾸는 것은 callback의 로그인뿐이다.
 				.requestMatchers(HttpMethod.GET, "/api/auth/login", "/api/auth/callback", "/api/auth/methods")
 				.permitAll()
+				// 재인증 시작은 브라우저의 top-level 이동이다. session이 없거나 만료됐으면 401 JSON 대신 handler가 돌아갈 경로에
+				// reauth=failed를 붙여 보낸다(ADR-0029). handler는 actor가 없으면 그 일만 하고 session을 만들지 않는다.
+				.requestMatchers(HttpMethod.GET, "/api/auth/reauth")
+				.permitAll()
 				.requestMatchers("/error")
 				.permitAll()
 				.requestMatchers("/api/**")

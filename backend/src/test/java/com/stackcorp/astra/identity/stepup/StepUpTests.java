@@ -142,7 +142,6 @@ class StepUpTests extends OidcIntegrationTest {
 
 		assertThat(stepUps("RECENT_AUTH", "SSO")).isZero();
 		contact(this.client, CONTACT).andExpect(status().isForbidden());
-		new ApiClient(this.mvc, null).get("/api/auth/reauth").andExpect(status().isUnauthorized());
 	}
 
 	@Test
@@ -158,6 +157,68 @@ class StepUpTests extends OidcIntegrationTest {
 			assertThat(attempt(this.token, other, unsafe).getHeader("Location")).isEqualTo("/?reauth=failed");
 		}
 		assertThat(stepUps("RECENT_AUTH", "SSO")).isZero();
+	}
+
+	// 재인증 시작은 top-level 이동이다. 시작할 수 없으면 JSON 대신 시작한 화면으로 reauth=failed를 붙여 돌려보낸다.
+	@Test
+	void returnsToTheMarkedStartingPageWithoutAUsableSession() throws Exception {
+		assertNotStarted(this.mvc.perform(get("/api/auth/reauth").param("returnTo", "/me/info?step=contact"))
+			.andReturn()
+			.getResponse(), "/me/info?step=contact&reauth=failed");
+
+		this.jdbc.sql("""
+				UPDATE user_sessions SET last_seen_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 3 HOUR)
+				 WHERE session_id = :id
+				""").param("id", sessionId(this.token)).update();
+		assertNotStarted(start(this.token, "/me/info?step=contact"), "/me/info?step=contact&reauth=failed");
+		// 만료된 session은 전처럼 폐기되고 이 경로가 되살리거나 늘리지 않는다.
+		assertThat(this.jdbc.sql("SELECT revoke_reason FROM user_sessions WHERE session_id = :id")
+			.param("id", sessionId(this.token))
+			.query(String.class)
+			.single()).isEqualTo("EXPIRED");
+		assertNotStarted(start(this.token, "/me/info?step=contact"), "/me/info?step=contact&reauth=failed");
+		this.client.get("/api/me").andExpect(status().isUnauthorized());
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM user_sessions WHERE user_id = :id")
+			.param("id", this.userId)
+			.query(Integer.class)
+			.single()).isOne();
+	}
+
+	@Test
+	void returnsBreakGlassSessionsToTheMarkedStartingPage() throws Exception {
+		String admin = this.data.session(breakGlassUser());
+		// 학습 화면의 새 탭은 auth=done을 붙인 경로로 시작한다. 실패 표시는 그 뒤에 붙는다.
+		assertNotStarted(start(admin, "/courses/7/lectures/3?item=5&auth=done"),
+				"/courses/7/lectures/3?item=5&auth=done&reauth=failed");
+		new ApiClient(this.mvc, admin).get("/api/me").andExpect(status().isOk());
+	}
+
+	@Test
+	void countsEveryStartAndReturnsToTheMarkedStartingPageWhenRateLimited() throws Exception {
+		for (int i = 0; i < 10; i++) {
+			MockHttpServletResponse started = start(this.token, "/me/info");
+			assertThat(started.getStatus()).isEqualTo(302);
+			assertThat(started.getHeader("Location")).startsWith(IDP.issuer());
+		}
+		assertNotStarted(start(this.token, "/me/info"), "/me/info?reauth=failed");
+		assertNotStarted(start(this.token, "/me/info#top"), "/me/info?reauth=failed#top");
+		this.client.get("/api/me").andExpect(status().isOk());
+	}
+
+	@Test
+	void neverFollowsAForeignOrMalformedReturnPathWhenItCannotStart() throws Exception {
+		String admin = this.data.session(breakGlassUser());
+		List<String> unsafe = List.of("//evil.example/x", "https://evil.example/", "/\\evil.example",
+				"javascript:alert(1)", "evil.example", "/a b", "/" + "a".repeat(600), "");
+		for (String returnTo : unsafe) {
+			assertNotStarted(this.mvc.perform(get("/api/auth/reauth").param("returnTo", returnTo))
+				.andReturn()
+				.getResponse(), "/?reauth=failed");
+			assertNotStarted(start(admin, returnTo), "/?reauth=failed");
+		}
+		assertNotStarted(this.mvc.perform(get("/api/auth/reauth").param("returnTo", "/a", "/b")).andReturn().getResponse(),
+				"/?reauth=failed");
+		assertNotStarted(this.mvc.perform(get("/api/auth/reauth")).andReturn().getResponse(), "/?reauth=failed");
 	}
 
 	@Test
@@ -243,6 +304,30 @@ class StepUpTests extends OidcIntegrationTest {
 
 	private static Cookie session(String token) {
 		return new Cookie("ASTRA_SESSION", token);
+	}
+
+	private MockHttpServletResponse start(String sessionToken, String returnTo) throws Exception {
+		return this.mvc.perform(get("/api/auth/reauth").param("returnTo", returnTo).cookie(session(sessionToken)))
+			.andReturn()
+			.getResponse();
+	}
+
+	/** 시작하지 않고 돌려보냈다. session도 로그인 전용 쿠키도 만들거나 지우지 않는다. */
+	private static void assertNotStarted(MockHttpServletResponse response, String location) {
+		assertThat(response.getStatus()).isEqualTo(302);
+		assertThat(response.getHeader("Location")).isEqualTo(location);
+		assertThat(response.getCookie("ASTRA_SESSION")).isNull();
+		assertThat(response.getCookie("ASTRA_LOGIN")).isNull();
+		assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+		assertThat(response.getHeader("Referrer-Policy")).isEqualTo("no-referrer");
+	}
+
+	private long breakGlassUser() {
+		return this.jdbc.sql("SELECT user_id FROM users WHERE external_ref = :ref")
+			.param("ref", BREAK_GLASS_REF)
+			.query(Long.class)
+			.optional()
+			.orElseGet(() -> this.data.userWithRef(BREAK_GLASS_REF, "STAFF"));
 	}
 
 }
