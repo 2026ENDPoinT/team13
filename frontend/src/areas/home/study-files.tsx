@@ -12,7 +12,8 @@ import { listRecordings, activeRecording, onRecordingEvent, formatDuration, move
 import {
   listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
 } from "../../shared/study-folders.ts";
-import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings } from "../../shared/study-room-remote.ts";
+import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings, refreshCourseView } from "../../shared/study-room-remote.ts";
+import { studyDocuments, scanDelay, SCAN_CHECKS, type StudyDocRecord } from "../../shared/study-documents.ts";
 import { serverCourseViews } from "../../shared/course-view.ts";
 import { thumbnailImage } from "../../shared/preview-remote.tsx";
 import { ApiError } from "../../shared/api.ts";
@@ -40,7 +41,7 @@ export function studyCourses(): Course[] {
 
 const courseName = (course: Course | null | undefined) => course && !course.missing ? course.cardTitle || course.ko : "과목 정보 없음";
 export const folderHref = (courseId: string, folderId?: string): string => hrefFor(find("study_home"), { kj: courseId, f: folderId });
-const pdfHref = (record: CoursePdfRecord) => hrefFor(find("study_home"), { kj: record.courseId, doc: record.id });
+const pdfHref = (record: { courseId: string; id: string }) => hrefFor(find("study_home"), { kj: record.courseId, doc: record.id });
 // A recording of a course I no longer take has no `kj`: its page is addressed by `rec` alone.
 export const recordingHref = (courseId: string, id?: string): string => hrefFor(find("study_lecture"), { kj: courseId || undefined, rec: id });
 const sampleHref = (item: StudyMaterial) => hrefFor(find("study_summary"), { m: item.id });
@@ -133,6 +134,45 @@ function PdfCard({ record, showCourse }: { record: CoursePdfRecord; showCourse: 
       thumb={record.remote ? thumbnailImage(record.backendCourseId, record.fileId, "fc-thumb-img") : null}
     />
   );
+}
+
+/** The student's own PDF in the study room: opens in the document view once the malware scan has passed. */
+function StudyDocCard({ record }: { record: StudyDocRecord }) {
+  const state = record.state === "scanning" ? "검사 중" : record.state === "rejected" ? "검사 거부" : "내 PDF";
+  return (
+    <FileCard
+      href={pdfHref(record)} kind="pdf" badge="PDF" title={record.title} iconName="file"
+      meta={[state, shortDate.format(record.uploadedAt)]}
+      label={`${record.title} 내 PDF${record.state === "ready" ? "" : `, ${state}`}`}
+    />
+  );
+}
+
+/**
+ * While a document of the course is in the malware scan, reads the course view again every `Retry-After` seconds
+ * (10 when the server gave none), at most `SCAN_CHECKS` times; stops as soon as nothing is scanning.
+ */
+function useScanRefresh(kj: string, scanning: boolean) {
+  useEffect(() => {
+    const server = scanning ? serverStudyCourse(kj) : null;
+    if (server == null) return undefined;
+    let live = true;
+    let checks = 0;
+    let timer = 0;
+    const next = () => {
+      timer = window.setTimeout(() => {
+        checks += 1;
+        void refreshCourseView(server).finally(() => {
+          if (live && checks < SCAN_CHECKS) next();
+        });
+      }, scanDelay() * 1000);
+    };
+    next();
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [kj, scanning]);
 }
 
 /** Where a recording stands, when it is not simply playable: the server's malware scan, or kept in this browser only. */
@@ -361,9 +401,13 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   const readOnly = folderGroup !== "mine";
   // At the course root only the user's own items; inside a folder whatever is placed there.
   const pdfs = shown.pdfs.filter((record) => folderOfItem(record) === folderId);
+  // The student's own PDFs come with the server course view (re-rendered by useStudyRoomStore), not the 30 s list.
+  const allDocs = data ? studyDocuments(course.id) : [];
+  const docs = allDocs.filter((record) => folderOfItem(record) === folderId);
+  useScanRefresh(course.id, allDocs.some((record) => record.state === "scanning"));
   const recordings = shown.recordings.filter((record) => folderOfItem(record) === folderId && (folder ? true : groupOf(record) === "mine"));
   const folders = folder ? [] : courseFolders;
-  const countIn = (id: string) => [...shown.pdfs, ...shown.recordings].filter((record) => folderOfItem(record) === id).length;
+  const countIn = (id: string) => [...shown.pdfs, ...allDocs, ...shown.recordings].filter((record) => folderOfItem(record) === id).length;
   const stuckIn = (id: string) => Object.keys(unmovable).filter((itemId) => placed[itemId] === id).length;
   const onServer = serverStudyCourse(course.id) != null;
   // The signed-in user's items still only in this browser: offered for an explicit move (course root).
@@ -375,7 +419,7 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
       ? `ASTRA 서버에서 PDF와 녹음 목록을 받지 못했습니다. ${failed || "잠시 후 다시 시도해 주세요."}`
       : "이 브라우저의 저장소에서 PDF와 녹음을 읽지 못했습니다. 사이트 데이터 접근 설정을 확인해 주세요."
     : data
-      ? [folders.length && `폴더 ${folders.length}개`, `PDF ${pdfs.length}개`, `녹음 ${recordings.length}개`, onServer && usageText(studyUsage())].filter(Boolean).join(" · ")
+      ? [folders.length && `폴더 ${folders.length}개`, `PDF ${pdfs.length + docs.length}개`, `녹음 ${recordings.length}개`, onServer && usageText(studyUsage())].filter(Boolean).join(" · ")
       : "PDF와 녹음을 불러오는 중입니다";
   const courseId = !folder && serverOwned(course.id) ? courseIdFor(course.id) : null;
   const moveAll = (scope: MoveScope) => {
@@ -438,6 +482,7 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
             {/* Server folder and recording ids are both small numbers: keys carry the kind. */}
             {folders.map(folderCard)}
             {pdfs.map((record) => <PdfCard key={record.id} record={record} showCourse={false} />)}
+            {docs.map((record) => <StudyDocCard key={record.id} record={record} />)}
             {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
             {samples.map((item) => <SampleCard key={item.id} item={item} showCourse={false} />)}
           </>
@@ -469,19 +514,22 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
 
 function FolderCard({ course }: { course: Course }) {
   const samples = samplesOf(course.id).length;
-  const [count, setCount] = useState(samples ? `샘플 ${samples}` : "비어 있음");
+  useStudyRoomStore();
+  const [counts, setCounts] = useState({ pdfs: 0, recordings: 0 });
   useEffect(() => {
     let live = true;
     Promise.all([listCoursePdfs(course.id), listRecordings(course.id)]).then(([pdfs, mixed]) => {
       // Browser recordings of other groups are counted in their own section, not on the course card.
       const recordings = mixed.filter((record) => record.remote || ownerGroup(record.ownerUserId) === "mine");
-      const parts = [pdfs.length && `PDF ${pdfs.length}`, recordings.length && `녹음 ${recordings.length}`, samples && `샘플 ${samples}`].filter(Boolean);
-      if (live) setCount(parts.length ? parts.join(" · ") : "비어 있음");
+      if (live) setCounts({ pdfs: pdfs.length, recordings: recordings.length });
     }).catch(() => {});
     return () => {
       live = false;
     };
   }, [course.id, samples]);
+  const pdfCount = counts.pdfs + studyDocuments(course.id).length;
+  const parts = [pdfCount && `PDF ${pdfCount}`, counts.recordings && `녹음 ${counts.recordings}`, samples && `샘플 ${samples}`].filter(Boolean);
+  const count = parts.length ? parts.join(" · ") : "비어 있음";
   return (
     <Link className="study-folder" href={folderHref(course.id)} aria-label={`${courseName(course)} 폴더`}>
       <span className="sf-thumb" aria-hidden="true">
@@ -551,7 +599,7 @@ function LeftCourseRecordings() {
   return (
     <section className="study-section" aria-label="지금 듣지 않는 과목의 녹음">
       <h2>지금 듣지 않는 과목의 녹음</h2>
-      <p className="tiny">수강을 마치거나 취소한 과목에서 저장한 녹음입니다. 녹음 저장 공간 사용량에 들어갑니다.</p>
+      <p className="tiny">수강을 마치거나 취소한 과목에서 저장한 녹음입니다. 학습실 저장 공간 사용량에 들어갑니다.</p>
       <div className="study-grid">
         {rows.map((recording) => <RecordingCard key={`rec-${recording.id}`} record={fromServer(recording, "")} showCourse={false} />)}
       </div>

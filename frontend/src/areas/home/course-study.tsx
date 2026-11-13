@@ -13,14 +13,16 @@ import { getFolder, folderOf, folderState, ownerGroup, useStudyRoomStore, type S
 import { serverStudyCourse, studyRoomMessage, refreshCourseView } from "../../shared/study-room-remote.ts";
 import { courseFiles, folderHref } from "./study-files.tsx";
 import { createNewMenu } from "./study-new.tsx";
+import { StudyDocumentContent } from "./study-document.tsx";
+import { isStudyDoc, isStudyDocId, type StudyDocRecord } from "../../shared/study-documents.ts";
 import { serverPreview } from "../../shared/preview-remote.tsx";
 import { studySummaryHref } from "./study-server.tsx";
 import { wallFormat } from "../../shared/home-remote.ts";
 
 const dateFormat = wallFormat("ko-KR", { year: "numeric", month: "long", day: "numeric" });
 
-/** A course PDF with its page text and excerpts (local records always; server records after `ensureCoursePdfText`). */
-type ParsedPdf = CoursePdfRecord & PdfSummary;
+/** A PDF with its page text and excerpts (local records always; server records and own documents after `ensureCoursePdfText`). */
+type ParsedPdf = (CoursePdfRecord | StudyDocRecord) & PdfSummary;
 
 /** A published summary as the server sends it: the page-image base comes with it. */
 interface PublishedSummary extends ServerSummary {
@@ -50,7 +52,8 @@ function PageDetails({ page }: { page: PdfPage }) {
   );
 }
 
-function OriginalControls({ record, keepUrl }: { record: CoursePdfRecord; keepUrl: KeepUrl }) {
+function OriginalControls({ record, keepUrl }: { record: CoursePdfRecord | StudyDocRecord; keepUrl: KeepUrl }) {
+  const onServer = Boolean(record.remote) || isStudyDoc(record);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState({ text: "", alert: false });
   const [url, setUrl] = useState("");
@@ -74,7 +77,7 @@ function OriginalControls({ record, keepUrl }: { record: CoursePdfRecord; keepUr
       if (!mounted.current) return;
       if (!blob) {
         setStatus({
-          text: record.remote
+          text: onServer
             ? "서버에서 원본 PDF를 찾을 수 없습니다. 자료가 비공개로 바뀌었을 수 있습니다."
             : "저장된 원본 PDF를 찾을 수 없습니다. 브라우저의 사이트 데이터가 삭제되었을 수 있습니다.",
           alert: true,
@@ -85,12 +88,14 @@ function OriginalControls({ record, keepUrl }: { record: CoursePdfRecord; keepUr
       keepUrl(next);
       setUrl(next);
       setStatus({ text: "원본이 준비되었습니다. 새 탭에서 열거나 다운로드할 수 있습니다.", alert: false });
-    } catch {
+    } catch (error) {
       if (!mounted.current) return;
       setStatus({
-        text: record.remote
-          ? "ASTRA 서버에서 원본 PDF를 받지 못했습니다. 잠시 후 다시 시도해 주세요."
-          : "이 브라우저의 저장소에서 원본 PDF를 읽지 못했습니다. 사이트 데이터 접근 설정을 확인해 주세요.",
+        text: isStudyDoc(record) && error instanceof Error && error.message
+          ? error.message
+          : onServer
+            ? "ASTRA 서버에서 원본 PDF를 받지 못했습니다. 잠시 후 다시 시도해 주세요."
+            : "이 브라우저의 저장소에서 원본 PDF를 읽지 못했습니다. 사이트 데이터 접근 설정을 확인해 주세요.",
         alert: true,
       });
     } finally {
@@ -246,7 +251,9 @@ function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
         </div>
         {docId ? back : null}
       </header>
-      {docId ? <DocumentContent course={course} docId={docId} /> : <FolderFiles course={course} folder={folder} />}
+      {!docId
+        ? <FolderFiles course={course} folder={folder} />
+        : isStudyDocId(docId) ? <StudyDocument course={course} docId={docId} /> : <DocumentContent course={course} docId={docId} />}
     </section>
   );
 }
@@ -273,13 +280,9 @@ type Content =
   | { kind: "unread"; record: RemotePdfRecord; message: string }
   | { kind: "remote"; record: RemotePdfRecord & PdfSummary };
 
-function DocumentContent({ course, docId }: { course: Course; docId: string }) {
-  const courseId = course.id;
-  const [content, setContent] = useState<Content>({ kind: "loading", text: "PDF 자료를 불러오는 중입니다" });
+/** Keeps the object URLs a screen made; revokes them a minute after it closes. */
+function useKeptUrls(): KeepUrl {
   const urls = useRef(new Set<string>());
-  const keepUrl = (url: string) => {
-    urls.current.add(url);
-  };
   useEffect(() => {
     const kept = urls.current;
     return () => {
@@ -290,6 +293,27 @@ function DocumentContent({ course, docId }: { course: Course; docId: string }) {
       }, 60000);
     };
   }, []);
+  return (url: string) => {
+    urls.current.add(url);
+  };
+}
+
+/** One of the student's own study-room PDFs: no published summary, no preview session, no model features. */
+function StudyDocument({ course, docId }: { course: Course; docId: string }) {
+  const keepUrl = useKeptUrls();
+  return (
+    <StudyDocumentContent
+      course={course} docId={docId}
+      renderCard={(record) => <DocumentCard record={record} keepUrl={keepUrl} />}
+      renderOriginal={(record) => <OriginalControls record={record} keepUrl={keepUrl} />}
+    />
+  );
+}
+
+function DocumentContent({ course, docId }: { course: Course; docId: string }) {
+  const courseId = course.id;
+  const [content, setContent] = useState<Content>({ kind: "loading", text: "PDF 자료를 불러오는 중입니다" });
+  const keepUrl = useKeptUrls();
 
   useEffect(() => {
     let live = true;
