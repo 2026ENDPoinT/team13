@@ -14,8 +14,9 @@ import jakarta.servlet.http.HttpServletResponse;
 /**
  * 상태를 바꾸는 multipart 요청은 CSRF token을 header로만 받는다(ADR-0004 4번). CSRF 검사는 header가 없으면 요청 parameter
  * {@code _csrf}에서 token을 찾는데, multipart 요청의 parameter를 읽으면 서블릿 컨테이너가 본문 전체(multipart 요청 상한까지)를 임시
- * 디스크로 받는다. 로그인 전에도 그렇게 되므로, header가 없으면 본문을 읽지 않고 CSRF 검사가 거부할 때와 같은 403으로 끝낸다. 화면은
- * 언제나 header로 보낸다.
+ * 디스크로 받는다. 로그인 전에도 그렇게 되므로, header가 없으면 multipart를 나누지 않고 CSRF 검사가 거부할 때와 같은 403으로 끝낸다.
+ * 응답 뒤 남은 본문은 Tomcat이 {@code server.tomcat.max-swallow-size}(2MB)까지 읽어 버리고, 그보다 크면 연결을 끊는다. 화면은 언제나
+ * header로 보낸다.
  */
 final class MultipartCsrfHeaderFilter extends OncePerRequestFilter {
 

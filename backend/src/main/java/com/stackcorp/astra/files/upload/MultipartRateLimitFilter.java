@@ -28,16 +28,18 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * multipart 본문을 임시 디스크로 받기 전에 판정한다. DispatcherServlet은 handler를 찾기 전에 multipart 본문 전체를 임시 디스크로
- * 받으므로, handler에서 요청 제한(SC-09)을 세면 제한을 넘긴 사용자도 요청마다 본문을 다 보낸 뒤에야 거부된다. 이 filter는 Spring
- * Security가 사용자를 정한 뒤, DispatcherServlet보다 앞에서 돈다.
+ * multipart 본문을 나눠 임시 디스크로 받기(spool) 전에 판정한다. DispatcherServlet은 handler를 찾기 전에 multipart 본문 전체를 임시
+ * 디스크로 받으므로, handler에서 요청 제한(SC-09)을 세면 제한을 넘긴 사용자도 요청마다 본문을 다 보낸 뒤에야 거부된다. 이 filter는
+ * Spring Security가 사용자를 정한 뒤, DispatcherServlet보다 앞에서 돈다.
  * <ul>
  * <li>multipart를 받는 업로드 경로(아래 세 곳)는 사용자·연산 요청 제한을 여기서 센다. 권한이 없는 시도와 뒤에서 거부하는 업로드도
  * 센다.</li>
- * <li>그 밖의 경로로 온 multipart는 받을 handler가 없으므로 본문을 받지 않고 415로 끝낸다. 이 판정은 CSRF 검사와 로그인 검사를
- * 통과해 이 filter까지 온 요청에만 적용된다. 로그인하지 않은 요청이 보호 경로로 오면 그 전에 401이다(본문은 읽지 않는다).</li>
+ * <li>그 밖의 경로로 온 multipart는 받을 handler가 없으므로 multipart를 나누지 않고 415로 끝낸다. 이 판정은 CSRF 검사와 로그인
+ * 검사를 통과해 이 filter까지 온 요청에만 적용된다. 로그인하지 않은 요청이 보호 경로로 오면 그 전에 401이다.</li>
  * </ul>
- * 거부 응답은 controller에서 던졌을 때와 같다(ApiExceptionHandler).
+ * 거부 응답은 controller에서 던졌을 때와 같다(ApiExceptionHandler). 응답은 본문을 기다리지 않고 나가지만, 그 뒤 Tomcat은 keep-alive로
+ * 연결을 다시 쓰려고 남은 본문을 {@code server.tomcat.max-swallow-size}(2MB)까지 읽어 버린다. 선언한 본문이 그보다 크면 그만큼 읽고
+ * 연결을 끊는다.
  */
 @Component
 @Order(Ordered.LOWEST_PRECEDENCE)

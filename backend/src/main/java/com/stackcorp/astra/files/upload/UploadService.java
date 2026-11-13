@@ -34,7 +34,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 업로드 수신(SC-08). 순서: 요청 제한 → 용도와 과목 권한 → 이름·확장자·크기 → 내용 형식 → 저장 → 기록.
- * 요청 제한은 본문을 받기 전에 {@link MultipartRateLimitFilter}가 센다.
+ * 요청 제한은 multipart 본문을 나누기 전에 {@link MultipartRateLimitFilter}가 센다.
  * 원본은 content bucket의 blobs/{sha256 앞 2자}/{sha256}에 둔다. 같은 내용은 객체 하나를 함께 쓴다. GC가 지운 내용을 다시 받으면
  * 뒤에 임의 값을 붙인 새 key에 저장하고 처음부터 다시 검사한다(ADR-0011).
  * 검사기가 없으면 형식 검사를 통과한 파일은 바로 clean이 된다. 검사기가 있으면 새 내용은 검사 worker가 판정할 때까지 quarantined다(ADR-0018).

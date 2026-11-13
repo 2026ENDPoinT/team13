@@ -60,7 +60,8 @@ class SecurityConfiguration {
 
 	/**
 	 * firewall이 거부한 요청(경로의 {@code ;}, 인코딩한 {@code /} 등)은 400 problem JSON을 바로 쓴다. 기본 처리는 sendError(400)로
-	 * {@code /error}에 넘기는데, 그곳의 DispatcherServlet이 multipart 본문 전체를 임시 디스크로 받는다.
+	 * {@code /error}에 넘기는데, 그곳의 DispatcherServlet이 multipart 본문 전체를 임시 디스크로 받는다. 400 응답 뒤 Tomcat은 남은 본문을
+	 * {@code server.tomcat.max-swallow-size}(2MB)까지 읽어 버리고 연결을 닫는다.
 	 */
 	@Bean
 	RequestRejectedHandler requestRejectedHandler() {

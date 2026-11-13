@@ -18,14 +18,16 @@ import org.springframework.util.unit.DataSize;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * api container가 multipart 본문을 임시로 쓰는 곳(spool)이 동시에 받을 수 있는 업로드를 모두 담는지 본다. 요청 thread마다 multipart
- * 요청 상한만큼 쓸 수 있다. spool이 container 메모리에서 잡히는 작은 tmpfs면 몇 개의 큰 업로드만으로 가득 차 모든 업로드가 실패한다.
+ * api container가 multipart 본문을 임시로 쓰는 곳(spool)의 compose 설정을 본다. 요청 thread마다
+ * multipart 요청 상한만큼 쓸 수 있다. spool이 작은 tmpfs면 몇 개의 큰 업로드만으로 가득 차 모든 업로드가 실패한다. spool이 tmpfs면 그
+ * 크기가 {@code threads.max × max-request-size} 이상인지 본다. host 디스크의 named volume이면 compose 설정(volume과 이미지의 디렉터리
+ * 소유자)만 본다. host 디스크의 빈 용량은 배포 환경에 달려 있어 이 테스트가 보지 않는다.
  */
 class UploadSpoolCapacityTests {
 
 	@Test
 	@SuppressWarnings("unchecked")
-	void apiSpoolsMultipartBodiesWhereEveryRequestThreadFits() throws IOException {
+	void apiSpoolsMultipartBodiesOnAWritableVolumeOrALargeEnoughTmpfs() throws IOException {
 		Properties shipped = PropertiesLoaderUtils.loadProperties(new ClassPathResource("application.properties"));
 		long perRequest = DataSize.parse(shipped.getProperty("spring.servlet.multipart.max-request-size")).toBytes();
 		int threads = Integer.parseInt(shipped.getProperty("server.tomcat.threads.max"));
