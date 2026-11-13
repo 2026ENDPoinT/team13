@@ -202,6 +202,14 @@ class LocalRunTests {
 		assertThat(ok(me, course + "/notices").get("items")).isNotEmpty();
 		assertThat(ok(me, course + "/qna").get("items")).isNotEmpty();
 		assertThat(ok(me, course + "/open-board/posts").get("items")).isNotEmpty();
+
+		// 화면은 roundLabel을 과정명 앞에 붙이므로 과정명에 차수가 또 들어 있으면 두 번 나온다.
+		JsonNode offerings = ok(me, "/api/catalog/offerings?size=40").get("items");
+		assertThat(offerings).isNotEmpty();
+		for (JsonNode offering : offerings) {
+			assertThat(offering.get("roundLabel").asString()).isNotBlank();
+			assertThat(offering.get("name").asString()).doesNotContain(offering.get("roundLabel").asString());
+		}
 	}
 
 	@Test
