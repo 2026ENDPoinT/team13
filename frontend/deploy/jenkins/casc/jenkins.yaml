@@ -60,9 +60,9 @@ jobs:
       // 같은 조직 레포의 브랜치와 PR 만 빌드한다(포크 PR 은 이 PC 에서 코드를 실행하지 않도록 제외).
       // 2026-11-14: e-class 프론트엔드는 Frontend-final, 백엔드는 STack-Backend 로 바뀌었다.
       // STack-Frontend(현재 STack-Frontend-Keep-, 옛 ASTRA 보존 뷰어)는 보관용이라 잡을 두지 않는다.
-      // STack-Backend 의 CI 는 GitHub Actions 가 돌리므로 main 만 보고 배포만 한다.
+      // STack-Backend·Frontend-final 의 검사는 GitHub Actions 가 PR 에서 돌리므로 Jenkins 는 main 만 보고 배포만 한다.
       def repos = [
-        [name: 'Frontend-final',     prs: true,  branches: '*'],
+        [name: 'Frontend-final',     prs: false, branches: 'main'],
         [name: 'STack-Backend',      prs: false, branches: 'main'],
         [name: 'STack-lessonviewer', prs: true,  branches: '*'],
       ]
