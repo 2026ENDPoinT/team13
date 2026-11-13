@@ -12,10 +12,12 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param documentCookieTtl 쪽 이미지 cookie 유효 시간. 1분 이상 10분 이하
  * @param videoCookieTtl 영상 cookie 유효 시간. 1분 이상 10분 이하. 재생 중에는 player가 만료 전에 다시 받는다(architecture.md 7.1절)
  * @param secureCookie cookie에 Secure를 붙일지. https가 없는 로컬 실행에서만 끈다
+ * @param required 전달 cookie 서명(CloudFront 또는 앱 직접 응답)이 없으면 시작하지 않을지. compose.yaml이 api에 켠다. 서명이 없으면 쪽
+ * 이미지와 영상이 열리지 않기 때문이다(ADR-0009)
  */
 @ConfigurationProperties("astra.delivery")
 record DeliveryProperties(@DefaultValue("10m") Duration documentCookieTtl, @DefaultValue("10m") Duration videoCookieTtl,
-		@DefaultValue("true") boolean secureCookie) {
+		@DefaultValue("true") boolean secureCookie, @DefaultValue("false") boolean required) {
 
 	static final Duration MIN_COOKIE_TTL = Duration.ofMinutes(1);
 

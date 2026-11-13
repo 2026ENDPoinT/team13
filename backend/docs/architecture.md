@@ -427,6 +427,8 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 로컬 실행과 CloudFront를 붙이지 않은 시연에서는 앱이 `/doc`, `/vod`를 직접 응답한다([ADR-0009](adr/0009-origin-delivery-without-cdn.md)). 권한 판정과 cookie 발급 API는 같고, cookie의 서명과 검증만 앱이 한다. 학교 도입 구성에서는 쓰지 않는다.
 
+CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `server.mjs`)가 브라우저를 받고 `/api/**`, `/doc/**`, `/vod/**`를 api로 넘긴다. 이 proxy는 Host를 api 주소로 바꾸므로 상태를 바꾸는 요청의 Origin 검사는 `ASTRA_SESSION_ALLOWED_ORIGINS`에 적은 브라우저 origin으로만 통과한다. compose 구성은 이 값과 `/doc`, `/vod` 서명(이 구성에서는 앱 직접 응답) 중 하나라도 없으면 api를 띄우지 않는다([ADR-0004](adr/0004-sso-bff-session.md) 4번, ADR-0009 8번).
+
 ### 7.6 강의실 공지
 
 저장 방식은 [ADR-0013](adr/0013-course-notice-storage.md)에 있다.

@@ -14,8 +14,8 @@ class DeliveryPropertiesTests {
 
 	@Test
 	void acceptsCookieLifetimesFromOneToTenMinutes() {
-		DeliveryProperties shortest = new DeliveryProperties(Duration.ofMinutes(1), Duration.ofMinutes(1), true);
-		DeliveryProperties longest = new DeliveryProperties(Duration.ofMinutes(10), Duration.ofMinutes(10), true);
+		DeliveryProperties shortest = new DeliveryProperties(Duration.ofMinutes(1), Duration.ofMinutes(1), true, false);
+		DeliveryProperties longest = new DeliveryProperties(Duration.ofMinutes(10), Duration.ofMinutes(10), true, false);
 
 		assertThat(shortest.videoCookieTtl()).isEqualTo(Duration.ofMinutes(1));
 		assertThat(longest.documentCookieTtl()).isEqualTo(Duration.ofMinutes(10));
@@ -27,16 +27,16 @@ class DeliveryPropertiesTests {
 		Duration tooShort = Duration.ofSeconds(59);
 
 		assertThatIllegalArgumentException()
-			.isThrownBy(() -> new DeliveryProperties(tooLong, Duration.ofMinutes(10), true))
+			.isThrownBy(() -> new DeliveryProperties(tooLong, Duration.ofMinutes(10), true, false))
 			.withMessageContaining("document-cookie-ttl");
 		assertThatIllegalArgumentException()
-			.isThrownBy(() -> new DeliveryProperties(Duration.ofMinutes(10), tooLong, true))
+			.isThrownBy(() -> new DeliveryProperties(Duration.ofMinutes(10), tooLong, true, false))
 			.withMessageContaining("video-cookie-ttl");
 		assertThatIllegalArgumentException()
-			.isThrownBy(() -> new DeliveryProperties(Duration.ofMinutes(10), tooShort, true))
+			.isThrownBy(() -> new DeliveryProperties(Duration.ofMinutes(10), tooShort, true, false))
 			.withMessageContaining("video-cookie-ttl");
 		assertThatIllegalArgumentException()
-			.isThrownBy(() -> new DeliveryProperties(null, Duration.ofMinutes(10), true));
+			.isThrownBy(() -> new DeliveryProperties(null, Duration.ofMinutes(10), true, false));
 	}
 
 }

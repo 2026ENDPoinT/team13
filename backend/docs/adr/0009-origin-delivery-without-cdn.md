@@ -24,6 +24,7 @@
 5. 서명 key는 `astra.delivery.origin.signing-key`(Base64, 32 byte 이상)로 받는다. 비밀값이다. 로컬 실행은 기동할 때마다 새로 만든다.
 6. CloudFront 서명(`astra.cloudfront.key-pair-id`)과 함께 설정하면 기동을 막는다. 둘 중 하나만 쓴다.
 7. port는 그대로다. `files`의 `DeliverySigner`를 `integration`이 구현하고, 객체 읽기는 `files`의 `DeliveryObjects`로만 한다.
+8. `astra.delivery.required=true`이면 서명기(CloudFront 또는 앱 직접 응답)가 없을 때 시작하지 않는다. 서명기가 없으면 cookie를 내지 않아 미리보기의 쪽 이미지, 요약의 쪽 그림, 영상 재생이 모두 열리지 않는데 다른 API는 정상이라 설정 누락이 드러나지 않기 때문이다. compose 구성은 api에 이 값을 켠다. Terraform 배포는 CloudFront 서명을, 프론트엔드 서버(STack-Frontend `server.mjs`)가 `/doc/**`, `/vod/**`를 api로 넘기는 단일 host 구성은 앱 직접 응답을 쓴다.
 
 ## 결과와 트레이드오프
 - CloudFront 없이도 권한 판정 → 짧은 cookie → 전달 경로의 흐름을 그대로 확인할 수 있다. 프론트엔드는 두 환경에서 같은 URL을 쓴다.
