@@ -20,7 +20,7 @@ import { isRemotePdfId, getPublishedSummary, listSummaryJobs, startSummaryJob, g
 import type { RemotePdfRecord, ServerSummary, SummaryJob } from "../../shared/course-pdfs-remote.ts";
 import { forgetMaterialList } from "../../shared/materials-remote.ts";
 import { backendStatus } from "../../shared/backend.ts";
-import { summaryView } from "../../shared/page-summary.tsx";
+import { SummaryReview } from "./summary-review.tsx";
 import { serverProfessorHome, serverNoticeFields } from "./notices-server.tsx";
 import { serverMaterialList, registrationAttach, registrationPicked, saveRegistrationFromFilebox } from "./materials-server.tsx";
 import { serverReportFields, serverSubmissionStatus, serverGrading } from "./assignments-server.tsx";
@@ -1376,11 +1376,10 @@ function SummaryJobPanel({ record }: { record: RemotePdfRecord }) {
       <div className="pf-actions">{buttons}</div>
       <p className="err" role="alert">{error}</p>
       <div className="pf-summary-preview">
-        {result ? (
+        {result && job ? (
           <div className="stack">
             <h3>요약 후보 미리보기</h3>
-            <p className="pf-sub">학생에게는 게시한 뒤에 보입니다. 검토가 필요한 쪽과 경고를 먼저 확인하세요.</p>
-            {summaryView(result, { pageImageBase: null })}
+            <SummaryReview record={record} jobId={job.id} result={result} />
           </div>
         ) : null}
       </div>

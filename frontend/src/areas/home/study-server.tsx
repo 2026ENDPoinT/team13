@@ -16,7 +16,8 @@ import { createResource, freshVisit, useResource, type Entry } from "../../share
 import { listCoursePdfs, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
 import { getPublishedSummary, summaryMessage, type ServerSummary } from "../../shared/course-pdfs-remote.ts";
 import { fileOverview, studyMessage, type FileOverview } from "../../shared/study-chat-remote.ts";
-import { LessonViewer, type LessonDoc } from "../../shared/lesson-viewer.tsx";
+import { LessonViewer } from "../../shared/lesson-viewer.tsx";
+import { summaryLessonDoc } from "../../shared/summary-lesson.ts";
 import {
   lectureDetails, lectureProgress, detailKey, courseKey, progressOf, lectureIdOf, lectureMessage, studentLectureHref,
   lecturePlayerHref, VIDEO_STATE, PROGRESS_STATE, durationText, windowText,
@@ -257,25 +258,20 @@ function PublishedSection({ entry, overview, load, loadOverview, docId, title, p
   if (!entry.data) return <EmptyState title="게시된 요약이 없습니다" body="교수님이 이 자료의 요약을 게시하면 여기에서 원문과 함께 볼 수 있습니다." />;
   const published = entry.data;
   const at = publishedFormat.format(published.publishedAt);
-  const pages = [...(published.slides || []).map((slide) => slide.page), ...(published.story || []).map((beat) => beat.to)];
-  const doc: LessonDoc = {
+  const doc = summaryLessonDoc({
     id: docId,
     title,
-    pageCount: pageCount || Math.max(0, ...pages),
-    source: published.pageImageBase
-      ? {
-        kind: "images", base: published.pageImageBase, aspect: null,
-        // 쪽 이미지 쿠키가 끝나면 게시본을 다시 받아 새 주소를 쓴다.
-        refresh: async () => {
-          const fresh: PublishedSummary | null = await getPublishedSummary({ backendCourseId: courseId, fileId });
-          return fresh ? fresh.pageImageBase ?? null : null;
-        },
-      }
-      : null,
+    pageCount,
     summary: published,
+    pageImageBase: published.pageImageBase,
+    // 쪽 이미지 쿠키가 끝나면 게시본을 다시 받아 새 주소를 쓴다.
+    refreshImages: async () => {
+      const fresh: PublishedSummary | null = await getPublishedSummary({ backendCourseId: courseId, fileId });
+      return fresh ? fresh.pageImageBase ?? null : null;
+    },
     overview: overview && overview.data ? overview.data.markdown || null : null,
     note: `${at ? `${at} 게시 · ` : ""}교수님이 검토해 게시한 AI 요약입니다. 원문과 함께 확인해 주세요.`,
-  };
+  });
   return (
     <>
       {overview && overview.error && !overview.data ? (
