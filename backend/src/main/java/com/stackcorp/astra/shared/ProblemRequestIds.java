@@ -12,8 +12,9 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 
 /**
  * 컨트롤러 단계의 모든 problem JSON에 requestId를 넣는다. {@link ApiExceptionHandler}뿐 아니라 모듈의 컨트롤러가 직접 만든
- * ProblemDetail에도 붙는다. filter 단계의 오류는 identity의 ProblemResponses가 같은 값을 넣는다. problem의 code는 요청 지표의 code
- * tag로도 쓴다({@link HttpObservationConvention}).
+ * ProblemDetail과 filter에서 난 예외의 /error 응답({@link ProblemErrorController})에도 붙는다. security filter가 직접 쓰는
+ * 401, 403은 identity의 ProblemResponses가 같은 값을 넣는다. problem의 code는 요청 지표의 code tag로도 쓴다
+ * ({@link HttpObservationConvention}).
  */
 @RestControllerAdvice
 class ProblemRequestIds implements ResponseBodyAdvice<Object> {

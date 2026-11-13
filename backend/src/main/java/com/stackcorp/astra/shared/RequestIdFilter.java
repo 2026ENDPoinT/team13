@@ -19,8 +19,9 @@ import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * 모든 요청에 서버가 만든 requestId를 붙인다. security filter보다 먼저 실행해 filter 단계에서 거부한 401, 403에도 붙는다.
- * 오류 dispatch에서는 처음 정한 값을 다시 쓴다. 처리하지 못하고 밖으로 나가는 예외는 requestId가 MDC에 있는 동안 한 번 ERROR로
- * 남기고 그대로 다시 던진다. 응답 상태와 /error 처리는 바뀌지 않는다. client가 연결을 끊은 경우는 남기지 않는다.
+ * 오류 dispatch에서는 처음 정한 값을 다시 쓴다. 그래서 /error가 쓰는 problem({@link ProblemErrorController})의 requestId도 header와
+ * 같다. 처리하지 못하고 밖으로 나가는 예외는 requestId가 MDC에 있는 동안 한 번 ERROR로 남기고 그대로 다시 던진다. 응답 상태는
+ * 바뀌지 않고, 본문은 container의 /error 처리가 쓴다. client가 연결을 끊은 경우는 남기지 않는다.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)

@@ -40,9 +40,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import tools.jackson.databind.JsonNode;
 
 /**
- * 처리기가 예상하지 못한 예외도 problem JSON 500으로 응답하고, detail에 예외 메시지(SQL, 입력값, key)를 싣지 않는다. 처리하지
- * 못한 예외는 컨트롤러 앞 filter에서 났어도 응답의 requestId와 함께 ERROR 로그로 한 번 남는다. client 연결 끊김은 남기지 않는다. 응답이
- * 이미 나간 뒤의 실패에는 problem을 덧붙이지 않는다.
+ * 처리기가 예상하지 못한 예외도 problem JSON 500으로 응답하고, detail에 예외 메시지(SQL, 입력값, key)를 싣지 않는다. client 연결
+ * 끊김은 남기지 않는다. 응답이 이미 나간 뒤의 실패에는 problem을 덧붙이지 않는다. 컨트롤러 앞 filter에서 난 예외는 container의
+ * /error dispatch를 거치므로 실제 port로 {@link ErrorDispatchApiTests}가 확인한다.
  */
 @ExtendWith(OutputCaptureExtension.class)
 @Import({ UnexpectedErrorApiTests.Boom.class, UnexpectedErrorApiTests.FailingFilter.class })
@@ -92,20 +92,6 @@ class UnexpectedErrorApiTests extends IntegrationTest {
 			.andReturn()
 			.getResponse();
 		assertThat(denied.getContentType()).startsWith(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
-	}
-
-	@Test
-	void exceptionsThrownBeforeTheControllerAreLoggedWithTheResponseRequestId(CapturedOutput output) {
-		// 예외는 servlet container의 /error 처리로 그대로 나간다.
-		assertThatThrownBy(() -> this.mvc.perform(get("/api/test-only/filter-boom?q=SECRET-QUERY")))
-			.isInstanceOf(IllegalStateException.class)
-			.hasMessage("SECRET filter");
-		String id = this.filter.responseRequestId.get();
-		assertThat(id).isNotBlank();
-		assertThat(unhandledLines(output, id)).singleElement()
-			.asString()
-			.contains("\"ERROR\"", "method=GET route=-", "java.lang.IllegalStateException")
-			.doesNotContain("SECRET-QUERY", "filter-boom");
 	}
 
 	@Test
@@ -206,7 +192,6 @@ class UnexpectedErrorApiTests extends IntegrationTest {
 				throws ServletException, IOException {
 			this.responseRequestId.set(response.getHeader(RequestIds.HEADER));
 			switch (request.getRequestURI()) {
-				case "/api/test-only/filter-boom" -> throw new IllegalStateException("SECRET filter");
 				case "/api/test-only/filter-abort" -> throw new ClientAbortException(new IOException("Broken pipe"));
 				default -> chain.doFilter(request, response);
 			}

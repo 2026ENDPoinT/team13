@@ -66,29 +66,37 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	@Override
 	protected ResponseEntity<Object> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException ex,
 			HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-		return generic(HttpStatus.CONTENT_TOO_LARGE, "too_large", "파일이 너무 큽니다.");
+		return generic(problem(HttpStatus.CONTENT_TOO_LARGE, "too_large", "파일이 너무 큽니다.").build());
 	}
 
 	@Override
 	protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body, HttpHeaders headers,
 			HttpStatusCode statusCode, WebRequest request) {
-		HttpStatus status = HttpStatus.resolve(statusCode.value());
-		if (status == null || status.is5xxServerError()) {
-			return generic(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error", "요청을 처리하지 못했습니다.");
-		}
-		return switch (status) {
-			case NOT_FOUND -> generic(status, "not_found", "찾을 수 없습니다.");
-			case METHOD_NOT_ALLOWED -> generic(status, "method_not_allowed", "허용하지 않는 method입니다.");
-			case UNSUPPORTED_MEDIA_TYPE -> generic(status, "unsupported_media_type", "지원하지 않는 본문 형식입니다.");
-			case NOT_ACCEPTABLE -> generic(status, "not_acceptable", "요청한 형식으로 응답할 수 없습니다.");
-			case BAD_REQUEST -> generic(status, "invalid_request", "요청 형식이 올바르지 않습니다.");
-			default -> generic(status, "request_rejected", "요청을 처리할 수 없습니다.");
-		};
+		return generic(forStatus(statusCode.value()));
 	}
 
-	private static ResponseEntity<Object> generic(HttpStatus status, String code, String detail) {
-		ResponseEntity<ProblemDetail> response = problem(status, code, detail).build();
-		return ResponseEntity.status(status).headers(response.getHeaders()).body(response.getBody());
+	/**
+	 * 상태 코드만으로 정하는 problem. Spring MVC 예외와 servlet container의 /error dispatch({@link ProblemErrorController})가 같은
+	 * code와 고정 문장을 쓴다. 5xx와 알 수 없는 상태는 500 internal_error다.
+	 */
+	static ResponseEntity<ProblemDetail> forStatus(int statusCode) {
+		HttpStatus status = HttpStatus.resolve(statusCode);
+		if (status == null || status.is5xxServerError()) {
+			return problem(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error", "요청을 처리하지 못했습니다.").build();
+		}
+		Builder problem = switch (status) {
+			case NOT_FOUND -> problem(status, "not_found", "찾을 수 없습니다.");
+			case METHOD_NOT_ALLOWED -> problem(status, "method_not_allowed", "허용하지 않는 method입니다.");
+			case UNSUPPORTED_MEDIA_TYPE -> problem(status, "unsupported_media_type", "지원하지 않는 본문 형식입니다.");
+			case NOT_ACCEPTABLE -> problem(status, "not_acceptable", "요청한 형식으로 응답할 수 없습니다.");
+			case BAD_REQUEST -> problem(status, "invalid_request", "요청 형식이 올바르지 않습니다.");
+			default -> problem(status, "request_rejected", "요청을 처리할 수 없습니다.");
+		};
+		return problem.build();
+	}
+
+	private static ResponseEntity<Object> generic(ResponseEntity<ProblemDetail> response) {
+		return ResponseEntity.status(response.getStatusCode()).headers(response.getHeaders()).body(response.getBody());
 	}
 
 	private static Builder problem(HttpStatus status, String code, String detail) {
