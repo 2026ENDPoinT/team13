@@ -10,6 +10,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -87,9 +88,11 @@ class LearningController {
 
 	private final SchoolContent schoolContent;
 
+	private final SchoolScreens schoolScreens;
+
 	LearningController(JdbcClient jdbc, LearningAccess access, MaterialFiles materialFiles, ActivityTargets targets,
 			MaterialService materials, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit,
-			SchoolActivities schoolActivities, SchoolContent schoolContent) {
+			SchoolActivities schoolActivities, SchoolContent schoolContent, SchoolScreens schoolScreens) {
 		this.jdbc = jdbc;
 		this.access = access;
 		this.materialFiles = materialFiles;
@@ -100,6 +103,7 @@ class LearningController {
 		this.audit = audit;
 		this.schoolActivities = schoolActivities;
 		this.schoolContent = schoolContent;
+		this.schoolScreens = schoolScreens;
 	}
 
 	/**
@@ -202,11 +206,15 @@ class LearningController {
 	 * 끝났으면 409 {@code school_signin_required}다.
 	 */
 	@GetMapping("/api/courses/{courseId}/activities/school-{schoolActivityId}")
-	ResponseEntity<SchoolContent.SchoolActivityView> schoolActivity(@AuthenticationPrincipal Actor actor,
-			@PathVariable long courseId, @PathVariable long schoolActivityId) {
-		return ResponseEntity.ok()
-			.cacheControl(CacheControl.noStore())
-			.body(this.schoolContent.activity(actor, courseId, schoolActivityId, this.access.now()));
+	ResponseEntity<?> schoolActivity(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+			@PathVariable long schoolActivityId) {
+		LocalDateTime now = this.access.now();
+		// 영상 활동은 학교 영상 상세(online_view_form.acl)만 읽는다. 재생할 것은 주지 않는다(SchoolScreens).
+		Optional<SchoolScreens.SchoolVideoView> video = this.schoolScreens.video(actor, courseId, schoolActivityId, now);
+		if (video.isPresent()) {
+			return ok(video.get());
+		}
+		return ok(this.schoolContent.activity(actor, courseId, schoolActivityId, now));
 	}
 
 	/** 활동 상세. 자료, 영상, 평가 활동 모두 이 경로다. 구간과 판정에 쓴 DB 시각(serverTime)이 있고, 평가 활동이면 과제·퀴즈·설문 ID가 있다. */

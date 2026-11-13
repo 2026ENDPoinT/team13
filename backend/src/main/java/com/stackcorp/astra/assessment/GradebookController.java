@@ -3,13 +3,13 @@ package com.stackcorp.astra.assessment;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import com.stackcorp.astra.assessment.GradebookService.Gradebook;
 import com.stackcorp.astra.assessment.GradebookService.ItemInput;
 import com.stackcorp.astra.assessment.GradebookService.ItemSheet;
 import com.stackcorp.astra.assessment.GradebookService.ItemUpdate;
 import com.stackcorp.astra.assessment.GradebookService.ItemView;
-import com.stackcorp.astra.assessment.GradebookService.MyGrades;
 import com.stackcorp.astra.assessment.GradebookService.ScoreRow;
 import com.stackcorp.astra.assessment.GradebookService.ScoreSheet;
 import com.stackcorp.astra.assessment.GradebookService.SettingsView;
@@ -48,15 +48,27 @@ class GradebookController {
 
 	private final Idempotency idempotency;
 
-	GradebookController(GradebookService service, RateLimiter rateLimiter, Idempotency idempotency) {
+	private final SchoolMyGrades school;
+
+	GradebookController(GradebookService service, RateLimiter rateLimiter, Idempotency idempotency,
+			SchoolMyGrades school) {
 		this.service = service;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
+		this.school = school;
 	}
 
+	/**
+	 * 학생 본인 성적. 학교에서 읽는 과목(ADR-0043)의 학생에게는 학생 본인의 학교 성적 화면을 그 학생의 학교 session으로 읽어 같은
+	 * 모양으로 준다({@code origin: "school"}).
+	 */
 	@GetMapping("/api/courses/{courseId}/grades/me")
-	ResponseEntity<MyGrades> mine(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
+	ResponseEntity<?> mine(@AuthenticationPrincipal Actor actor, @PathVariable long courseId,
 			@RequestParam(required = false) String type, @RequestParam(required = false) String q) {
+		Optional<SchoolMyGrades.View> school = this.school.of(actor, courseId, type, q);
+		if (school.isPresent()) {
+			return ok(school.get());
+		}
 		return ok(this.service.mine(actor.userId(), courseId, type, q));
 	}
 
