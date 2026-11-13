@@ -60,6 +60,8 @@ export interface ServerDocument {
   createdAt: string;
   updatedAt: string;
   version: number;
+  /** Page summary state (null: never requested); absent on a backend without document summaries. */
+  summaryStatus?: "queued" | "processing" | "ready" | "failed" | null;
 }
 
 export interface StudyUsage {
