@@ -418,8 +418,8 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간 |
-| `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나 |
+| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 역할은 과목 행과 같은 문장에서 정하고 수강생 수는 담당 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
+| `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나. 항목은 `/api/me/courses`와 같다(`learners`는 담당자에게만) |
 | `GET /api/courses/{courseId}/weeks` | 과목 구성원 | `{serverTime, weeks}`. 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 활동마다 DB 시계로 정한 `phase`(`not_open`·`open`·`late`·`closed`, 과제·퀴즈·설문 화면과 같은 경계)와, 평가 활동이면 `assignmentId`·`quizId`·`surveyId` 중 하나. 자료·영상 활동은 `activityId`가 그 화면의 ID다. 쿼리는 권한 판정 뒤 3번 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부(파일마다 `summaryPublished`), 강의 영상 항목, `phase`, `serverTime`, 평가 활동이면 그 유형의 ID |
 
