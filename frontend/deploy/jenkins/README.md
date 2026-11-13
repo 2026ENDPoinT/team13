@@ -99,6 +99,8 @@ STack-Backend 에 새 환경 변수가 생기면 Hermes `~/projects/eclass-backe
 - 설정은 `~/.config/agy-llm-gateway/env`(600: 게이트웨이 토큰 = 백엔드 `ASTRA_LLM_API_KEY`, Hive key). 기록은 `journalctl -u agy-llm-gateway`(요청마다 경로·시간·토큰 수, 본문 없음).
 - `docker compose up --no-deps api` 처럼 api·worker 만 다시 만들면 중계가 옛 네트워크에 남아 LLM 이 끊깁니다. 항상 `docker compose up -d`(jenkins-deploy 와 같음)로 올립니다.
 - 교수자 고지(`ASTRA_LLM_POLICY_*`)는 Google Gemini 4 Hydrogen(Antigravity), 장애 시 Hive DeepSeek 로 적혀 있습니다(`gemini-agy-2026-11-14`).
+- 프론트 AI 도우미(홈 명령줄·마스코트 챗봇, `/api/assistant`)도 같은 게이트웨이를 씁니다. viewer 의 `GEMINI_API_BASE=http://172.24.0.1:18090` 으로 Gemini `generateContent` 형식 요청을 보내고, 게이트웨이가 **Gemini 4 Hydrogen Low**(`gemini-4-hydrogen-low`)로 처리합니다. 실패하면 DeepSeek(JSON 응답)로 넘어갑니다. 키는 게이트웨이 `ASSISTANT_TOKEN` 이고 viewer 에는 `~/projects/astra-eclass-reference/assistant.env`(600, 저장소 밖)의 `GEMINI_API_KEY` 로 들어갑니다.
+- 도우미 응답을 빠르게 하려고 게이트웨이가 agy 하나를 늘 미리 띄워 둡니다(약 400 MB, 5분마다 교체). 미리 띄운 것이 있으면 약 3초, 없으면 약 7초입니다. 서버 제한 20초, 브라우저 제한 25초.
 
 ## 공개 도메인
 
