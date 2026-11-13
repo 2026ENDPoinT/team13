@@ -44,7 +44,7 @@ describe("createResource.load", () => {
     expect(resource.peek("a")?.loading).toBeInstanceOf(Promise);
     await loading;
 
-    expect(resource.peek("a")).toEqual({ data: 42, error: null, loading: null });
+    expect(resource.peek("a")).toEqual({ data: 42, error: null, loading: null, previous: null });
     expect(keys).toEqual(["a", "a"]);
     expect(resource.version()).toBe(2);
   });
@@ -87,7 +87,7 @@ describe("createResource.load", () => {
       throw failure;
     });
     await expect(resource.load("a")).resolves.toBeUndefined();
-    expect(resource.peek("a")).toEqual({ data: null, error: failure, loading: null });
+    expect(resource.peek("a")).toEqual({ data: null, error: failure, loading: null, previous: null });
   });
 
   it("fetcher 가 동기적으로 던져도 같은 방식으로 처리한다", async () => {

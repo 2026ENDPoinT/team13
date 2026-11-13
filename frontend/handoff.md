@@ -514,3 +514,12 @@
 
 ### 남은 작업
 - 백엔드 담당자가 `README.md`의 선택 필드 계약을 지원해야 실제 생성 결과가 표시된다. 처리 예정이면 첫 상세 응답부터 `queued`/`processing`을 보내야 자동 조회가 이어진다. 이번 작업에는 백엔드 생성·저장·API 구현이 포함되지 않는다.
+
+## 2026-11-14 커밋·푸시 (origin/main 병합)
+
+### 작업 내용
+- 세 터미널(BENTO·SCRIPT·LESSON)이 모두 idle인 것을 확인하고 작업 트리 전체를 한 커밋으로 묶었다. 로컬 main이 origin/main보다 21커밋 뒤처져 있어 `git merge origin/main`(충돌 없음) 후 푸시.
+- 병합 후 `tests/unit/remote-cache.test.ts` 2건이 실패: 원격에서 `Entry`에 `previous` 필드가 추가돼 `toEqual`이 맞지 않았다. 기대값에 `previous: null`을 추가해 수정.
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 1320건 통과(병합 후).
