@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
-import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
+import { freshVisit, shownRows, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
 import {
@@ -562,12 +562,15 @@ function QuizList({ course, courseId, target }: { course: Course; courseId: numb
   const load = () => { void quizLists.load(key, courseId); };
   const entry = useResource(quizLists, key, load);
   useVisit(quizLists, `pf-quizzes-${target}`, key, load);
-  const data = entry && entry.data;
+  // After a write the list reloads; its previous rows (links only) stay on screen meanwhile.
+  const { rows: data, stale } = shownRows(entry);
   let body: ReactNode;
   if (!data) body = !entry || !entry.error ? <p className="pf-sub">서버에 등록된 시험을 불러오는 중입니다.</p> : <Failure error={entry.error} reload={load} />;
   else {
+    const note = entry?.error ? <Failure error={entry.error} reload={load} />
+      : stale ? <p className="pf-sub" role="status">저장한 내용을 반영한 목록을 불러오는 중입니다.</p> : null;
     const items: QuizRow[] = Array.isArray(data) ? data : [];
-    body = !items.length ? <p className="pf-sub">아직 서버에 등록된 시험이 없습니다.</p> : items.map((item) => {
+    body = <>{note}{!items.length ? <p className="pf-sub">아직 서버에 등록된 시험이 없습니다.</p> : items.map((item) => {
       const ref = quizRef(item.quizId);
       const edit = pf("pf_exam_create", { kj: course.id, edit: String(item.quizId) });
       const status = pf("pf_exam_status", { kj: course.id, n: ref });
@@ -591,7 +594,7 @@ function QuizList({ course, courseId, target }: { course: Course; courseId: numb
           </div>
         </div>
       );
-    });
+    })}</>;
   }
   return (
     <section className="sheet" aria-label="ASTRA 서버에 등록된 시험">

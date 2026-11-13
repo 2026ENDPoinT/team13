@@ -145,10 +145,10 @@ async function firstPage(request: Promise<CommunityPageResponse | null>): Promis
 }
 
 export const materialLists = createResource<CommunityList, [audience: string, q: string]>((audience, q) => firstPage(apiGet<CommunityPageResponse | null>(materialsUrl(audience, q))));
-// `seeded`: the view a command already returned (no second request).
-export const materialDetails = createResource<CommunityPost, [postId: string, seeded?: CommunityPost]>((postId, seeded) => seeded ? Promise.resolve(seeded) : apiGet<CommunityPost>(`${materialsPath}/${encodeURIComponent(postId)}`));
+// A create answers with the view itself: `seed()` caches it, and any later load asks the server.
+export const materialDetails = createResource<CommunityPost, [postId: string]>((postId) => apiGet<CommunityPost>(`${materialsPath}/${encodeURIComponent(postId)}`));
 export const inquiryLists = createResource<CommunityList, [status: string, q: string, all?: boolean]>((status, q, all = false) => firstPage(apiGet<CommunityPageResponse | null>(inquiriesUrl(status, q, all))));
-export const inquiryDetails = createResource<CommunityPost, [postId: string, seeded?: CommunityPost]>((postId, seeded) => seeded ? Promise.resolve(seeded) : apiGet<CommunityPost>(`${inquiriesPath}/${encodeURIComponent(postId)}`));
+export const inquiryDetails = createResource<CommunityPost, [postId: string]>((postId) => apiGet<CommunityPost>(`${inquiriesPath}/${encodeURIComponent(postId)}`));
 
 /** 목록 응답의 `canManage`: true / false, 이 세션에서 아직 자료실·문의 목록을 읽지 않았으면 null. */
 export function communityManageState(): boolean | null {
@@ -248,8 +248,7 @@ const forgetMaterialLists = () => materialLists.drop(() => true);
 export async function createInquiry(payload: InquiryCreate): Promise<CommunityPost> {
   const view = await createOnce(INQUIRY_CREATE, payload, (key) => apiSend<CommunityPost>("POST", inquiriesPath, payload, { idempotencyKey: key }));
   forgetInquiryLists();
-  inquiryDetails.drop((k) => k === view.postId);
-  void inquiryDetails.load(view.postId, view.postId, view);
+  inquiryDetails.seed(view.postId, view, view.postId);
   return view;
 }
 
@@ -271,8 +270,7 @@ export async function answerInquiry(inquiryId: string, payload: InquiryAnswer): 
 export async function createMaterial(payload: MaterialCreate): Promise<CommunityPost> {
   const view = await createOnce(MATERIAL_CREATE, payload, (key) => apiSend<CommunityPost>("POST", materialsPath, payload, { idempotencyKey: key }));
   forgetMaterialLists();
-  materialDetails.drop((k) => k === view.postId);
-  void materialDetails.load(view.postId, view.postId, view);
+  materialDetails.seed(view.postId, view, view.postId);
   return view;
 }
 
