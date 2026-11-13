@@ -74,9 +74,12 @@ public class DevLoginConfiguration {
 
 		private final Set<String> allowedRemoteAddresses;
 
+		private final ClientAddresses clientAddresses;
+
 		DevLoginController(JdbcClient jdbc, SessionStore sessions, SessionProperties properties,
 				BreakGlassMarker breakGlass, StepUps stepUps, StepUpProperties stepUpProperties,
-				@Value("${astra.dev-login.allowed-remote-addresses:}") List<String> allowedRemoteAddresses) {
+				@Value("${astra.dev-login.allowed-remote-addresses:}") List<String> allowedRemoteAddresses,
+				ClientAddresses clientAddresses) {
 			this.jdbc = jdbc;
 			this.sessions = sessions;
 			this.properties = properties;
@@ -84,6 +87,7 @@ public class DevLoginConfiguration {
 			this.stepUps = stepUps;
 			this.stepUpProperties = stepUpProperties;
 			this.allowedRemoteAddresses = Set.copyOf(allowedRemoteAddresses);
+			this.clientAddresses = clientAddresses;
 		}
 
 		@PostMapping(PATH)
@@ -98,7 +102,7 @@ public class DevLoginConfiguration {
 				.optional()
 				.filter((id) -> !this.breakGlass.isBreakGlass(id))
 				.orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "rejected", "로그인 정보를 확인해 주세요."));
-			IssuedSession session = this.sessions.create(userId, DeviceCookie.read(request), request.getRemoteAddr(),
+			IssuedSession session = this.sessions.create(userId, DeviceCookie.read(request), this.clientAddresses.of(request),
 					request.getHeader(HttpHeaders.USER_AGENT));
 			ResponseCookie cookie = ResponseCookie.from(this.properties.cookieName(), session.token())
 				.httpOnly(true)
