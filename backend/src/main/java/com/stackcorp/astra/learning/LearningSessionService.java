@@ -1,6 +1,5 @@
 package com.stackcorp.astra.learning;
 
-import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -54,9 +53,6 @@ import io.micrometer.core.instrument.Timer;
 class LearningSessionService {
 
 	private static final int START_ATTEMPTS = 3;
-
-	/** MySQL이 교착으로 transaction을 되돌릴 때의 SQLSTATE. */
-	private static final String DEADLOCK = "40001";
 
 	private final JdbcClient jdbc;
 
@@ -149,11 +145,8 @@ class LearningSessionService {
 	}
 
 	private static boolean retryable(RuntimeException ex) {
-		if (ex instanceof OnlineAttendance.WeekMoved) {
-			return true;
-		}
-		return ex instanceof PessimisticLockingFailureException locking
-				&& locking.getMostSpecificCause() instanceof SQLException sql && DEADLOCK.equals(sql.getSQLState());
+		return ex instanceof OnlineAttendance.WeekMoved
+				|| ex instanceof PessimisticLockingFailureException locking && DeadlockRetry.deadlock(locking);
 	}
 
 	/**
@@ -417,14 +410,15 @@ class LearningSessionService {
 	}
 
 	/**
-	 * 원장, 기준 시각, 진도를 한 transaction에서 바꾼다. 같은 session 행 잠금 아래에서만 부른다. 적립하면 진도를 쓰기 전에 활동 주차를
-	 * 공유 잠금한다. 차시·영상 활동 명령이 주차를 배타 잠금하고 출석부를 다시 판정하므로 충족과 그 판정이 서로 엇갈리지 않는다.
+	 * 원장, 기준 시각, 진도를 한 transaction에서 바꾼다. 같은 session 행 잠금 아래에서만 부른다. 이 적립으로 콘텐츠가 처음 충족되면 진도를
+	 * 쓰기 전에 활동 주차를 공유 잠금하고 충족을 판정한다. 차시·영상 활동 명령이 주차를 배타 잠금하고 출석부를 다시 판정하므로 충족과 그
+	 * 판정이 서로 엇갈리지 않는다. 충족하지 않는 하트비트는 주차도, 충족 판정이 읽는 콘텐츠 행도 잠그지 않는다. 영상 활동 수정은 콘텐츠
+	 * 행을 배타 잠금한 채 진도 행을 공유 잠금으로 읽으므로, 진도 행을 쥔 하트비트가 콘텐츠 행을 기다리면 교착한다.
 	 */
 	private void apply(Session session, Item item, Credit credit, Integer positionSec, LocalDateTime now) {
-		Long lockedWeek = null;
-		if (credit.seconds() > 0 && meets(session.userId(), item, credit.seconds())) {
-			lockedWeek = item.weekId();
-			this.attendance.lockWeeks(false, List.of(lockedWeek));
+		boolean meets = credit.seconds() > 0 && meets(session.userId(), item, credit.seconds());
+		if (meets) {
+			this.attendance.lockWeeks(false, List.of(item.weekId()));
 		}
 		if (credit.seconds() > 0) {
 			this.jdbc.sql("""
@@ -447,14 +441,17 @@ class LearningSessionService {
 		if (credit.seconds() > 0 || positionSec != null) {
 			recordProgress(session.userId(), item, credit.seconds(), positionSec, now, session.rule());
 		}
-		if (credit.seconds() > 0) {
-			decide(session.userId(), item, lockedWeek, now, session.rule());
+		if (meets) {
+			decide(session.userId(), item, now, session.rule());
 		}
 	}
 
 	/**
-	 * 이 적립으로 콘텐츠가 처음 충족되는지. 출석부를 바꿀 수 있는 하트비트는 이것뿐이라 그때만 진도를 쓰기 전에 활동 주차를 공유 잠금한다
-	 * ({@link OnlineAttendance}). 이 사용자의 진도는 이 사용자의 session 행 잠금 아래에서만 바뀌므로 잠그지 않고 읽어도 최신이다.
+	 * 이 적립으로 콘텐츠가 처음 충족되는지. 출석부를 바꿀 수 있는 하트비트는 이것뿐이라 그때만 진도를 쓰기 전에 활동 주차를 공유 잠금하고
+	 * 충족을 판정한다({@link OnlineAttendance}). 이 사용자의 진도는 이 사용자의 session 행 잠금 아래에서만 바뀌므로 잠그지 않고 읽어도
+	 * 최신이다. 필요 시간은 snapshot 값이라, snapshot 뒤에 담당자가 필요 시간을 낮췄으면 이 하트비트는 충족하지 않은 것으로 보고 다음
+	 * 적립 하트비트가 충족한다(필요 시간을 낮춰도 적립 없이 소급해 충족하지 않는 것과 같은 규칙). 높였으면 이 하트비트는 주차를 잠그고
+	 * 충족 판정이 지금 값으로 거른다.
 	 */
 	private boolean meets(long userId, Item item, int seconds) {
 		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
@@ -509,9 +506,8 @@ class LearningSessionService {
 	 * <p>
 	 * 필요 시간은 snapshot({@code item})이 아니라 이 UPDATE가 읽는 지금의 콘텐츠 행에서 정한다. 주차 잠금을 기다리는 동안 담당자가
 	 * 필요 시간을 올렸거나 콘텐츠를 뺐으면 그 값으로 판정한다.
-	 * @param lockedWeek 진도를 쓰기 전에 공유 잠금한 주차. 잠그지 않았으면 null
 	 */
-	private void decide(long userId, Item item, Long lockedWeek, LocalDateTime now, String rule) {
+	private void decide(long userId, Item item, LocalDateTime now, String rule) {
 		int met = this.jdbc.sql("""
 				UPDATE online_lecture_item_progress p
 				  JOIN online_lecture_items i ON i.online_lecture_item_id = p.online_lecture_item_id AND i.deleted_at IS NULL
@@ -527,7 +523,7 @@ class LearningSessionService {
 		if (met == 0) {
 			return;
 		}
-		this.attendance.credit(userId, item.activityId(), lockedWeek, now, rule);
+		this.attendance.credit(userId, item.activityId(), item.weekId(), now, rule);
 		boolean complete = this.jdbc.sql("""
 				SELECT NOT EXISTS (
 				  SELECT 1 FROM online_lecture_items i
