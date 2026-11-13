@@ -510,10 +510,16 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		}
 
 		/**
-		 * 첨부 파일 하나를 {@code target}에 받는다. 학교가 파일 대신 화면(로그인 화면, 오류 화면)을 돌려주면 받지 않는다. 크기가
+		 * 첨부 파일 하나를 {@code target}에 받는다. 학교는 받기 주소({@code efile_download.acl})에서 실제 받기 주소
+		 * ({@code file_download_v2.acl})로 넘긴다. 그 주소는 경로 앞에 {@code /}가 겹쳐 오므로 하나로 줄여 같은 origin의
+		 * {@code /ilos/} 경로일 때만 따라간다. 학교가 파일 대신 화면(로그인 화면, 오류 화면)을 돌려주면 받지 않는다. 크기가
 		 * {@code maxBytes}를 넘으면 받는 도중에 끊는다.
 		 */
 		SchoolDownload download(URI url, URI referer, long maxBytes, Path target) {
+			return download(url, referer, maxBytes, target, 0);
+		}
+
+		private SchoolDownload download(URI url, URI referer, long maxBytes, Path target, int redirects) {
 			long remaining = this.deadline - System.nanoTime();
 			if (remaining <= 0) {
 				throw unavailable("timeout");
@@ -535,9 +541,16 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 					this.cookies.put(url, response.headers().map());
 					int status = response.statusCode();
 					if (status >= 300 && status < 400) {
-						String location = response.headers().firstValue("Location").orElse("");
-						throw loginPath(url.resolve(location.isBlank() ? "/" : location)) ? expired("signed_out")
-								: unavailable("redirect");
+						String location = response.headers().firstValue("Location").orElse("").strip();
+						if (location.isBlank() || redirects >= MAX_REDIRECTS) {
+							throw unavailable("redirect");
+						}
+						URI next = URI.create(url.resolve(location.replaceFirst("^(https?://[^/]+)?/{2,}", "$1/"))
+							.toString());
+						if (loginPath(next)) {
+							throw expired("signed_out");
+						}
+						return download(resolve(url, next.toString()), url, maxBytes, target, redirects + 1);
 					}
 					if (status == 404) {
 						throw notFound("file");

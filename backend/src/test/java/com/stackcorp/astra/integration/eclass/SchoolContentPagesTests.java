@@ -27,8 +27,10 @@ class SchoolContentPagesTests {
 		List<SchoolFile> files = SchoolContentPages.files(page("school-files-list.html"));
 
 		assertThat(files).hasSize(30);
-		assertThat(files.stream().filter((f) -> "lecture_material".equals(f.activityType()))).hasSize(18);
-		assertThat(files.stream().filter((f) -> "report".equals(f.activityType()))).hasSize(12);
+		assertThat(files.stream().filter((f) -> "lecture_material".equals(f.activityType()))).hasSize(23);
+		assertThat(files.stream().filter((f) -> "report".equals(f.activityType()))).hasSize(7);
+		// 한 주차 카드 안의 활동마다 그 활동의 파일이 붙는다(받기 키 CONTENT_SEQ가 그 활동 번호다).
+		assertThat(files).allSatisfy((f) -> assertThat(f.contentSeq()).isEqualTo(f.activityItemId()));
 		assertThat(files).extracting(SchoolFile::fileSeq).doesNotHaveDuplicates();
 		SchoolFile first = files.get(0);
 		assertThat(first).isEqualTo(new SchoolFile("SYNKEY1000008", "1000007", "파일21.pdf", 3_355_443L,

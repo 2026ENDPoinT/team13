@@ -66,18 +66,28 @@ final class SchoolContentPages {
 	private SchoolContentPages() {
 	}
 
-	/** 파일모음의 파일. 화면 순서이고 같은 파일은 한 번만 둔다. */
+	/**
+	 * 파일모음의 파일. 화면 순서이고 같은 파일은 한 번만 둔다. 한 주차 카드({@code .files_list}) 안에 활동 머리
+	 * ({@code .file_list_top})와 그 활동의 파일 목록({@code ul.attach_list})이 활동마다 번갈아 온다.
+	 */
 	static List<SchoolFile> files(Document doc) {
 		Map<String, SchoolFile> files = new LinkedHashMap<>();
 		for (Element block : doc.select(".files_list")) {
-			Map<String, String> target = query(block.selectFirst("a.file_target_artl"));
-			String type = target.get("m") != null && TYPE.matcher(target.get("m")).matches() ? target.get("m") : null;
-			String item = key(target.get("n"));
-			for (SchoolFile file : attachments(block, type, item)) {
-				if (files.size() >= MAX_FILES) {
-					break;
+			String type = null;
+			String item = null;
+			for (Element part : block.select(".file_list_top, ul.attach_list")) {
+				if (part.hasClass("file_list_top")) {
+					Map<String, String> target = query(part.selectFirst("a.file_target_artl"));
+					type = target.get("m") != null && TYPE.matcher(target.get("m")).matches() ? target.get("m") : null;
+					item = key(target.get("n"));
+					continue;
 				}
-				files.putIfAbsent(file.fileSeq(), file);
+				for (SchoolFile file : list(part, type, item)) {
+					if (files.size() >= MAX_FILES) {
+						break;
+					}
+					files.putIfAbsent(file.fileSeq(), file);
+				}
 			}
 		}
 		return List.copyOf(files.values());
@@ -86,7 +96,15 @@ final class SchoolContentPages {
 	/** 첨부 목록 조각(또는 그것을 담은 요소)의 파일. 화면 순서. */
 	static List<SchoolFile> attachments(Element root, String activityType, String activityItemId) {
 		List<SchoolFile> files = new ArrayList<>();
-		for (Element row : root.select("ul.attach_list > li")) {
+		for (Element list : root.select("ul.attach_list")) {
+			files.addAll(list(list, activityType, activityItemId));
+		}
+		return files;
+	}
+
+	private static List<SchoolFile> list(Element attachList, String activityType, String activityItemId) {
+		List<SchoolFile> files = new ArrayList<>();
+		for (Element row : attachList.select("> li")) {
 			Element link = row.selectFirst("a.file_down[href*=efile_download]");
 			if (link == null) {
 				link = row.selectFirst("a[href*=efile_download]");
