@@ -17,6 +17,7 @@ concurrency:
 
 # action은 commit SHA로, container 이미지는 digest로 고정한다. 판은 줄 끝 주석에 적는다. 판을 올릴 때는 SHA와 주석을 함께 바꾼다.
 # 바뀐 파일에 필요한 작업만 돈다(changes). 문서만 바뀌면 아무것도 돌지 않고, 수동 실행(workflow_dispatch)은 전부 돈다.
+# main 은 배포 직전 관문이라 코드가 바뀌었으면 세 작업을 모두 돈다(자바 코드만 바뀌어도 실제 이미지 기동을 확인한다).
 #   build      코드·설정이 바뀌면(문서·자산·ERD 스냅샷만 바뀐 경우 제외)
 #   schema     마이그레이션이나 db/tools 가 바뀌면. ERD 스냅샷이 오래됐으면 실패 대신 경고만 남긴다
 #   container  Dockerfile·compose·docker/·.env.example·gradle·src/main/resources 가 바뀌면
@@ -45,6 +46,9 @@ jobs:
           printf '%s\n' "$files"
           pick() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
           code=$(printf '%s\n' "$files" | grep -vE '^$|^(docs|assets|db/erdcloud)/|\.md$' | grep -q . && echo true || echo false)
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$code" = true ]; then
+            echo "main 코드 변경: 전체 실행"; { echo code=true; echo schema=true; echo container=true; } | tee -a "$GITHUB_OUTPUT"; exit 0
+          fi
           {
             echo "code=$code"
             echo "schema=$(pick '^(src/main/resources/db/migration/|db/tools/)')"

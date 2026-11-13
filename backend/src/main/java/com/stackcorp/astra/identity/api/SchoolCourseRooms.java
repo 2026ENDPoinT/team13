@@ -11,6 +11,10 @@ import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolPost;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolAttendanceWeek;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolGradeItem;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolSyllabus;
+import com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolVideo;
 
 /**
  * 학번·비밀번호 확인({@link SchoolPasswordVerifier#verify})으로 열린 학교 e-Class session으로 학생의 강의실을 읽는 손잡이. 학교
@@ -81,6 +85,28 @@ public interface SchoolCourseRooms {
 	 */
 	SchoolDownload download(String courseKey, SchoolFile file, long maxBytes, Path target, Duration requestTimeout,
 			Duration remaining);
+
+	// 영상 상세, 강의계획서, 출석, 성적(ADR-0043 4단계·5단계). 모두 그 학생이 STack에서 그 화면을 열었을 때만 부른다.
+
+	/**
+	 * 영상 활동 하나의 상세({@code online_view_form.acl}): 콘텐츠 목록, 진도율, 학습시간, 출석인정 시간. 학습창, 영상 주소 조회, 시청
+	 * 기록 요청은 보내지 않는다.
+	 * @param itemId 학교 영상 활동 번호(강의실 목록 링크의 {@code n})
+	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 그 활동을 보여 주지 않았다
+	 */
+	SchoolVideo video(String courseKey, String itemId, Duration requestTimeout, Duration remaining);
+
+	/**
+	 * 정규과목의 강의계획서({@code regular_view_pop.acl}, {@code regular_view_plan.acl}). 요청 값은 강의실 첫 화면의 script에서 읽는다.
+	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 계획서를 주지 않았다(비정규 과정 등)
+	 */
+	SchoolSyllabus syllabus(String courseKey, Duration requestTimeout, Duration remaining);
+
+	/** 학생 본인의 출석({@code attendance_list.acl}, 모든 주차). 주차 순서다. */
+	List<SchoolAttendanceWeek> attendance(String courseKey, Duration requestTimeout, Duration remaining);
+
+	/** 학생 본인의 평가 활동과 점수({@code eval3_result_view_detail_list.acl}, 모든 유형). 화면 순서다. */
+	List<SchoolGradeItem> grades(String courseKey, Duration requestTimeout, Duration remaining);
 
 	/** 쿠키를 버린다. 여러 번 불러도 된다. 닫은 뒤 읽기는 {@code EXPIRED}로 실패한다. */
 	void close();

@@ -67,15 +67,22 @@ class SyllabusController {
 
 	private final RateLimiter rateLimiter;
 
+	private final SchoolScreens school;
+
 	SyllabusController(LearningAccess access, CourseProfiles profiles, SyllabusService service, UserNames names,
-			RateLimiter rateLimiter) {
+			RateLimiter rateLimiter, SchoolScreens school) {
 		this.access = access;
 		this.profiles = profiles;
 		this.service = service;
 		this.names = names;
 		this.rateLimiter = rateLimiter;
+		this.school = school;
 	}
 
+	/**
+	 * 학교에서 읽는 과목(ADR-0043)의 학생에게는 학교 강의계획서를 그 학생의 학교 session으로 읽어 준다. 비정규 과정은 404
+	 * {@code syllabus_not_provided}다.
+	 */
 	@GetMapping("/api/courses/{courseId}/syllabus")
 	ResponseEntity<?> syllabus(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		Optional<CourseRole> role = this.access.roleIn(actor.userId(), courseId);
@@ -83,6 +90,10 @@ class SyllabusController {
 			.filter((p) -> role.isPresent() || p.regular())
 			.orElseThrow(ApiException::notFound);
 		if (role.isPresent()) {
+			Optional<SchoolScreens.SyllabusView> school = this.school.syllabus(actor, courseId);
+			if (school.isPresent()) {
+				return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(school.get());
+			}
 			SyllabusView view = memberView(profile);
 			return ResponseEntity.ok()
 				.cacheControl(CacheControl.noStore())

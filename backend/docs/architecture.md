@@ -167,6 +167,7 @@ flowchart LR
 - 내 과목의 안 읽은 공지 수: 공지와 읽음 기록은 `communication`의 것이고 `catalog`는 `communication`에 의존하지 않으므로 `catalog`가 `catalog.api.UnreadCourseNotices` port를 정의하고 `communication`이 메인 화면의 `CourseNoticeDigest.unreadCounts`와 같은 집계로 구현한다. 목록의 과목 ID를 모아 과목 수와 관계없이 쿼리 한 번으로 묻는다.
 - 학교 강의실 공지: 학교 공지와 학생의 학교 읽음 표시는 학교 session을 쓰는 `learning`이 두고(ADR-0043), 공지 목록과 안 읽은 공지 수는 `communication`이 낸다. `communication`은 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.SchoolCourseNotices` port를 정의하고 `learning`이 구현한다. 안 읽은 수는 과목 수와 관계없이 쿼리 한 번이다. 학교 공지 상세(`/notices/school-{id}`)는 `learning`의 controller다.
 - 학교 과제: 과제 상세, 첨부, 본인 제출 정보는 학교 session을 쓰는 `learning`이 읽는다(ADR-0043, `/assignments/school-{id}`와 학교 항목 제출 거절은 `learning`의 controller). 서비스 과제 목록은 `assessment`가 내므로 `learning.api.SchoolAssignmentRows` port로 가져온 학교 과제 행을 받아 학생 목록 뒤에 붙인다. 할 일은 `home`이 `learning.api.DueActivities.schoolDue`(가져온 행과 본인 완료 표시, 과목 수와 관계없이 쿼리 한 번)를 서비스 활동과 한 마감 순서로 섞는다.
+- 학교 영상 상세·강의계획서·출석·성적: 학교 session을 쓰는 `learning`(`SchoolScreens`)이 그 학생이 화면을 열 때 읽는다. 영상 상세, 강의계획서, 출석은 `learning`의 controller가 낸다. 학생 성적은 `assessment`가 내므로 `learning`이 `learning.api.SchoolGrades` port를 정의하고 구현한다(`assessment`는 이미 `learning.api`에 의존한다). 학교 값을 쓰는 과목은 학교 과목 키가 있는 수강생의, STack 담당자가 없는 과목이다. 담당자가 있는 과목은 서비스 화면 그대로다.
 - 아바타 사진 유무: 이름 옆에 아바타를 그리는 `communication`·`learning` 응답은 사용자 ID 옆에 사진 유무를 준다. 판정은 `files`가 `files.api.AvatarPhotos`로 내보내고 `files/avatar/AvatarImages`가 아바타 경로와 같은 규칙으로 구현한다. 현재 사진은 `identity.api.ProfileImages.withCurrent`로, 공통 과목은 `catalog.api.CourseMates`로 사람 수와 관계없이 쿼리 두 번 이하에 묻는다.
 
 ### 4.2 모듈 규칙
@@ -428,6 +429,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나. 항목은 `/api/me/courses`와 같다(`learners`는 담당자에게만) |
 | `GET /api/courses/{courseId}/weeks` | 과목 구성원 | `{serverTime, weeks}`. 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 활동마다 DB 시계로 정한 `phase`(`not_open`·`open`·`late`·`closed`, 과제·퀴즈·설문 화면과 같은 경계)와, 평가 활동이면 `assignmentId`·`quizId`·`surveyId` 중 하나. 자료·영상 활동은 `activityId`가 그 화면의 ID다. 학생에게는 학교 강의실에서 가져온 행(`activityId: "school-<번호>"`, `origin: "school"`, 화면 유형 `type`, `schoolType`, `schoolKind`, `phase`, 본인 `done`(모르면 null), `attendance`, `learningTimeSec`, `offline`, 학교에서 여는 `schoolUrl`)과 학교에만 있는 주차를 같은 목록에 붙인다. 담당자에게는 붙이지 않는다([ADR-0042](adr/0042-school-activity-import.md)). 쿼리는 권한 판정 뒤 학생 5번, 담당자 3번 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부(파일마다 `summaryPublished`), 강의 영상 항목, `phase`, `serverTime`, 평가 활동이면 그 유형의 ID |
+| `GET /api/courses/{courseId}/activities/school-{id}` | 학교 로그인한 그 과목 학생 | 학교 강의실 활동 상세(ADR-0043). 자료는 학교 상세와 첨부, 영상(`lecture_weeks`)은 학교 영상 상세(`online_view_form.acl`)만 읽어 `video`(출석부 반영 차시, 출석인정기간, 콘텐츠별 진도율·학습시간·출석인정 시간, `attendanceInSchoolOnly`)를 준다. 영상은 `playable: false`, `lectureItems: []`이고 재생 주소가 없다. 학교 session이 없거나 끝났으면 409 `school_signin_required` |
 
 ### 7.5 CDN이 없는 환경
 
@@ -539,7 +541,7 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/courses/{courseId}/grades/me?type=&q=` | 수강생 본인 | 내 성적(EP-0035, EP-0036). 평가 활동 비공개 과목이면 목록과 합계가 없다. 직접 입력 항목과, 학생이 볼 수 있는 과제(`assignmentId`, 제출 여부)·퀴즈(`quizId`)의 항목만 있다. 공개한 항목만 점수·의견·채점 일시가 있고, 합계는 공개했고 점수를 받은 항목만 더한다. 퀴즈 항목은 결과 공개 일시부터 공개다. `type`은 `all`, `assignment`, `quiz`, `manual` |
+| `GET /api/courses/{courseId}/grades/me?type=&q=` | 수강생 본인 | 내 성적(EP-0035, EP-0036). 평가 활동 비공개 과목이면 목록과 합계가 없다. 직접 입력 항목과, 학생이 볼 수 있는 과제(`assignmentId`, 제출 여부)·퀴즈(`quizId`)의 항목만 있다. 공개한 항목만 점수·의견·채점 일시가 있고, 합계는 공개했고 점수를 받은 항목만 더한다. 퀴즈 항목은 결과 공개 일시부터 공개다. `type`은 `all`, `assignment`, `quiz`, `manual`. 학교에서 읽는 과목의 학생에게는 학생 본인의 학교 성적 화면을 그 학생의 학교 session으로 읽어 같은 이름의 값(`itemId: "school-<n>"`, `origin`, `schoolType`, `activityId`, `offline`)으로 준다. 공개 전 항목에는 `score` 속성이 없다. 저장·캐시하지 않는다(ADR-0043) |
 | `GET /api/courses/{courseId}/gradebook?page=&size=` | 담당자 | 설정, 항목(유형, `assignmentId`·`quizId`, 공개 여부, 점수 받은 학생 수, `managedByAssignment`·`managedByQuiz`), 수강생 쪽(ID 순, size 100 이하)의 점수·의견·`version`과 학생별 합계. 지운 활동의 항목은 없다 |
 | `GET /api/courses/{courseId}/gradebook/items/{itemId}?page=&size=` | 담당자 | 성적부 항목 하나(오프라인 점수표). `item`은 성적부의 항목과 같은 모양이고, 수강생 쪽(ID 순, 1부터, size 1~100, 기본 50, `totalStudents`)의 학생마다 `studentId`, `name`, 그 항목의 `score`·`feedback`·`gradedAt`(없으면 null)·`version`(성적 행이 없으면 0). 지운 활동의 항목과 다른 과목의 항목은 404. 쿼리 수는 학생 수와 관계없다 |
 | `PUT /api/courses/{courseId}/grade-settings` | 담당자 | 평가 활동 공개(`activitiesVisible`). 처음이면 `revision` 0 |
@@ -696,7 +698,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/courses/{courseId}/attendance?week=` | 과목 구성원 | 출석부(EP-0011). 학생은 차시마다 자기 기록과 요약, 담당자는 차시마다 상태별 수 |
+| `GET /api/courses/{courseId}/attendance?week=` | 과목 구성원 | 출석부(EP-0011). 학생은 차시마다 자기 기록과 요약, 담당자는 차시마다 상태별 수. 학교에서 읽는 과목의 학생에게는 학생 본인의 학교 출석을 그 학생의 학교 session으로 읽어 같은 모양에 `origin: "school"`, `sessionId: "school-<순번>"`, `schoolMethod`, `record.statusLabel`을 붙여 준다. 저장·캐시하지 않는다(ADR-0043) |
 | `GET /api/courses/{courseId}/attendance/roster?page=&size=&sort=` | 담당자 | 수강생 × 차시 출석부. 쪽 번호, size 100까지, `sort`는 `studentNo`·`name`. 칸마다 version |
 | `GET /api/courses/{courseId}/attendance/settings` · `PUT` | 구성원 읽기, 담당자 수정 | 지각 기준, 회차 진행 시간, 지각 환산. 수정은 `If-Match`(설정 전 0) |
 | `POST /api/courses/{courseId}/attendance-sessions` | 담당자 | 차시(주차, 차시 번호, 수업일·시각, 방식, 보강 대상) 등록. 201. `Idempotency-Key` 지원 |
@@ -712,7 +714,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | `GET /api/courses/{courseId}/groups` | 과목 구성원 | 담당자는 모든 그룹과 구성원(사용자 ID, 학번, `hasPhoto`), 학생은 자기 그룹과 구성원 이름(EP-0039). 학생 응답에는 사용자 ID가 없어 `hasPhoto`는 언제나 false다 |
 | `POST /api/courses/{courseId}/groups` · `PUT …/{groupId}` · `DELETE …/{groupId}` | 담당자 | 그룹 생성(`Idempotency-Key` 지원), 이름 바꾸기와 삭제(`If-Match`). 출석에 쓴 그룹은 삭제 409 |
 | `PUT /api/courses/{courseId}/groups/{groupId}/members/{studentId}` · `DELETE` · `POST …/move` | 담당자 | 수강생 넣기·빼기(멱등), 다른 그룹으로 옮기기(한 transaction) |
-| `GET /api/courses/{courseId}/syllabus` | 구성원 전체, 구성원이 아닌 로그인 사용자는 정규과목 공개 항목만 | 강의계획서(EP-0218, EP-0219). 과목 기본 정보는 catalog 값 |
+| `GET /api/courses/{courseId}/syllabus` | 구성원 전체, 구성원이 아닌 로그인 사용자는 정규과목 공개 항목만 | 강의계획서(EP-0218, EP-0219). 과목 기본 정보는 catalog 값. 학교에서 읽는 과목(학교 과목 키가 있고 STack 담당자가 없는 과목)의 학생에게는 그 학생의 학교 session으로 학교 계획서를 읽어 같은 이름의 값에 `origin: "school"`을 붙여 준다(`version`·강사 `userId` 없음). 비정규 과정은 404 `syllabus_not_provided`(ADR-0043) |
 | `PUT /api/courses/{courseId}/syllabus` · `PUT …/syllabus/instructors/me` | 담당자 | 서술 항목과 주별 계획, 자기 강사 정보. `If-Match`(처음 0). 일반 텍스트. 200으로 바뀐 계획서(GET과 같은 모양)와 바뀐 자기 강사 정보를 돌려주고 `ETag`가 새 version이다. 강사 정보는 계획서 강사소개에 나오는 과목 담당자 명단(`course_instructors`)에 있는 사람만 쓴다. 조교·교수로 수강만 확정된 담당자는 409 `not_listed_instructor` |
 
 스마트출석의 실시간 신호는 WebSocket 없이 조회로 한다. 학생 화면은 `pollAfterSec`(기본 3초)마다 `active`와 `me`를 묻고, 담당자 화면은 QR 교체 시각마다 회차를 다시 읽는다. "출석했습니다."는 `me`가 `confirmed`이고 서버 기록이 있을 때만 보인다(SEC-06).
