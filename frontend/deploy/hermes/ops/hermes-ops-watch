@@ -149,6 +149,19 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def push_heartbeat(problems, now):
+    """yoobin-desktop 의 바깥 감시(hermes-external-watch)가 읽는 heartbeat 를 갱신한다. 데스크톱(CI/CD·백업 사본)에 닿지 않으면 그것도 문제다."""
+    try:
+        result = subprocess.run(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'desktop',
+                                 f'echo {int(now)} > ~/hermes-ops-watch.heartbeat'],
+                                capture_output=True, timeout=30)
+        ok = result.returncode == 0
+    except subprocess.TimeoutExpired:
+        ok = False
+    if not ok:
+        problems['http:desktop'] = 'yoobin-desktop(Jenkins·백업 사본·바깥 감시)에 ssh 접속 불가'
+
+
 def check_backups(problems, now):
     for name, directory in BACKUP_DIRS:
         files = [p for p in directory.glob('*') if p.is_file() and not p.name.startswith('.')] if directory.exists() else []
@@ -217,6 +230,8 @@ def main():
     check_units(problems)
     check_http(problems)
     check_backups(problems, now)
+    if not args.dry_run:
+        push_heartbeat(problems, now)
 
     if args.dry_run:
         print(json.dumps({'problems': problems, 'events': events}, ensure_ascii=False, indent=1))
