@@ -2,13 +2,14 @@
 // 백엔드 `ready`(학습실이 서버에 있을 때): 이 과목의 PDF는 학습실 과목 화면에 이미 들어 있으므로, 저장은 그 PDF를
 // 학생의 서버 폴더에 넣는 것(`PUT /api/me/study-room/placements/course-files/{fileId}`, study-folders.ts `placeItem`)이다.
 // 버튼은 서버가 아는 위치(어느 폴더에 있는지)를 보여 준다. 폴더에서 빼는 함수가 아직 없어 "폴더 없이"는 고를 수 없다.
-// 백엔드 없음(샘플): **목업**이다. 서버에도 이 브라우저에도 저장하지 않고, 누른 파일 표시(`saved`)만 이 탭의 메모리에 둔다.
-import { useState, useSyncExternalStore, type FormEvent } from "react";
+// 백엔드 없음(샘플), 또는 학습실 엔드포인트가 없는 백엔드(과목 view 404): **목업**이다. 서버에도 이 브라우저에도
+// 저장하지 않고, 누른 파일 표시(`saved`)만 이 탭의 메모리에 둔다.
+import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { Button, Dialog } from "../ui/kit.tsx";
 import { Icon } from "../ui/icon.tsx";
 import { toast } from "../store.ts";
-import { createFolder, folderState, getFolder, listFolders, placeItem, serverFolderOf, useStudyRoomStore } from "./study-folders.ts";
-import { refreshCourseView, serverStudyCourse, studyRoomMessage } from "./study-room-remote.ts";
+import { createFolder, folderState, getFolder, listFolders, placeItem, serverFolderOf, useStudyRoomStore, type StudyFolder } from "./study-folders.ts";
+import { peekCourseView, refreshCourseView, serverStudyCourse, studyRoomMessage } from "./study-room-remote.ts";
 
 const saved = new Map<string, string>();
 const listeners = new Set<() => void>();
@@ -29,6 +30,9 @@ const ROOT = "";
 /** "학습실에 저장" 버튼. 서버 학습실이면 실제 폴더 배치, 아니면 목업. */
 export function SaveToStudy({ kj, file, courseName }: { kj: string; file: SaveFile; courseName?: string }) {
   useStudyRoomStore();
+  // Reading the folder state loads the course view; a 404 there marks the study-room endpoints missing, and
+  // `serverStudyCourse` then answers null, so the button turns into the mock as soon as that is known.
+  if (serverStudyCourse(kj) != null) folderState(kj);
   return serverStudyCourse(kj) != null
     ? <ServerSaveToStudy kj={kj} file={file} courseName={courseName} />
     : <MockSaveToStudy kj={kj} file={file} courseName={courseName} />;
@@ -63,9 +67,24 @@ function ServerSaveDialog({ kj, file, itemId, courseName, onClose }: {
 }) {
   useStudyRoomStore();
   const { state, error } = folderState(kj);
+  const server = serverStudyCourse(kj);
+  // The cached view may be older than a move on another device: the dialog reloads it and shows the folders
+  // only once that reload has answered.
+  const [checking, setChecking] = useState(true);
+  const check = () => {
+    if (server == null) return;
+    setChecking(true);
+    void refreshCourseView(server).finally(() => setChecking(false));
+  };
+  useEffect(check, []);
+  // A failed reload keeps the older view (still safe to save: a stale version answers 409).
+  const staleError = !checking && server != null ? peekCourseView(server).error : null;
   const where = serverFolderOf(kj, itemId) || "";
+  // Folders made here, shown and selectable before the background reload lists them.
+  const [made, setMade] = useState<StudyFolder[]>([]);
   // Server folders only: a browser folder would keep the placement in this browser.
-  const folders = listFolders(kj).filter((folder) => !folder.local);
+  const listed = listFolders(kj).filter((folder) => !folder.local);
+  const folders = [...listed, ...made.filter((folder) => !listed.some((item) => item.id === folder.id))];
   const current = folders.find((folder) => folder.id === where) || null;
   const [choice, setChoice] = useState("");
   const [name, setName] = useState("");
@@ -93,18 +112,15 @@ function ServerSaveDialog({ kj, file, itemId, courseName, onClose }: {
     setBusy(true);
     setMessage("");
     try {
-      const made = await createFolder(kj, name);
-      setChoice(made.id);
+      const folder = await createFolder(kj, name);
+      setMade((list) => [...list, folder]);
+      setChoice(folder.id);
       setName("");
     } catch (failure) {
       setMessage(failure instanceof Error ? failure.message : studyRoomMessage(failure));
     } finally {
       setBusy(false);
     }
-  };
-  const reload = () => {
-    const server = serverStudyCourse(kj);
-    if (server != null) void refreshCourseView(server);
   };
 
   return (
@@ -114,14 +130,22 @@ function ServerSaveDialog({ kj, file, itemId, courseName, onClose }: {
           <Icon name="file" />
           <span><b>{file.name}</b>{courseName ? <span className="tiny">{courseName}</span> : null}</span>
         </div>
-        {state === "loading" ? <p className="tiny" role="status">학습실 폴더를 불러오는 중입니다.</p> : null}
+        {state === "loading" || (state === "ready" && checking)
+          ? <p className="tiny" role="status">학습실에서 지금 위치를 확인하는 중입니다.</p>
+          : null}
         {state === "failed" ? (
           <div className="save-study-failed" role="alert">
             <p className="tiny">{studyRoomMessage(error)}</p>
-            <Button kind="ghost" onClick={reload}>다시 불러오기</Button>
+            <Button kind="ghost" onClick={check}>다시 불러오기</Button>
           </div>
         ) : null}
-        {state === "ready" ? (
+        {state === "ready" && !checking && staleError ? (
+          <div className="save-study-failed" role="alert">
+            <p className="tiny">{`최신 위치를 확인하지 못해 전에 불러온 내용을 보여 줍니다. ${studyRoomMessage(staleError)}`}</p>
+            <Button kind="ghost" onClick={check}>다시 불러오기</Button>
+          </div>
+        ) : null}
+        {state === "ready" && !checking ? (
           <>
             <p className="tiny save-study-note">
               {current
@@ -149,7 +173,7 @@ function ServerSaveDialog({ kj, file, itemId, courseName, onClose }: {
         {message ? <p className="tiny save-study-error" role="alert">{message}</p> : null}
         <div className="btn-row save-study-actions">
           <Button kind="ghost" onClick={onClose}>취소</Button>
-          <Button kind="primary" disabled={busy || !selected || selected.id === where} onClick={() => void save()}>
+          <Button kind="primary" disabled={busy || checking || !selected || selected.id === where} onClick={() => void save()}>
             {current ? "옮기기" : "저장"}
           </Button>
         </div>
