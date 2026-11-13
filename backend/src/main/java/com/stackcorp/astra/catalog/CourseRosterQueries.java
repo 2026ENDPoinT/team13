@@ -1,9 +1,13 @@
 package com.stackcorp.astra.catalog;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -29,6 +33,21 @@ class CourseRosterQueries implements CourseRosters {
 			.param("course", courseId)
 			.query(Long.class)
 			.list();
+	}
+
+	@Override
+	public Map<Long, Set<Long>> students(Collection<Long> courseIds) {
+		Map<Long, Set<Long>> rosters = new HashMap<>();
+		if (courseIds.isEmpty()) {
+			return rosters;
+		}
+		this.jdbc.sql("SELECT DISTINCT e.course_id, e.user_id FROM course_enrollments e WHERE e.course_id IN (:courses) AND "
+				+ MembershipRule.studentOf("e.course_id", "e.user_id"))
+			.param("courses", courseIds)
+			.query((rs) -> {
+				rosters.computeIfAbsent(rs.getLong(1), (c) -> new HashSet<>()).add(rs.getLong(2));
+			});
+		return rosters;
 	}
 
 	/**

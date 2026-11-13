@@ -23,6 +23,15 @@ public interface CalendarActivities {
 			LocalDateTime now, LocalDateTime from, LocalDateTime to, int limit);
 
 	/**
+	 * 담당 과목에서 시작 일시가 기간 안인 활동. 공개 여부와 관계없이 모두다(담당자 메인의 다가오는 일정). 시작 순({@code open_at},
+	 * {@code activity_id}) 목록이다.
+	 * @param from 이 시각부터(포함)
+	 * @param to 이 시각 전까지(제외)
+	 */
+	List<CalendarActivity> openingBetween(Collection<Long> taughtCourseIds, LocalDateTime from, LocalDateTime to,
+			int limit);
+
+	/**
 	 * @param type learning_activities.activity_type
 	 * @param published 공개 여부. 학생에게 돌려주는 활동은 언제나 true다
 	 */

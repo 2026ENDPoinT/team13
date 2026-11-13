@@ -249,6 +249,30 @@ class EnrollmentRecords {
 	}
 
 	/**
+	 * 그 사용자가 처리할 수 있는 과목({@link #deciderRole}이 있는 과목)마다 처리를 기다리는 신청 수({@link #pendingCount}). 처리할 수
+	 * 없는 과목은 결과에 없다. 과목 수와 관계없이 쿼리 한 번이다.
+	 */
+	Map<Long, Integer> pendingCounts(long userId, Collection<Long> courseIds) {
+		Map<Long, Integer> counts = new HashMap<>();
+		if (courseIds.isEmpty()) {
+			return counts;
+		}
+		this.jdbc.sql("""
+				SELECT DISTINCT ci.course_id,
+				       (SELECT COUNT(*) FROM course_enrollments e
+				         WHERE e.course_id = ci.course_id AND e.enrollment_status IN ('PENDING', 'REQUESTED')) AS pending
+				  FROM course_instructors ci
+				 WHERE ci.user_id = :user AND ci.course_id IN (:courses) AND ci.instructor_role IN ('PROFESSOR', 'MANAGER')
+				""" + " AND " + MembershipRule.liveCourse("ci.course_id"))
+			.param("user", userId)
+			.param("courses", courseIds)
+			.query((rs) -> {
+				counts.put(rs.getLong(1), rs.getInt(2));
+			});
+		return counts;
+	}
+
+	/**
 	 * 사용자 본인의 비정규 수강신청과 청강 신청. 처리를 기다리는 신청, 확정, 반려, 취소를 모두 담는다. 학사 원장 수강은 신청이 아니라 넣지
 	 * 않고, 폐강한 과목의 신청은 카탈로그와 같이 넣지 않는다. 최근 신청이 먼저다.
 	 * @param kind NONREGULAR|AUDIT. 없으면 둘 다

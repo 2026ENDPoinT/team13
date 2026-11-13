@@ -1,5 +1,7 @@
 package com.stackcorp.astra.learning;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -46,10 +48,33 @@ class CalendarActivityQueries implements CalendarActivities {
 			.param("taught", taughtCourseIds.isEmpty() ? List.of(0L) : taughtCourseIds)
 			.param("enrolled", enrolledCourseIds.isEmpty() ? List.of(0L) : enrolledCourseIds)
 			.param("limit", limit)
-			.query((rs, n) -> new CalendarActivity(rs.getLong("activity_id"), rs.getLong("course_id"),
-					rs.getString("activity_type"), rs.getString("title"), rs.getObject("open_at", LocalDateTime.class),
-					rs.getObject("close_at", LocalDateTime.class), rs.getBoolean("published_yn")))
+			.query(CalendarActivityQueries::row)
 			.list();
+	}
+
+	@Override
+	public List<CalendarActivity> openingBetween(Collection<Long> taughtCourseIds, LocalDateTime from, LocalDateTime to,
+			int limit) {
+		if (taughtCourseIds.isEmpty() || limit < 1) {
+			return List.of();
+		}
+		return this.jdbc.sql("""
+				SELECT a.activity_id, a.course_id, a.activity_type, a.title, a.open_at, a.close_at, a.published_yn
+				  FROM learning_activities a
+				 WHERE a.deleted_at IS NULL AND a.open_at >= :from AND a.open_at < :to
+				""" + " AND " + TAUGHT + " ORDER BY a.open_at, a.activity_id LIMIT :limit")
+			.param("from", from)
+			.param("to", to)
+			.param("taught", taughtCourseIds)
+			.param("limit", limit)
+			.query(CalendarActivityQueries::row)
+			.list();
+	}
+
+	private static CalendarActivity row(ResultSet rs, int n) throws SQLException {
+		return new CalendarActivity(rs.getLong("activity_id"), rs.getLong("course_id"), rs.getString("activity_type"),
+				rs.getString("title"), rs.getObject("open_at", LocalDateTime.class),
+				rs.getObject("close_at", LocalDateTime.class), rs.getBoolean("published_yn"));
 	}
 
 }
