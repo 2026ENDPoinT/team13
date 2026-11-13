@@ -10,10 +10,10 @@ import { listCoursePdfs, deleteCoursePdf, type CoursePdfRecord } from "../../sha
 import { backendStatus, backendState, courseIdFor, kjOfCourseId, subscribe as onBackendChange } from "../../shared/backend.ts";
 import { listRecordings, deleteRecording, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, fromServer, type RecordingRecord, type MoveScope } from "../../shared/course-recordings.ts";
 import {
-  listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, deleteFolder, leaveFolder, placeItem, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
+  listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, deleteFolder, leaveFolder, placeItem, unplaceItem, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
 } from "../../shared/study-folders.ts";
 import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings, refreshCourseView } from "../../shared/study-room-remote.ts";
-import { studyDocuments, scanDelay, SCAN_CHECKS, type StudyDocRecord } from "../../shared/study-documents.ts";
+import { studyDocuments, deleteStudyDocument, scanDelay, SCAN_CHECKS, type StudyDocRecord } from "../../shared/study-documents.ts";
 import { serverCourseViews } from "../../shared/course-view.ts";
 import { thumbnailImage } from "../../shared/preview-remote.tsx";
 import { ApiError } from "../../shared/api.ts";
@@ -145,13 +145,14 @@ function PdfCard({ record, showCourse, menu }: { record: CoursePdfRecord; showCo
 }
 
 /** The student's own PDF in the study room: opens in the document view once the malware scan has passed. */
-function StudyDocCard({ record }: { record: StudyDocRecord }) {
+function StudyDocCard({ record, menu }: { record: StudyDocRecord; menu?: ReactNode }) {
   const state = record.state === "scanning" ? "검사 중" : record.state === "rejected" ? "검사 거부" : "내 PDF";
   return (
     <FileCard
       href={pdfHref(record)} kind="pdf" badge="PDF" title={record.title} iconName="file"
       meta={[state, shortDate.format(record.uploadedAt)]}
       label={`${record.title} 내 PDF${record.state === "ready" ? "" : `, ${state}`}`}
+      menu={menu}
     />
   );
 }
@@ -453,14 +454,14 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   };
   // Where an item can go: this course's own folders except the one open now.
   const targets = courseFolders.filter((item) => item.id !== folderId).map((item) => ({ id: item.id, name: item.name }));
-  const itemMenu = (record: { id: string; title: string; remote?: boolean; pendingFolderId?: string }, remove: () => Promise<void>, blocked?: string) => (
+  const itemMenu = (record: { id: string; title: string; remote?: boolean; studyDocument?: true; pendingFolderId?: string }, remove: () => Promise<void>, blocked?: string) => (
     <CardMenu
       title={record.title}
       move={{
         targets,
-        // The server has no "back to the root" for an item it holds; only browser-only items can leave a folder.
-        canLeave: Boolean(folderOfItem(record)) && !record.remote,
-        onMove: (target) => (target ? placeItem(record.id, target) : Promise.resolve(leaveFolder(record.id)))
+        canLeave: Boolean(folderOfItem(record)),
+        // An item the server holds goes back to the root with `DELETE …/placements`; a browser-only one just loses its local placement.
+        onMove: (target) => (target ? placeItem(record.id, target) : record.remote || record.studyDocument ? unplaceItem(course.id, record.id) : Promise.resolve(leaveFolder(record.id)))
           .then(() => say(`"${record.title}"을 ${target ? `"${targets.find((item) => item.id === target)?.name ?? ""}" 폴더` : "과목 폴더"}로 옮겼습니다.`), failure)
           .finally(afterChange),
       }}
@@ -537,7 +538,7 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
                 menu={itemMenu(record, () => deleteCoursePdf(record.id), record.remote ? "서버에 등록한 자료는 강의자료 화면의 서버 자료 목록에서 삭제합니다." : undefined)}
               />
             ))}
-            {docs.map((record) => <StudyDocCard key={record.id} record={record} />)}
+            {docs.map((record) => <StudyDocCard key={record.id} record={record} menu={itemMenu(record, () => deleteStudyDocument(record))} />)}
             {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} menu={itemMenu(record, () => deleteRecording(record))} />)}
             {samples.map((item) => <SampleCard key={item.id} item={item} showCourse={false} />)}
           </>
