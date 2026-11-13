@@ -19,7 +19,10 @@ public final class CsrfCookie {
 	private CsrfCookie() {
 	}
 
-	/** session이 바뀌는 응답에 붙이는 새 token. 로그인 전에 심겼을 수 있는 값을 로그인 뒤에 쓰지 않게 한다. */
+	/**
+	 * session이 바뀌는 응답에 붙이는 새 token. 로그인 전에 읽힌 값을 로그인 뒤에 쓰지 못하게 한다. 다른 subdomain이 심은 쿠키는 덮지
+	 * 못하고, 그 경우는 OriginCheckFilter가 막는다(ADR-0004 4번).
+	 */
 	public static ResponseCookie renew(HttpServletRequest request) {
 		return ResponseCookie.from(NAME, UUID.randomUUID().toString())
 			.httpOnly(false)
