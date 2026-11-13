@@ -1,7 +1,6 @@
 package com.stackcorp.astra.summary.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -105,22 +104,23 @@ class ConsentApiTests extends IntegrationTest {
 		new ApiClient(this.mvc, null).get("/api/llm/policy").andExpect(status().isUnauthorized());
 	}
 
+	/** 제공자가 설정됐지만 호출이 실패한다(잘못된 key, 재시도하지 않는 AUTH). 그 작업만 실패하고 배포는 꺼진 것으로 보이지 않는다. */
 	@Test
-	void aProviderOutageDoesNotLookLikeADisabledDeployment() throws Exception {
+	void aProviderFailureDoesNotLookLikeADisabledDeployment() throws Exception {
 		this.llm.reset((request) -> {
-			throw new LlmException(LlmException.Code.NETWORK, "connection refused");
+			throw new LlmException(LlmException.Code.AUTH, "invalid api key");
 		});
 		grant("page_summary", true).andExpect(status().isOk());
 
 		this.student.get("/api/llm/policy").andExpect(jsonPath("$.enabled").value(true));
 		long job = ApiClient.json(requestJob().andExpect(status().isAccepted())).get("id").asLong();
-		SummaryRunnerDriver.runOnce(this.context);
+		assertThat(SummaryRunnerDriver.runOnce(this.context)).isTrue();
 
-		// 장애는 그 작업의 결과로 남고 배포 상태(enabled)와 새 요청의 거절 사유는 바뀌지 않는다.
 		this.professor.get("/api/courses/" + this.course + "/summary-jobs/" + job)
-			.andExpect(jsonPath("$.errorCode").value(not("not_configured")));
+			.andExpect(jsonPath("$.state").value("failed"))
+			.andExpect(jsonPath("$.errorCode").value("provider"));
 		this.student.get("/api/llm/policy").andExpect(jsonPath("$.enabled").value(true));
-		requestJob().andExpect((result) -> assertThat(result.getResponse().getStatus()).isNotEqualTo(503));
+		requestJob().andExpect(status().isAccepted());
 	}
 
 	@Test

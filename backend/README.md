@@ -118,7 +118,7 @@ git commit -m "Update reference to <변경 요약>"
 | 쪽지·게시판 | 받은 쪽지 둘, 질의응답, 열린게시판 | 받은 쪽지 둘, 보낸 쪽지 |
 | 파일함 | 폴더 트리와 파일 4개, 휴지통 1 | 강의자료 폴더와 파일, 휴지통 1(폴더째) |
 
-표본의 온라인 강의에는 영상 바이트가 없다. 지금 기간의 강의는 콘텐츠가 변환 중(API `state` `processing`)이고, 지난 강의는 학생들이 본 뒤 원본이 내려간 상태(`video_state` `removed`, API `state` `failed`)다. 재생되는 강의는 교수 박은주로 로그인해 강의 화면에서 영상 파일을 올려 만든다. 로컬 실행은 transcoder를 같은 process에서 띄우므로 PATH에 `ffmpeg`가 있으면 곧 `ready`가 된다. 외부 LLM 처리 동의는 넣지 않는다. 쪽별 요약이나 학습 대화를 쓰려면 교수 화면에서 직접 동의한다.
+표본의 온라인 강의에는 영상 바이트가 없다. 지금 기간의 강의는 콘텐츠가 변환 중(API `state` `processing`)이고, 지난 강의는 학생들이 본 뒤 원본이 내려간 상태(`video_state` `removed`, API `state` `failed`)다. 재생되는 강의는 교수 박은주로 로그인해 강의 화면에서 영상 파일을 올려 만든다. 로컬 실행은 transcoder를 같은 process에서 띄우므로 PATH에 `ffmpeg`가 있으면 곧 `ready`가 된다. 외부 LLM 처리 동의는 넣지 않는다. 쪽별 요약이나 학습 대화를 쓰려면 제공자 key를 넣고 띄운 뒤(`ASTRA_LLM_API_KEY=… ./gradlew bootTestRun`, 아래 "LLM 설정") 교수 화면에서 직접 동의한다. key가 없으면 `GET /api/llm/policy`가 `enabled=false`이고, 교수 화면의 외부 AI 처리 동의는 "이 서비스에서는 외부 AI 기능을 쓰지 않습니다"를 보이며 새로 동의할 수 없다(이미 한 동의는 철회만 할 수 있다). 요약 생성과 학습 대화는 503 `llm_disabled`다.
 
 프론트엔드([STack-Frontend](https://github.com/STack-Corp/STack-Frontend))는 개발 서버가 `/api`, `/doc`, `/vod`를 이 서버로 넘긴다. 브라우저는 프론트엔드 주소만 쓴다. 백엔드는 CORS를 열지 않는다.
 
