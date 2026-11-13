@@ -18,9 +18,9 @@ import { rememberMaterials } from "../../shared/course-pdfs-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
 import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import {
-  schoolMaterialDetails, schoolDetailKey, schoolFilesOf, schoolFileRef, schoolProblemOf, SchoolLink, SchoolProblemNote,
-  type SchoolFile, type SchoolMaterialDetail,
+  schoolMaterialDetails, schoolDetailKey, schoolFilesOf, schoolProblemOf, SchoolLink, SchoolProblemNote, type SchoolMaterialDetail,
 } from "../../shared/school-content.tsx";
+import { SchoolFileRow } from "../../shared/school-files.tsx";
 import { resolveActivityHref } from "../../shared/course-activities-remote.ts";
 import type { ScreenCtx, Screen } from "../../types.ts";
 import type { ActivityParts } from "./learning.tsx";
@@ -154,23 +154,6 @@ function MaterialLoaded({ kj, courseId, activityId, parts }: { kj: string; cours
 }
 
 // ---------- 학교 자료 상세 ----------
-
-/** A file of a school material: preview and download only. Study tools and summaries stay off (the school has none). */
-function SchoolFileRow({ kj, courseId, file, schoolUrl }: { kj: string; courseId: number | string; file: SchoolFile; schoolUrl: string | null | undefined }) {
-  const preview = hrefFor(find("65_file_preview"), { n: schoolFileRef(file), kj });
-  return (
-    <article className="file-row srv-material-file" data-file={String(file.fileId)}>
-      <div>
-        <b>{file.name}</b>
-        <p className="tiny">{[String(file.extension || "").toUpperCase(), sizeText(file.sizeBytes)].filter(Boolean).join(" · ")}</p>
-      </div>
-      <div className="btn-row">
-        <Link href={preview} className="btn btn-secondary">미리보기</Link>
-        {downloadControl(courseId, { fileId: file.fileId, name: file.name, schoolUrl })}
-      </div>
-    </article>
-  );
-}
 
 function SchoolMaterialBody({ data, kj, courseId, parts }: { data: SchoolMaterialDetail; kj: string; courseId: number | string; parts: ActivityParts }) {
   const files = schoolFilesOf(data);
