@@ -17,6 +17,7 @@ import { backendSettled, backendState, connect, currentUserId, kjOfCourseId, sub
 import { saveBlob } from "./uploads-remote.tsx";
 import { toast } from "../store.ts";
 import { appendWebm, isAppendable } from "./webm-append.ts";
+import { originalCleanupWarning } from "./recording-join.ts";
 import type { RecordingStudyResults } from "./recording-study.ts";
 
 const DATABASE = "astra-course-recordings";
@@ -118,8 +119,11 @@ interface Session {
   pausedTotal: number;
   pausedAt: number;
   stoppedAt: number;
-  /** "이어서 녹음": the recording continued, and its audio (read at the start, used when this one stops). */
-  append: { record: RecordingRecord; base: Promise<Blob> } | null;
+  /**
+   * "이어서 녹음": the recording continued, and its audio and folder, both read at the start. The folder is the fallback
+   * for `appendFolder` when this one stops: by then the original may have been deleted elsewhere, taking its placement.
+   */
+  append: { record: RecordingRecord; base: Promise<Blob>; folder: Promise<string | null> } | null;
   done?: Promise<RecordingRecord | null>;
 }
 
@@ -918,7 +922,7 @@ export async function startRecording({ courseId, source, folderId = null, append
     courseId, source, folderId: appendTo ? null : folderId, ownerUserId: currentUserId(), settled: appendTo ? true : backendSettled(), recorder, stream, chunks, bytes: 0,
     limitBytes: server != null ? studyUsage()?.maxFileBytes ?? null : null, limitReached: false, warned: false,
     startedAt: new Date(), pausedTotal: 0, pausedAt: 0, stoppedAt: 0,
-    append: appendTo ? { record: appendTo, base: recordingAudio(appendTo) } : null,
+    append: appendTo ? { record: appendTo, base: recordingAudio(appendTo), folder: folderOf(appendTo).catch(() => null) } : null,
   };
   // Awaited when it stops; a failure there only means the new audio is saved on its own.
   current.append?.base.catch(() => {});
@@ -981,10 +985,20 @@ async function folderOf(record: RecordingRecord): Promise<string | null> {
 }
 
 /**
+ * The folder for a continuation's audio: where the original is now, or, when it has no placement any more (deleted in
+ * another tab or device during the recording), where it was when the continuation started.
+ */
+async function appendFolder(append: NonNullable<Session["append"]>): Promise<string | null> {
+  const now = await folderOf(append.record).catch(() => null);
+  return now ?? await append.folder;
+}
+
+/**
  * "이어서 녹음": joins `blob` to the end of the recording it continues and stores the joined file in its place. A
  * browser recording is rewritten in IndexedDB under the same id. A server recording is uploaded again as a new
- * recording (same title, start, folder) and the old one is deleted only after that 201; when that delete fails both
- * stay and `warning` says so. Throws when nothing was replaced, so the caller saves `blob` on its own.
+ * recording (same title, start, folder) and the old one is deleted only after that 201; when that delete fails (both
+ * stay) or finds it already deleted elsewhere, `warning` says so (recording-join.ts). Throws when nothing was replaced,
+ * so the caller saves `blob` on its own.
  */
 async function joinRecording(current: Session, blob: Blob, durationMs: number): Promise<{ record: RecordingRecord; warning?: string }> {
   const { record, base } = current.append!;
@@ -997,7 +1011,7 @@ async function joinRecording(current: Session, blob: Blob, durationMs: number): 
   }
   const input: SaveInput = {
     courseId: record.courseId, source: record.source, blob: joined, durationMs: total, startedAt: new Date(recordedAt(record.createdAt)),
-    title: record.title, fileName: record.fileName, folderId: await folderOf(record),
+    title: record.title, fileName: record.fileName, folderId: await appendFolder(current.append!),
   };
   let saved: RemoteRecording;
   try {
@@ -1007,15 +1021,14 @@ async function joinRecording(current: Session, blob: Blob, durationMs: number): 
     if (error instanceof AccountStop) throw new Error(KEPT[error.outcome]);
     throw new ApiErrorMessage(error);
   }
+  let cleanup: unknown = null;
   try {
     await deleteServerRecording({ id: record.id, version: record.version, courseId: record.backendCourseId });
   } catch (error) {
-    // Already gone (deleted meanwhile) is what was wanted.
-    if (!(error instanceof ApiError && error.status === 404)) {
-      return { record: saved, warning: `이어 붙인 녹음을 저장했지만 원래 녹음을 지우지 못해 둘 다 남아 있습니다. 앞부분만 있는 "${record.title}" 녹음을 지우세요. ${studyRoomMessage(error)}` };
-    }
+    cleanup = error;
   }
-  return { record: saved };
+  const warning = originalCleanupWarning(cleanup, record.title, studyRoomMessage);
+  return warning ? { record: saved, warning } : { record: saved };
 }
 
 /**
@@ -1045,7 +1058,7 @@ async function finish(current: Session): Promise<RecordingRecord | null> {
         const original = current.append.record;
         notes.push(`원래 녹음에 이어 붙이지 못해 새 녹음으로 따로 저장했습니다. ${error instanceof Error ? error.message : ""}`.trim());
         title = `${original.title} (이어서)`;
-        current.folderId = await folderOf(original).catch(() => null);
+        current.folderId = await appendFolder(current.append);
       }
     }
     const browserFolder = current.folderId ? localFolder(current.folderId) : null;

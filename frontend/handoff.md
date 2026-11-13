@@ -1,5 +1,32 @@
 # Handoff
 
+## 2026-11-14 런타임 점검 5 결함 수정(F1·F2·F3·F5·F6·F7)
+
+### 작업 내용
+- F1 쪽 이미지 복구: 이미지가 실패하면(전달 쿠키 만료) 출처를 다시 받아 쿠키를 새로 받고 `<img>`를 key로 다시 만든다(주소가 같아도 다시 요청한다). 자동 재시도는 이미지마다 1번, 그다음은 "N쪽 이미지를 불러오지 못했습니다" + "다시 불러오기"(누를 때마다 한 번만 다시 받는다). 동시에 실패한 쪽은 요청 하나를 같이 쓰고, 끝난 뒤의 실패는 새로 받는다(`page-image-retry.ts`). 레슨 뷰어와 쪽별 요약(`page-summary.tsx`)이 같은 `PageImage`를 쓴다. 레슨 뷰어의 크게 보기 버튼은 이미지 안쪽(`.lv-zoom`)으로 옮겨, 실패 안내의 버튼이 버튼 안에 들어가지 않게 했다.
+- F1 리뷰 후속: 다시 받기는 15초(`REFRESH_TIMEOUT_MS`)에 답이 없으면 실패로 끝나 안내와 버튼을 보이고, 다음 실패는 멈춘 요청을 기다리지 않는다. 다시 받은 뒤에도 실패한 주소는 뷰어가 기억해 나중에 불러오는 쪽은 요약을 다시 받지 않고 바로 안내로 간다(다시 불러오기는 한 번 받고, 이미지가 불러와지면 기억을 지운다). 다시 불러오기를 누르면 버튼이 같은 요소로 남아("불러오는 중…") 포커스가 그대로이고, 이미지가 돌아오면 크게 보기 버튼(쪽별 요약에서는 이미지)으로, 다시 실패하면 버튼으로 간다.
+- F2 자료 등록: 등록에 성공하면 폼을 새 key로 다시 그려 자료명·파일을 비우고, 요청 중 두 번째 누름은 ref로 막는다(파일함 경로 포함). 같은 결함이 있던 교수 그룹 만들기 폼도 같은 방식으로 고쳤다. 공지·과제·설문·시험·차시·성적 항목·강의 등록 폼은 이미 비우거나 수정 화면으로 간다.
+- F3 이어서 녹음: 원래 녹음의 폴더를 시작할 때 읽어 두고, 멈출 때 원래 녹음의 배치가 없으면 그 폴더에 저장한다. 원래 녹음이 이미 지워졌으면(DELETE 404) 그렇다고 알린다.
+- F6 같은 흐름에서 원래 녹음이 바뀌어 409 `version_conflict`이면 "다시 불러왔습니다. 다시 시도하세요" 대신 무엇을 새로 저장했고 무엇을 남겼는지 말한다(`recording-join.ts`).
+- F5 없어진 `?pop=` 창(avatar·files·history 등)은 열지 않고 주소에서 뺀다(`dialog-names.ts`, `applyRoute`). 이름을 모르는 창의 샘플 대화상자는 없앴다.
+- F7 파일함 고르기 창이 비었을 때 없어진 파일함 화면을 가리키지 않고, 기기 파일은 첨부 칸에서 바로 올리라고 말한다. 이 창이 쓰이는 네 곳(과제 제출, 첨부 고르기, 자료 등록, 자료 수정)에는 모두 직접 올리기가 있다.
+
+### 변경 파일
+- `src/shared/page-image-retry.ts`(새), `src/shared/page-summary.tsx`, `src/shared/lesson-viewer.tsx`, `src/shared/lesson-viewer.css`, `src/shared/backend-ui.css`
+- `src/areas/professor/professor.tsx`, `src/areas/professor/materials-server.tsx`, `src/areas/professor/groups-server.tsx`
+- `src/shared/recording-join.ts`(새), `src/shared/course-recordings.ts`
+- `src/shared/dialog-names.ts`(새), `src/router.tsx`, `src/areas/registry.tsx`
+- `src/shared/filebox-attach.tsx`
+- 테스트 `tests/unit/page-image-retry.test.ts`, `dialog-names.test.ts`, `recording-join.test.ts`, `vitest.config.ts`(coverage include)
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 24파일 1390건 통과(리뷰 후속 포함), `npm run build` 통과(청크 크기 경고만).
+- 백엔드 3626189 run-only + 프런트 4193에서 브라우저로 확인: F1 실제 403 `delivery_forbidden`→요약 재조회→같은 주소 200, 나중 실패도 재조회, 계속 실패하면 요청 2번 뒤 안내와 버튼(3초간 추가 요청 없음), 버튼 1번에 요청 1번. F2 한 번에 두 번 눌러도 자료 1개, 폼 비움. 그룹도 1개. F3 원래 녹음 삭제 뒤 새 녹음이 폴더 1에 배치되고 안내. F6 409 안내 문구. F5 일곱 이름 모두 창 없음·주소에서 빠짐, `pop=myinfo`는 열림.
+- 확인 못 함: 쪽별 요약 화면(`course-study.tsx`의 `summaryView`) 이미지 복구는 같은 컴포넌트지만 브라우저로 열어 보지 않았다. F7 빈 파일함 문구는 화면으로 보지 않았다(학생 파일함에 시드 파일이 있다). 리뷰 후속(시간 제한, 실패 주소 기억, 포커스)은 단위 테스트와 typecheck만 했고 브라우저로 다시 보지 않았다.
+
+### 남은 작업
+- 결정 필요: 파일함에 파일을 넣을 화면이 없으므로 "파일함에서 첨부"를 남길지. 지금은 시드 파일과 다른 경로로 들어간 파일만 고를 수 있다.
+
 ## 2026-11-14 로그인은 포커스된 모달 하나로만 (본문·내 메뉴의 로그인 폼 전부 제거)
 
 ### 작업 내용

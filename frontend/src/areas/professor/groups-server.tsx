@@ -86,6 +86,8 @@ function CmdButton({ label, busyLabel, kind, run, ...rest }: {
 }) {
   const [busy, setBusy] = useState(false);
   const live = useRef(true);
+  // `busy` disables the button only after React repaints; this blocks a second press in the same moment.
+  const running = useRef(false);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   return (
     <Button
@@ -94,9 +96,13 @@ function CmdButton({ label, busyLabel, kind, run, ...rest }: {
       aria-busy={busy ? "true" : undefined}
       {...rest}
       onClick={() => {
-        if (busy) return;
+        if (running.current) return;
+        running.current = true;
         setBusy(true);
-        void run().finally(() => { if (live.current) setBusy(false); });
+        void run().finally(() => {
+          running.current = false;
+          if (live.current) setBusy(false);
+        });
       }}
     >
       {busy ? busyLabel : label}
@@ -283,6 +289,8 @@ function DeleteGroup({ courseId, group }: { courseId: number; group: Group }) {
 
 function CreateForm({ courseId }: { courseId: number }) {
   const form = useRef<HTMLDivElement>(null);
+  // A successful create remounts the fields empty, so a second press cannot create the same group again.
+  const [round, setRound] = useState(0);
   async function create() {
     const root = form.current;
     if (!root) return;
@@ -295,6 +303,7 @@ function CreateForm({ courseId }: { courseId: number }) {
     }
     try {
       await createGroup(courseId, { name, type: value("type"), description });
+      setRound((n) => n + 1);
       done("그룹을 만들었습니다");
     } catch (error) {
       failed(courseId, error);
@@ -303,7 +312,7 @@ function CreateForm({ courseId }: { courseId: number }) {
   return (
     <section className="sheet" aria-label="그룹 만들기">
       <h2>그룹 만들기</h2>
-      <div ref={form} className="pf-form" data-group-form="new">
+      <div key={round} ref={form} className="pf-form" data-group-form="new">
         <label className="field"><span className="field-label">그룹 이름</span><input data-field="name" maxLength={100} /></label>
         <label className="field">
           <span className="field-label">종류</span>

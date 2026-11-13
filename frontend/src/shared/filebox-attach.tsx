@@ -211,7 +211,10 @@ export function FileboxAttach({ courseId, purpose, limit, room, onAttach, disabl
               })}
             </ul>
           )
-          : <EmptyState title="이 폴더에 항목이 없습니다" body="파일함 화면에서 파일을 올린 뒤 다시 고르세요." />}
+          : folder == null
+            // 파일함에 파일을 넣는 화면은 없어졌다. 기기의 파일은 이 창 옆의 직접 올리기로 붙인다.
+            ? <EmptyState title="파일함이 비어 있습니다" body="고를 파일이 없습니다. 기기에 있는 파일은 이 창을 닫고 첨부 칸에서 바로 올리세요." />
+            : <EmptyState title="이 폴더에 항목이 없습니다" body="다른 폴더를 고르세요. 기기에 있는 파일은 이 창을 닫고 첨부 칸에서 바로 올리세요." />}
         {data.nextCursor
           ? (
             <div className="btn-row">

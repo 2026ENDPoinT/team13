@@ -12,6 +12,7 @@ import { surveyIdOf } from "./shared/surveys-remote.ts";
 import { lectureIdOf } from "./shared/lectures-remote.ts";
 import { activityLinkOf } from "./shared/activity-links.ts";
 import { replaceVisit } from "./shared/remote-cache.ts";
+import { withoutStalePop } from "./shared/dialog-names.ts";
 import type { Role, Screen } from "./types.ts";
 
 export const HOME_PATH = "/ilos/main/main_form.acl";
@@ -103,6 +104,9 @@ export function currentScreen(): Screen {
 /** Syncs the state the address implies, then redraws. Runs on every navigation and on popstate. */
 export function applyRoute() {
   const state = getState();
+  // A `?pop=` naming a removed window (old links such as `?pop=avatar`) opens nothing and leaves the address.
+  const search = withoutStalePop(location.search);
+  if (search !== null) history.replaceState(history.state, "", `${location.pathname}${search}${location.hash}`);
   const params = currentParams();
   const screen = resolveScreen(location.pathname, params);
   const previousRole = state.role;
