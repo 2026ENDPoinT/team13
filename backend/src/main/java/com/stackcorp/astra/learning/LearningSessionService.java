@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
@@ -65,13 +66,15 @@ class LearningSessionService {
 
 	private final LearningAuthGrants grants;
 
+	private final OnlineAttendance attendance;
+
 	private final MeterRegistry meters;
 
 	private final Timer heartbeatGap;
 
 	LearningSessionService(JdbcClient jdbc, TransactionTemplate tx, LearningClock clock,
 			CourseMemberships memberships, DeliveryCookies cookies, LearningSessionProperties properties,
-			LearningAuthGrants grants, MeterRegistry meters) {
+			LearningAuthGrants grants, OnlineAttendance attendance, MeterRegistry meters) {
 		this.jdbc = jdbc;
 		this.tx = tx;
 		this.clock = clock;
@@ -79,6 +82,7 @@ class LearningSessionService {
 		this.cookies = cookies;
 		this.properties = properties;
 		this.grants = grants;
+		this.attendance = attendance;
 		this.meters = meters;
 		this.heartbeatGap = Timer.builder("astra.learning.heartbeat.gap")
 			.description("받아들인 하트비트와 앞 기준 시각(앞 하트비트 또는 시작) 사이의 서버 시각 간격")
@@ -107,15 +111,33 @@ class LearningSessionService {
 	/** 하트비트(EP-0050). seq는 session 안에서 증가하는 순번이다. 위치는 이어보기 힌트로만 저장한다. */
 	Granted<HeartbeatResult> heartbeat(long userId, long loginSessionId, long courseId, long sessionId, long seq,
 			Integer positionSec, Boolean playing) {
-		return this.tx
-			.execute((status) -> doHeartbeat(userId, loginSessionId, courseId, sessionId, seq, positionSec, playing))
+		return retried(() -> this.tx
+			.execute((status) -> doHeartbeat(userId, loginSessionId, courseId, sessionId, seq, positionSec, playing)))
 			.orThrow();
 	}
 
 	/** 명시적 종료(EP-0057, EP-0058). 마지막 기준 시각 뒤 구간을 같은 규칙으로 적립한다. 이미 닫힌 session이면 그 결과를 그대로 돌려준다. */
 	Ended end(long userId, long loginSessionId, long courseId, long sessionId, Integer positionSec, String reason) {
-		return this.tx.execute((status) -> doEnd(userId, loginSessionId, courseId, sessionId, positionSec, reason))
+		return retried(
+				() -> this.tx.execute((status) -> doEnd(userId, loginSessionId, courseId, sessionId, positionSec, reason)))
 			.orThrow();
+	}
+
+	/**
+	 * 교착이나 잠금 시간 초과로 진 transaction은 전부 되돌아가므로 처음부터 다시 실행한다. 적립은 주차 행을 잠그고 출석 차시를 잠금 읽기로
+	 * 판정해, 차시·영상 활동 명령과 드물게 엇갈릴 수 있다(OnlineAttendance).
+	 */
+	private <T> T retried(Supplier<T> work) {
+		for (int attempt = 1;; attempt++) {
+			try {
+				return work.get();
+			}
+			catch (PessimisticLockingFailureException ex) {
+				if (attempt == START_ATTEMPTS) {
+					throw ex;
+				}
+			}
+		}
 	}
 
 	/**
@@ -359,9 +381,13 @@ class LearningSessionService {
 		return b != null && b.isBefore(a) ? b : a;
 	}
 
-	/** 원장, 기준 시각, 진도를 한 transaction에서 바꾼다. 같은 session 행 잠금 아래에서만 부른다. */
+	/**
+	 * 원장, 기준 시각, 진도를 한 transaction에서 바꾼다. 같은 session 행 잠금 아래에서만 부른다. 적립하면 진도를 쓰기 전에 활동 주차를
+	 * 공유 잠금한다. 차시·영상 활동 명령이 주차를 배타 잠금하고 출석부를 다시 판정하므로 충족과 그 판정이 서로 엇갈리지 않는다.
+	 */
 	private void apply(Session session, Item item, Credit credit, Integer positionSec, LocalDateTime now) {
 		if (credit.seconds() > 0) {
+			this.attendance.lockWeeks(false, List.of(item.weekId()));
 			this.jdbc.sql("""
 					INSERT INTO learning_credit_ledger (learning_session_id, from_at, to_at, credited_sec, in_period_yn, rule_version)
 					VALUES (:session, :from, :to, :seconds, 1, :rule)
@@ -416,8 +442,8 @@ class LearningSessionService {
 	}
 
 	/**
-	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록한다. 활동의 모든 콘텐츠가 충족되면 활동 완료와 출석부(연결된 차시가 있을 때)에
-	 * 한 번 반영한다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
+	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록한다. 활동의 모든 콘텐츠가 충족되면 활동 완료를 한 번 쓰고 출석부 반영을
+	 * {@link OnlineAttendance}에 맡긴다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
 	 */
 	private void decide(long userId, Item item, LocalDateTime now, String rule) {
 		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
@@ -451,31 +477,7 @@ class LearningSessionService {
 				INSERT INTO activity_progress (user_id, activity_id, completed_at) VALUES (:user, :activity, :now) AS n
 				ON DUPLICATE KEY UPDATE completed_at = COALESCE(activity_progress.completed_at, n.completed_at)
 				""").param("user", userId).param("activity", item.activityId()).param("now", now).update();
-		if (item.attendanceSessionId() == null) {
-			return;
-		}
-		this.jdbc.sql("""
-				INSERT INTO attendance_records (attendance_session_id, user_id, status, source, progress_percent, decided_at,
-				                                rule_version)
-				VALUES (:attendance, :user, '출석', 'online', 100.00, :now, :rule)
-				ON DUPLICATE KEY UPDATE attendance_record_id = attendance_record_id
-				""")
-			.param("attendance", item.attendanceSessionId())
-			.param("user", userId)
-			.param("now", now)
-			.param("rule", rule)
-			.update();
-		this.jdbc.sql("""
-				UPDATE attendance_records
-				   SET status = '출석', source = 'online', progress_percent = 100.00, decided_at = :now, rule_version = :rule,
-				       row_version = row_version + 1
-				 WHERE attendance_session_id = :attendance AND user_id = :user AND status = '미처리'
-				""")
-			.param("attendance", item.attendanceSessionId())
-			.param("user", userId)
-			.param("now", now)
-			.param("rule", rule)
-			.update();
+		this.attendance.credit(userId, item.activityId(), now, rule);
 	}
 
 	/** 학습 시작은 명시적 POST라 열람 기록과 이어보기 포인터를 여기서 남긴다(SC-04). */
@@ -626,7 +628,7 @@ class LearningSessionService {
 	private Optional<Item> item(long itemId, long courseId) {
 		return this.jdbc.sql("""
 				SELECT i.online_lecture_item_id, i.activity_id, a.course_id, a.published_yn, a.open_at, a.close_at,
-				       a.attendance_session_id, i.content_path, i.duration_sec, i.required_sec
+				       a.course_week_id, i.content_path, i.duration_sec, i.required_sec
 				  FROM online_lecture_items i JOIN learning_activities a ON a.activity_id = i.activity_id
 				 WHERE i.online_lecture_item_id = :item AND a.course_id = :course AND a.deleted_at IS NULL
 				   AND i.deleted_at IS NULL
@@ -635,7 +637,7 @@ class LearningSessionService {
 			.param("course", courseId)
 			.query((rs, n) -> new Item(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getBoolean(4),
 					rs.getObject(5, LocalDateTime.class), rs.getObject(6, LocalDateTime.class),
-					rs.getObject(7, Long.class), rs.getString(8), rs.getObject(9, Integer.class),
+					rs.getLong(7), rs.getString(8), rs.getObject(9, Integer.class),
 					rs.getObject(10, Integer.class)))
 			.optional();
 	}
@@ -649,7 +651,7 @@ class LearningSessionService {
 	}
 
 	private record Item(long itemId, long activityId, long courseId, boolean published, LocalDateTime openAt,
-			LocalDateTime closeAt, Long attendanceSessionId, String contentPath, Integer durationSec,
+			LocalDateTime closeAt, long weekId, String contentPath, Integer durationSec,
 			Integer requiredSec) {
 	}
 
