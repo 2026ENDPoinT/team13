@@ -2,6 +2,8 @@
 // `GET …/smart-rounds/active`에서 받는다. 응답의 `pollAfterSec`마다 다시 묻고, 진행 목록에서 빠진 회차는 `…/me`로 마지막 상태
 // (마감, 만료, 취소)를 한 번 더 읽는다. "출석했습니다."는 상태가 `confirmed`이고 서버 기록(`attendance`)이 있을 때만 쓴다.
 // 입력 중인 PIN·QR token은 다시 그려도 남게 메모리에만 둔다.
+// 학교 과목의 학생은 학교 출석부(`origin: "school"`)를 받는다: 학교 출석 방식(`schoolMethod`)과 학교 상태 글(`record.statusLabel`)을
+// 보이고, 학교 연결이 끝났으면(409 `school_signin_required`) 다시 로그인을, 학교가 답하지 않으면(502) 다시 시도를 보인다.
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Button, EmptyState, ErrorState, Field, LoadingState } from "../../ui/kit.tsx";
 import { courseById } from "../../data.ts";
@@ -17,6 +19,7 @@ import {
 } from "../../shared/attendance-remote.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { RetryButton } from "./activity-server.tsx";
+import { schoolProblemOf, SchoolProblemNote } from "../../shared/school-content.tsx";
 
 
 interface Note {
@@ -206,7 +209,7 @@ function RoundCard({ courseId, view, sessionLabel }: { courseId: number; view: M
   );
 }
 
-function SmartPanel({ courseId, sessionsById }: { courseId: number; sessionsById: Map<number, string> }) {
+function SmartPanel({ courseId, sessionsById }: { courseId: number; sessionsById: Map<number | string, string> }) {
   const key = attendanceKey(courseId);
   const entry = useResource(activeRounds, key);
   useResource(myRounds, null);
@@ -286,7 +289,7 @@ function usePolling(courseId: number): void {
 // ---------- 출석부 ----------
 
 function SessionRow({ session }: { session: AttendanceSession }) {
-  const record = session.record || { status: "unmarked", source: null };
+  const record = session.record || { status: "unmarked", source: null, statusLabel: null };
   const cancelled = session.cancelled;
   const time = [koDay(session.classDate), timeRange(session)].filter(Boolean).join(" ");
   return (
@@ -294,7 +297,11 @@ function SessionRow({ session }: { session: AttendanceSession }) {
       <span className="att-rail" aria-hidden="true"><i /></span>
       <span>
         <b>{`${session.sessionNo}차시${session.makeup ? " 보강" : ""}`}</b>
-        <span className="tiny">{[cancelled ? "휴강" : METHOD[session.method || ""] || session.method, time].filter(Boolean).join(" · ")}</span>
+        <span className="tiny">{[
+          cancelled ? "휴강" : METHOD[session.method || ""] || session.method || session.schoolMethod,
+          time,
+          !cancelled && record.statusLabel ? `e-Class ${record.statusLabel}` : "",
+        ].filter(Boolean).join(" · ")}</span>
       </span>
       {cancelled
         ? <span className="att-status st-empty">휴강</span>
@@ -314,11 +321,12 @@ function AttendanceBody({ courseId, selectedWeek }: { courseId: number; selected
   usePolling(courseId);
   const data = entry && entry.data;
   const weeks = data && Array.isArray(data.weeks) ? data.weeks : [];
-  const sessionsById = new Map<number, string>();
+  const sessionsById = new Map<number | string, string>();
   for (const week of weeks) for (const session of week.sessions || []) sessionsById.set(session.sessionId, `${week.weekNo}주 ${session.sessionNo}차시`);
   let body: ReactNode;
   if (!data) {
     if (!entry || !entry.error) body = <LoadingState title="출석을 불러오는 중입니다" />;
+    else if (schoolProblemOf(entry.error)) body = <SchoolProblemNote error={entry.error} retry={load} />;
     else if (missing(entry.error)) body = <EmptyState title="출석을 볼 수 없습니다" body="이 과목의 구성원이 아니거나 과목을 찾을 수 없습니다." />;
     else body = <ErrorState title="출석을 불러오지 못했습니다" body={attendanceMessage(entry.error)} actions={<RetryButton reload={load} />} />;
   } else {
@@ -341,7 +349,9 @@ function AttendanceBody({ courseId, selectedWeek }: { courseId: number; selected
       const selected = selectedWeek != null && numbers.includes(selectedWeek) ? selectedWeek : null;
       body = (
         <>
-          {entry.error ? <p className="err" role="alert">{attendanceMessage(entry.error)}</p> : null}
+          {!entry.error ? null : schoolProblemOf(entry.error)
+            ? <SchoolProblemNote error={entry.error} retry={load} compact />
+            : <p className="err" role="alert">{attendanceMessage(entry.error)}</p>}
           {stats}
           <div className="attend-weeks" role="group" aria-label="주차">
             {numbers.map((n) => (

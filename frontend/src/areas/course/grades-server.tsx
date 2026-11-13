@@ -1,6 +1,8 @@
 // 학생 성적 화면(43, 43b, 43c)의 서버 버전. 공개 여부는 서버가 항목마다 정하므로 세 경로가 같은 서버 화면을 그린다.
 // 출석 요약은 `GET …/attendance`, 평가 활동은 `GET …/grades/me?type=&q=`다. 공개하지 않은 항목에는 점수·의견·채점 일시
-// 속성이 아예 없으므로 화면은 속성이 있을 때만 그리고, 합계는 서버가 준 값만 쓴다(직접 더하지 않는다).
+// 속성이 아예 없으므로 화면은 속성이 있을 때만 그리고, 합계는 서버가 준 값만 쓴다(직접 더하지 않는다). 학교 과목의 학생은 학교 성적과
+// 출석(`origin: "school"`)을 같은 모양으로 받는다. 학교 연결이 끝났으면(409) 다시 로그인을, 학교가 답하지 않으면(502) 다시 시도를 보이고,
+// 어느 쪽에서 눌러도 출석과 성적을 함께 다시 읽는다.
 import { useEffect, useRef, type ReactNode } from "react";
 import type { Course } from "../../data.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
@@ -17,6 +19,7 @@ import { myGrades, myGradesKey, GRADE_TYPES, TYPE_LABEL, points, totalText, grad
 import { attendanceViews, attendanceKey, attendanceMessage } from "../../shared/attendance-remote.ts";
 import type { CourseParts } from "./course.tsx";
 import { RetryButton } from "./groups-server.tsx";
+import { schoolProblemOf, SchoolProblemNote } from "../../shared/school-content.tsx";
 
 const SEARCH_DELAY = 300;
 
@@ -42,6 +45,7 @@ function scoreCell(item: MyGradeItem): ReactNode {
 function itemRow(item: MyGradeItem, kj: string): ReactNode {
   const meta = [
     TYPE_LABEL[item.type] || item.type,
+    item.offline === true ? "오프라인" : "",
     item.closeAt ? `마감 ${koDateTime(item.closeAt)}` : "",
     item.weight != null ? `반영 ${points(item.weight)}%` : "",
     has(item, "gradedAt") ? `채점 ${koDateTime(item.gradedAt)}` : "",
@@ -61,7 +65,7 @@ function itemRow(item: MyGradeItem, kj: string): ReactNode {
   );
 }
 
-function AttendanceBlock({ courseId }: { courseId: number | string }) {
+function AttendanceBlock({ courseId, reloadGrades }: { courseId: number | string; reloadGrades: () => void }) {
   const key = attendanceKey(courseId);
   const load = () => void attendanceViews.load(key, courseId);
   const entry = useResource(attendanceViews, key, load);
@@ -72,6 +76,7 @@ function AttendanceBlock({ courseId }: { courseId: number | string }) {
   let body: ReactNode;
   if (!data) {
     if (!entry || !entry.error) body = <LoadingState title="출석을 불러오는 중입니다" />;
+    else if (schoolProblemOf(entry.error)) body = <SchoolProblemNote error={entry.error} retry={() => { load(); reloadGrades(); }} compact />;
     else if (missing(entry.error)) body = <p className="crs-note">출석 정보를 볼 수 없습니다.</p>;
     else body = <ErrorState title="출석을 불러오지 못했습니다" body={attendanceMessage(entry.error)} actions={<RetryButton reload={load} />} />;
   } else if (!data.summary) {
@@ -120,6 +125,10 @@ function RemoteGrades({ ctx, kj, courseId, parts }: { ctx: ScreenCtx; kj: string
   const q = readQuery(ctx.state, parts.scope).trim().slice(0, 100);
   const key = myGradesKey(courseId, type, q);
   const load = () => void myGrades.load(key, courseId, type, q);
+  const reloadBoth = () => {
+    load();
+    void attendanceViews.load(attendanceKey(courseId), courseId);
+  };
   const entry = useResource(myGrades, key, load);
   const live = useRef(true);
   useEffect(() => {
@@ -144,6 +153,7 @@ function RemoteGrades({ ctx, kj, courseId, parts }: { ctx: ScreenCtx; kj: string
   let body: ReactNode;
   if (!data) {
     if (!entry || !entry.error) body = <LoadingState title="성적을 불러오는 중입니다" />;
+    else if (schoolProblemOf(entry.error)) body = <SchoolProblemNote error={entry.error} retry={reloadBoth} />;
     else if (missing(entry.error)) body = <EmptyState title="성적을 볼 수 없습니다" body="이 과목의 수강생 계정으로 로그인해야 성적을 볼 수 있습니다." />;
     else body = <ErrorState title="성적을 불러오지 못했습니다" body={gradeMessage(entry.error)} actions={<RetryButton reload={load} />} />;
   } else if (hidden) {
@@ -160,7 +170,9 @@ function RemoteGrades({ ctx, kj, courseId, parts }: { ctx: ScreenCtx; kj: string
     } else {
       body = (
         <>
-          {entry.error ? <p className="err" role="alert">{gradeMessage(entry.error)}</p> : null}
+          {!entry.error ? null : schoolProblemOf(entry.error)
+            ? <SchoolProblemNote error={entry.error} retry={reloadBoth} compact />
+            : <p className="err" role="alert">{gradeMessage(entry.error)}</p>}
           <div className="crs-eval">{items.map((item) => itemRow(item, kj))}</div>
         </>
       );
@@ -169,7 +181,7 @@ function RemoteGrades({ ctx, kj, courseId, parts }: { ctx: ScreenCtx; kj: string
   return (
     <section className="crs crs-grades" data-area="course">
       {parts.head("성적", "chart", null)}
-      <AttendanceBlock courseId={courseId} />
+      <AttendanceBlock courseId={courseId} reloadGrades={load} />
       <section className="crs-block">
         <div className="crs-toolbar">
           <h2>평가 활동</h2>

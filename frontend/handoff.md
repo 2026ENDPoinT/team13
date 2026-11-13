@@ -1,5 +1,30 @@
 # Handoff
 
+## 2026-11-14 학교 영상 상세(재생 없음), 학교 강의계획서·출석·성적의 학교 표시와 오류 상태
+
+### 작업 내용
+- 백엔드(`dev` 4b4fefe, 설계 노트 §5d·§5e)는 학교 과목의 학생에게 `GET …/activities/school-<n>`(주차 행 `schoolType: "lecture_weeks"`)으로 영상의 학교 사실(`video.contents[]` 진도·기간 안·밖 진도·학습시간·출석인정 시간, 출석 주차·기간, `attendanceInSchoolOnly`)을, `…/syllabus`·`…/attendance`·`…/grades/me`로 네이티브 모양 + `origin: "school"`을 준다.
+- 학교 영상: 강의실·학습활동 목록·"이어서 학습하기"의 학교 영상 행이 `schoolUrl`(새 탭) 대신 STack 상세 `activity_form.acl?m=lecture_weeks&n=school-<n>`(같은 창)로 간다(`schoolVideoHref`, `course-activities-remote.ts`). 라우터는 `serverSchoolLecture`. 상세(`activity-server.tsx` `SchoolVideoBody`)는 열 때 한 번만 읽고(포커스·목록에서는 안 읽음) 출석 주차·인정 기간·상태, 학교 학습창 안내(`attendanceInSchoolOnly`), 앞쪽의 "e-Class에서 시청"(primary, 새 탭, `noopener noreferrer`), 내용 표(차례·내용·진도·기간 내·기간 후·학습시간·출석인정 시간)를 그린다. 재생기·learning session·heartbeat·진도 요청은 없다. `video`가 없는 응답(이 읽기가 없는 백엔드)은 행 정보와 e-Class 링크만, 영상이 아닌 `type`은 "영상 활동이 아닙니다".
+- 강의계획서: `userId` 없는 담당자는 이름으로 key를 만들고 사진을 찾지 않는다(이름 첫 글자). 학교 계획서에 "학교 e-Class의 강의계획서입니다." 404 `syllabus_not_provided`는 "이 과목은 학교 e-Class에 강의계획서가 없습니다."
+- 출석: 방식은 `METHOD[method]`가 없으면 `schoolMethod`, 학교 상태 글은 `e-Class <statusLabel>`. `STATUS.other` "기타"(회색). `sessionId`는 `number | string`.
+- 성적: `itemId` 문자열 허용, `offline`이면 "오프라인".
+- 오류: 네 화면 모두 409 `school_signin_required`는 자료·공지와 같은 `SchoolProblemNote`(다시 로그인 → 로그인 뒤 그 화면을 다시 읽음), 502 `school_unavailable`은 다시 시도. 성적 화면은 출석 블록과 성적 목록 어느 쪽에서 다시 로그인해도 둘 다 다시 읽는다.
+- 학교 행 상태 글(`activity-state.ts` `schoolState`)의 학습시간은 `school-content.tsx` `schoolDuration`(옮김, `schoolPercent`도 새로)이고, STack 상세로 가는 학교 영상 행은 "학교 영상". 영상 상세도 왼쪽 학습활동 목록 패널(`ActivityShell`) 안에 그린다.
+
+### 변경 파일
+- `src/shared/school-content.tsx`, `src/shared/activity-links.ts`, `src/shared/course-activities-remote.ts`, `src/shared/activity-state.ts`, `src/router.tsx`, `src/types.ts`, `src/areas/learning/learning.tsx`, `src/areas/learning/activity-server.tsx`
+- `src/shared/syllabus-remote.ts`, `src/areas/course/syllabus-server.tsx`, `src/shared/attendance-remote.ts`, `src/areas/learning/attendance-server.tsx`, `src/shared/grades-remote.ts`, `src/areas/course/grades-server.tsx`
+- 테스트 `tests/integration/school-screens.test.ts`(새, 15개), `tests/integration/school-activities.test.ts`(학교 영상 행 기대값을 STack 상세로)
+
+### 검증
+- `origin/main` d35f956 위에서 `npm run typecheck` 오류 없음, `npm test` 35파일 1472개 통과, `npm run build` 성공(청크 크기 경고만). 아래 브라우저 확인은 rebase 전(ac5d072 위, 활동 상세 왼쪽 학습활동 목록 패널 전)에 했다.
+- 실제 실행(백엔드 `origin/dev` 4b4fefe run-only `bootTestRun` 18480/18481, `course_code` NULL, 프론트 `http://localhost:4193`, 본인 계정 학교 로그인 2번: 첫 세션 쿠키가 같은 `localhost`의 다른 실행에 덮여 401이 되어 한 번 더): 과목 10개(정규 7·비정규 3). 정규 과목 하나 강의실: 학교 행 17개 중 영상 3개 모두 같은 창 STack 상세 링크("학교 영상"), 목록이 `/activities/` 요청 0번. 완료된 영상 하나 열기: 내용 1행(진도·기간 내·기간 후·학습시간·출석인정 시간 채워짐), 인정 기간 표시, 학교 학습창 안내, "e-Class에서 시청"(eclass.seoultech.ac.kr, `_blank`, `noopener noreferrer`), `video`·`audio`·`iframe` 0개, learning session·heartbeat 요청 0번. 계획서: 학교 표시, 담당자 1명(사진 요청 없음, 이름 첫 글자), 주차 16행. 출석: 16주 51차시(출석 24·결석 3·휴강 6·미처리 18), 학교 상태 글 27개. 성적: 2항목 모두 미공개, 합계 없음 문장, 출석 요약 표. 비정규 과목 계획서: "이 과목은 학교 e-Class에 강의계획서가 없습니다."(학교 읽기 로그 없음). 로그아웃 204.
+- 지금 백엔드(`main`, 학교 영상 읽기 없음): `SchoolContent.activity`는 영상 행에 학교 요청 없이 저장된 행(`type: "lecture_weeks"`, `attendance`, `schoolUrl`, `video` 없음)을 준다. 이 응답은 Vitest로 확인(행 정보 + e-Class 시청 링크). 계획서·출석·성적은 `origin`이 없으면 예전 그대로(네이티브 출석·계획서 Vitest).
+
+### 남은 작업
+- 백엔드 파싱으로 보이는 것 두 가지(프론트는 받은 글을 그대로 그린다): 영어 화면 과목의 `video.attendanceWeek`가 "WeekWeek 4 Session1", 판정 전 차시 18개의 `schoolMethod`가 "출석 전"(상태 글로 보임).
+- 409 `school_signin_required`와 502는 Vitest로만 확인.
+
 ## 2026-11-14 학교 e-Class 자료 PDF 첨부에 "학습실에 저장" 업로드 아이콘
 
 ### 작업 내용

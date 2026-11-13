@@ -102,6 +102,62 @@ export const schoolDetailKey = (courseId: Id, activityId: string): string => `${
 export const schoolMaterialDetails = createResource<SchoolMaterialDetail, [Id, string]>((courseId, activityId) =>
   apiGet<SchoolMaterialDetail>(`/api/courses/${encodeURIComponent(String(courseId))}/activities/${encodeURIComponent(activityId)}`));
 
+/** One content of a school video (`video.contents[]`); the student's own progress as the school counts it. */
+export interface SchoolVideoContent {
+  no: number;
+  title: string;
+  percent?: number | null;
+  /** Progress watched inside the attendance period (%). */
+  inPeriodPercent?: number | null;
+  /** Progress watched after the period (%). */
+  outOfPeriodPercent?: number | null;
+  /** The student's cumulative 학습시간. */
+  learningTimeSec?: number | null;
+  /** The 출석인정 time the school requires. */
+  attendanceTimeSec?: number | null;
+  attendanceInSchoolOnly?: boolean;
+}
+
+export interface SchoolVideo {
+  attendanceWeek?: string | null;
+  periodStartAt?: string | null;
+  periodEndAt?: string | null;
+  /** Some content counts toward attendance, which the school credits only in its own learning window. */
+  attendanceInSchoolOnly?: boolean;
+  contents?: SchoolVideoContent[];
+}
+
+/**
+ * `GET …/activities/school-<n>` for a week row with `schoolType: "lecture_weeks"`: the school's facts about one video,
+ * never anything to play (`lectureItems` empty, `playable` false). A backend without this reader answers the same address
+ * without `video` (the stored row only).
+ */
+export interface SchoolVideoDetail extends SchoolMaterialDetail {
+  attendance?: string | null;
+  playable?: boolean;
+  video?: SchoolVideo | null;
+}
+
+/** The school detail of one imported video. Loaded only by the video detail screen, never by a list. */
+export const schoolVideoDetails = createResource<SchoolVideoDetail, [Id, string]>((courseId, activityId) =>
+  apiGet<SchoolVideoDetail>(`/api/courses/${encodeURIComponent(String(courseId))}/activities/${encodeURIComponent(activityId)}`));
+
+/** Seconds as "25분 5초", "1시간 2분", "0초"; empty when not a number. */
+export function schoolDuration(seconds: unknown): string {
+  const total = typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : null;
+  if (total == null) return "";
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h ? `${h}시간 ${m}분` : m ? `${m}분${s ? ` ${s}초` : ""}` : `${s}초`;
+}
+
+/** A percentage as "100%", "12.5%"; empty when not a number. */
+export function schoolPercent(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "";
+  return `${Math.round(value * 10) / 10}%`;
+}
+
 /** What a failed school request means for the student. */
 export type SchoolProblem = "signin" | "scanning" | "unsupported" | "too_large" | "unavailable";
 
