@@ -85,9 +85,9 @@ export function schoolMaterialsOf(data: MaterialList | null | undefined): School
   return items.filter((item): item is SchoolMaterial => item.origin === "school" && SCHOOL_MATERIAL_ID.test(String(item.activityId)));
 }
 
-/** The files of an imported material whose id is either a school id or a copied native number. */
-export function schoolFilesOf(material: SchoolMaterial | null | undefined): SchoolFile[] {
-  const files = material && Array.isArray(material.files) ? material.files : [];
+/** The files of an imported item (material, notice) whose id is either a school id or a copied native number. */
+export function schoolFilesOf(item: { files?: SchoolFile[] | null } | null | undefined): SchoolFile[] {
+  const files = item && Array.isArray(item.files) ? item.files : [];
   return files.filter((file) => file && (SCHOOL_FILE_ID.test(String(file.fileId)) || (typeof file.fileId === "number" && file.fileId > 0)));
 }
 

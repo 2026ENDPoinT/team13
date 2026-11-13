@@ -16,7 +16,7 @@ import { useHome, reloadHome, memberCourses, koDate, koDateTime, homeMessage } f
 import { routeFor } from "../../shared/routes.ts";
 import {
   NOTICE_PAGE, listKey, noticeKey, noticeLists, noticeDetails, noticeMessage, noticeFlags, createNotice, updateNotice, deleteNotice,
-  isVersionConflict, type CourseNotice,
+  isVersionConflict, isNativeNotice, type CourseNotice,
 } from "../../shared/notices-remote.ts";
 
 const pf = (screenId: string, extra?: Record<string, string>) => routeFor("professor", "screen", { screenId, ...(extra || {}) });
@@ -271,7 +271,8 @@ function NoticeList({ course, courseId, page, screenId = "pf_notice_write" }: { 
     const note = entry?.error
       ? <div><p className="err" role="alert">{noticeMessage(entry.error)}</p>{stale ? <Retry reload={load} /> : null}</div>
       : stale ? <p className="pf-sub" role="status">저장한 내용을 반영한 목록을 불러오는 중입니다.</p> : null;
-    const items = Array.isArray(data.items) ? data.items : [];
+    // Only notices written in STack are listed for editing; school notices are for students.
+    const items = (Array.isArray(data.items) ? data.items : []).filter(isNativeNotice);
     if (!items.length) list = <>{note}<p className="pf-sub">{page > 1 ? "이 쪽에는 공지가 없습니다." : "아직 서버에 등록된 공지가 없습니다."}</p></>;
     else {
       const after = pf(screenId, page > 1 ? { kj: course.id, page: String(page) } : { kj: course.id });
