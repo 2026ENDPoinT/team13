@@ -325,7 +325,7 @@ class HomeApiTests extends IntegrationTest {
 		long term = this.data.insert("""
 				INSERT INTO terms (term_year, term_code, term_name, start_date, end_date)
 				VALUES (:year, '1', '테스트 학기', CURRENT_DATE - INTERVAL 15 DAY, CURRENT_DATE + INTERVAL 60 DAY)
-				""", Map.of("year", (int) (Math.random() * 60_000) + 3000));
+				""", Map.of("year", TestData.termYear()));
 		this.jdbc.sql("UPDATE courses SET term_id = :t WHERE course_id = :c").param("t", term).param("c", c).update();
 		// 열린 영상 콘텐츠 둘 가운데 하나를 채웠다. 공개 전 활동의 콘텐츠는 세지 않는다.
 		long video = this.data.activity(c, "lecture_weeks", true, null, null);
@@ -385,7 +385,7 @@ class HomeApiTests extends IntegrationTest {
 	/** 차시 하나와, status가 있으면 그 학생의 기록. */
 	private void attendance(long courseId, long userId, String status, boolean cancelled) {
 		long week = this.data.insert("INSERT INTO course_weeks (course_id, week_no) VALUES (:c, :n)",
-				Map.of("c", courseId, "n", (int) (Math.random() * 1_000_000) + 1));
+				Map.of("c", courseId, "n", TestData.weekNo()));
 		long session = this.data.insert("""
 				INSERT INTO attendance_sessions (course_id, course_week_id, session_no, session_state)
 				VALUES (:c, :w, 1, :state)
@@ -481,7 +481,7 @@ class HomeApiTests extends IntegrationTest {
 	 */
 	private long activity(long courseId, boolean published, String openAt, String closeAt) {
 		long week = this.data.insert("INSERT INTO course_weeks (course_id, week_no) VALUES (:c, :n)",
-				Map.of("c", courseId, "n", (int) (Math.random() * 1_000_000) + 1));
+				Map.of("c", courseId, "n", TestData.weekNo()));
 		return this.data.insert("""
 				INSERT INTO learning_activities (course_id, course_week_id, activity_type, title, published_yn, open_at, close_at)
 				VALUES (:c, :w, 'report', '과제', :pub, %s, %s)

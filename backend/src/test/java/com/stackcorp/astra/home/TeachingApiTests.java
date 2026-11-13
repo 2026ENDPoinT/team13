@@ -292,7 +292,7 @@ class TeachingApiTests extends IntegrationTest {
 	 */
 	private long activity(long courseId, boolean published, String openAt, String closeAt) {
 		long week = this.data.insert("INSERT INTO course_weeks (course_id, week_no) VALUES (:c, :n)",
-				Map.of("c", courseId, "n", (int) (Math.random() * 1_000_000) + 1));
+				Map.of("c", courseId, "n", TestData.weekNo()));
 		return this.data.insert("""
 				INSERT INTO learning_activities (course_id, course_week_id, activity_type, title, published_yn, open_at, close_at)
 				VALUES (:c, :w, 'report', '일정', :pub, %s, %s)
