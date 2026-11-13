@@ -256,9 +256,17 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 			}
 			String stage = ex.stage().name().toLowerCase();
 			if (ex.code() == GenerationException.Code.PROVIDER) {
-				// 제공자 문구(key는 client가 지웠다)와 예외 종류는 로그에만 남긴다.
-				log.warn("summary job provider call failed jobId={} stage={} kind={} detail={}", job.id(), stage,
-						ex.providerFailure(), ex.getMessage());
+				// 제공자 문구(key는 client가 지웠다)와 예외 종류는 로그에만 남긴다. 모델 client가 분류하지 못한 예외는 stack도 남긴다.
+				Throwable cause = ex.getCause();
+				String error = cause != null ? cause.getClass().getName() : null;
+				if (ex.providerFailure() == null && cause != null) {
+					log.warn("summary job provider call failed jobId={} stage={} kind={} error={} detail={}", job.id(),
+							stage, ex.providerFailure(), error, ex.getMessage(), cause);
+				}
+				else {
+					log.warn("summary job provider call failed jobId={} stage={} kind={} error={} detail={}", job.id(),
+							stage, ex.providerFailure(), error, ex.getMessage());
+				}
 			}
 			this.storage.writeFailure(job.fileId(), job.id(), stage, ex.getMessage());
 			finish(job, JobState.FAILED, usage, ex.code().name().toLowerCase(), failureMessage(ex));

@@ -10,7 +10,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -149,7 +152,8 @@ class SummaryJobFlowTests extends IntegrationTest {
 	}
 
 	@Test
-	void providerFailuresStoreAFixedSentencePerKind() {
+	@ExtendWith(OutputCaptureExtension.class)
+	void providerFailuresStoreAFixedSentencePerKind(CapturedOutput output) {
 		// 제공자 문구, 예외 class 이름, 주소, key 조각은 화면 문장에 들어가지 않는다. 일시적인 실패는 재시도한 뒤에 실패한다.
 		String raw = "java.net.http.HttpConnectTimeoutException: HTTP connect timed out https://llm.example/v1 sk-secret";
 		Map<LlmException.Code, String> expected = new LinkedHashMap<>();
@@ -178,6 +182,12 @@ class SummaryJobFlowTests extends IntegrationTest {
 		SummaryJob job = request(pdfFile(TestPdfs.pdf(1), "clean"));
 		this.runner.runOnce();
 		assertThat(this.service.get(job.id()).errorMessage()).isEqualTo("모델 호출이 실패했습니다. 잠시 후 다시 시도해 주세요.");
+		// 그 예외의 종류와 stack은 서버 로그에만 남는다.
+		assertThat(output.getAll().lines()
+			.filter((line) -> line.contains("summary job provider call failed jobId=" + job.id() + " ")))
+			.singleElement()
+			.asString()
+			.contains("error=java.lang.IllegalStateException", "stack_trace");
 	}
 
 	@Test

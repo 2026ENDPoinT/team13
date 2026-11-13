@@ -198,6 +198,11 @@ class SummaryApiTests extends IntegrationTest {
 						"모델 호출이 실패했습니다. 잠시 후 다시 시도해 주세요." },
 				{ "file", "PDF is encrypted (encrypted)",
 						"암호가 걸린 PDF라 쪽 이미지로 바꾸지 못했습니다. 암호를 푼 파일을 올려 주세요." },
+				// 작업 전에 파일이 지워졌다
+				{ "file", "파일이 없습니다.", "자료 파일이 없습니다." },
+				{ "file", "rendition 문서 정보가 없습니다.", "자료의 쪽 이미지를 읽지 못했습니다. 잠시 후 다시 시도해 주세요." },
+				{ "file", "rendition 문서 정보를 읽지 못했습니다.", "자료의 쪽 이미지를 읽지 못했습니다. 잠시 후 다시 시도해 주세요." },
+				{ "file", "원본 파일이 저장소에 없습니다.", "자료의 쪽 이미지를 읽지 못했습니다. 잠시 후 다시 시도해 주세요." },
 				{ "file", "converter returned HTTP 500 from http://converter:8080/convert",
 						"자료를 쪽 이미지로 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요." },
 				{ "interrupted", "작업을 실행하던 worker가 멈췄습니다. 다시 시도해 주세요.",

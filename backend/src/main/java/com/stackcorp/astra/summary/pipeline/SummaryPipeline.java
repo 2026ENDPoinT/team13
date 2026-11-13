@@ -388,11 +388,12 @@ public final class SummaryPipeline {
 					String kind = llmEx != null ? llmEx.code().name().toLowerCase() : null;
 					throw GenerationException.provider(this.stage, kind,
 							"모델 호출이 실패했습니다" + (kind != null ? " (" + kind + ")" : "") + ": "
-									+ truncate(String.valueOf(ex.getMessage()), 200));
+									+ truncate(String.valueOf(ex.getMessage()), 200),
+							ex);
 				}
 				guard();
 				if (res == null || res.text() == null) {
-					throw GenerationException.provider(this.stage, "protocol", "모델 응답에 텍스트가 없습니다.");
+					throw GenerationException.provider(this.stage, "protocol", "모델 응답에 텍스트가 없습니다.", null);
 				}
 				if (res.usage() != null) {
 					this.inputTokens += res.usage().inputTokens();

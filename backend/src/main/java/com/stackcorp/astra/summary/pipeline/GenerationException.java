@@ -20,20 +20,22 @@ public class GenerationException extends RuntimeException {
 	private final String providerFailure;
 
 	public GenerationException(Code code, Stage stage, String message) {
-		this(code, stage, message, null, null);
+		this(code, stage, message, null, null, null);
 	}
 
 	/**
 	 * 모델 호출 실패({@link Code#PROVIDER}).
 	 * @param providerFailure 실패한 호출의 {@code LlmException.Code} 이름(소문자). 모델 client 밖의 예외면 null
 	 * @param message 서버 로그와 failure.json에 남기는 기술 세부. 화면에는 보이지 않는다
+	 * @param cause 모델 호출에서 난 예외. 응답이 없을 뿐이면 null. 서버 로그에만 남긴다
 	 */
-	static GenerationException provider(Stage stage, String providerFailure, String message) {
-		return new GenerationException(Code.PROVIDER, stage, message, null, providerFailure);
+	static GenerationException provider(Stage stage, String providerFailure, String message, Throwable cause) {
+		return new GenerationException(Code.PROVIDER, stage, message, null, providerFailure, cause);
 	}
 
-	private GenerationException(Code code, Stage stage, String message, Usage usage, String providerFailure) {
-		super(message);
+	private GenerationException(Code code, Stage stage, String message, Usage usage, String providerFailure,
+			Throwable cause) {
+		super(message, cause);
 		this.code = code;
 		this.stage = stage;
 		this.usage = usage;
@@ -59,7 +61,7 @@ public class GenerationException extends RuntimeException {
 	}
 
 	GenerationException withUsage(Usage usage) {
-		return new GenerationException(this.code, this.stage, getMessage(), usage, this.providerFailure);
+		return new GenerationException(this.code, this.stage, getMessage(), usage, this.providerFailure, getCause());
 	}
 
 }

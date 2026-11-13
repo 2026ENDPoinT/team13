@@ -372,7 +372,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 |---|---|---|
 | `POST /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자. 요청한 사람이 결정권자(담당자 명단의 교수, 비정규 담당자)여야 하고 조교는 403 `llm_decider_required` | 요약 생성 요청. 202. 요청한 사람의 `page_summary` 동의가 없으면 409 `llm_consent_required`. `Idempotency-Key` 지원 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 최근 작업 20개 |
-| `GET /api/courses/{courseId}/summary-jobs/{jobId}` | 담당자 | 작업 상태와 진행 쪽 수. 실패하면 `errorCode`(provider\|file\|invalid_output\|budget\|input\|interrupted\|internal)와 그 종류마다 정해 둔 문장 `errorMessage`. 제공자 응답, 예외 이름, 주소는 넣지 않고 작업 ID와 함께 서버 로그에만 남긴다 |
+| `GET /api/courses/{courseId}/summary-jobs/{jobId}` | 담당자 | 작업 상태와 진행 쪽 수. 실패하면 `errorCode`(provider\|file\|invalid_output\|budget\|input\|not_configured\|interrupted\|internal)와 그 종류마다 정해 둔 문장 `errorMessage`. 제공자 응답, 예외 이름, 주소는 넣지 않고 작업 ID와 함께 서버 로그에만 남긴다 |
 | `POST /api/courses/{courseId}/summary-jobs/{jobId}/cancel` · `/retry` | 담당자. 재시도는 생성 요청과 같이 결정권자만 하고 조교는 작업 상태와 상관없이 403 `llm_decider_required` | 취소, 실패·취소한 작업 재시도 |
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}/result` | 담당자 | 게시 전 후보와 원본 대조가 필요한 쪽 |
 | `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시. 게시한 사람이 학습 대화의 책임 교수자다. 조교가 게시하면 그 파일의 학습 대화는 열리지 않고, 결정권자가 다시 게시해야 열린다 |

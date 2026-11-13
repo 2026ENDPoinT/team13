@@ -65,6 +65,15 @@ public final class FailureText {
 
 	private static final Pattern OLD_FILE_DETAIL = Pattern.compile("\\(([a-z_]+)\\)$");
 
+	/** 세부 코드 없이 저장된 전의 rendition 문구(files.DocumentRenditionService)의 앞부분과 그 종류. */
+	private static final Map<String, RenditionException.Code> OLD_RENDITION = Map.of(
+			"파일이 없습니다.", RenditionException.Code.NOT_FOUND,
+			"변환하는 동안 파일이 삭제됐거나", RenditionException.Code.NOT_FOUND,
+			"원본 파일이 저장소에 없습니다.", RenditionException.Code.STORAGE,
+			"rendition 문서 정보가 없습니다.", RenditionException.Code.STORAGE,
+			"rendition 문서 정보를 읽지 못했습니다.", RenditionException.Code.STORAGE,
+			"모델 입력용 쪽 이미지가 없습니다", RenditionException.Code.STORAGE);
+
 	private FailureText() {
 	}
 
@@ -103,7 +112,15 @@ public final class FailureText {
 					yield stored;
 				}
 				Matcher old = OLD_FILE_DETAIL.matcher(stored);
-				yield old.find() ? CONVERSION.getOrDefault(old.group(1), FILE_DEFAULT) : FILE_DEFAULT;
+				if (old.find()) {
+					yield CONVERSION.getOrDefault(old.group(1), FILE_DEFAULT);
+				}
+				yield OLD_RENDITION.entrySet()
+					.stream()
+					.filter((e) -> stored.startsWith(e.getKey()))
+					.map((e) -> RENDITION.get(e.getValue()))
+					.findFirst()
+					.orElse(FILE_DEFAULT);
 			}
 			default -> stored;
 		};
