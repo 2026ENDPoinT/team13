@@ -192,11 +192,32 @@ export function placeLocally(itemId: string, folderId: string): void {
   write(data);
 }
 
+/** Thrown by `placeItem` when the server folder is gone (deleted in another tab or on another device). */
+export const FOLDER_GONE = "이 폴더는 다른 탭이나 기기에서 지웠습니다. 다시 불러왔습니다. 다른 폴더를 고르세요.";
+
+/**
+ * Where the server holds `itemId` (`srv-<fileId>` or a recording id) in course `courseId`: its folder id, or "" in
+ * the course root. Null while the study room is not on the server, for an id the server cannot place, or before the
+ * course view is loaded (a load starts). Browser placements are not read.
+ */
+export function serverFolderOf(courseId: string, itemId: string): string | null {
+  const server = serverStudyCourse(courseId);
+  const item = serverItem(itemId);
+  if (server == null || !item) return null;
+  const { view } = peekCourseView(server);
+  if (!view) return null;
+  const found = view.placements.find((placement) => placement.kind === item.placementKind && String(placement.itemId) === item.id);
+  return found ? String(found.folderId) : "";
+}
+
 /**
  * Puts an item into a folder. A browser folder, or an item that is only in this browser, keeps the placement here;
- * otherwise `PUT …/placements` with the version the view holds, retried once after a reload on 409.
+ * otherwise `PUT …/placements` with the version the view holds. On 409 the view is reloaded and, with
+ * `retryOnConflict` (default), the PUT is sent once more; without it the conflict sentence is thrown, for a caller
+ * whose user chose with the old placement on screen. A 404 for a folder the reloaded view no longer has throws
+ * `FOLDER_GONE`.
  */
-export async function placeItem(itemId: string, folderId: string | null | undefined): Promise<void> {
+export async function placeItem(itemId: string, folderId: string | null | undefined, { retryOnConflict = true }: { retryOnConflict?: boolean } = {}): Promise<void> {
   if (!folderId) return;
   const item = serverItem(itemId);
   if (!studyRoomOnServer() || !item || isLocalFolder(folderId)) {
@@ -204,18 +225,31 @@ export async function placeItem(itemId: string, folderId: string | null | undefi
     return;
   }
   const course = cachedViews().find((view) => view.folders.some((folder) => String(folder.id) === folderId));
+  // True while the cached view is newer than the last write (no refresh needed afterwards).
+  let reloaded = false;
+  const reload = async (courseId: number) => {
+    await loadCourseView(courseId, true);
+    reloaded = true;
+  };
   try {
     try {
       await putPlacement(item.kind, item.id, folderId, placementVersion(item.placementKind, item.id));
     } catch (error) {
       if (!(error instanceof ApiError && error.code === "version_conflict") || !course) throw error;
-      await loadCourseView(course.courseId, true);
+      await reload(course.courseId);
+      if (!retryOnConflict) throw error;
+      reloaded = false;
       await putPlacement(item.kind, item.id, folderId, placementVersion(item.placementKind, item.id));
     }
   } catch (error) {
+    if (course && error instanceof ApiError && error.status === 404) {
+      if (!reloaded) await reload(course.courseId).catch(() => undefined);
+      const view = cachedViews().find((candidate) => candidate.courseId === course.courseId);
+      if (reloaded && view && !view.folders.some((folder) => String(folder.id) === folderId)) throw new Error(FOLDER_GONE);
+    }
     throw new Error(studyRoomMessage(error));
   } finally {
-    if (course) void refreshCourseView(course.courseId);
+    if (course && !reloaded) void refreshCourseView(course.courseId);
   }
 }
 
