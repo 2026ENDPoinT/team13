@@ -535,7 +535,9 @@ export function isStaleVersion(error: unknown): boolean {
 // ---------- text ----------
 
 export const VIDEO_STATE: Record<string, string> = { processing: "변환 중", ready: "재생 가능", failed: "재생할 수 없음" };
-export const PROGRESS_STATE: Record<string, string> = { met: "출석 인정", under_required: "출석 미달", unknown: "인정 시간 없음" };
+// A lecture item's own state (its viewing requirement), not the attendance record of the week: the
+// professor may have set that by hand, and a week with two online sessions is not credited automatically.
+export const PROGRESS_STATE: Record<string, string> = { met: "인정 기준 충족", under_required: "인정 기준 미달", unknown: "인정 시간 없음" };
 
 /** "12분 30초" / "45초" / "1시간 5분" for seconds. */
 export function durationText(total: unknown): string {
