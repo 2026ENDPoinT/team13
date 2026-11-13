@@ -17,7 +17,7 @@ public final class SchoolCourseScreens {
 
 	/**
 	 * 영상 활동 하나({@code online_view_form.acl}). 재생 주소나 영상 ID는 담지 않는다.
-	 * @param attendanceWeek 출석부 반영 차시 표시(예 {@code 3 주 1차시}). 없으면 null
+	 * @param attendanceWeek 출석부 반영 차시. 정규 {@code 4주 1차시}, 비정규 {@code 1회차 2차시}(화면 언어와 관계없이 같은 모양). 없으면 null
 	 * @param periodStartAt 출석인정기간 시작. 읽지 못했으면 null
 	 * @param periodEndAt 출석인정기간 끝. 읽지 못했으면 null
 	 * @param contents 콘텐츠. 화면 순서
@@ -82,12 +82,13 @@ public final class SchoolCourseScreens {
 	 * @param classDate 수업일. 화면에 없으면 null
 	 * @param startTime 수업 시작. 없으면 null
 	 * @param endTime 수업 끝. 없으면 null
-	 * @param method 학교 화면의 방식 표시(예 {@code 온라인}, {@code Smart}). 표시용 글자다
+	 * @param method 학교 화면의 출석 방식 표시(예 {@code 온라인}, {@code Smart}). 표시용 글자다. 출석 전·휴강 차시는 화면이 방식 대신
+	 * 상태를 쓰므로 null
 	 * @param makeup 보강 차시
 	 * @param cancelled 휴강
 	 * @param status 학교 상태 class: {@code attend}·{@code tardy}·{@code absence}·{@code ex_absence}, 그 밖의 class는 그대로.
 	 * 아직 처리되지 않았으면 null
-	 * @param statusLabel 학교 화면의 상태 표시(예 {@code 결석 (0%)}). 없으면 null
+	 * @param statusLabel 학교 화면의 상태 표시(예 {@code 결석 (0%)}, 출석 전 차시 {@code 출석 전}, 휴강 {@code 휴강}). 없으면 null
 	 */
 	public record SchoolAttendanceSession(int sessionNo, LocalDate classDate, LocalTime startTime, LocalTime endTime,
 			String method, boolean makeup, boolean cancelled, String status, String statusLabel) {

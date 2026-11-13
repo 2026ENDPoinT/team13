@@ -95,9 +95,10 @@ final class SchoolScreenPages {
 	/**
 	 * 영상 활동 상세.
 	 * @param year 과목 학년도. 연도 없는 날짜를 정한다
+	 * @param nonRegular 비정규 과정이면 true. 출석부 반영 차시를 "N회차 M차시"로 쓴다
 	 * @throws SchoolLoginException {@code NOT_FOUND}: 영상 상세 화면이 아니다
 	 */
-	static SchoolVideo video(Document doc, int year) {
+	static SchoolVideo video(Document doc, int year, boolean nonRegular) {
 		if (doc.selectFirst(".online_contents_list_wrap, .online_contents_container") == null) {
 			throw new SchoolLoginException(Kind.NOT_FOUND, "video_unrecognized");
 		}
@@ -113,7 +114,7 @@ final class SchoolScreenPages {
 				}
 			}
 			else if (attendanceWeek == null) {
-				attendanceWeek = limit(text(info));
+				attendanceWeek = attendanceWeek(text(info), nonRegular);
 			}
 		}
 		List<SchoolVideoContent> contents = new ArrayList<>();
@@ -147,6 +148,27 @@ final class SchoolScreenPages {
 					badges.size() >= 2 ? clock(badges.get(1)) : null));
 		}
 		return new SchoolVideo(attendanceWeek, start, end, contents);
+	}
+
+	/**
+	 * 출석부 반영 차시 표시를 한 모양으로 바꾼다: 정규 "4주 1차시", 비정규 "1회차 2차시". 학교 화면은 한국어("4 주 1차시", "1 회차
+	 * 1차시")나 영어("WeekWeek 4 Session1"처럼 이름이 겹쳐 그려진다)로 오므로 글자가 아니라 앞의 두 숫자로 읽는다. 숫자가 둘이 아니면
+	 * null.
+	 */
+	static String attendanceWeek(String label, boolean nonRegular) {
+		if (label == null) {
+			return null;
+		}
+		Matcher number = NUMBER.matcher(label);
+		if (!number.find()) {
+			return null;
+		}
+		int week = Integer.parseInt(number.group(1));
+		if (!number.find()) {
+			return null;
+		}
+		int session = Integer.parseInt(number.group(1));
+		return week + (nonRegular || label.contains("회차") ? "회차 " : "주 ") + session + "차시";
 	}
 
 	// 배지의 마지막 span이 시간이다. 앞의 span은 이름(학습시간, Studying Time 등)이다.
@@ -290,11 +312,15 @@ final class SchoolScreenPages {
 				.findFirst()
 				.orElse(null);
 		}
-		Element label = menu.selectFirst(".attend_stats .attend_dv_icon_title");
+		// .attend_dv는 처리 중이거나 끝난 차시면 출석 방식(스마트, 온라인, 일반)이고, 아직 출석 전(.ready)이면 "출석 전", 휴강(.cancel)이면
+		// "휴강"이라는 상태 글자다. 상태 글자는 방식으로 내보내지 않고 상태 표시로 둔다.
+		String dv = limit(text(menu.selectFirst(".attend_dv")));
+		boolean stateText = menu.hasClass("ready") || menu.hasClass("cancel");
+		String label = status != null ? limit(text(menu.selectFirst(".attend_stats .attend_dv_icon_title")))
+				: stateText ? dv : null;
 		return new SchoolAttendanceSession(sessionNo, date, times == null ? null : times[0],
-				times == null ? null : times[1], limit(text(menu.selectFirst(".attend_dv"))),
-				makeupBox || menu.hasClass("supply"), menu.hasClass("cancel"), status,
-				status == null ? null : limit(text(label)));
+				times == null ? null : times[1], stateText ? null : dv, makeupBox || menu.hasClass("supply"),
+				menu.hasClass("cancel"), status, label);
 	}
 
 	/**
