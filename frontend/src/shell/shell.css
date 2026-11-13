@@ -291,11 +291,17 @@ html.layout-mobile.aside-open .aside { display: block; position: relative; heigh
 }
 .chat-dock { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); margin: 0; }
 .chat-say {
-  align-self: flex-end; max-width: 100%; margin: 0; padding: var(--space-2) var(--space-3);
+  position: relative; align-self: flex-end; max-width: 100%; margin: 0 0 var(--space-1); padding: var(--space-2) var(--space-3);
   background: var(--surface); color: var(--text); border: var(--border-w) solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
   font-size: var(--text-sm); line-height: var(--leading-sm); overflow-wrap: anywhere;
 }
-.chat-say:empty { padding: 0; border: 0; box-shadow: none; }
+/* 꼬리: 입력창을 가리킨다. */
+.chat-say::after {
+  content: ""; position: absolute; right: 22px; bottom: -6px; width: 10px; height: 10px;
+  background: var(--surface); border: solid var(--border); border-width: 0 var(--border-w) var(--border-w) 0; transform: rotate(45deg);
+}
+.chat-say:empty { padding: 0; border: 0; box-shadow: none; margin: 0; }
+.chat-say:empty::after { display: none; }
 .chat-box {
   display: flex; align-items: center; gap: var(--space-2); min-height: var(--hit-touch); padding: 0 var(--space-1) 0 var(--space-4);
   background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-full); box-shadow: var(--shadow-md);

@@ -412,7 +412,12 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
             ))}
           </ul>
         )}
-      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{currentSay() || (server && busy ? "AI 도우미가 답을 찾고 있어요…" : server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "")}</p>
+      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">
+        {(() => {
+          const text = currentSay() || (server && busy ? "AI 도우미가 답을 찾고 있어요…" : server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "");
+          return text ? <span className="cmd-say-bubble">{text}</span> : null;
+        })()}
+      </p>
       <div className="cmd" role="search" ref={cmdRef}>
         <div
           className={["cmd-box", listShown ? "has-list" : "", ghost ? "has-ghost" : "", busy ? "is-busy" : ""].filter(Boolean).join(" ")}
