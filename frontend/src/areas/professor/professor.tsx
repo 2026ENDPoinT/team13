@@ -16,7 +16,7 @@ import { activityPhase, endsAfter, isClosedActivity, removeActivity, upsertActiv
 import { plainText, richNodes, richPlain, sanitizeRichSource } from "../../shared/rich-text.tsx";
 import { bindUploadedVideo, deleteActivityFile, getActivityFile, putActivityFile } from "../../shared/activity-files.ts";
 import { listCoursePdfs, saveCoursePdf, deleteCoursePdf, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
-import { isRemotePdfId, getPublishedSummary, listSummaryJobs, startSummaryJob, getSummaryJob, cancelSummaryJob, retrySummaryJob, getSummaryResult, publishSummary, summaryMessage } from "../../shared/course-pdfs-remote.ts";
+import { isRemotePdfId, getPublishedSummary, listSummaryJobs, startSummaryJob, getSummaryJob, cancelSummaryJob, retrySummaryJob, getSummaryResult, publishSummary, summaryMessage, withCandidate } from "../../shared/course-pdfs-remote.ts";
 import type { RemotePdfRecord, ServerSummary, SummaryJob } from "../../shared/course-pdfs-remote.ts";
 import { forgetMaterialList } from "../../shared/materials-remote.ts";
 import { backendStatus } from "../../shared/backend.ts";
@@ -1261,10 +1261,11 @@ function SummaryJobPanel({ record }: { record: RemotePdfRecord }) {
   const live = useRef(true);
 
   const adopt = async (next: SummaryJob | null) => {
-    const candidate = next && next.state === "completed" ? await getSummaryResult(record, next.id) : null;
+    const read = await withCandidate(record, next);
     if (!live.current) return;
-    setJob(next);
-    setResult(candidate);
+    setJob(read.job);
+    setResult(read.result);
+    if (read.failure) setError(summaryMessage(read.failure));
     setPoll((n) => n + 1);
   };
 
