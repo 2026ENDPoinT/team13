@@ -47,6 +47,9 @@ class MultipartRateLimitTests {
 	// 응답을 기다리기 전에 보내는 본문의 앞부분
 	private static final int CHUNK = 64 * 1024;
 
+	// 녹음 올리기. 없는 과목이라 본문을 받은 요청은 handler가 404로 거부한다.
+	private static final String RECORDINGS = "/api/me/study-room/courses/999999999/recordings";
+
 	private static final HttpClient HTTP = HttpClient.newHttpClient();
 
 	@LocalServerPort
@@ -61,6 +64,9 @@ class MultipartRateLimitTests {
 	@Autowired
 	RateLimiter rateLimiter;
 
+	@Autowired
+	UploadProperties uploads;
+
 	@AfterAll
 	static void closeClient() {
 		HTTP.close();
@@ -69,7 +75,7 @@ class MultipartRateLimitTests {
 	@Test
 	void rejectsALimitedUserBeforeParsingTheMultipartBody() throws Exception {
 		for (String[] endpoint : new String[][] { { "/api/uploads", "upload" }, { "/api/filebox/files", "upload" },
-				{ "/api/me/profile/image", "avatar-upload" } }) {
+				{ RECORDINGS, "upload" }, { "/api/me/profile/image", "avatar-upload" } }) {
 			long user = this.data.user("STUDENT");
 			// 이 사용자가 연산의 한도를 이미 다 쓴 상태로 만든다. 서버 쪽 한도는 어느 연산이든 1000보다 작다.
 			for (int i = 0; i < 1000; i++) {
@@ -78,6 +84,25 @@ class MultipartRateLimitTests {
 			List<String> head = refuse(endpoint[0], this.data.session(user), csrfToken(), 429);
 			assertThat(head).as(endpoint[0]).anyMatch((line) -> line.regionMatches(true, 0, "Retry-After:", 0, 12));
 		}
+	}
+
+	@Test
+	void aRecordingUploadCountsOnceAgainstTheSharedUploadLimit() throws Exception {
+		long user = this.data.user("STUDENT");
+		String session = this.data.session(user);
+		// 두 번을 남기고 한도를 쓴다. 녹음 올리기가 한 번에 둘을 센다면 두 번째 요청이 429다.
+		for (int i = 0; i < this.uploads.rateLimit() - 2; i++) {
+			this.rateLimiter.check("upload", user, Integer.MAX_VALUE, Duration.ofMinutes(10));
+		}
+		// 녹음 경로는 multipart를 받는 업로드 경로라 415가 아니고, 본문을 나눈 뒤 handler가 구성원이 아닌 과목이라 404로 거부한다.
+		// 거부한 시도도 센다.
+		assertThat(recording(session).statusCode()).isEqualTo(404);
+		assertThat(recording(session).statusCode()).isEqualTo(404);
+		HttpResponse<String> limited = recording(session);
+		assertThat(limited.statusCode()).isEqualTo(429);
+		assertThat(limited.headers().firstValue("Retry-After")).isPresent();
+		// 같은 한도를 일반 업로드와 함께 쓴다.
+		refuse("/api/uploads", session, csrfToken(), 429);
 	}
 
 	@Test
@@ -92,6 +117,7 @@ class MultipartRateLimitTests {
 		// header가 없으면 CSRF 검사가 본문의 _csrf parameter를 찾느라 multipart 본문 전체를 받는다. 로그인 전 요청도 그렇다.
 		refuse("/api/uploads", null, null, 403);
 		refuse("/api/uploads", this.data.session(this.data.user("STUDENT")), null, 403);
+		refuse(RECORDINGS, this.data.session(this.data.user("STUDENT")), null, 403);
 	}
 
 	@Test
@@ -231,6 +257,27 @@ class MultipartRateLimitTests {
 			.map((cookie) -> cookie.substring("XSRF-TOKEN=".length(), cookie.indexOf(';')))
 			.findFirst()
 			.orElseThrow();
+	}
+
+	/** 구성원이 아닌 과목에 작은 녹음을 끝까지 보낸다. */
+	private HttpResponse<String> recording(String session) throws IOException, InterruptedException {
+		String csrf = csrfToken();
+		String body = "--astra-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"r.webm\"\r\n"
+				+ "Content-Type: audio/webm\r\n\r\nwebm\r\n" + field("title", "녹음")
+				+ field("source", "mic") + field("durationMs", "1000") + field("recordedAt", "2026-11-12T05:00:00Z")
+				+ "--astra-boundary--\r\n";
+		HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + this.port + RECORDINGS))
+			.version(HttpClient.Version.HTTP_1_1)
+			.header("Content-Type", "multipart/form-data; boundary=astra-boundary")
+			.header("Cookie", "ASTRA_SESSION=" + session + "; XSRF-TOKEN=" + csrf)
+			.header("X-XSRF-TOKEN", csrf)
+			.POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+			.build();
+		return HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
+	private static String field(String name, String value) {
+		return "--astra-boundary\r\nContent-Disposition: form-data; name=\"" + name + "\"\r\n\r\n" + value + "\r\n";
 	}
 
 }

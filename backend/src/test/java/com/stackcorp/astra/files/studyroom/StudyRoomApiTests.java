@@ -432,6 +432,11 @@ class StudyRoomApiTests extends IntegrationTest {
 			.containsExactly(c, b, a);
 		this.owner.get(BASE + "/recordings/" + a + "/content")
 			.andExpect(header().string("Content-Disposition", containsString("ogg")));
+		// 가져온 파일의 recordedAt은 그 파일의 마지막 수정 일시라 오래전이어도 된다. 위쪽 한계는 지금 + 5분뿐이다.
+		record(this.owner, this.course, "옛 녹음.ogg", ogg(), "옛 녹음", "audio", "1000", "2009-03-14T08:00:00+09:00", null,
+				null)
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.createdAt").value("2009-03-13T23:00:00Z"));
 	}
 
 	@Test
@@ -441,6 +446,13 @@ class StudyRoomApiTests extends IntegrationTest {
 		record(fresh(), this.course, "a.webm", webm(), "t", "phone", "10", at, null, null).andExpect(status().isBadRequest());
 		record(fresh(), this.course, "a.webm", webm(), null, "mic", "10", at, null, null).andExpect(status().isBadRequest());
 		record(fresh(), this.course, "a.webm", webm(), "t".repeat(201), "mic", "10", at, null, null)
+			.andExpect(status().isBadRequest());
+		// 제목 길이는 UTF-16 단위로 센다. 보충 평면 글자(😀)는 둘이다.
+		record(fresh(), this.course, "a.webm", webm(), "😀".repeat(100) + "t", "mic", "10", at, null, null)
+			.andExpect(status().isBadRequest());
+		record(fresh(), this.course, "a.webm", webm(), "😀".repeat(100), "mic", "10", at, null, null)
+			.andExpect(status().isCreated());
+		record(fresh(), this.course, "a.ogg", ogg(), "t", "audio", "10", "1999-12-31T23:59:59Z", null, null)
 			.andExpect(status().isBadRequest());
 		record(fresh(), this.course, "a.webm", webm(), "t", "mic", "0", at, null, null).andExpect(status().isBadRequest());
 		record(fresh(), this.course, "a.webm", webm(), "t", "mic", "12.5", at, null, null).andExpect(status().isBadRequest());

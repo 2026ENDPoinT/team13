@@ -21,7 +21,9 @@ import io.micrometer.core.instrument.MeterRegistry;
  * <ul>
  * <li>부르는 쪽의 transaction 안이면 같은 transaction에 쓴다. 기록에 실패하면 그 명령도 되돌린다.</li>
  * <li>transaction 밖이면 바로 commit한다. 기록에 실패해도 요청을 실패시키지 않고 경고 로그를 남기며 빠진 수를 연산별로 센다
- * (astra.audit.write.failures).</li>
+ * (astra.audit.write.failures). {@link #successOnceWithin}이 이미 남겼는지 찾다가 실패하면 남기지 않은 것으로 보고 기록을 쓴다.
+ * 요청을 실패시키지 않고 기록을 조용히 건너뛰지도 않는다. 찾기 실패는 경고 로그와 연산별 수(astra.audit.lookup.failures)로
+ * 남는다.</li>
  * </ul>
  */
 @Component
@@ -52,10 +54,40 @@ public class AuditLog {
 	}
 
 	/**
-	 * 같은 로그인 session이 같은 대상에 같은 연산을 within 안에 이미 남겼는지. 재생처럼 한 번의 행위가 요청 여러 개(구간 탐색)로 나뉘는 읽기
-	 * 연산이 기록을 구간 안에 한 번만 남길 때 쓴다. 대상 index(object_type, object_id)로 찾는다.
+	 * 성공한 읽기를 같은 로그인 session, 같은 대상, 같은 연산마다 within 안에 한 번만 남긴다. 재생처럼 한 번의 행위가 요청 여러 개(구간
+	 * 탐색)로 나뉘는 읽기 연산이 쓴다. 이미 남겼는지는 대상 index(object_type, object_id)로 찾는다. 동시에 온 두 요청은 둘 다 남길 수
+	 * 있다.
+	 * <p>
+	 * transaction 밖에서 찾기가 실패하면(DB 오류) 아직 남기지 않은 것으로 보고 기록을 쓴다. 구간 안에 기록이 하나 더 생기는 쪽이 기록이
+	 * 빠지는 쪽보다 낫다. 쓰기도 실패하면 transaction 밖 쓰기 규칙대로 요청은 계속되고 빠진 기록으로 센다. transaction 안이면 찾기
+	 * 실패도 그 명령을 실패시킨다.
 	 */
-	public boolean recordedSince(long sessionId, String operation, String objectType, long objectId, Duration within) {
+	public void successOnceWithin(long actorUserId, long sessionId, String operation, String objectType, long objectId,
+			Long courseId, Duration within) {
+		if (!recordedSince(sessionId, operation, objectType, objectId, within)) {
+			success(actorUserId, sessionId, operation, objectType, objectId, courseId);
+		}
+	}
+
+	private boolean recordedSince(long sessionId, String operation, String objectType, long objectId, Duration within) {
+		if (TransactionSynchronizationManager.isActualTransactionActive()) {
+			return countSince(sessionId, operation, objectType, objectId, within) > 0;
+		}
+		try {
+			return countSince(sessionId, operation, objectType, objectId, within) > 0;
+		}
+		catch (DataAccessException ex) {
+			log.warn("audit lookup failed operation={} error={}", operation, ex.getClass().getSimpleName());
+			Counter.builder("astra.audit.lookup.failures")
+				.description("transaction 밖에서 이미 남겼는지 찾지 못해 다시 쓴 감사 기록 수")
+				.tag("operation", operation)
+				.register(this.meters)
+				.increment();
+			return false;
+		}
+	}
+
+	private long countSince(long sessionId, String operation, String objectType, long objectId, Duration within) {
 		return this.jdbc.sql("""
 				SELECT COUNT(*) FROM audit_events
 				 WHERE object_type = :objectType AND object_id = :objectId AND operation = :operation
@@ -69,7 +101,7 @@ public class AuditLog {
 			.param("ok", OK)
 			.param("seconds", within.toSeconds())
 			.query(Long.class)
-			.single() > 0;
+			.single();
 	}
 
 	/**

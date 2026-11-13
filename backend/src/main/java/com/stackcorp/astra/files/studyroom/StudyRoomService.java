@@ -468,7 +468,9 @@ class StudyRoomService {
 	 * 받지 않고 연결을 끊는다.
 	 * <p>
 	 * 감사 기록은 구간과 관계없이 같은 로그인 session의 같은 녹음 재생을 {@link #PLAY_AUDIT_WINDOW} 안에 한 번 남긴다. 탐색마다 남기지
-	 * 않으면서, 처음이 아닌 구간({@code bytes=1-})만 읽어 기록을 피할 수 없다.
+	 * 않으면서, 처음이 아닌 구간({@code bytes=1-})만 읽어 기록을 피할 수 없다. 기록은 저장소를 열기 전에 남긴다. 연 stream은 응답
+	 * 본문으로 넘길 때까지 다른 일을 하지 않아, 그 사이 실패해 닫히지 않은 채 남지 않는다. 이미 남겼는지 찾지 못하면 재생을 막지 않고
+	 * 기록을 다시 남긴다({@link AuditLog#successOnceWithin}).
 	 */
 	ResponseEntity<InputStreamResource> content(Actor actor, long id, String rangeHeader) {
 		Recording recording = playable(actor, id);
@@ -476,15 +478,12 @@ class StudyRoomService {
 		Optional<ByteRange> range = ByteRange.parse(rangeHeader, size);
 		long first = range.map(ByteRange::first).orElse(0L);
 		long last = range.map(ByteRange::last).orElse(size - 1);
+		String name = downloadName(recording);
+		this.audit.successOnceWithin(actor.userId(), actor.sessionId(), "study_room.recording.play",
+				"study_room_recording", id, recording.courseId(), PLAY_AUDIT_WINDOW);
 		InputStream content = this.store.openRange(Bucket.CONTENT, recording.storageKey(), first, last)
 			.orElseThrow(ApiException::notFound);
-		if (!this.audit.recordedSince(actor.sessionId(), "study_room.recording.play", "study_room_recording", id,
-				PLAY_AUDIT_WINDOW)) {
-			this.audit.success(actor.userId(), actor.sessionId(), "study_room.recording.play", "study_room_recording", id,
-					recording.courseId());
-		}
-		return Downloads.ranged(downloadName(recording), recording.mimeType(), size, first, last, range.isPresent(),
-				content);
+		return Downloads.ranged(name, recording.mimeType(), size, first, last, range.isPresent(), content);
 	}
 
 	/** HEAD: 녹음 행만 읽어 GET과 같은 header를 돌려준다. 저장소를 열지 않고 감사 기록도 남기지 않는다. */
@@ -530,7 +529,7 @@ class StudyRoomService {
 		return name;
 	}
 
-	/** 녹음 제목: 앞뒤 공백을 빼고 1~200자, 제어 문자는 받지 않는다. */
+	/** 녹음 제목: 앞뒤 공백을 빼고 1~200자(UTF-16 단위), 제어 문자는 받지 않는다. */
 	static String title(String raw) {
 		String title = raw == null ? "" : raw.strip();
 		if (title.isEmpty() || title.length() > MAX_TITLE || title.codePoints().anyMatch(Character::isISOControl)) {
@@ -625,7 +624,7 @@ class StudyRoomService {
 
 	/**
 	 * @param source mic, tab, audio
-	 * @param recordedAt 녹음 시작 일시(가져온 파일은 가져온 일시)
+	 * @param recordedAt 녹음 시작 일시(가져온 파일은 그 파일의 마지막 수정 일시)
 	 * @param folderId 바로 둘 폴더. 없으면 과목 학습실 맨 위
 	 */
 	record NewRecording(String title, String source, long durationMs, Instant recordedAt, Long folderId) {
