@@ -47,19 +47,30 @@ export interface Entry<T> {
 
 export interface Resource<T, A extends unknown[] = any[]> {
   peek(key: string): Entry<T> | null;
+  /**
+   * Loads `key`, sharing a load of it already in flight unless that one started before a `drop()`
+   * of the key: then it waits for that one and asks again.
+   */
   load(key: string, ...args: A): Promise<void>;
   /** A load of `key` that starts after now: waits for one already in flight (it may have read the state before a write), then loads again. */
   reload(key: string, ...args: A): Promise<void>;
+  /**
+   * Puts `data` the server just answered (e.g. the view a create returned) in place as a finished
+   * load. `args` are the arguments a later reload of `key` asks the server with.
+   */
+  seed(key: string, data: T, ...args: A): void;
   /** Loads `key` when the screen was navigated to, or when nothing is cached for it yet. */
   visit(scope: string, key: string, ...args: A): Promise<void>;
   /** Changes cached data in place (e.g. a notice marked read) and re-renders its readers. */
   patch(match: (key: string) => boolean, change: (data: T) => void): void;
   /**
-   * Forgets matching keys after a write, so their next visit loads them. A key that a mounted
-   * `useResource` reader shows is decided once the writing code has run on (a delete may close the
-   * screen that showed it): still shown, it is loaded again with the arguments of the load that
-   * first filled it, keeping the old data on screen meanwhile and never reusing a load that
-   * started before the write; no longer shown, it is forgotten. A load started after the drop wins.
+   * Forgets matching keys after a write. A key no mounted `useResource` reader shows is deleted, so
+   * its next visit loads it. A shown key keeps its entry with `data` and `error` cleared at once:
+   * nothing may build forms, versions or revisions from the pre-write copy, and its readers show
+   * their loading text, then the reload's result or its failure. A load that started before the
+   * write no longer counts. Once the writing code has run on (a delete may close the screen), a key
+   * still shown is loaded again with the arguments of the load (or `seed`) that first filled it;
+   * one no longer shown is deleted. A load started after the drop counts as that reload.
    */
   drop(match: (key: string) => boolean): void;
   /** Marks `key` as shown by a mounted reader (`useResource` does this); returns the release function. */
@@ -93,22 +104,33 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
     origins.delete(key);
   }
 
+  // Writes noted by drop() per key; a load whose request started before the latest one does not count.
+  const writes = new Map<string, number>();
+  const writesOf = (key: string) => writes.get(key) || 0;
+  const startedAt = new WeakMap<Entry<T>, number>(); // entry -> writesOf(key) when its request started
+
   const resource: Resource<T, A> = {
     peek(key) {
       return entries.get(key) || null;
     },
     load(key, ...args) {
       const current = entries.get(key);
-      if (current && current.loading) return current.loading;
+      if (current && current.loading) {
+        if (startedAt.get(current) === writesOf(key)) return current.loading;
+        return current.loading.then(() => resource.load(key, ...args));
+      }
       const gen = generation;
+      const mark = writesOf(key);
+      const counts = () => gen === generation && writesOf(key) === mark;
       const entry: Entry<T> = { data: current ? current.data : null, error: null, loading: null };
+      startedAt.set(entry, mark);
       if (!current) origins.set(key, args);
       entry.loading = Promise.resolve()
         .then(() => fetcher(...args))
         .then((data) => {
-          if (gen === generation) entry.data = data;
+          if (counts()) entry.data = data;
         }, (error: unknown) => {
-          if (gen === generation) entry.error = error;
+          if (counts()) entry.error = error;
         })
         .finally(() => {
           if (gen !== generation) return;
@@ -123,6 +145,11 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       const running = entries.get(key)?.loading;
       if (running) await running;
       return resource.load(key, ...args);
+    },
+    seed(key, data, ...args) {
+      entries.set(key, { data, error: null, loading: null });
+      origins.set(key, args);
+      notify(key);
     },
     visit(scope, key, ...args) {
       const fresh = freshVisit(scope, key);
@@ -144,12 +171,16 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
           forget(key);
           continue;
         }
-        const dropped = entries.get(key);
+        const dropped = entries.get(key)!;
+        writes.set(key, writesOf(key) + 1);
+        dropped.data = null;
+        dropped.error = null;
+        notify(key);
         const gen = generation;
         setTimeout(() => {
           if (gen !== generation || entries.get(key) !== dropped) return;
           const args = origins.get(key);
-          if (readers.get(key) && args) void resource.reload(key, ...args);
+          if (readers.get(key) && args) void resource.load(key, ...args);
           else forget(key);
         }, 0);
       }
@@ -166,6 +197,7 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       generation += 1;
       entries.clear();
       origins.clear();
+      writes.clear();
       notify("");
     },
     subscribe(listener) {
