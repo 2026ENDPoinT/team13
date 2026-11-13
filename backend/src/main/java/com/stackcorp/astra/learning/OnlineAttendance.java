@@ -64,12 +64,12 @@ class OnlineAttendance {
 	/**
 	 * 학생이 방금 콘텐츠 하나를 충족했다. 대상 차시가 있고 그 차시에 걸린 활동을 모두 충족했으면 출석부에 쓴다. 판정은 잠금 읽기라
 	 * 부르는 쪽 snapshot이 그 사이 바뀐 활동·콘텐츠를 못 봐도 맞다.
-	 * @param lockedWeek 부르는 쪽이 진도를 쓰기 전에 공유 잠금한 주차. 잠그지 않았으면 null이고 여기서 잠근다
+	 * @param lockedWeek 부르는 쪽이 진도를 쓰기 전에 공유 잠금한 주차
 	 * @param rule 이 충족을 만든 적립 규칙 버전
 	 * @throws WeekMoved 잠근 뒤 활동이 다른 주차로 옮겨졌다. 옮긴 주차를 순서를 어겨 더 잠그면 두 주차를 ID 순으로 잠그는 명령과
 	 * 교착할 수 있어, 부르는 쪽 transaction을 처음부터 다시 실행하게 한다
 	 */
-	void credit(long userId, long activityId, Long lockedWeek, LocalDateTime now, String rule) {
+	void credit(long userId, long activityId, long lockedWeek, LocalDateTime now, String rule) {
 		Optional<Link> link = this.jdbc.sql("""
 				SELECT course_week_id, attendance_session_id FROM learning_activities
 				 WHERE activity_id = :activity AND deleted_at IS NULL
@@ -81,10 +81,7 @@ class OnlineAttendance {
 		if (link.isEmpty()) {
 			return;
 		}
-		if (lockedWeek == null) {
-			lockWeeks(false, List.of(link.get().weekId()));
-		}
-		else if (lockedWeek != link.get().weekId()) {
+		if (lockedWeek != link.get().weekId()) {
 			throw new WeekMoved();
 		}
 		Long target = link.get().sessionId() != null ? link.get().sessionId()
