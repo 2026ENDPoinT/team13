@@ -1,6 +1,8 @@
 // 강의계획서 팝업(40b)의 서버 버전(`GET /api/courses/{courseId}/syllabus`). 서술 항목과 주별 계획은 일반 텍스트이고, 줄바꿈만
 // 살려 텍스트로 그린다. 비어 있는 항목은 "—"로 둔다. 담당자 연락처는 응답에 있을 때만 그린다. 담당자 사진은 구성원에게 오는
-// `userId`로 `GET /api/users/{userId}/avatar`를 읽고, 없거나 볼 수 없으면 이름 첫 글자다.
+// `userId`로 `GET /api/users/{userId}/avatar`를 읽고, 없거나 볼 수 없으면 이름 첫 글자다. 학교 과목의 학생은 학교 e-Class의 계획서를
+// 받는다(`origin: "school"`, 담당자에 `userId` 없음: 사진을 찾지 않고 이름 첫 글자). 학교 연결이 끝났으면(409) 다시 로그인을,
+// 학교가 답하지 않으면(502) 다시 시도를, 학교에 계획서가 없는 과목(404 `syllabus_not_provided`)은 그 문장을 보인다.
 import { useEffect, type ReactNode } from "react";
 import type { Course } from "../../data.ts";
 import { Dialog, EmptyState, ErrorState, LoadingState, Table } from "../../ui/kit.tsx";
@@ -10,6 +12,7 @@ import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { syllabi, syllabusKey, syllabusMessage, OUTCOME, type Syllabus, type SyllabusInstructor, type OutcomeLevel } from "../../shared/syllabus-remote.ts";
 import { personAvatar } from "../../shared/avatar-remote.tsx";
 import { RetryButton } from "./groups-server.tsx";
+import { schoolProblemOf, SchoolProblemNote } from "../../shared/school-content.tsx";
 
 
 function meta(pairs: [string, unknown][]): ReactNode {
@@ -37,7 +40,7 @@ function section(title: string, text: string | null | undefined): ReactNode {
   );
 }
 
-function instructor(person: SyllabusInstructor): ReactNode {
+function instructor(person: SyllabusInstructor, index: number): ReactNode {
   const contact = ([
     ["소속", person.department],
     ["이메일", person.email],
@@ -47,8 +50,10 @@ function instructor(person: SyllabusInstructor): ReactNode {
     ["홈페이지", person.homepage],
   ] as const).filter(([, value]) => value);
   return (
-    <div key={person.userId} className="crs-prof">
-      {personAvatar({ userId: person.userId, name: person.name, className: "crs-avatar" })}
+    <div key={person.userId ?? `name-${index}-${person.name || ""}`} className="crs-prof">
+      {person.userId != null
+        ? personAvatar({ userId: person.userId, name: person.name, className: "crs-avatar" })
+        : personAvatar({ name: person.name, className: "crs-avatar", photo: false })}
       <div>
         <strong>{person.name || "담당 교수"}</strong>
         {contact.map(([label, value]) => <span key={label} className="tiny">{`${label} ${value}`}</span>)}
@@ -63,6 +68,7 @@ function view(data: Syllabus): ReactNode {
   const level = data.outcomeRelevance ? String(data.outcomeRelevance) : "";
   return (
     <>
+      {data.origin === "school" ? <p className="tiny" data-syllabus-origin="school">학교 e-Class의 강의계획서입니다.</p> : null}
       {instructors.map(instructor)}
       <h3>강의 계획</h3>
       {meta([
@@ -111,8 +117,10 @@ function SyllabusBody({ courseId }: { courseId: number | string }) {
   });
   const data = entry && entry.data;
   let body: ReactNode;
-  if (data) body = view(data);
+  const problem = entry && entry.error && schoolProblemOf(entry.error) ? <SchoolProblemNote error={entry.error} retry={load} /> : null;
+  if (data) body = <>{problem}{view(data)}</>;
   else if (!entry || !entry.error) body = <LoadingState title="강의계획서를 불러오는 중입니다" />;
+  else if (problem) body = problem;
   else if (entry.error instanceof ApiError && entry.error.status === 404) body = <EmptyState title="강의계획서를 볼 수 없습니다" body={syllabusMessage(entry.error)} />;
   else body = <ErrorState title="강의계획서를 불러오지 못했습니다" body={syllabusMessage(entry.error)} actions={<RetryButton reload={load} />} />;
   return <div className="crs-dialog" aria-live="polite">{body}</div>;

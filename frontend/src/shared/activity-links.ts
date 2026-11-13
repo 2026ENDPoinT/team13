@@ -33,6 +33,21 @@ export function materialHref(kj: string | number, activityId: string | number): 
   return `${ACTIVITY_PATH}?${new URLSearchParams({ m: "lecture_material", n: ref, kj: String(kj) })}`;
 }
 
+/**
+ * 학교 e-Class에서 가져온 영상(`school-<n>`, 주차 목록의 `schoolType: "lecture_weeks"`)의 STack 상세(`m=lecture_weeks&n=school-<n>`).
+ * 재생은 없고 학교의 학습 정보와 e-Class 링크만 보인다. 학교 ID가 아니면 null.
+ */
+export function schoolVideoHref(kj: string | number, activityId: string | number): string | null {
+  if (!/^school-[1-9]\d{0,17}$/.test(String(activityId))) return null;
+  return `${ACTIVITY_PATH}?${new URLSearchParams({ m: "lecture_weeks", n: String(activityId), kj: String(kj) })}`;
+}
+
+/** 학교 e-Class에서 가져온 과제(`school-<n>`)의 STack 상세(`m=report&n=school-<n>`, 읽기 전용). 학교 ID가 아니면 null. */
+export function schoolAssignmentHref(kj: string | number, activityId: string | number): string | null {
+  if (!/^school-[1-9]\d{0,17}$/.test(String(activityId))) return null;
+  return `${ACTIVITY_PATH}?${new URLSearchParams({ m: "report", n: String(activityId), kj: String(kj) })}`;
+}
+
 /** 과제·시험·설문 행(`{ assignmentId | quizId | surveyId }`)이 주는 그 화면의 ID, 없으면 null. */
 export function targetIdOf(type: string, row: ActivityTargetRow | null | undefined): number | null {
   const field = isResolvedType(type) ? TARGET[type] : null;

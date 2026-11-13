@@ -40,6 +40,8 @@ export interface Screen {
   extra?: boolean;
   // Backend screens resolved from the address (router.ts resolveScreen).
   serverAssignment?: number;
+  /** An assignment imported from the school's e-Class (`m=report&n=school-<n>`); read only. */
+  serverSchoolAssignment?: string | null;
   serverQuiz?: number | null;
   serverAttempt?: number | null;
   serverSurvey?: number | null;
@@ -48,6 +50,8 @@ export interface Screen {
   serverMaterial?: number | null;
   /** A material imported from the school's e-Class (`n=school-<n>`); never a number. */
   serverSchoolMaterial?: string | null;
+  /** A video imported from the school's e-Class (`m=lecture_weeks&n=school-<n>`); shown without a player. */
+  serverSchoolLecture?: string | null;
   serverLink?: { type: string; activityId: number } | null;
 }
 

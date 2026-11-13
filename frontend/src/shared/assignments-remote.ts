@@ -7,6 +7,7 @@ import { subscribe } from "./backend.ts";
 import { createResource, retryLater } from "./remote-cache.ts";
 import { koDateTime } from "./home-remote.ts";
 import { forgetGradebook } from "./grades-remote.ts";
+import { SCHOOL_PROBLEM_TEXT, type SchoolFile } from "./school-content.tsx";
 
 export type Id = number | string;
 
@@ -27,10 +28,15 @@ export interface AssignmentInfo {
   scoresReleased?: boolean;
 }
 
-/** One row of `GET …/assignments`: `status` for a student, counts for the instructor. */
+/**
+ * One row of `GET …/assignments`: `status` for a student, counts for the instructor. A student's list ends with the school's
+ * assignments (`origin: "school"`, `assignmentId` = `activityId` = `school-<n>`, `status` from the imported done mark, `schoolUrl`).
+ */
 export interface AssignmentListItem {
-  assignmentId: number;
+  assignmentId: number | string;
   activityId?: number | string;
+  origin?: "school";
+  schoolUrl?: string | null;
   weekNo: number;
   title: string;
   openAt?: string | null;
@@ -82,6 +88,35 @@ export interface AssignmentDetail {
   revision?: number;
   submittedCount?: number;
   lateCount?: number;
+}
+
+/**
+ * `GET …/assignments/school-<n>`: a school assignment read with the student's own school session, read only. Attachments and the
+ * student's own submitted files have the school file shape (`school-file-<n>` until copied); nothing is submitted from STack.
+ */
+export interface SchoolAssignmentDetail {
+  origin?: "school";
+  schoolUrl?: string | null;
+  phase?: string;
+  serverTime?: string;
+  assignment: {
+    assignmentId: string;
+    weekNo?: number | null;
+    title: string;
+    description?: string | null;
+    openAt?: string | null;
+    closeAt?: string | null;
+    files?: SchoolFile[] | null;
+    schoolUrl?: string | null;
+  };
+  submission?: {
+    status: string;
+    submittedAt?: string | null;
+    body?: string | null;
+    files?: SchoolFile[] | null;
+    /** The school's own label ("정상제출" …), shown as is. */
+    statusLabel?: string | null;
+  } | null;
 }
 
 export interface SubmissionListItem {
@@ -137,8 +172,10 @@ export interface AssignmentPayload {
   revision?: number;
 }
 
-/** Activity ids (`?n=`) of backend assignments are `srv-<assignmentId>`. */
+/** Activity ids (`?n=`) of backend assignments are `srv-<assignmentId>`; the school's are their own `school-<n>`. */
 export const SERVER_PREFIX = "srv-";
+/** An imported school assignment id. */
+export const SCHOOL_ASSIGNMENT_ID = /^school-[1-9]\d{0,17}$/;
 
 /** The assignment id in a `srv-<id>` reference, or null. */
 export function assignmentIdOf(ref: unknown): number | null {
@@ -146,9 +183,9 @@ export function assignmentIdOf(ref: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
-export const serverRef = (assignmentId: Id): string => `${SERVER_PREFIX}${assignmentId}`;
+export const serverRef = (assignmentId: Id): string => (SCHOOL_ASSIGNMENT_ID.test(String(assignmentId)) ? String(assignmentId) : `${SERVER_PREFIX}${assignmentId}`);
 
-/** Student detail address of a backend assignment in sample course `kj`. */
+/** Student detail address of a backend assignment (`n=srv-<id>`) or an imported school assignment (`n=school-<n>`) in course `kj`. */
 export function studentAssignmentHref(kj: Id, assignmentId: Id, extra: Record<string, unknown> = {}): string {
   const params = new URLSearchParams({ m: "report", n: serverRef(assignmentId), kj: String(kj) });
   for (const [key, value] of Object.entries(extra)) if (value != null && value !== "") params.set(key, String(value));
@@ -166,6 +203,8 @@ export const submissionKey = (courseId: Id, assignmentId: Id, submissionId: Id):
 export const assignmentLists = createResource<AssignmentListItem[], [courseId: Id]>((courseId) => apiGet<AssignmentListItem[]>(base(courseId)));
 /** `GET …/assignments/{id}`: `{ assignment, phase, serverTime, submission }` or, for the instructor, `{ assignment, revision, … }`. */
 export const assignmentDetails = createResource<AssignmentDetail, [courseId: Id, assignmentId: Id]>((courseId, assignmentId) => apiGet<AssignmentDetail>(one(courseId, assignmentId)));
+/** The school detail of one imported assignment. Loaded only by the assignment detail screen (one read per visit), never by a list. */
+export const schoolAssignmentDetails = createResource<SchoolAssignmentDetail, [courseId: Id, assignmentId: string]>((courseId, assignmentId) => apiGet<SchoolAssignmentDetail>(one(courseId, assignmentId)));
 export const submissionLists = createResource<SubmissionListItem[], [courseId: Id, assignmentId: Id]>((courseId, assignmentId) => apiGet<SubmissionListItem[]>(`${one(courseId, assignmentId)}/submissions`));
 export const submissionDetails = createResource<SubmissionDetail, [courseId: Id, assignmentId: Id, submissionId: Id]>((courseId, assignmentId, submissionId) => (
   apiGet<SubmissionDetail>(`${one(courseId, assignmentId)}/submissions/${encodeURIComponent(submissionId)}`)
@@ -357,6 +396,7 @@ export function assignmentMessage(error: unknown, options?: { creating?: boolean
           : "같은 제출을 처리하고 있습니다. 잠시 후 제출 상태를 확인하세요.";
         case "edit_conflict": return "다른 곳에서 이 과제를 먼저 수정했습니다. 최신 내용을 불러왔습니다. 입력한 내용은 그대로 두었으니 확인한 뒤 다시 저장하세요.";
         case "score_exceeds_max": return "이미 준 점수보다 배점을 낮출 수 없습니다.";
+        case "school_submit_at_school": return SCHOOL_PROBLEM_TEXT.at_school;
         default: return error.detail || "같은 요청이 이미 처리되었습니다. 화면을 새로 불러오세요.";
       }
     case 429: return retryLater(error);

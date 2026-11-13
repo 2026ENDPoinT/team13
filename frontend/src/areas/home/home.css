@@ -535,12 +535,32 @@ a.pill:hover { text-decoration: none; }
 .study-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: var(--space-5) var(--space-4); min-width: 0; align-items: start; }
 .course-study__files { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
 .study-folder, .file-card {
-  display: flex; flex-direction: column; gap: var(--space-2); min-width: 0;
+  position: relative; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0;
   padding: var(--space-2); margin: 0; border-radius: var(--radius-md);
   color: inherit; text-decoration: none;
 }
 .study-folder:hover, .file-card:hover { text-decoration: none; background: var(--surface-2); }
-.study-folder:focus-visible, .file-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* The title link stretches over the whole card; the ⋮ menu sits above it as its own control. */
+.sf-head { display: flex; align-items: flex-start; gap: var(--space-1); min-width: 0; }
+.sf-stretch { flex: 1; min-width: 0; color: inherit; text-decoration: none; }
+.sf-stretch:hover { text-decoration: none; }
+.sf-stretch::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius-md); }
+.sf-stretch:focus-visible { outline: none; }
+.sf-stretch:focus-visible::after { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sf-menu { position: relative; z-index: 1; flex: none; margin: -4px -4px -4px 0; }
+.sf-menu-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer;
+}
+.sf-menu-btn svg { width: 20px; height: 20px; }
+.sf-menu-btn:hover:not(:disabled), .sf-menu-btn[aria-expanded="true"] { background: var(--raised); color: var(--text); }
+.sf-menu-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.sf-menu-btn:disabled { opacity: var(--disabled); cursor: progress; }
+.sf-menu .study-new-menu { left: auto; right: 0; top: calc(100% + var(--space-1)); min-width: 200px; max-width: min(280px, 80vw); }
+.sf-menu .study-new-item[aria-disabled="true"] { color: var(--muted); cursor: not-allowed; }
+.sf-menu .study-new-item.is-danger:not([aria-disabled="true"]) { color: var(--danger); }
+.sf-menu-target { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sf-menu-hint { display: block; margin-top: 2px; color: var(--text-2); font-size: var(--text-xs, 12px); font-weight: normal; white-space: normal; }
 .sf-thumb {
   position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; overflow: hidden;
   border: var(--border-w) solid var(--border); border-radius: var(--radius-md); background: var(--raised);
@@ -552,8 +572,8 @@ a.pill:hover { text-decoration: none; }
   width: 48px; height: 48px; border-radius: var(--radius-sm); opacity: 0;
   background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm);
 }
-.study-folder:hover .sf-icon, .study-folder:focus-visible .sf-icon { opacity: 0; }
-.study-folder:hover .sf-open, .study-folder:focus-visible .sf-open { opacity: 1; }
+.study-folder:hover .sf-icon, .study-folder:has(.sf-stretch:focus-visible) .sf-icon { opacity: 0; }
+.study-folder:hover .sf-open, .study-folder:has(.sf-stretch:focus-visible) .sf-open { opacity: 1; }
 .sf-name { min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-semibold); }
 .sf-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-xs); }
 .sf-count { color: var(--material-ink); font-weight: var(--weight-semibold); }

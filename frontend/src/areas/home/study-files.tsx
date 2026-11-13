@@ -2,17 +2,22 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { courses, courseById, studyMaterials, COURSE_ORDER, type Course } from "../../data.ts";
 import { hrefFor, find } from "../../manifest.ts";
 import type { ScreenCtx } from "../../types.ts";
-import { Link } from "../../router.tsx";
+import { Link, navigate } from "../../router.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { readQuery, pageSearch } from "../../shared/query.tsx";
-import { listCoursePdfs, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
+import { listCoursePdfs, deleteCoursePdf, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
 import { backendStatus, backendState, courseIdFor, kjOfCourseId, subscribe as onBackendChange } from "../../shared/backend.ts";
-import { listRecordings, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, fromServer, type RecordingRecord, type MoveScope } from "../../shared/course-recordings.ts";
+import { listRecordings, deleteRecording, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, fromServer, type RecordingRecord, type MoveScope } from "../../shared/course-recordings.ts";
 import {
-  listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
+  listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, deleteFolder, leaveFolder, placeItem, unplaceItem, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
 } from "../../shared/study-folders.ts";
-import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings } from "../../shared/study-room-remote.ts";
+import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings, refreshCourseView } from "../../shared/study-room-remote.ts";
+import {
+  studyDocuments, deleteStudyDocument, scanDelay, SCAN_CHECKS, summaryOffered, startDocSummary, docSummaryMessage, summaryPollDelay,
+  type StudyDocRecord,
+} from "../../shared/study-documents.ts";
+import { SUMMARY_SENDS } from "./study-doc-summary.tsx";
 import { serverCourseViews } from "../../shared/course-view.ts";
 import { thumbnailImage } from "../../shared/preview-remote.tsx";
 import { ApiError } from "../../shared/api.ts";
@@ -23,6 +28,7 @@ import {
 } from "../../shared/lectures-remote.ts";
 import { serverStudySummary, studyLectureHref } from "./study-server.tsx";
 import { LessonViewer, type LessonDoc } from "../../shared/lesson-viewer.tsx";
+import { CardMenu, type MenuAction } from "./study-card-menu.tsx";
 import { wallFormat } from "../../shared/home-remote.ts";
 
 const REFRESH_MS = 30000;
@@ -40,7 +46,7 @@ export function studyCourses(): Course[] {
 
 const courseName = (course: Course | null | undefined) => course && !course.missing ? course.cardTitle || course.ko : "과목 정보 없음";
 export const folderHref = (courseId: string, folderId?: string): string => hrefFor(find("study_home"), { kj: courseId, f: folderId });
-const pdfHref = (record: CoursePdfRecord) => hrefFor(find("study_home"), { kj: record.courseId, doc: record.id });
+const pdfHref = (record: { courseId: string; id: string }) => hrefFor(find("study_home"), { kj: record.courseId, doc: record.id });
 // A recording of a course I no longer take has no `kj`: its page is addressed by `rec` alone.
 export const recordingHref = (courseId: string, id?: string): string => hrefFor(find("study_lecture"), { kj: courseId || undefined, rec: id });
 const sampleHref = (item: StudyMaterial) => hrefFor(find("study_summary"), { m: item.id });
@@ -89,11 +95,14 @@ interface FileCardProps {
   meta: (string | null | undefined | false)[];
   label?: string;
   thumb?: ReactNode;
+  /** The vertical-dots menu at the right of the title. */
+  menu?: ReactNode;
 }
 
-function FileCard({ href, kind, badge, title, preview, iconName, meta, label, thumb }: FileCardProps) {
+// The title is a stretched link (see .sf-stretch): the whole card opens it, while the menu button next to it stays a separate control.
+function FileCard({ href, kind, badge, title, preview, iconName, meta, label, thumb, menu }: FileCardProps) {
   return (
-    <Link className={`study-card file-card kind-${kind}`} href={href} aria-label={label}>
+    <div className={`study-card file-card kind-${kind}`}>
       <span className="sf-thumb fc-thumb" aria-hidden="true">
         {badge ? <span className="fc-badge">{badge}</span> : null}
         {preview
@@ -101,11 +110,14 @@ function FileCard({ href, kind, badge, title, preview, iconName, meta, label, th
           : <span className="sf-icon"><Icon name={iconName || "file"} /></span>}
         {thumb}
       </span>
-      <b className="sf-name" title={title}>{title}</b>
+      <div className="sf-head">
+        <Link className="sf-stretch" href={href} aria-label={label}><b className="sf-name" title={title}>{title}</b></Link>
+        {menu}
+      </div>
       <span className="sf-meta">
         {meta.filter(Boolean).map((text, i) => <span key={i} className={i ? undefined : "sf-count"}>{text}</span>)}
       </span>
-    </Link>
+    </div>
   );
 }
 
@@ -119,7 +131,7 @@ function SampleCard({ item, showCourse }: { item: StudyMaterial; showCourse: boo
   );
 }
 
-function PdfCard({ record, showCourse }: { record: CoursePdfRecord; showCourse: boolean }) {
+function PdfCard({ record, showCourse, menu }: { record: CoursePdfRecord; showCourse: boolean; menu?: ReactNode }) {
   const ready = record.status !== "no-text";
   // Server list records carry no overview (it is extracted when the document is opened).
   const preview = ready && !record.remote ? record.overview.slice(0, 2).map((point) => point.text.replace(/\s+/g, " ")).join(" ") : "";
@@ -131,8 +143,51 @@ function PdfCard({ record, showCourse }: { record: CoursePdfRecord; showCourse: 
       meta={[record.remote ? "ASTRA 서버 자료" : ready ? "개요 준비됨" : "텍스트 없음", showCourse ? courseName(courseById(record.courseId)) : detail]}
       // Server PDFs: the first-page thumbnail the backend made while converting (nothing when there is none).
       thumb={record.remote ? thumbnailImage(record.backendCourseId, record.fileId, "fc-thumb-img") : null}
+      menu={menu}
     />
   );
+}
+
+const SUMMARY_TEXT: Record<string, string> = { queued: "AI 요약 중", processing: "AI 요약 중", ready: "AI 요약 있음", failed: "AI 요약 실패" };
+
+/** The student's own PDF in the study room: opens in the document view once the malware scan has passed. */
+function StudyDocCard({ record, menu }: { record: StudyDocRecord; menu?: ReactNode }) {
+  const state = record.state === "scanning" ? "검사 중" : record.state === "rejected" ? "검사 거부" : (record.summaryStatus && SUMMARY_TEXT[record.summaryStatus]) || "내 PDF";
+  return (
+    <FileCard
+      href={pdfHref(record)} kind="pdf" badge="PDF" title={record.title} iconName="file"
+      meta={[state, shortDate.format(record.uploadedAt)]}
+      label={`${record.title} 내 PDF${state === "내 PDF" ? "" : `, ${state}`}`}
+      menu={menu}
+    />
+  );
+}
+
+/**
+ * While a document of the course is in the malware scan or its summary is being made, reads the course view again
+ * every `delay` seconds, at most `SCAN_CHECKS` times; stops as soon as nothing is waiting (`delay` null).
+ */
+function useWaitRefresh(kj: string, delay: number | null) {
+  useEffect(() => {
+    const server = delay ? serverStudyCourse(kj) : null;
+    if (server == null || !delay) return undefined;
+    let live = true;
+    let checks = 0;
+    let timer = 0;
+    const next = () => {
+      timer = window.setTimeout(() => {
+        checks += 1;
+        void refreshCourseView(server).finally(() => {
+          if (live && checks < SCAN_CHECKS) next();
+        });
+      }, delay * 1000);
+    };
+    next();
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [kj, delay]);
 }
 
 /** Where a recording stands, when it is not simply playable: the server's malware scan, or kept in this browser only. */
@@ -142,12 +197,13 @@ function recordingStatus(record: RecordingRecord): string | null {
   return record.uploadError ? `이 브라우저에만 저장 · ${record.uploadError}` : "이 브라우저에만 저장";
 }
 
-function RecordingCard({ record, showCourse }: { record: RecordingRecord; showCourse: boolean }) {
+function RecordingCard({ record, showCourse, menu }: { record: RecordingRecord; showCourse: boolean; menu?: ReactNode }) {
   return (
     <FileCard
       href={recordingHref(record.courseId, record.id)} kind="rec" badge={record.source === "audio" ? "오디오 파일" : record.source === "tab" ? "탭 녹음" : "마이크 녹음"}
       title={record.title} iconName="play"
       meta={[recordingStatus(record) || formatDuration(record.durationMs), showCourse ? courseName(courseById(record.courseId)) : shortDate.format(record.createdAt)]}
+      menu={menu}
     />
   );
 }
@@ -235,19 +291,24 @@ function LectureSection({ course, courseId }: { course: Course; courseId: number
   );
 }
 
-function UserFolderCard({ course, folder, count, note }: { course: Course; folder: StudyFolder; count: number; note?: string }) {
+function UserFolderCard({ course, folder, count, note, menu }: { course: Course; folder: StudyFolder; count: number; note?: string; menu?: ReactNode }) {
   return (
-    <Link className="study-folder user-folder" href={folderHref(course.id, folder.id)} aria-label={`${folder.name} 폴더`}>
+    <div className="study-folder user-folder">
       <span className="sf-thumb" aria-hidden="true">
         <span className="sf-icon"><Icon name="folder" /></span>
         <span className="sf-open"><Icon name="chev" /></span>
       </span>
-      <b className="sf-name" title={folder.name}>{folder.name}</b>
+      <div className="sf-head">
+        <Link className="sf-stretch" href={folderHref(course.id, folder.id)} aria-label={`${folder.name} 폴더`}>
+          <b className="sf-name" title={folder.name}>{folder.name}</b>
+        </Link>
+        {menu}
+      </div>
       <span className="sf-meta">
         <span className="sf-count">{count ? `${count}개` : "비어 있음"}</span>
         {note || (folder.local ? <span>이 브라우저에만 저장</span> : null)}
       </span>
-    </Link>
+    </div>
   );
 }
 
@@ -361,9 +422,27 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   const readOnly = folderGroup !== "mine";
   // At the course root only the user's own items; inside a folder whatever is placed there.
   const pdfs = shown.pdfs.filter((record) => folderOfItem(record) === folderId);
+  // The student's own PDFs come with the server course view (re-rendered by useStudyRoomStore), not the 30 s list.
+  const allDocs = data ? studyDocuments(course.id) : [];
+  const docs = allDocs.filter((record) => folderOfItem(record) === folderId);
+  // Scanning: the server's `Retry-After` (10 s); a summary being made: 4–10 s.
+  const summarizing = allDocs.some((record) => record.summaryStatus === "queued" || record.summaryStatus === "processing");
+  useWaitRefresh(course.id, allDocs.some((record) => record.state === "scanning") ? scanDelay() : summarizing ? summaryPollDelay() : null);
+  const docActions = (record: StudyDocRecord): MenuAction[] => {
+    if (!summaryOffered(record)) return [];
+    if (record.summaryStatus === "ready") return [{ label: "AI 요약 보기", icon: "book", onSelect: async () => navigate(pdfHref(record)) }];
+    if (record.summaryStatus === "queued" || record.summaryStatus === "processing") return [];
+    return [{
+      label: record.summaryStatus === "failed" ? "AI 요약 다시 만들기" : "요약 만들기", icon: "star", hint: SUMMARY_SENDS,
+      onSelect: () => startDocSummary(record.documentId).then(
+        (answer) => say(answer.status === "ready" ? `"${record.title}"의 요약이 준비되었습니다.` : `"${record.title}"의 요약을 만들고 있습니다. 끝나면 카드에 "AI 요약 있음"이 나타납니다.`),
+        (error: unknown) => say(docSummaryMessage(error), true),
+      ).finally(() => void refreshCourseView(record.backendCourseId)),
+    }];
+  };
   const recordings = shown.recordings.filter((record) => folderOfItem(record) === folderId && (folder ? true : groupOf(record) === "mine"));
   const folders = folder ? [] : courseFolders;
-  const countIn = (id: string) => [...shown.pdfs, ...shown.recordings].filter((record) => folderOfItem(record) === id).length;
+  const countIn = (id: string) => [...shown.pdfs, ...allDocs, ...shown.recordings].filter((record) => folderOfItem(record) === id).length;
   const stuckIn = (id: string) => Object.keys(unmovable).filter((itemId) => placed[itemId] === id).length;
   const onServer = serverStudyCourse(course.id) != null;
   // The signed-in user's items still only in this browser: offered for an explicit move (course root).
@@ -375,7 +454,7 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
       ? `ASTRA 서버에서 PDF와 녹음 목록을 받지 못했습니다. ${failed || "잠시 후 다시 시도해 주세요."}`
       : "이 브라우저의 저장소에서 PDF와 녹음을 읽지 못했습니다. 사이트 데이터 접근 설정을 확인해 주세요."
     : data
-      ? [folders.length && `폴더 ${folders.length}개`, `PDF ${pdfs.length}개`, `녹음 ${recordings.length}개`, onServer && usageText(studyUsage())].filter(Boolean).join(" · ")
+      ? [folders.length && `폴더 ${folders.length}개`, `PDF ${pdfs.length + docs.length}개`, `녹음 ${recordings.length}개`, onServer && usageText(studyUsage())].filter(Boolean).join(" · ")
       : "PDF와 녹음을 불러오는 중입니다";
   const courseId = !folder && serverOwned(course.id) ? courseIdFor(course.id) : null;
   const moveAll = (scope: MoveScope) => {
@@ -387,12 +466,51 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
         notifyStudyChanged();
       });
   };
+  const failure = (error: unknown) => say(error instanceof Error ? error.message : String(error), true);
+  // Browser-only changes (placements, folders) are not observed: re-render now, and let open lists re-read.
+  const afterChange = () => {
+    setFolderVersion((n) => n + 1);
+    notifyStudyChanged();
+  };
+  // Where an item can go: this course's own folders except the one open now.
+  const targets = courseFolders.filter((item) => item.id !== folderId).map((item) => ({ id: item.id, name: item.name }));
+  const itemMenu = (
+    record: { id: string; title: string; remote?: boolean; studyDocument?: true; pendingFolderId?: string }, remove: () => Promise<void>, blocked?: string, actions?: MenuAction[],
+  ) => (
+    <CardMenu
+      title={record.title}
+      actions={actions}
+      move={{
+        targets,
+        canLeave: Boolean(folderOfItem(record)),
+        // An item the server holds goes back to the root with `DELETE …/placements`; a browser-only one just loses its local placement.
+        onMove: (target) => (target ? placeItem(record.id, target) : record.remote || record.studyDocument ? unplaceItem(course.id, record.id) : Promise.resolve(leaveFolder(record.id)))
+          .then(() => say(`"${record.title}"을 ${target ? `"${targets.find((item) => item.id === target)?.name ?? ""}" 폴더` : "과목 폴더"}로 옮겼습니다.`), failure)
+          .finally(afterChange),
+      }}
+      remove={{ blocked, onRemove: () => remove().then(() => say(`"${record.title}"을 삭제했습니다.`), failure).finally(afterChange) }}
+    />
+  );
+  const folderMenu = (item: StudyFolder) => {
+    // Counted now: once the folder is gone its items are no longer listed under it.
+    const inside = item.local || item.version == null ? countIn(item.id) : 0;
+    return (
+      <CardMenu
+        title={item.name}
+        remove={{
+          onRemove: () => deleteFolder(item)
+            .then(() => say(`"${item.name}" 폴더를 삭제했습니다.${inside ? ` 안에 있던 자료 ${inside}개는 과목 폴더에 남아 있습니다.` : ""}`), failure)
+            .finally(afterChange),
+        }}
+      />
+    );
+  };
   const account = `지금 로그인한 계정${accountName ? `(${accountName})` : ""}`;
   const folderCard = (item: StudyFolder) => {
     const stuck = item.movedTo ? stuckIn(item.id) : 0;
     return (
       <UserFolderCard
-        key={`folder-${item.id}`} course={course} folder={item} count={countIn(item.id)}
+        key={`folder-${item.id}`} course={course} folder={item} count={countIn(item.id)} menu={folderMenu(item)}
         note={stuck ? `강의자료 ${stuck}개는 서버에서 열 수 없어 옮기지 못함` : undefined}
       />
     );
@@ -437,8 +555,14 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
             ) : null}
             {/* Server folder and recording ids are both small numbers: keys carry the kind. */}
             {folders.map(folderCard)}
-            {pdfs.map((record) => <PdfCard key={record.id} record={record} showCourse={false} />)}
-            {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
+            {pdfs.map((record) => (
+              <PdfCard
+                key={record.id} record={record} showCourse={false}
+                menu={itemMenu(record, () => deleteCoursePdf(record.id), record.remote ? "서버에 등록한 자료는 강의자료 화면의 서버 자료 목록에서 삭제합니다." : undefined)}
+              />
+            ))}
+            {docs.map((record) => <StudyDocCard key={record.id} record={record} menu={itemMenu(record, () => deleteStudyDocument(record), undefined, docActions(record))} />)}
+            {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} menu={itemMenu(record, () => deleteRecording(record))} />)}
             {samples.map((item) => <SampleCard key={item.id} item={item} showCourse={false} />)}
           </>
         ) : null}
@@ -457,7 +581,7 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
             <Button kind="ghost" disabled={moving} onClick={() => moveAll({ kj: course.id, group })}>{moving ? "옮기는 중…" : text.button}</Button>
             <div className="study-grid">
               {separate[group].map(folderCard)}
-              {loose.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
+              {loose.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} menu={itemMenu(record, () => deleteRecording(record))} />)}
             </div>
           </section>
         );
@@ -469,19 +593,22 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
 
 function FolderCard({ course }: { course: Course }) {
   const samples = samplesOf(course.id).length;
-  const [count, setCount] = useState(samples ? `샘플 ${samples}` : "비어 있음");
+  useStudyRoomStore();
+  const [counts, setCounts] = useState({ pdfs: 0, recordings: 0 });
   useEffect(() => {
     let live = true;
     Promise.all([listCoursePdfs(course.id), listRecordings(course.id)]).then(([pdfs, mixed]) => {
       // Browser recordings of other groups are counted in their own section, not on the course card.
       const recordings = mixed.filter((record) => record.remote || ownerGroup(record.ownerUserId) === "mine");
-      const parts = [pdfs.length && `PDF ${pdfs.length}`, recordings.length && `녹음 ${recordings.length}`, samples && `샘플 ${samples}`].filter(Boolean);
-      if (live) setCount(parts.length ? parts.join(" · ") : "비어 있음");
+      if (live) setCounts({ pdfs: pdfs.length, recordings: recordings.length });
     }).catch(() => {});
     return () => {
       live = false;
     };
   }, [course.id, samples]);
+  const pdfCount = counts.pdfs + studyDocuments(course.id).length;
+  const parts = [pdfCount && `PDF ${pdfCount}`, counts.recordings && `녹음 ${counts.recordings}`, samples && `샘플 ${samples}`].filter(Boolean);
+  const count = parts.length ? parts.join(" · ") : "비어 있음";
   return (
     <Link className="study-folder" href={folderHref(course.id)} aria-label={`${courseName(course)} 폴더`}>
       <span className="sf-thumb" aria-hidden="true">
@@ -551,7 +678,7 @@ function LeftCourseRecordings() {
   return (
     <section className="study-section" aria-label="지금 듣지 않는 과목의 녹음">
       <h2>지금 듣지 않는 과목의 녹음</h2>
-      <p className="tiny">수강을 마치거나 취소한 과목에서 저장한 녹음입니다. 녹음 저장 공간 사용량에 들어갑니다.</p>
+      <p className="tiny">수강을 마치거나 취소한 과목에서 저장한 녹음입니다. 학습실 저장 공간 사용량에 들어갑니다.</p>
       <div className="study-grid">
         {rows.map((recording) => <RecordingCard key={`rec-${recording.id}`} record={fromServer(recording, "")} showCourse={false} />)}
       </div>

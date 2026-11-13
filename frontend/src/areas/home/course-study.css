@@ -65,6 +65,19 @@
   color: var(--danger);
 }
 
+/* The student's own study-room PDF: rename, move, delete above the document. */
+.course-study__doc-actions {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.course-study__doc-actions form input,
+.course-study__doc-actions form select {
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+
 .course-study .course-study__crumb {
   margin-top: var(--space-2);
   color: var(--text-2);

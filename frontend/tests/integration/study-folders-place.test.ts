@@ -27,7 +27,7 @@ import { FOLDER_GONE, placeItem, serverFolderOf } from "../../src/shared/study-f
 
 const folder = (id: number, name: string) => ({ id, courseId: 9, name, position: id, createdAt: "2026-11-14T00:00:00Z", version: 1 });
 const view = (patch: Partial<StudyCourseView> = {}): StudyCourseView => ({
-  courseId: 9, folders: [folder(5, "중간고사"), folder(6, "기말고사")], recordings: [], placements: [], usage: null, ...patch,
+  courseId: 9, folders: [folder(5, "중간고사"), folder(6, "기말고사")], recordings: [], placements: [], usage: null, documents: [], ...patch,
 });
 const conflict = () => new ApiError(409, { code: "version_conflict" });
 let current: StudyCourseView;

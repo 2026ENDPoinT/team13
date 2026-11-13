@@ -87,7 +87,7 @@ function fixture() {
     { weekNo: 1, title: "1주", startsOn: "2026-09-01", endsOn: "2026-09-07", activities: [
       { activityId: 11, type: "lecture_weeks", title: "서버 영상", phase: "open" },
       { activityId: "school-812", origin: "school", type: "material", schoolType: "lecture_material", title: "학교 자료 812", phase: "open", done: true, schoolUrl: ECLASS },
-      { activityId: "school-900", origin: "school", type: "report", schoolType: "report", title: "학교 과제", phase: "open", done: false, schoolUrl: ECLASS },
+      { activityId: "school-900", origin: "school", type: "test", schoolType: "test", title: "학교 시험", phase: "open", done: false, schoolUrl: ECLASS },
     ] },
     { weekNo: 2, title: "2주", startsOn: "2026-09-08", endsOn: "2026-09-14", activities: [] },
   ] });

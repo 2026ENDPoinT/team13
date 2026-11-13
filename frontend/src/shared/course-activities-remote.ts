@@ -7,12 +7,12 @@
 import { ApiError } from "./api.ts";
 import { backendStatus, courseIdFor } from "./backend.ts";
 import type { Entry, Resource } from "./remote-cache.ts";
-import { serverActivityHref, materialHref, targetIdOf } from "./activity-links.ts";
+import { serverActivityHref, materialHref, schoolVideoHref, targetIdOf } from "./activity-links.ts";
 import { courseWeeks, lectureDetails, lectureProgress, courseKey, detailKey, lectureRows, weeksOf } from "./lectures-remote.ts";
 import type { WeekActivity } from "./lectures-remote.ts";
 import { materialLists, materialKey, materialsOf } from "./materials-remote.ts";
 import { schoolHref, schoolMaterialsOf, schoolFilesOf, SCHOOL_MATERIAL_ID } from "./school-content.tsx";
-import { assignmentLists, listKey as assignmentListKey, studentAssignmentHref, accepting } from "./assignments-remote.ts";
+import { assignmentLists, listKey as assignmentListKey, studentAssignmentHref, accepting, SCHOOL_ASSIGNMENT_ID } from "./assignments-remote.ts";
 import { quizLists, quizListKey, studentQuizHref } from "./quizzes-remote.ts";
 import { surveyLists, studentSurveyHref } from "./surveys-remote.ts";
 
@@ -212,11 +212,14 @@ export function activitySnapshot(parts: ActivityPart[], kj: string, { instructor
     });
   }
   for (const item of Array.isArray(data.assignments) ? data.assignments : []) {
+    // A school assignment is one row: the week list's row when it has one (place and own done mark), else this list's.
+    const school = item.origin === "school";
+    if (school && listedSchool.has(String(item.activityId))) continue;
     rows.push({
-      type: "report", kind: "report", key: `report-${item.assignmentId}`, weekNo: item.weekNo, title: item.title, activityId: item.activityId,
+      type: "report", kind: "report", key: school ? String(item.assignmentId) : `report-${item.assignmentId}`, weekNo: item.weekNo, title: item.title, activityId: item.activityId,
       openAt: item.openAt, closeAt: item.closeAt, phase: item.phase, href: studentAssignmentHref(kj, item.assignmentId),
       ongoing: accepting(item.phase), missing: item.status === "not_submitted" && accepting(item.phase),
-      done: DONE.report.includes(item.status), item,
+      done: DONE.report.includes(item.status), item, ...(school ? { school: true } : {}),
     });
   }
   for (const item of Array.isArray(data.quizzes) ? data.quizzes : []) {
@@ -243,13 +246,15 @@ export function activitySnapshot(parts: ActivityPart[], kj: string, { instructor
         const type = typeof activity.type === "string" && activity.type ? activity.type : "etc";
         const ongoing = activity.phase === "open";
         const id = String(activity.activityId);
-        // A school material opens STack's own material detail; any other imported row opens the school's e-Class.
+        // A school material, video (no player) or assignment opens STack's own read-only detail; any other imported row opens the school's e-Class.
         const material = (type === "material" || activity.schoolType === "lecture_material") && SCHOOL_MATERIAL_ID.test(id);
-        const href = material ? materialHref(kj, id) : schoolHref(activity.schoolUrl);
+        const video = !material && activity.schoolType === "lecture_weeks" ? schoolVideoHref(kj, id) : null;
+        const assignment = !material && !video && type === "report" && SCHOOL_ASSIGNMENT_ID.test(id) ? studentAssignmentHref(kj, id) : null;
+        const href = material ? materialHref(kj, id) : video || assignment || schoolHref(activity.schoolUrl);
         rows.push({
           type, kind: activity.schoolType || type, key: `school-${id.replace(/^school-/, "")}`, weekNo: week.weekNo,
           title: activity.title, openAt: activity.openAt, closeAt: activity.closeAt, phase: activity.phase || null, href,
-          activityId: activity.activityId, ongoing, done: activity.done === true, school: true, external: !material && href !== null, item: activity,
+          activityId: activity.activityId, ongoing, done: activity.done === true, school: true, external: !material && !video && !assignment && href !== null, item: activity,
           missing: ongoing && activity.done === false && type !== "material" && activity.offline !== true,
           ...(material ? { files: schoolFilesOf(schoolMaterials.get(id)) } : {}),
         });

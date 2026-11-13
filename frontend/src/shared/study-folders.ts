@@ -6,7 +6,7 @@ import { useSyncExternalStore } from "react";
 import { ApiError } from "./api.ts";
 import { courseIdFor, currentUserId } from "./backend.ts";
 import {
-  courseViews, peekCourseView, cachedViews, createServerFolder, putPlacement, refreshCourseView, loadCourseView,
+  courseViews, peekCourseView, cachedViews, createServerFolder, deleteServerFolder, putPlacement, deletePlacement, refreshCourseView, loadCourseView,
   serverStudyCourse, studyRoomOnServer, studyRoomMessage, isMissingEndpoint, type ServerFolder, type PlacementKind,
 } from "./study-room-remote.ts";
 
@@ -136,7 +136,7 @@ export function placements(): Record<string, string> {
   if (!studyRoomOnServer()) return local;
   const placed: Record<string, string> = { ...local };
   for (const view of cachedViews()) {
-    for (const item of view.placements) placed[item.kind === "course_file" ? `srv-${item.itemId}` : String(item.itemId)] = String(item.folderId);
+    for (const item of view.placements) placed[serverItemId(item.kind, item.itemId)] = String(item.folderId);
   }
   return placed;
 }
@@ -168,10 +168,17 @@ export async function createFolder(courseId: string, name: string | null | undef
   return folder;
 }
 
-/** The server placement target of a study-room item id: `srv-<fileId>` (course PDF) or a server recording id. */
+/** The study-room item id of a server placement: `srv-<fileId>`, `doc-<documentId>` or the recording id. */
+function serverItemId(kind: string, itemId: number): string {
+  return kind === "course_file" ? `srv-${itemId}` : kind === "document" ? `doc-${itemId}` : String(itemId);
+}
+
+/** The server placement target of a study-room item id: `srv-<fileId>` (course PDF), `doc-<documentId>` (the student's own PDF) or a server recording id. */
 function serverItem(itemId: string): { kind: PlacementKind; id: string; placementKind: string } | null {
   const pdf = /^srv-([1-9][0-9]*)$/.exec(itemId);
   if (pdf) return { kind: "course-files", id: pdf[1], placementKind: "course_file" };
+  const own = /^doc-([1-9][0-9]*)$/.exec(itemId);
+  if (own) return { kind: "documents", id: own[1], placementKind: "document" };
   return /^[1-9][0-9]*$/.test(itemId) ? { kind: "recordings", id: itemId, placementKind: "recording" } : null;
 }
 
@@ -251,6 +258,61 @@ export async function placeItem(itemId: string, folderId: string | null | undefi
   } finally {
     if (course && !reloaded) void refreshCourseView(course.courseId);
   }
+}
+
+/**
+ * Takes a server item out of its folder back to the course root: `DELETE …/placements` with the version the view
+ * holds. A 409 reloads the view and throws the conflict sentence (the user chose with the old placement on screen).
+ * Nothing is sent for an item the view has in the root already.
+ */
+export async function unplaceItem(courseId: string, itemId: string): Promise<void> {
+  const server = serverStudyCourse(courseId);
+  const item = serverItem(itemId);
+  if (server == null || !item) return;
+  const version = placementVersion(item.placementKind, item.id);
+  if (!version) return;
+  let reloaded = false;
+  try {
+    await deletePlacement(item.kind, item.id, version);
+  } catch (error) {
+    if (error instanceof ApiError && (error.code === "version_conflict" || error.status === 404)) {
+      await loadCourseView(server, true).catch(() => undefined);
+      reloaded = true;
+    }
+    throw new Error(studyRoomMessage(error));
+  } finally {
+    if (!reloaded) void refreshCourseView(server);
+  }
+}
+
+/** Takes an item that is only in this browser out of its folder, back to the course root. */
+export function leaveFolder(itemId: string): void {
+  const data = read();
+  if (!(itemId in data.placement)) return;
+  delete data.placement[itemId];
+  write(data);
+}
+
+/**
+ * Deletes a folder. A browser folder is removed here; a server folder with `DELETE …/folders/{id}`. Either way the
+ * browser placements into it are dropped, so those items sit in the course root again.
+ */
+export async function deleteFolder(folder: StudyFolder): Promise<void> {
+  if (!folder.local && folder.version != null) {
+    const server = serverStudyCourse(folder.courseId);
+    if (server == null) throw new Error("ASTRA 서버에 연결되어 있지 않아 이 폴더를 지울 수 없습니다.");
+    try {
+      await deleteServerFolder({ id: folder.id, version: folder.version, courseId: server });
+    } catch (error) {
+      throw new Error(studyRoomMessage(error));
+    }
+  }
+  const data = read();
+  const before = data.folders.length;
+  data.folders = data.folders.filter((item) => item.id !== folder.id);
+  const orphaned = Object.keys(data.placement).filter((itemId) => data.placement[itemId] === folder.id);
+  for (const itemId of orphaned) delete data.placement[itemId];
+  if (data.folders.length !== before || orphaned.length) write(data);
 }
 
 // ---------- moving browser folders to the account ----------

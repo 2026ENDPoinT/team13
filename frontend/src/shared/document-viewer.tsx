@@ -32,10 +32,11 @@ function storedPage(documentId: string): number {
   return Number.isInteger(value) && value > 0 ? value : 0;
 }
 
-// Pages of server documents (`server-file:…`, `course-pdf:srv-…`) belong to the signed-in user: forget them
-// when that user goes, so the next user of the tab neither starts on them nor learns what was read.
+// Pages of server documents (`server-file:…`, `course-pdf:srv-…`, the student's own `course-pdf:doc-…`) belong to
+// the signed-in user: forget them when that user goes, so the next user of the tab neither starts on them nor learns
+// what was read.
 function serverDocument(documentId: string): boolean {
-  return documentId.startsWith("server-file:") || documentId.startsWith("course-pdf:srv-");
+  return documentId.startsWith("server-file:") || documentId.startsWith("course-pdf:srv-") || documentId.startsWith("course-pdf:doc-");
 }
 
 function writePage(documentId: string, page: number) {

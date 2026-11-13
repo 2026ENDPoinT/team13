@@ -1,6 +1,7 @@
 // The student's own study room on the ASTRA backend (`/api/me/study-room/**`, ADR-0040): folders, item
-// placement and lecture recordings. study-folders.ts and course-recordings.ts delegate here while the backend
-// connection is `ready`; every path is private to the signed-in user. Course views stay in memory only.
+// placement, lecture recordings and the student's own PDFs (documents, study-documents.ts). study-folders.ts,
+// course-recordings.ts and study-documents.ts delegate here while the backend connection is `ready`; every path is
+// private to the signed-in user. Course views stay in memory only.
 // A backend without these endpoints (404 on the course view) leaves both stores in the browser for the session.
 import { apiGet, apiSend, apiUpload, ApiError, newRequestKey } from "./api.ts";
 import { backendStatus, courseIdFor, subscribe } from "./backend.ts";
@@ -39,10 +40,28 @@ export interface ServerRecording extends RecordingStudyResults {
 }
 
 export interface ServerPlacement {
-  kind: "course_file" | "recording";
+  kind: "course_file" | "recording" | "document";
   itemId: number;
   folderId: number;
   version: number;
+}
+
+export type DocumentState = "scanning" | "ready" | "rejected";
+
+/** One of the student's own PDFs in the study room (`…/documents`): private, never sent to a model. */
+export interface ServerDocument {
+  documentId: number;
+  courseId: number;
+  title: string;
+  fileName: string;
+  sizeBytes: number;
+  state: DocumentState;
+  folderId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+  /** Page summary state (null: never requested); absent on a backend without document summaries. */
+  summaryStatus?: "queued" | "processing" | "ready" | "failed" | null;
 }
 
 export interface StudyUsage {
@@ -53,6 +72,10 @@ export interface StudyUsage {
   /** null when the upload policy has no ceiling. */
   maxFileBytes: number | null;
   maxFoldersPerCourse: number;
+  /** Present on a backend with study-room documents. */
+  documentCount?: number;
+  maxDocuments?: number;
+  maxDocumentFileBytes?: number | null;
 }
 
 export interface StudyCourseView {
@@ -61,6 +84,8 @@ export interface StudyCourseView {
   recordings: ServerRecording[];
   placements: ServerPlacement[];
   usage: StudyUsage | null;
+  /** The student's own PDFs, newest first; null when the backend does not support them (no `documents` field). */
+  documents: ServerDocument[] | null;
 }
 
 // ---------- availability ----------
@@ -107,6 +132,8 @@ export const courseViews = createResource<StudyCourseView, [courseId: Id]>(async
     folders: list<ServerFolder>(body && body.folders),
     recordings: list<ServerRecording>(body && body.recordings),
     placements: list<ServerPlacement>(body && body.placements),
+    // A backend from before study-room documents sends no `documents` field: null, not an empty list.
+    documents: body && Array.isArray(body.documents) ? body.documents : null,
     usage: (body && body.usage) || null,
   };
   if (view.usage) lastUsage = view.usage;
@@ -199,11 +226,22 @@ export async function createServerFolder(courseId: Id, name: string, idempotency
   return folder;
 }
 
-export type PlacementKind = "course-files" | "recordings";
+/** `DELETE …/folders/{id}` with the version the view holds; what becomes of the items inside is the server's answer. */
+export async function deleteServerFolder(folder: { id: Id; version: number; courseId: Id }): Promise<void> {
+  await apiSend<null>("DELETE", `${BASE}/folders/${encodeURIComponent(folder.id)}`, undefined, { ifMatch: folder.version });
+  void refreshCourseView(folder.courseId);
+}
+
+export type PlacementKind = "course-files" | "recordings" | "documents";
 
 /** `PUT …/placements/{kind}/{itemId}` with `If-Match: "<version>"` ("0" for an item in the course root). */
 export function putPlacement(kind: PlacementKind, itemId: Id, folderId: Id, version: number): Promise<ServerPlacement> {
   return apiSend<ServerPlacement>("PUT", `${BASE}/placements/${kind}/${encodeURIComponent(itemId)}`, { folderId: Number(folderId) }, { ifMatch: version });
+}
+
+/** `DELETE …/placements/{kind}/{itemId}` with `If-Match: "<version>"`: the item goes back to the course root. */
+export async function deletePlacement(kind: PlacementKind, itemId: Id, version: number): Promise<void> {
+  await apiSend<null>("DELETE", `${BASE}/placements/${kind}/${encodeURIComponent(itemId)}`, undefined, { ifMatch: version });
 }
 
 export interface UploadInput {
@@ -301,10 +339,10 @@ export function formatBytes(bytes: number | null | undefined): string {
   return value > 0 ? `${Math.max(1, Math.round(value / 1024))}KB` : "0KB";
 }
 
-/** "녹음 저장 공간 12MB / 2GB" for the screens that show usage. */
+/** "학습실 저장 공간 12MB / 2GB" (recordings and PDFs together) for the screens that show usage. */
 export function usageText(usage: StudyUsage | null | undefined): string {
   if (!usage) return "";
-  return `녹음 저장 공간 ${formatBytes(usage.usedBytes)} / ${formatBytes(usage.quotaBytes)}`;
+  return `학습실 저장 공간 ${formatBytes(usage.usedBytes)} / ${formatBytes(usage.quotaBytes)}`;
 }
 
 /** Korean message for a failed study-room request. */
@@ -314,7 +352,7 @@ export function studyRoomMessage(error: unknown): string {
   switch (error.code) {
     case "name_conflict": return "같은 이름의 폴더가 이미 있습니다.";
     case "too_many_folders": return `한 과목에는 폴더를 ${usage ? `${usage.maxFoldersPerCourse}개` : "정해진 수"}까지 만들 수 있습니다. 쓰지 않는 폴더가 있는지 확인하세요.`;
-    case "quota_exceeded": return `서버의 녹음 저장 공간${usage ? `(${formatBytes(usage.quotaBytes)})` : ""}이 부족합니다. 오래된 녹음을 지운 뒤 다시 저장하세요.`;
+    case "quota_exceeded": return `서버의 학습실 저장 공간${usage ? `(${formatBytes(usage.usedBytes)} / ${formatBytes(usage.quotaBytes)} 사용 중)` : ""}이 가득 찼습니다. 오래된 녹음이나 PDF를 지운 뒤 다시 저장하세요.`;
     case "too_many_recordings": return `녹음은 ${usage ? `${usage.maxRecordings}개` : "정해진 수"}까지 저장할 수 있습니다. 오래된 녹음을 지운 뒤 다시 저장하세요.`;
     case "too_large": return `녹음 파일이 너무 큽니다. 한 파일은 ${usage && usage.maxFileBytes ? formatBytes(usage.maxFileBytes) : "50MB"}까지 저장할 수 있습니다.`;
     case "version_conflict": return "다른 탭이나 기기에서 먼저 바뀌었습니다. 다시 불러왔습니다. 확인한 뒤 다시 시도하세요.";

@@ -1,10 +1,11 @@
 // 학생 활동 상세의 백엔드 부분 중 영상·과제·시험·설문 상세 밖의 것. 서버 자료 상세
 // (`?m=lecture_material&n=srv-<activityId>`, `GET …/activities/{id}`의 설명과 첨부, 내려받기, 미리보기, 학습실), 학교 e-Class에서
-// 가져온 자료 상세(`?m=lecture_material&n=school-<n>`, 학생이 열 때만 학교에서 읽는다), 활동 ID만 있는 예전 연결 주소
+// 가져온 자료 상세(`?m=lecture_material&n=school-<n>`, 학생이 열 때만 학교에서 읽는다), 학교 영상 상세(`?m=lecture_weeks&n=school-<n>`,
+// 재생 없이 학교의 진도·출석 사실과 e-Class 링크), 활동 ID만 있는 예전 연결 주소
 // (`?m=report|test|survey&act=<activityId>`, 활동 상세가 주는 과제·시험·설문 ID로 그 상세로 주소를 바꾼다), 연결된 과목에서
 // 샘플 활동 ID로 열린 상세·플레이어·미리보기의 찾을 수 없음 화면이다. 서버 글은 텍스트로만 넣는다.
 import { Fragment, useEffect, useState, type ReactNode } from "react";
-import { Button, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
+import { Button, EmptyState, ErrorState, LoadingState, Table } from "../../ui/kit.tsx";
 import { Link } from "../../router.tsx";
 import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { hrefFor, find } from "../../manifest.ts";
@@ -20,7 +21,8 @@ import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
 import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import { AttachmentRow } from "../../shared/attachment-row.tsx";
 import {
-  schoolMaterialDetails, schoolDetailKey, schoolFilesOf, schoolProblemOf, SchoolLink, SchoolProblemNote, type SchoolMaterialDetail,
+  schoolMaterialDetails, schoolVideoDetails, schoolDetailKey, schoolFilesOf, schoolProblemOf, schoolDuration, schoolPercent,
+  SchoolLink, SchoolProblemNote, type SchoolMaterialDetail, type SchoolVideoDetail, type SchoolVideoContent,
 } from "../../shared/school-content.tsx";
 import { SchoolFileRow } from "../../shared/school-files.tsx";
 import { resolveActivityHref } from "../../shared/course-activities-remote.ts";
@@ -227,6 +229,109 @@ function MaterialDetail({ screen, parts }: { screen: Screen; parts: ActivityPart
 /** `screen.serverMaterial` 또는 `screen.serverSchoolMaterial` 자료 상세(백엔드 모드). `parts`는 learning.tsx 도우미다. */
 export function remoteMaterialDetail(screen: Screen, ctx: ScreenCtx, parts: ActivityParts): ReactNode {
   return <MaterialDetail key={`${screen.course}:${screen.serverSchoolMaterial || screen.serverMaterial}`} screen={screen} parts={parts} />;
+}
+
+// ---------- 학교 영상 상세 ----------
+
+function contentCells(content: SchoolVideoContent): ReactNode[] {
+  const credit = typeof content.attendanceTimeSec === "number" && content.attendanceTimeSec > 0 ? schoolDuration(content.attendanceTimeSec) : "없음";
+  return [
+    String(content.no),
+    content.title || "—",
+    schoolPercent(content.percent) || "—",
+    schoolPercent(content.inPeriodPercent) || "—",
+    schoolPercent(content.outOfPeriodPercent) || "—",
+    schoolDuration(content.learningTimeSec) || "—",
+    credit,
+  ];
+}
+
+/**
+ * 학교 영상의 학교 사실만 보인다: 내용마다 본인 진도(출석 인정 기간 안·밖), 학습시간, 출석인정 시간, 출석 주차와 기간. 재생기·진도
+ * 기록·heartbeat는 없다. 시청과 출석은 학교 학습창에서만이라 "e-Class에서 시청"을 앞에 둔다. `video`가 없는 응답(이 읽기가 없는
+ * 백엔드)이면 받은 행 정보와 e-Class 링크만 보인다.
+ */
+function SchoolVideoBody({ data, kj, parts }: { data: SchoolVideoDetail; kj: string; parts: ActivityParts }) {
+  const video = data.video || null;
+  const contents = video && Array.isArray(video.contents) ? video.contents : [];
+  const week = (video && video.attendanceWeek) || data.attendance || "";
+  const start = video && video.periodStartAt;
+  const end = video && video.periodEndAt;
+  const period = start || end ? `${start ? koDateTime(start) : ""} – ${end ? koDateTime(end) : ""}`.trim() : "";
+  return (
+    <div className="act-body" data-school-video={data.activityId}>
+      {parts.typeLine("video")}
+      <h1>{data.title}</h1>
+      <p className="tiny">{[data.weekNo != null ? `${data.weekNo}주차` : "", "학교 e-Class 영상"].filter(Boolean).join(" · ")}</p>
+      {parts.metaTable([
+        ["출석 주차", week || "—"],
+        ["출석 인정 기간", period || "—"],
+        ["상태", ACTIVITY_PHASE[data.phase || ""] || "—"],
+      ])}
+      {video && video.attendanceInSchoolOnly
+        ? <p className="note" role="note" data-school-only="">출석은 학교 e-Class 학습창에서 시청할 때만 인정됩니다. STack에서는 영상을 재생하지 않으니, 출석이 필요하면 아래 "e-Class에서 시청"으로 여세요.</p>
+        : <p className="tiny">STack에서는 이 영상을 재생하지 않습니다. 시청은 e-Class 학습창에서 하세요.</p>}
+      <div className="btn-row">
+        <SchoolLink url={data.schoolUrl} kind="primary" label="e-Class에서 시청" />
+        <Link href={listHref(kj)} className="btn btn-ghost">학습활동 목록</Link>
+      </div>
+      <h2>학습 내용</h2>
+      {!video
+        ? <p className="tiny" data-school-video-facts="none">이 영상의 진도와 학습시간은 e-Class에서 볼 수 있습니다.</p>
+        : contents.length
+          ? <Table label="학습 내용" layout="scroll" headers={["차례", "내용", "진도", "기간 내 진도", "기간 후 진도", "학습시간", "출석인정 시간"]} rows={contents.map(contentCells)} />
+          : <p className="tiny">학교 e-Class에 학습 내용 정보가 없습니다.</p>}
+    </div>
+  );
+}
+
+/** The school video detail is read once per visit of this address, never on focus and never by a list. */
+function SchoolVideoLoaded({ kj, courseId, activityId, parts }: { kj: string; courseId: number | string; activityId: string; parts: ActivityParts }) {
+  const key = schoolDetailKey(courseId, activityId);
+  const load = () => void schoolVideoDetails.load(key, courseId, activityId);
+  const entry = useResource(schoolVideoDetails, key);
+  useEffect(() => {
+    if (freshVisit("school-video-detail", key) === "entry" || !schoolVideoDetails.peek(key)) load();
+  });
+  const data = entry && entry.data;
+  if (entry && entry.error && schoolProblemOf(entry.error)) {
+    return (
+      <div className="act-body">
+        {parts.typeLine("video")}
+        {data ? <h1>{data.title}</h1> : null}
+        <SchoolProblemNote error={entry.error} schoolUrl={data && data.schoolUrl} retry={load} />
+        <div className="btn-row"><Link href={listHref(kj)} className="btn btn-ghost">학습활동 목록</Link></div>
+      </div>
+    );
+  }
+  if (!data) {
+    if (!entry || !entry.error) return <LoadingState title="학교 영상 정보를 불러오는 중입니다" />;
+    if (missing(entry.error)) {
+      return <EmptyState title="영상을 찾을 수 없습니다" body="학교 e-Class에서 지워졌거나 볼 수 있는 권한이 없습니다." actions={<Link href={listHref(kj)} className="btn btn-secondary">학습활동 목록</Link>} />;
+    }
+    return <ErrorState title="영상 정보를 불러오지 못했습니다" body={materialMessage(entry.error)} actions={<RetryButton reload={load} />} />;
+  }
+  if (data.type && data.type !== "lecture_weeks") {
+    return <EmptyState title="영상 활동이 아닙니다" body="학습활동 목록에서 다시 선택해 보세요." actions={<Link href={listHref(kj)} className="btn btn-secondary">학습활동 목록</Link>} />;
+  }
+  return <SchoolVideoBody data={data} kj={kj} parts={parts} />;
+}
+
+function SchoolVideoDetailScreen({ screen, parts }: { screen: Screen; parts: ActivityParts }) {
+  const kj = screen.course || "";
+  const activityId = screen.serverSchoolLecture || "";
+  const { blocked, offLate } = useGate(kj);
+  const courseId = courseIdFor(kj);
+  let main: ReactNode;
+  if (offLate) main = <EmptyState title="활동을 찾을 수 없습니다" body="ASTRA 서버에 연결되어 있지 않습니다." />;
+  else if (blocked || courseId == null) main = <div className="act-body">{parts.typeLine("video")}{blocked}</div>;
+  else main = <SchoolVideoLoaded kj={kj} courseId={courseId} activityId={activityId} parts={parts} />;
+  return <ActivityShell kj={kj} itemOpen={activityId}>{main}</ActivityShell>;
+}
+
+/** `screen.serverSchoolLecture` 학교 영상 상세(백엔드 모드, 재생 없음). `parts`는 learning.tsx 도우미다. */
+export function remoteSchoolVideoDetail(screen: Screen, ctx: ScreenCtx, parts: ActivityParts): ReactNode {
+  return <SchoolVideoDetailScreen key={`${screen.course}:${screen.serverSchoolLecture}`} screen={screen} parts={parts} />;
 }
 
 // ---------- 활동 ID 연결 ----------

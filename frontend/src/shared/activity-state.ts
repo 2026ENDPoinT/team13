@@ -6,6 +6,7 @@ import { roleIn } from "./backend.ts";
 import { loadPart, type ActivityPart, type ActivityRow } from "./course-activities-remote.ts";
 import { koDateTime } from "./home-remote.ts";
 import { windowText, PROGRESS_STATE, ACTIVITY_PHASE, type WeekActivity } from "./lectures-remote.ts";
+import { schoolDuration } from "./school-content.tsx";
 import { periodText, PHASE as REPORT_PHASE, STATUS as REPORT_STATUS } from "./assignments-remote.ts";
 import { PHASE as QUIZ_PHASE, ATTEMPT_STATUS } from "./quizzes-remote.ts";
 import { PHASE as SURVEY_PHASE, STATE as SURVEY_STATE } from "./surveys-remote.ts";
@@ -87,26 +88,16 @@ function lectureState(row: ActivityRow, item: ServerItem, instructor: boolean): 
   return [phase, `진도 ${percent}% · 인정 기준 충족 ${met}/${progress.length}`].filter(Boolean).join(" · ");
 }
 
-/** 학습시간(초) "25분 5초", "1시간 2분". 수가 아니면 빈 글. */
-function learningTime(seconds: unknown): string {
-  const total = typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : null;
-  if (total == null) return "";
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return h ? `${h}시간 ${m}분` : m ? `${m}분${s ? ` ${s}초` : ""}` : `${s}초`;
-}
-
 /**
  * 학교 e-Class에서 가져온 행의 상태: 본인 완료(`done`), 미완료(진행 중인데 `done: false`), 아니면 서버 시계의 구간.
- * 영상은 출석 차시와 학습시간, 시험은 오프라인 표시를 붙이고, 끝에 그 행이 어디서 열리는지 적는다(학교 자료는 STack 자료 상세).
+ * 영상은 출석 차시와 학습시간, 시험은 오프라인 표시를 붙이고, 끝에 그 행이 어디서 열리는지 적는다(학교 자료·영상·과제는 STack 상세).
  */
 function schoolState(row: ActivityRow): string {
   // A school row's item is its week activity, or for a material only the materials list has, that material.
   const item = row.item as Partial<WeekActivity>;
   const phase = ACTIVITY_PHASE[row.phase || ""] || "";
   const own = row.done ? "완료" : row.missing ? "미완료" : phase || (row.external ? "e-Class" : row.href ? "" : "열 수 없음");
-  const time = row.type === "video" ? learningTime(item.learningTimeSec) : "";
+  const time = row.type === "video" ? schoolDuration(item.learningTimeSec) : "";
   return [
     own,
     row.done && row.phase && row.phase !== "open" ? phase : "",
@@ -114,7 +105,7 @@ function schoolState(row: ActivityRow): string {
     time ? `학습시간 ${time}` : "",
     item.offline === true ? "오프라인" : "",
     row.files && row.files.length ? `파일 ${row.files.length}개` : "",
-    row.external ? "e-Class에서 열기" : row.href ? "학교 자료" : "e-Class 주소 없음",
+    row.external ? "e-Class에서 열기" : row.href ? ({ video: "학교 영상", report: "학교 과제" }[row.type] || "학교 자료") : "e-Class 주소 없음",
   ].filter(Boolean).join(" · ");
 }
 

@@ -15,9 +15,10 @@ import { foldTray, focusTray, openTray, refreshTray } from "../../shared/assista
 import { createRun, planGroups, runState, startRun, stopRun, todayDeadlinePlan } from "../../shared/assistant/plan.ts";
 import type { Activity } from "../../data.ts";
 import { backendState, backendStatus, subscribe as onBackendChange } from "../../shared/backend.ts";
-import { serverCourseViews } from "../../shared/course-view.ts";
-import { useHome, useTodo, loadMoreTodo, homeMessage } from "../../shared/home-remote.ts";
-import { currentServerActions, serverPrompts, serverActionForCommand, TODO_COMMAND, type ServerAction } from "../../shared/assistant/server-home.ts";
+import { useHome, useTodo, homeMessage } from "../../shared/home-remote.ts";
+import { currentServerActions, serverPrompts, type ServerAction } from "../../shared/assistant/server-home.ts";
+import { askServer, type AssistantAction } from "../../shared/assistant/server-ask.ts";
+import { assistantFailure } from "../../shared/assistant/request.ts";
 
 const MAX_ROWS = 5;
 // Survive re-renders and navigation: a request in flight, the input revision it was made for, the spoken line.
@@ -57,7 +58,8 @@ export interface CommandInput {
 let commandInput: CommandInput | null = null;
 /** 다른 화면의 챗봇 도크 입력창(홈 히어로 입력창과 동시에 보이지 않는다). */
 let dockInput: CommandInput | null = null;
-let serverListVisible = false;
+/** Where the signed-in assistant's last answer leads when it is not a single in-app page (shown as buttons). */
+let serverChoices: AssistantAction[] | null = null;
 let session = `${backendStatus()}:${backendState().me?.userId ?? ""}`;
 onBackendChange((next) => {
   const owner = `${next.status}:${next.me?.userId ?? ""}`;
@@ -68,7 +70,7 @@ onBackendChange((next) => {
   inputRevision += 1;
   busy = false;
   sayText = "";
-  serverListVisible = false;
+  serverChoices = null;
   commandInput?.clear();
   dockInput?.clear();
 });
@@ -122,7 +124,7 @@ function busyState(on: boolean): void {
 
 export function planPreview(): ReactNode {
   if (backendStatus() === "ready") {
-    return serverListVisible ? <ServerTodoPreview /> : <section className="hero-plan" id="hero-plan-preview" hidden />;
+    return serverChoices ? <ServerChoices actions={serverChoices} /> : <section className="hero-plan" id="hero-plan-preview" hidden />;
   }
   const run = runState();
   if (run?.status !== "ready") {
@@ -212,38 +214,36 @@ function ActionRow({ action }: { action: NextAction }) {
   );
 }
 function ServerActionRow({ action }: { action: ServerAction }) {
+  const className = `hero-action ${action.kind === "video" ? "is-lecture" : "is-deadline"}`;
+  const body = (
+    <>
+      <span className={`hero-chip t-${action.kind}`} aria-hidden="true" title={action.label}><Icon name={typeIcon(action.kind)} /></span>
+      <span className="hero-action-main" aria-hidden="true">
+        <span className="hero-action-title">{action.title}</span>
+        <span className={`hero-action-meta${action.urgent ? " is-urgent" : ""}`}>{action.meta}</span>
+      </span>
+      <span className="hero-cta" aria-hidden="true"><span>{action.external ? "e-Class" : "열기"}</span><span className="hero-arrow">→</span></span>
+    </>
+  );
   return (
     <li>
-      <Link className={`hero-action ${action.kind === "video" ? "is-lecture" : "is-deadline"}`} href={action.href} aria-label={`${action.label} ${action.title}, ${action.meta}. 열기`}>
-        <span className={`hero-chip t-${action.kind}`} aria-hidden="true" title={action.label}><Icon name={typeIcon(action.kind)} /></span>
-        <span className="hero-action-main" aria-hidden="true">
-          <span className="hero-action-title">{action.title}</span>
-          <span className={`hero-action-meta${action.urgent ? " is-urgent" : ""}`}>{action.meta}</span>
-        </span>
-        <span className="hero-cta" aria-hidden="true"><span>열기</span><span className="hero-arrow">→</span></span>
-      </Link>
+      {action.external
+        ? <a className={className} href={action.href} target="_blank" rel="noopener noreferrer" data-external="eclass" aria-label={`${action.label} ${action.title}, ${action.meta}. 학교 e-Class에서 열기(새 탭)`}>{body}</a>
+        : <Link className={className} href={action.href} aria-label={`${action.label} ${action.title}, ${action.meta}. 열기`}>{body}</Link>}
     </li>
   );
 }
 
-function ServerTodoPreview() {
-  const entry = useTodo();
-  useHome();
-  const actions = currentServerActions();
+function ServerChoices({ actions }: { actions: readonly AssistantAction[] }) {
   return (
-    <section className="hero-plan" id="hero-plan-preview" aria-labelledby="hero-plan-title" aria-busy={entry?.loading ? "true" : "false"}>
-      <h2 id="hero-plan-title">서버 할 일 목록</h2>
-      {entry?.error
-        ? <p className="hero-plan-meta" role="status">{homeMessage(entry.error)}</p>
-        : !entry?.data
-          ? <p className="hero-plan-meta" role="status">할 일을 불러오는 중이에요.</p>
-          : actions.length
-            ? <ul className="hero-actions" aria-label="서버 할 일">{actions.map((action) => <ServerActionRow key={action.item.activityId} action={action} />)}</ul>
-            : <p className="hero-plan-meta">현재 열 수 있는 할 일이 없어요.</p>}
-      {entry?.data?.nextCursor && !entry.error
-        ? <button type="button" className="btn" disabled={Boolean(entry.loading)} onClick={() => void loadMoreTodo()}>할 일 더 보기</button>
-        : null}
-      <p className="hero-plan-rule">항목을 선택하면 해당 활동으로 이동해요. 학습과 제출은 활동 화면에서 직접 진행해 주세요.</p>
+    <section className="hero-plan" id="hero-plan-preview" aria-labelledby="hero-plan-title">
+      <h2 id="hero-plan-title">AI 도우미가 찾은 곳</h2>
+      <div className="btn-row">
+        {actions.map((action) => action.external
+          ? <a key={action.href} className="btn" href={action.href} target="_blank" rel="noopener noreferrer" aria-label={`${action.label} (새 탭)`}>{action.label}</a>
+          : <Link key={action.href} className="btn" href={action.href}>{action.label}</Link>)}
+      </div>
+      <p className="hero-plan-rule">학습과 제출은 활동 화면에서 직접 진행해 주세요.</p>
     </section>
   );
 }
@@ -412,7 +412,7 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
             ))}
           </ul>
         )}
-      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{currentSay() || (server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "")}</p>
+      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{currentSay() || (server && busy ? "AI 도우미가 답을 찾고 있어요…" : server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "")}</p>
       <div className="cmd" role="search" ref={cmdRef}>
         <div
           className={["cmd-box", listShown ? "has-list" : "", ghost ? "has-ghost" : "", busy ? "is-busy" : ""].filter(Boolean).join(" ")}
@@ -528,7 +528,9 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
 }
 
 /**
- * `assistant-ask`: 강의실 명령은 로컬 색인으로 즉시 이동하고, 그 외 입력은 AI에 전달한다.
+ * `assistant-ask`: 로그인한 서버 모드에서는 모든 입력을 백엔드 AI 도우미에 보내고 그 답(`say`, `actions`)을 따른다
+ * (24b775e 의 서버 모드 로컬 처리를 대신한다). 백엔드는 있는데 로그인 전이면 묻지 않고 로그인 안내만 보인다.
+ * 백엔드 없는 샘플 모드는 강의실 명령을 로컬 색인으로 즉시 이동하고, 그 외 입력은 로컬 중계 AI에 전달한다.
  * `acceptRun`: the plan preview's Accept (as if "ㄱㄱ" were typed); `command`: the picked suggestion.
  */
 async function submitCommand({ acceptRun, command, field: given }: { acceptRun?: string; command?: string; field?: CommandInput }): Promise<void> {
@@ -539,30 +541,12 @@ async function submitCommand({ acceptRun, command, field: given }: { acceptRun?:
   if (!text) return;
   markChatUsed();
   if (backendStatus() === "ready") {
-    const requested = command || text;
-    const classroom = classroomForCommand(requested);
-    const action = serverActionForCommand(requested, currentServerActions());
+    await askServerCommand(command || text, field, docked);
+    return;
+  }
+  if (backendStatus() === "anon") {
     field.clear();
-    if (classroom) {
-      const course = serverCourseViews().find(({ course }) => course?.id === classroom.courseId)?.course;
-      if (course) {
-        sayText = "";
-        navigate(routeFor(currentRole(), "classroom", { kj: course.id, special: course.kind === "special" }));
-        return;
-      }
-    }
-    if (action) {
-      sayText = "";
-      navigate(action.href);
-      return;
-    }
-    if (requested.replace(/\s+/g, "") === TODO_COMMAND.replace(/\s+/g, "")) {
-      serverListVisible = true;
-      say("서버 할 일 목록에서 활동을 선택해 주세요. 자동 실행이나 제출은 하지 않아요.");
-      if (docked) navigate(routeFor(currentRole(), "home"));
-      return;
-    }
-    say("과목명을 입력해 강의실을 선택하거나, ‘할 일 목록 보여줘’로 활동을 찾아 주세요. 자동 실행이나 제출은 지원하지 않아요.");
+    say(assistantFailure(401));
     return;
   }
   const reply = planReply(text);
@@ -661,4 +645,40 @@ async function submitCommand({ acceptRun, command, field: given }: { acceptRun?:
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
   }
   render();
+}
+
+async function askServerCommand(text: string, field: CommandInput, docked: boolean): Promise<void> {
+  field.clear();
+  const revision = inputRevision;
+  const controller = new AbortController();
+  pendingController = controller;
+  serverChoices = null;
+  busy = true;
+  say("");
+  // 백엔드 제한(ASTRA_ASSISTANT_TIMEOUT, 기본 20초)보다 길게 둔다: 서버가 먼저 끝내야 실패 이유가 화면에 남는다.
+  const timer = setTimeout(() => controller.abort(), 25000);
+  let answer: { say: string; actions: AssistantAction[] };
+  try {
+    answer = await askServer(text, controller.signal);
+  } catch {
+    answer = { say: controller.signal.aborted ? "AI 응답 시간이 초과되었습니다" : "AI에 연결하지 못했습니다", actions: [] };
+  } finally {
+    clearTimeout(timer);
+    if (pendingController === controller) pendingController = null;
+  }
+  busy = false;
+  // 입력을 바꿨거나(Esc·새 입력) 다른 계정으로 바뀌었으면 이 답은 버린다.
+  if (inputRevision !== revision || backendStatus() !== "ready") {
+    render();
+    return;
+  }
+  const [only] = answer.actions;
+  if (answer.actions.length === 1 && !only.external) {
+    say(answer.say);
+    navigate(only.href);
+    return;
+  }
+  serverChoices = answer.actions.length ? answer.actions : null;
+  say(answer.say);
+  if (docked && serverChoices) navigate(routeFor(currentRole(), "home"));
 }

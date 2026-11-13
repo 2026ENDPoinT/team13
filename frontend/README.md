@@ -25,12 +25,12 @@ npm run test:mutation  # 변이 테스트(Stryker, 10분 이상)
 
 | 변수 | 내용 |
 |---|---|
-| `ASTRA_API_ORIGIN` | 백엔드 주소. 지정하면 `/api/**` 요청을 이 주소로 중계한다. 없으면 샘플 데이터로 동작한다 |
-| `GEMINI_API_KEY` | 홈 명령줄 AI 비서 키. 없으면 `/api/assistant`가 503으로 비활성화된다 |
-| `GEMINI_MODEL` | 비서 모델 이름. 기본 `gemini-3.5-flash-lite` |
-| `GEMINI_API_BASE` | 비서 요청(generateContent)을 보낼 origin. 기본 `https://generativelanguage.googleapis.com`. Hermes 배포는 같은 host 의 agy 게이트웨이(`http://172.24.0.1:18090`) |
-| `ASSISTANT_TIMEOUT_MS` | 비서 요청 하나의 서버 쪽 제한 시간(밀리초). 기본 7000 |
-| `ASSISTANT_GLOBAL_PER_MINUTE` | 모든 사용자를 합친 비서 요청의 분당 상한. 기본 60. 사용자 한 명은 분당 10(터널 뒤에서는 `CF-Connecting-IP` 기준) |
+| `ASTRA_API_ORIGIN` | 백엔드 주소. 지정하면 `/api/**` 요청을 이 주소로 중계한다. AI 비서(`/api/assistant`)도 백엔드가 답한다(로그인 필요, 모델·한도·제한 시간은 백엔드 `ASTRA_LLM_*`·`ASTRA_ASSISTANT_*`). 없으면 샘플 데이터로 동작한다 |
+| `GEMINI_API_KEY` | 백엔드 없는 샘플 모드의 AI 비서 키(로컬 중계). 없으면 `/api/assistant`가 503으로 비활성화된다. `ASTRA_API_ORIGIN`이 있으면 읽지 않는다 |
+| `GEMINI_MODEL` | 샘플 모드 비서 모델 이름. 기본 `gemini-3.5-flash-lite` |
+| `GEMINI_API_BASE` | 샘플 모드 비서 요청(generateContent)을 보낼 origin. 기본 `https://generativelanguage.googleapis.com` |
+| `ASSISTANT_TIMEOUT_MS` | 샘플 모드 비서 요청 하나의 제한 시간(밀리초). 기본 7000. 백엔드가 있으면 백엔드 `ASTRA_ASSISTANT_TIMEOUT` |
+| `ASSISTANT_GLOBAL_PER_MINUTE` | 샘플 모드에서 모든 사용자를 합친 비서 요청의 분당 상한. 기본 60. 사용자 한 명은 분당 10(터널 뒤에서는 `CF-Connecting-IP` 기준) |
 | `ASTRA_PUBLIC_HOSTS` | 추가로 허용할 공개 호스트 이름(쉼표 구분) |
 
 ## 로그인 홈 UI와 서버 데이터

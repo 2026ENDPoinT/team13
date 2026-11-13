@@ -77,7 +77,7 @@ function ServerUsage({ courseId }: { courseId: number | string }) {
   const usage = view && view.usage;
   if (!usage) return null;
   const full = usage.usedBytes >= usage.quotaBytes
-    ? "서버의 녹음 저장 공간이 가득 찼습니다. 새 녹음은 서버에 저장되지 않고 이 브라우저에 보관됩니다. 오래된 녹음을 지워 공간을 비우세요."
+    ? "서버의 학습실 저장 공간이 가득 찼습니다. 새 녹음은 서버에 저장되지 않고 이 브라우저에 보관됩니다. 오래된 녹음이나 PDF를 지워 공간을 비우세요."
     : usage.recordingCount >= usage.maxRecordings
       ? `녹음은 ${usage.maxRecordings}개까지 저장할 수 있습니다. 새 녹음은 서버에 저장되지 않고 이 브라우저에 보관됩니다. 오래된 녹음을 지우세요.`
       : "";
@@ -317,8 +317,8 @@ function LiveView({ live }: { live: ActiveRecording }) {
 }
 
 /**
- * 머리 오른쪽 다운로드 메뉴: 원본 음성과 서버가 만든 전사문 TXT.
- * 삭제는 같은 메뉴 맨 아래에 두고, 한 번 더 눌러야 지운다(메뉴를 닫으면 되돌아간다).
+ * 머리 오른쪽 버튼들: 다운로드 메뉴(원본 음성, 서버가 만든 전사문 TXT·요약 PDF)와 그 왼쪽의 휴지통 삭제 버튼.
+ * 삭제는 한 번 더 눌러야 지운다(다른 곳을 누르거나 Esc·4초가 지나면 되돌아간다).
  */
 function DownloadMenu({ record, course, url, fileName, onStale }: { record: RecordingRecord; course: Course | null; url: string; fileName: string; onStale: () => void }) {
   const [open, setOpen] = useState(false);
@@ -326,6 +326,7 @@ function DownloadMenu({ record, course, url, fileName, onStale }: { record: Reco
   const [deleting, setDeleting] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const trash = useRef<HTMLButtonElement>(null);
   const transcription = record.remote && record.state === "ready" && record.transcription?.status === "ready" ? record.transcription.result : null;
   const summary = record.remote && record.state === "ready" && record.summary?.status === "ready" ? record.summary.result : null;
   useEffect(() => {
@@ -347,8 +348,26 @@ function DownloadMenu({ record, course, url, fileName, onStale }: { record: Reco
     };
   }, [open]);
   useEffect(() => {
-    if (!open) setArmed(false);
+    if (open) setArmed(false);
   }, [open]);
+  // 한 번 눌러 "한 번 더" 상태가 된 삭제는 4초 뒤, 다른 곳을 누르거나 Esc를 누르면 되돌아간다.
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmed(false), 4000);
+    const onPointer = (event: PointerEvent) => {
+      if (!trash.current || !trash.current.contains(event.target as Node)) setArmed(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setArmed(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [armed]);
   const remove = () => {
     if (!armed) {
       setArmed(true);
@@ -361,7 +380,6 @@ function DownloadMenu({ record, course, url, fileName, onStale }: { record: Reco
     }, (error: unknown) => {
       setDeleting(false);
       setArmed(false);
-      setOpen(false);
       showErrors({ "rec-delete": messageOf(error) });
       // Changed elsewhere (409 version_conflict): read it again so the next press sends the new version.
       const cause = error instanceof Error ? error.cause : null;
@@ -369,52 +387,56 @@ function DownloadMenu({ record, course, url, fileName, onStale }: { record: Reco
     });
   };
   return (
-    <div ref={wrap} className="rs-menu">
+    <div className="rs-actions">
       <button
-        ref={trigger} type="button" className="rs-menu-btn" aria-haspopup="menu" aria-expanded={open ? "true" : "false"} aria-label="다운로드"
-        onClick={() => setOpen(!open)}
+        ref={trash} type="button" className={`rs-menu-btn is-danger${armed ? " is-armed" : ""}`} disabled={deleting}
+        aria-label={armed ? "한 번 더 누르면 녹음 삭제" : "녹음 삭제"} title={armed ? "한 번 더 누르면 삭제" : "삭제"} onClick={remove}
       >
-        <Icon name="download" />
+        <Icon name="trash" />{armed ? <span>한 번 더 누르면 삭제</span> : null}
       </button>
-      {open ? (
-        <div className="study-new-menu" role="menu" aria-label="다운로드">
-          {url ? (
-            <a role="menuitem" className="study-new-item" href={url} download={fileName} onClick={() => setOpen(false)}>
-              <Icon name="download" /><span>원본 음성</span>
-            </a>
-          ) : (
-            <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled"><Icon name="download" /><span>원본 음성</span></span>
-          )}
-          {transcription ? (
-            <button type="button" role="menuitem" className="study-new-item" onClick={() => {
-              saveBlob(new Blob([transcription.text], { type: "text/plain;charset=utf-8" }), `${record.title.replace(/[\\/:*?"<>|]/g, "-")}.txt`);
-              setOpen(false);
-            }}>
-              <Icon name="file" /><span>전사문 TXT</span>
-            </button>
-          ) : (
-            <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled" title="서버에서 전사가 완료되면 내려받을 수 있습니다.">
-              <Icon name="file" /><span>전사문 TXT</span>
-            </span>
-          )}
-          {summary ? (
-            <button type="button" role="menuitem" className="study-new-item" onClick={() => {
-              printSummaryPdf(record.title, summary);
-              setOpen(false);
-            }}>
-              <Icon name="file" /><span>요약 PDF</span>
-            </button>
-          ) : (
-            <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled" title="서버에서 요약이 완료되면 내려받을 수 있습니다.">
-              <Icon name="file" /><span>요약 PDF</span>
-            </span>
-          )}
-          <div className="study-new-sep" role="separator" />
-          <button type="button" role="menuitem" className="study-new-item is-danger" disabled={deleting} onClick={remove}>
-            <Icon name="close" /><span>{armed ? "한 번 더 누르면 삭제" : "삭제"}</span>
-          </button>
-        </div>
-      ) : null}
+      <div ref={wrap} className="rs-menu">
+        <button
+          ref={trigger} type="button" className="rs-menu-btn" aria-haspopup="menu" aria-expanded={open ? "true" : "false"} aria-label="다운로드"
+          onClick={() => setOpen(!open)}
+        >
+          <Icon name="download" />
+        </button>
+        {open ? (
+          <div className="study-new-menu" role="menu" aria-label="다운로드">
+            {url ? (
+              <a role="menuitem" className="study-new-item" href={url} download={fileName} onClick={() => setOpen(false)}>
+                <Icon name="download" /><span>원본 음성</span>
+              </a>
+            ) : (
+              <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled"><Icon name="download" /><span>원본 음성</span></span>
+            )}
+            {transcription ? (
+              <button type="button" role="menuitem" className="study-new-item" onClick={() => {
+                saveBlob(new Blob([transcription.text], { type: "text/plain;charset=utf-8" }), `${record.title.replace(/[\\/:*?"<>|]/g, "-")}.txt`);
+                setOpen(false);
+              }}>
+                <Icon name="file" /><span>전사문 TXT</span>
+              </button>
+            ) : (
+              <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled" title="서버에서 전사가 완료되면 내려받을 수 있습니다.">
+                <Icon name="file" /><span>전사문 TXT</span>
+              </span>
+            )}
+            {summary ? (
+              <button type="button" role="menuitem" className="study-new-item" onClick={() => {
+                printSummaryPdf(record.title, summary);
+                setOpen(false);
+              }}>
+                <Icon name="file" /><span>요약 PDF</span>
+              </button>
+            ) : (
+              <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled" title="서버에서 요약이 완료되면 내려받을 수 있습니다.">
+                <Icon name="file" /><span>요약 PDF</span>
+              </span>
+            )}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
