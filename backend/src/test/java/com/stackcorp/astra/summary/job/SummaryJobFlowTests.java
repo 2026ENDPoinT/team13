@@ -3,12 +3,17 @@ package com.stackcorp.astra.summary.job;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -147,6 +152,45 @@ class SummaryJobFlowTests extends IntegrationTest {
 	}
 
 	@Test
+	@ExtendWith(OutputCaptureExtension.class)
+	void providerFailuresStoreAFixedSentencePerKind(CapturedOutput output) {
+		// 제공자 문구, 예외 class 이름, 주소, key 조각은 화면 문장에 들어가지 않는다. 일시적인 실패는 재시도한 뒤에 실패한다.
+		String raw = "java.net.http.HttpConnectTimeoutException: HTTP connect timed out https://llm.example/v1 sk-secret";
+		Map<LlmException.Code, String> expected = new LinkedHashMap<>();
+		expected.put(LlmException.Code.AUTH, "모델 제공자가 API key를 거부했습니다. 관리자에게 알려 주세요.");
+		expected.put(LlmException.Code.BAD_REQUEST, "모델 제공자가 요청을 거부했습니다. 관리자에게 알려 주세요.");
+		expected.put(LlmException.Code.PROTOCOL, "모델 제공자의 응답을 처리하지 못했습니다. 다시 시도해 주세요.");
+		expected.put(LlmException.Code.RATE_LIMIT, "모델 제공자의 요청 한도에 걸렸습니다. 잠시 후 다시 시도해 주세요.");
+		expected.put(LlmException.Code.SERVER, "모델 제공자 서버에 오류가 났습니다. 잠시 후 다시 시도해 주세요.");
+		expected.put(LlmException.Code.NETWORK, "모델 제공자에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+		for (Map.Entry<LlmException.Code, String> kind : expected.entrySet()) {
+			this.llm.reset((req) -> {
+				throw new LlmException(kind.getKey(), "제공자에 연결하지 못했습니다: " + raw);
+			});
+			SummaryJob job = request(pdfFile(TestPdfs.pdf(1), "clean"));
+			this.runner.runOnce();
+			assertThat(this.service.get(job.id())).as(kind.getKey().name()).satisfies((j) -> {
+				assertThat(j.state()).isEqualTo(JobState.FAILED);
+				assertThat(j.errorCode()).isEqualTo("provider");
+				assertThat(j.errorMessage()).isEqualTo(kind.getValue());
+			});
+		}
+		// 모델 client 밖의 예외도 class 이름 없이 같은 종류의 문장이다.
+		this.llm.reset((req) -> {
+			throw new IllegalStateException(raw);
+		});
+		SummaryJob job = request(pdfFile(TestPdfs.pdf(1), "clean"));
+		this.runner.runOnce();
+		assertThat(this.service.get(job.id()).errorMessage()).isEqualTo("모델 호출이 실패했습니다. 잠시 후 다시 시도해 주세요.");
+		// 그 예외의 종류와 stack은 서버 로그에만 남는다.
+		assertThat(output.getAll().lines()
+			.filter((line) -> line.contains("summary job provider call failed jobId=" + job.id() + " ")))
+			.singleElement()
+			.asString()
+			.contains("error=java.lang.IllegalStateException", "stack_trace");
+	}
+
+	@Test
 	void cancelsQueuedJobOnce() {
 		long fileId = pdfFile(TestPdfs.pdf(1), "clean");
 		SummaryJob job = request(fileId);
@@ -217,7 +261,8 @@ class SummaryJobFlowTests extends IntegrationTest {
 		assertThat(this.service.get(job.id())).satisfies((j) -> {
 			assertThat(j.state()).isEqualTo(JobState.FAILED);
 			assertThat(j.errorCode()).isEqualTo("file");
-			assertThat(j.errorMessage()).contains("encrypted");
+			// converter 문구 대신 실패 종류의 문장이다.
+			assertThat(j.errorMessage()).isEqualTo("암호가 걸린 PDF라 쪽 이미지로 바꾸지 못했습니다. 암호를 푼 파일을 올려 주세요.");
 		});
 		assertThat(this.llm.log).isEmpty();
 		assertThat(this.jdbc.sql("SELECT error_code FROM conversion_jobs WHERE file_id = :id")

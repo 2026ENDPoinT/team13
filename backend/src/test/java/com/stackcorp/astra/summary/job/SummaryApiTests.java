@@ -24,6 +24,7 @@ import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.summary.FakeLlm;
 import com.stackcorp.astra.summary.LlmConsents;
+import com.stackcorp.astra.summary.api.LlmException;
 
 import jakarta.servlet.http.Cookie;
 
@@ -172,6 +173,49 @@ class SummaryApiTests extends IntegrationTest {
 		this.mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
 			.post(files() + "/summary-jobs")
 			.cookie(this.professor)).andExpect(status().isForbidden());
+	}
+
+	@Test
+	void failedJobsShowAFixedSentenceEvenForRowsStoredBeforeIt() throws Exception {
+		this.llm.reset((req) -> {
+			throw new LlmException(LlmException.Code.AUTH,
+					"제공자가 API key를 거부했습니다 (HTTP 401): Incorrect API key provided: sk-abc***");
+		});
+		MvcResult created = this.mvc.perform(post(files() + "/summary-jobs", this.professor)).andReturn();
+		long jobId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.id")).longValue();
+		this.runner.runOnce();
+		this.mvc.perform(get(jobs(jobId)).cookie(this.professor))
+			.andExpect(jsonPath("$.state").value("failed"))
+			.andExpect(jsonPath("$.errorCode").value("provider"))
+			.andExpect(jsonPath("$.errorMessage").value("모델 제공자가 API key를 거부했습니다. 관리자에게 알려 주세요."));
+
+		// 이 문장으로 바뀌기 전에 저장된 행(runtime audit 3의 문구)도 읽을 때 같은 종류의 문장으로 바뀐다.
+		String[][] stored = {
+				{ "provider", "모델 호출이 실패했습니다 (network): 제공자에 연결하지 못했습니다: "
+						+ "java.net.http.HttpConnectTimeoutException: HTTP connect timed out",
+						"모델 제공자에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요." },
+				{ "provider", "모델 호출이 실패했습니다: java.lang.IllegalStateException: boom",
+						"모델 호출이 실패했습니다. 잠시 후 다시 시도해 주세요." },
+				{ "file", "PDF is encrypted (encrypted)",
+						"암호가 걸린 PDF라 쪽 이미지로 바꾸지 못했습니다. 암호를 푼 파일을 올려 주세요." },
+				// 작업 전에 파일이 지워졌다
+				{ "file", "파일이 없습니다.", "자료 파일이 없습니다." },
+				{ "file", "rendition 문서 정보가 없습니다.", "자료의 쪽 이미지를 읽지 못했습니다. 잠시 후 다시 시도해 주세요." },
+				{ "file", "rendition 문서 정보를 읽지 못했습니다.", "자료의 쪽 이미지를 읽지 못했습니다. 잠시 후 다시 시도해 주세요." },
+				{ "file", "원본 파일이 저장소에 없습니다.", "자료의 쪽 이미지를 읽지 못했습니다. 잠시 후 다시 시도해 주세요." },
+				{ "file", "converter returned HTTP 500 from http://converter:8080/convert",
+						"자료를 쪽 이미지로 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요." },
+				{ "interrupted", "작업을 실행하던 worker가 멈췄습니다. 다시 시도해 주세요.",
+						"작업을 실행하던 worker가 멈췄습니다. 다시 시도해 주세요." } };
+		for (String[] row : stored) {
+			this.jdbc.sql("UPDATE summary_jobs SET error_code = :code, error_message = :message WHERE summary_job_id = :id")
+				.param("code", row[0])
+				.param("message", row[1])
+				.param("id", jobId)
+				.update();
+			this.mvc.perform(get(jobs(jobId)).cookie(this.professor))
+				.andExpect(jsonPath("$.errorMessage").value(row[2]));
+		}
 	}
 
 	private String files() {

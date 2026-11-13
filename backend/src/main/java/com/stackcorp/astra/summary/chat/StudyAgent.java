@@ -164,7 +164,7 @@ final class StudyAgent {
 			response = this.llm.complete(request);
 		}
 		catch (LlmException ex) {
-			throw new Failed("provider", tally());
+			throw new Failed("provider", tally(), ex);
 		}
 		if (response == null) {
 			throw new Failed("provider", tally());
@@ -381,7 +381,12 @@ final class StudyAgent {
 		private final Tally tally;
 
 		Failed(String code, Tally tally) {
-			super(code, null, false, false);
+			this(code, tally, null);
+		}
+
+		/** @param cause 모델 호출 실패. 응답에는 싣지 않고 로그에만 남긴다 */
+		Failed(String code, Tally tally, Throwable cause) {
+			super(code, cause, false, false);
 			this.code = code;
 			this.tally = tally;
 		}

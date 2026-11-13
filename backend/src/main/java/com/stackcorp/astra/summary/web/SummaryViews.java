@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.SortedMap;
 
+import com.stackcorp.astra.summary.job.FailureText;
 import com.stackcorp.astra.summary.job.PublishedSummary;
 import com.stackcorp.astra.summary.job.SummaryJob;
 import com.stackcorp.astra.summary.pack.Beat;
@@ -22,9 +23,11 @@ final class SummaryViews {
 			Instant startedAt, Instant finishedAt) {
 
 		static JobView of(SummaryJob job) {
+			// 이 문장으로 바뀌기 전에 저장된 실패 문구도 정해 둔 문장으로 보인다.
 			return new JobView(job.id(), job.fileId(), job.state().name().toLowerCase(), job.stage(), job.pagesDone(),
-					job.pagesTotal(), job.cancelRequested(), job.errorCode(), job.errorMessage(), job.retryOfJobId(),
-					job.createdAt(), job.startedAt(), job.finishedAt());
+					job.pagesTotal(), job.cancelRequested(), job.errorCode(),
+					FailureText.display(job.errorCode(), job.errorMessage()), job.retryOfJobId(), job.createdAt(),
+					job.startedAt(), job.finishedAt());
 		}
 
 	}

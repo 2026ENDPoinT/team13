@@ -25,6 +25,7 @@ import com.stackcorp.astra.files.api.StoredFiles;
 import com.stackcorp.astra.shared.metrics.MetricTags;
 import com.stackcorp.astra.shared.schedule.SchedulerLock;
 import com.stackcorp.astra.summary.api.LlmClient;
+import com.stackcorp.astra.summary.api.LlmException;
 import com.stackcorp.astra.summary.chat.StudyAgent.Tally;
 import com.stackcorp.astra.summary.job.PublishedSummary;
 import com.stackcorp.astra.summary.job.SummaryJobService;
@@ -255,6 +256,11 @@ class StudyChatRunner implements SmartLifecycle {
 			return;
 		}
 		catch (StudyAgent.Failed ex) {
+			// 질문에는 오류 코드만 남는다. 제공자 문구(key는 client가 지웠다)는 로그에만 남긴다.
+			if (ex.getCause() instanceof LlmException provider) {
+				log.warn("study chat provider call failed exchangeId={} kind={} detail={}", exchange.id(),
+						provider.code().name().toLowerCase(), provider.getMessage());
+			}
 			finish(exchange, chat, ExchangeState.FAILED, ex.code(), ex.tally());
 			return;
 		}
