@@ -2,6 +2,7 @@ package com.stackcorp.astra;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -16,6 +17,10 @@ import software.amazon.awssdk.services.s3.S3Client;
  * 테스트 데이터. 행마다 고유한 값을 써서 같은 DB를 쓰는 테스트끼리 섞이지 않게 한다.
  */
 public final class TestData {
+
+	private static final AtomicInteger TERM_YEARS = new AtomicInteger(3000);
+
+	private static final AtomicInteger WEEK_NUMBERS = new AtomicInteger(100_000);
 
 	private final JdbcClient jdbc;
 
@@ -66,6 +71,22 @@ public final class TestData {
 	}
 
 	/**
+	 * terms의 (institution_code, term_year, term_code)는 unique다. 임의 연도는 한 database에 학기가 쌓이면 같은 수가 다시 뽑혀
+	 * duplicate key로 실패하므로 JVM 안에서 겹치지 않는 연도를 차례로 준다. 실제 학년도(SchoolCourseSync, LocalSeed)와 겹치지
+	 * 않게 3000부터 시작한다.
+	 */
+	public static int termYear() {
+		return TERM_YEARS.getAndIncrement();
+	}
+
+	/**
+	 * course_weeks의 (course_id, week_no)도 unique다. 테스트가 직접 넣는 작은 주차 번호와 겹치지 않게 100000부터 차례로 준다.
+	 */
+	public static int weekNo() {
+		return WEEK_NUMBERS.getAndIncrement();
+	}
+
+	/**
 	 * 처리를 마친 현재 아바타 사진을 둔다(ADR-0038). 행만 만들고 객체는 두지 않는다. 사진 유무 플래그를 보는 테스트용이다.
 	 */
 	public void photo(long userId) {
@@ -84,7 +105,7 @@ public final class TestData {
 	 */
 	public long activity(long courseId, String type, boolean published, String openAt, Long attachmentGroupId) {
 		long week = insert("INSERT INTO course_weeks (course_id, week_no) VALUES (:c, :n)",
-				Map.of("c", courseId, "n", (int) (Math.random() * 1_000_000) + 1));
+				Map.of("c", courseId, "n", weekNo()));
 		return insert("""
 				INSERT INTO learning_activities (course_id, course_week_id, activity_type, title, published_yn, open_at, attachment_group_id)
 				VALUES (:c, :w, :type, '9주차', :pub, :open, :group)

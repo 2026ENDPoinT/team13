@@ -9,7 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.time.LocalDate;
 import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
 
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
@@ -163,7 +162,7 @@ class TimetableApiTests extends IntegrationTest {
 		return this.data.insert("""
 				INSERT INTO terms (term_year, term_code, term_name, is_current, start_date, end_date)
 				VALUES (:year, '3', '시험 학기', :current, :start, :end)
-				""", Map.of("year", ThreadLocalRandom.current().nextInt(3000, 65000), "current", current, "start", start,
+				""", Map.of("year", TestData.termYear(), "current", current, "start", start,
 				"end", end));
 	}
 
