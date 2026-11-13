@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Hermes 파일·SQLite 일일 백업. systemd hermes-file-backup.timer 가 매일 KST 05:00 에 돌린다(DB 백업 04:30 다음).
+#   e-class 업로드 저장소(SeaweedFS S3, 버킷 astra-content·astra-delivery) → ~/backups/files/eclass-s3/<버킷>/   (aws s3 sync, 증분 미러. 지운 객체도 남김)
+#   캠퍼스 온 lesson_data 볼륨                                         → ~/backups/files/campus-lesson-data/*.tar.gz (7개)
+#   Hermes 에이전트 ~/.hermes/state.db                                   → ~/backups/files/hermes-state/*.db.zst      (3개)
+#   stock-report agent_console.sqlite3                                   → ~/backups/files/stock-agent-console/*.sqlite3.zst (7개)
+# SQLite 는 쓰는 중에 cp 하면 깨진 사본이 될 수 있어 온라인 백업 API(sqlite3 backup)로 복사한다.
+# 끝나면 ~/backups/files 와 ~/backups/stock-report 를 yoobin-desktop-linux(~/hermes-backups/) 로 rsync 한다(--delete 없음).
+set -euo pipefail
+umask 077
+root=~/backups/files
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+failed=()
+mkdir -p "$root"
+
+rotate() { ls -1t "$1"/*"$2" 2>/dev/null | tail -n +$(($3 + 1)) | xargs -r rm -f; }
+ok() { echo "ok $1 $(du -sh "$2" | cut -f1)"; }
+
+sqlite_backup() {  # sqlite_backup <name> <db> <keep>
+  local name=$1 db=$2 keep=$3 dir=$root/$1 tmp
+  mkdir -p "$dir"
+  tmp=$dir/.$name-$stamp.db
+  if nice -n 19 ionice -c2 -n7 python3 - "$db" "$tmp" <<'PY' && nice -n 19 zstd -q -T2 -3 --rm "$tmp" -o "$dir/$name-$stamp.db.zst"; then
+import sqlite3, sys
+src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True, timeout=60)
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+ok = dst.execute("pragma quick_check").fetchone()[0]
+dst.close(); src.close()
+sys.exit(0 if ok == "ok" else 1)
+PY
+    ok "$name" "$dir/$name-$stamp.db.zst"
+    rotate "$dir" .db.zst "$keep"
+  else
+    rm -f "$tmp" "$dir/$name-$stamp.db.zst"
+    echo "FAILED $name" >&2
+    failed+=("$name")
+  fi
+}
+
+# ---------- e-class S3 (SeaweedFS) ----------
+s3_backup() {
+  local app=~/projects/eclass-backend/app dir=$root/eclass-s3 cfg key secret
+  mkdir -p "$dir"
+  key=$(sed -n 's/^MINIO_ROOT_USER=//p' "$app/s3-credentials.env")
+  secret=$(sed -n 's/^MINIO_ROOT_PASSWORD=//p' "$app/s3-credentials.env")
+  cfg=$(mktemp); printf '[default]\nregion = ap-northeast-2\ns3 =\n  addressing_style = path\n' > "$cfg"; chmod 644 "$cfg"
+  local rc=0
+  for bucket in astra-content astra-delivery; do
+    mkdir -p "$dir/$bucket"
+    docker run --rm --network astra_data -u "$(id -u):$(id -g)" \
+      -e HOME=/tmp -e AWS_CONFIG_FILE=/aws.cfg -e AWS_ACCESS_KEY_ID="$key" -e AWS_SECRET_ACCESS_KEY="$secret" \
+      -v "$cfg":/aws.cfg:ro -v "$dir/$bucket":/dst \
+      amazon/aws-cli:2.27.0 s3 sync "s3://$bucket" /dst --endpoint-url http://s3:8333 --no-progress --only-show-errors || rc=1
+  done
+  rm -f "$cfg"
+  if (( rc == 0 )); then ok eclass-s3 "$dir"; else echo "FAILED eclass-s3" >&2; failed+=(eclass-s3); fi
+}
+s3_backup
+
+# ---------- 캠퍼스 온 lesson_data 볼륨 ----------
+dir=$root/campus-lesson-data; mkdir -p "$dir"
+if docker run --rm -v campus-on-demo_lesson_data:/src:ro -v "$dir":/dst alpine:3.20 \
+     sh -c "tar -C /src -czf /dst/.lesson-data-$stamp.tar.gz . && chown $(id -u):$(id -g) /dst/.lesson-data-$stamp.tar.gz"; then
+  mv "$dir/.lesson-data-$stamp.tar.gz" "$dir/lesson-data-$stamp.tar.gz"
+  ok campus-lesson-data "$dir/lesson-data-$stamp.tar.gz"
+  rotate "$dir" .tar.gz 7
+else
+  rm -f "$dir/.lesson-data-$stamp.tar.gz"; echo "FAILED campus-lesson-data" >&2; failed+=(campus-lesson-data)
+fi
+
+# ---------- SQLite ----------
+sqlite_backup hermes-state ~/.hermes/state.db 3
+sqlite_backup stock-agent-console ~/.local/share/stock-report/agent_console.sqlite3 7
+
+# ---------- 호스트 밖 사본 ----------
+ssh_opts='ssh -o BatchMode=yes -o ConnectTimeout=10'
+if ! timeout 3600 rsync -a -e "$ssh_opts" "$root/" desktop:hermes-backups/files/ ||
+   ! timeout 600 rsync -a -e "$ssh_opts" ~/backups/stock-report/ desktop:hermes-backups/stock-report/ ||
+   ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 desktop \
+       'find ~/hermes-backups/files/hermes-state -type f -mtime +7 -delete; find ~/hermes-backups/files/campus-lesson-data ~/hermes-backups/files/stock-agent-console ~/hermes-backups/stock-report -type f -mtime +30 -delete'; then
+  echo "FAILED offsite rsync" >&2
+  failed+=(offsite)
+fi
+
+if (( ${#failed[@]} )); then
+  echo "failed: ${failed[*]}" >&2
+  exit 1
+fi

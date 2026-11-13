@@ -93,8 +93,21 @@ STack-Backend 에 새 환경 변수가 생기면 Hermes `~/projects/eclass-backe
 
 ## 서버 운영 (Hermes)
 
-- DB 백업: `hermes-db-backup.timer` 가 매일 KST 04:30 에 gyeongmae(호스트 PostgreSQL)·campus-on(PostgreSQL)·e-class(MySQL)를 `~/backups/db/<이름>/` 에 7개씩 남기고 `yoobin-desktop-linux:/home/hermes-ml/hermes-backups/db` 로 rsync 합니다(삭제는 전파하지 않고, 사본은 30일 보관). 스크립트는 `~/bin/hermes-db-backup`.
-- 파일 백업: `hermes-file-backup.timer` 가 매일 KST 05:00 에 e-class 업로드 저장소(SeaweedFS 버킷 `astra-content`·`astra-delivery`, `aws s3 sync` 증분 미러), 캠퍼스 온 `lesson_data` 볼륨(tar.gz 7개), Hermes `~/.hermes/state.db`(3개)와 stock-report `agent_console.sqlite3`(7개)를 `~/backups/files/` 에 남기고 `~/backups/stock-report` 와 함께 같은 데스크톱 `hermes-backups/` 로 rsync 합니다. SQLite 는 온라인 백업 API 로 복사하고 `quick_check` 를 통과한 것만 남깁니다. 스크립트는 `~/bin/hermes-file-backup`.
-- 백업 하나라도 실패하면 `gyeongmae-alert@` 가 텔레그램으로 알립니다.
+스크립트와 systemd 유닛의 원본은 `deploy/hermes/ops/` 입니다(비밀값 없음). 고친 뒤 설치:
+
+```sh
+tar -C deploy/hermes -cf - ops | ssh hermes 'rm -rf /tmp/ops && tar -C /tmp -xf - && bash /tmp/ops/install.sh && rm -rf /tmp/ops'
+```
+
+| 타이머 (KST) | 스크립트 | 하는 일 |
+|---|---|---|
+| `hermes-ops-watch.timer` 5분마다 | `hermes-ops-watch` | 디스크 85%, 사용 가능 메모리 1.5GiB·스왑 1GiB 미만, 메모리 예약 95%, 커널 OOM, 컨테이너 멈춤·unhealthy·재시작, 핵심 systemd 유닛, 공개·내부 HTTP(2회 연속 실패), 백업 26시간 경과를 보고 헤르메스 에이전트 텔레그램 봇으로 알림. 같은 문제는 6시간마다 다시 알리고 풀리면 복구 알림 |
+| `hermes-db-backup.timer` 매일 04:30 | `hermes-db-backup` | gyeongmae(호스트 PostgreSQL)·campus-on(PostgreSQL)·e-class(MySQL)를 `~/backups/db/<이름>/` 에 7개씩 |
+| `hermes-file-backup.timer` 매일 05:00 | `hermes-file-backup` | e-class 업로드 저장소(SeaweedFS 버킷 `astra-content`·`astra-delivery`, `aws s3 sync` 증분 미러), 캠퍼스 온 `lesson_data` 볼륨(tar.gz 7개), Hermes `~/.hermes/state.db`(3개), stock-report `agent_console.sqlite3`(7개)를 `~/backups/files/` 에. SQLite 는 온라인 백업 API 로 복사하고 `quick_check` 를 통과한 것만 남김 |
+| `docker-cache-prune.timer` 일요일 05:30 | `docker-cache-prune` | 7일 지난 빌드 캐시와 이름 없는 이미지 정리(볼륨·태그 이미지는 건드리지 않음) |
+
+- 백업은 끝나면 `yoobin-desktop-linux:/home/hermes-ml/hermes-backups/` 로 rsync 합니다(삭제는 전파하지 않음. 사본은 state.db 7일, 나머지 30일 보관).
+- 위 유닛이 실패하면 `hermes-ops-alert@.service`(OnFailure)가 실패 유닛과 로그 끝 몇 줄을 같은 텔레그램 봇으로 보냅니다. 알림 경로 시험: `~/bin/hermes-ops-watch --test`, 점검만: `--dry-run`.
+- 텔레그램 토큰은 `~/.hermes/.env` 의 `TELEGRAM_BOT_TOKEN`, 대화방은 `~/.hermes/state/agent-watch/config.json` 의 `chat_id` 를 그대로 읽습니다(헤르메스 agent-watch 와 같은 봇).
 - 자원 한도: 모든 compose 서비스에 메모리·CPU 한도와 로그 상한(20m×3)이 있습니다(campus-on-demo 는 `compose.override.yaml`). `gyeongmae-api` 는 systemd `MemoryHigh=1280M`, `MemoryMax=1536M`.
 - 디스크·로그: `/etc/docker/daemon.json`(기본 로그 상한, live-restore. 다음 Docker 재시작부터), journald 1G 상한, sysstat 수집.

@@ -1,0 +1,7 @@
+[Unit]
+Description=Hermes ops failure alert for %i (Hermes agent Telegram)
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/bin/hermes-ops-watch --unit-failed %i
