@@ -4,6 +4,7 @@
 import { apiGet, apiSend, ApiError, newRequestKey } from "./api.ts";
 import { subscribe } from "./backend.ts";
 import { createResource, retryLater } from "./remote-cache.ts";
+import { SCHOOL_PROBLEM_TEXT } from "./school-content.tsx";
 
 type Id = string | number;
 
@@ -233,6 +234,7 @@ export function surveyMessage(error: unknown): string {
     case 409:
       switch (error.code) {
         case "already_completed": return "이미 응답을 완료한 설문입니다. 응답은 고칠 수 없습니다.";
+        case "school_submit_at_school": return SCHOOL_PROBLEM_TEXT.at_school;
         case "deadline_passed": return "응답 기간이 아니어서 제출하지 못했습니다.";
         case "survey_changed": return "설문 설정이 바뀌었습니다. 설문을 다시 불러왔으니 확인한 뒤 다시 제출하세요.";
         case "idempotency_conflict": return "같은 완료 요청을 다른 답으로 보냈습니다. 설문 상태를 다시 불러왔습니다.";

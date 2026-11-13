@@ -18,7 +18,7 @@ import { readForm, showErrors, stamp } from "../../forms.ts";
 import { mediaFile, mediaForActivity } from "../../media.ts";
 import { createDocumentViewer } from "../../shared/document-viewer.tsx";
 import { ensurePlayerChrome, PlayerIcon, usePlayControlFade, usePlayerFullscreen, togglePlayerFullscreen } from "../../shared/player-controls.ts";
-import { remoteAssignmentDetail } from "./assignments-server.tsx";
+import { remoteAssignmentDetail, remoteSchoolAssignmentDetail } from "./assignments-server.tsx";
 import { backendStatus } from "../../shared/backend.ts";
 import { serverWeekCalendar, serverTimetable } from "./calendar-server.tsx";
 import { usesServerMessages, serverMessages } from "./messages-server.tsx";
@@ -250,6 +250,7 @@ function surveyDetail(a: Activity, ctx: ScreenCtx): ReactNode {
 function renderActivity(screen: Screen, ctx: ScreenCtx): ReactNode {
   const helpers = { metaTable, typeLine };
   if (screen.serverAssignment) return remoteAssignmentDetail(screen, ctx, helpers);
+  if (screen.serverSchoolAssignment) return remoteSchoolAssignmentDetail(screen, ctx, helpers);
   if (screen.serverQuiz) return remoteQuizDetail(screen, ctx, helpers);
   if (screen.serverSurvey) return remoteSurveyDetail(screen, ctx, helpers);
   if (screen.serverLecture) return remoteLectureDetail(screen, ctx, helpers);

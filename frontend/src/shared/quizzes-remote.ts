@@ -5,6 +5,7 @@ import { apiGet, apiSend, ApiError, newRequestKey } from "./api.ts";
 import { subscribe } from "./backend.ts";
 import { createResource, retryLater } from "./remote-cache.ts";
 import { forgetGradebook } from "./grades-remote.ts";
+import { SCHOOL_PROBLEM_TEXT } from "./school-content.tsx";
 
 type Id = string | number;
 
@@ -410,6 +411,7 @@ export function quizMessage(error: unknown): string {
     case 409:
       switch (error.code) {
         case "offline_quiz": return "오프라인 시험은 온라인으로 응시할 수 없습니다.";
+        case "school_submit_at_school": return SCHOOL_PROBLEM_TEXT.at_school;
         case "deadline_passed": return "응시 시간이 끝났습니다. 마지막으로 저장된 답으로 처리됩니다.";
         case "attempt_limit_reached": return "응시 횟수를 모두 썼습니다.";
         case "attempt_conflict": return "응시를 시작하지 못했습니다. 잠시 후 다시 시도하세요.";

@@ -30,6 +30,7 @@ vi.mock("../../src/shared/home-remote.ts", () => {
       const course = control.courses.find(({ remote }) => remote.courseId === item.courseId);
       return course ? serverActivityHref(course.course.id, item.type, item.activityId, item) : null;
     },
+    todoSchoolHref: (item: TodoItem) => (item.origin === "school" && item.type !== "report" ? item.schoolUrl ?? null : null),
     todoKind: (type: string) => type === "lecture_weeks" ? "video" : type,
     todoLabel: (type: string) => type,
     koDateTime: (value: string) => value,
@@ -262,6 +263,21 @@ describe("로그인 서버 히어로 명령", () => {
     type("위협 모델 제출 열어줘");
     key("Enter");
     expect(control.navigate).not.toHaveBeenCalled();
+  });
+
+  it("학교 시험·설문 할 일은 새 탭의 e-Class 링크이고, 입력 명령은 그것을 열지 않는다", () => {
+    const eclass = "https://eclass.seoultech.ac.kr/ilos/mp/todo_list_connect.acl?SEQ=77&gubun=survey&KJKEY=A2026";
+    control.todo!.items.unshift({ activityId: "school-77", courseId: 731, type: "survey", title: "학교 설문", origin: "school", schoolUrl: eclass, closeAt: "2026-11-12T20:00:00" });
+    act(paint);
+    const rows = [...host.querySelectorAll<HTMLAnchorElement>(".hero-action")];
+    expect(rows[0]!.getAttribute("href")).toBe(eclass);
+    expect(rows[0]!.getAttribute("target")).toBe("_blank");
+    expect(rows[0]!.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(rows[0]!.getAttribute("aria-label")).toContain("학교 e-Class에서 열기(새 탭)");
+    expect([...host.querySelectorAll(".hero-prompt")].map((node) => node.textContent)).not.toContain("서버 보안설계 학교 설문 열어줘");
+    type("다음 할 일 열어줘");
+    key("Enter");
+    expect(control.navigate).toHaveBeenCalledWith("/ilos/cls/st/activity/activity_form.acl?m=report&n=srv-8401&kj=c731");
   });
 
   it("off에서는 기존 목업 추천과 다음 행동을 유지한다", () => {

@@ -10,13 +10,15 @@ import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { toast } from "../../store.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor, subscribe } from "../../shared/backend.ts";
-import { useResource } from "../../shared/remote-cache.ts";
+import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { koDateTime, ddayAt } from "../../shared/home-remote.ts";
 import {
   assignmentDetails, assignmentKey, saveDraft, submitAssignment, submitUncertain, assignmentMessage, isConflict,
-  PHASE, STATUS, accepting, scoreText, receiptTime, studentAssignmentHref,
+  PHASE, STATUS, accepting, scoreText, receiptTime, studentAssignmentHref, schoolAssignmentDetails,
 } from "../../shared/assignments-remote.ts";
-import type { AssignmentDetail, AssignmentInfo, MySubmission, SubmissionFile, SubmissionReceipt } from "../../shared/assignments-remote.ts";
+import type { AssignmentDetail, AssignmentInfo, MySubmission, SchoolAssignmentDetail, SubmissionFile, SubmissionReceipt } from "../../shared/assignments-remote.ts";
+import { schoolFilesOf, schoolProblemOf, SchoolLink, SchoolProblemNote, SCHOOL_PROBLEM_TEXT } from "../../shared/school-content.tsx";
+import { SchoolFileRow } from "../../shared/school-files.tsx";
 import {
   uploadFile, awaitScan, getUpload, discardUpload, uploadFailure, downloadControl, sizeText,
 } from "../../shared/uploads-remote.tsx";
@@ -270,6 +272,126 @@ function DetailBody({ data, courseId, kj, assignmentId, parts, staleError }: Det
       ) : null}
       {action}
     </div>
+  );
+}
+
+// ---------- school assignment (read only) ----------
+
+const schoolListHref = (kj: string): string => `/ilos/cls/st/activity/activity_list_form.acl?kj=${encodeURIComponent(kj)}`;
+
+/**
+ * A school assignment as the school shows it to this student: description, period, attachments, and the student's own submission
+ * (time, the school's label, text and files). Nothing is submitted from here: "e-Class에서 제출" opens the school in a new tab.
+ */
+function SchoolAssignmentBody({ data, kj, courseId, parts }: { data: SchoolAssignmentDetail; kj: string; courseId: number | string; parts: DetailParts }) {
+  const info = data.assignment;
+  const schoolUrl = data.schoolUrl || info.schoolUrl;
+  const dday = ddayAt(info.closeAt, data.serverTime);
+  const attachments = schoolFilesOf(info);
+  const mine = data.submission || null;
+  const submitted = Boolean(mine && (mine.status === "submitted" || mine.status === "late"));
+  const own = mine && submitted ? schoolFilesOf(mine) : [];
+  const rows: [string, ReactNode][] = mine
+    ? [
+      ["상태", <Badge tone={submitted ? "success" : "danger"}>{STATUS[mine.status] || mine.status}</Badge>],
+      ...(mine.submittedAt ? [["제출 시각", koDateTime(mine.submittedAt)] as [string, ReactNode]] : []),
+      ...(mine.statusLabel ? [["e-Class 표시", mine.statusLabel] as [string, ReactNode]] : []),
+    ]
+    : [];
+  return (
+    <div className="act-body" data-school-assignment={info.assignmentId}>
+      {parts.typeLine("report")}
+      <h1>{info.title}</h1>
+      <p className="tiny">{[info.weekNo != null ? `${info.weekNo}주차` : "", "학교 e-Class 과제"].filter(Boolean).join(" · ")}</p>
+      {parts.metaTable([
+        ["제출 구간", <PhaseBadge phase={data.phase} />],
+        ["시작", info.openAt ? koDateTime(info.openAt) : "—"],
+        ["마감", info.closeAt ? <span className="due-line"><span>{koDateTime(info.closeAt)}</span>{dday ? <span className="dday">{dday}</span> : null}</span> : "—"],
+      ])}
+      <Prose text={info.description} empty="과제 설명이 없습니다." />
+      <h2>첨부파일</h2>
+      {attachments.length
+        ? attachments.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={schoolUrl} />)
+        : <p className="tiny">첨부 파일이 없습니다.</p>}
+      <h2>내 제출</h2>
+      {mine ? parts.metaTable(rows) : <p className="tiny">제출 정보가 없습니다.</p>}
+      {submitted ? <Prose text={mine?.body} /> : null}
+      <div data-school-own-files="">
+        {own.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={schoolUrl} />)}
+      </div>
+      <p className="note">학교 e-Class에서 가져온 과제는 STack에서 제출하지 않습니다. 제출과 다시 제출은 e-Class에서 합니다.</p>
+      <div className="btn-row">
+        <SchoolLink url={schoolUrl} kind="primary" label="e-Class에서 제출" />
+        <Link href={schoolListHref(kj)} className="btn btn-ghost">학습활동 목록</Link>
+      </div>
+    </div>
+  );
+}
+
+/** The school detail is read once per visit of this address (never on focus, never by a list). */
+function SchoolAssignmentScreen({ screen, parts }: { screen: Screen; parts: DetailParts }) {
+  const kj = screen.course || "";
+  const assignmentId = screen.serverSchoolAssignment || "";
+  const gate = useGate(kj);
+  const courseId = gate ? null : courseIdFor(kj);
+  const key = courseId == null ? null : assignmentKey(courseId, assignmentId);
+  const load = () => {
+    if (key && courseId != null) void schoolAssignmentDetails.load(key, courseId, assignmentId);
+  };
+  const entry = useResource(schoolAssignmentDetails, key);
+  useEffect(() => {
+    if (key && (freshVisit("school-assignment-detail", key) === "entry" || !schoolAssignmentDetails.peek(key))) load();
+  });
+  let main: ReactNode;
+  const data = entry && entry.data;
+  if (gate) {
+    main = gate.off
+      ? <EmptyState title="활동을 찾을 수 없습니다" body="ASTRA 서버에 연결되어 있지 않습니다." />
+      : <div className="act-body">{parts.typeLine("report")}{gate.view}</div>;
+  } else if (entry && entry.error && schoolProblemOf(entry.error)) {
+    main = (
+      <div className="act-body">
+        {parts.typeLine("report")}
+        {data ? <h1>{data.assignment.title}</h1> : null}
+        <SchoolProblemNote error={entry.error} schoolUrl={data && data.schoolUrl} retry={load} />
+        <div className="btn-row"><Link href={schoolListHref(kj)} className="btn btn-ghost">학습활동 목록</Link></div>
+      </div>
+    );
+  } else if (!data || courseId == null) {
+    if (!entry || !entry.error) main = <LoadingState title="학교 과제를 불러오는 중입니다" />;
+    else if (missing(entry.error)) main = <EmptyState title="과제를 찾을 수 없습니다" body="학교 e-Class에서 지워졌거나 볼 수 있는 권한이 없습니다." actions={<Link href={schoolListHref(kj)} className="btn btn-secondary">학습활동 목록</Link>} />;
+    else main = <ErrorState title="과제를 불러오지 못했습니다" body={assignmentMessage(entry.error)} actions={<RetryButton reload={load} />} />;
+  } else {
+    main = <SchoolAssignmentBody data={data} kj={kj} courseId={courseId} parts={parts} />;
+  }
+  return <ActivityShell kj={kj} itemOpen={assignmentId}>{main}</ActivityShell>;
+}
+
+/** The detail screen of `screen.serverSchoolAssignment` (backend mode, read only). */
+export function remoteSchoolAssignmentDetail(screen: Screen, ctx: ScreenCtx, parts: DetailParts): ReactNode {
+  return <SchoolAssignmentScreen key={`${screen.course}:${screen.serverSchoolAssignment}`} screen={screen} parts={parts} />;
+}
+
+/**
+ * `?pop=submit` on a school assignment: there is no STack submission, only the way to the school. Reads nothing; the e-Class
+ * address comes from the detail this visit already read.
+ */
+export function remoteSchoolSubmitDialog(ctx: ScreenCtx): ReactNode {
+  const kj = ctx.screen.course || "";
+  const assignmentId = ctx.screen.serverSchoolAssignment || "";
+  const courseId = courseIdFor(kj);
+  const known = courseId == null ? null : schoolAssignmentDetails.peek(assignmentKey(courseId, assignmentId));
+  const schoolUrl = known && known.data ? known.data.schoolUrl || known.data.assignment.schoolUrl : null;
+  return (
+    <Dialog title="과제 제출">
+      <div className="school-problem" role="alert" data-school-problem="at_school">
+        <p>{SCHOOL_PROBLEM_TEXT.at_school}</p>
+        <div className="btn-row">
+          <SchoolLink url={schoolUrl} kind="primary" label="e-Class에서 제출" />
+          <Button kind="ghost" onClick={() => closeDialog()}>닫기</Button>
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
