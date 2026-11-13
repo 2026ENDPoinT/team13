@@ -1,0 +1,18 @@
+/* 자료 "내려받기" 오른편의 "학습실에 저장" 버튼과 폴더 고르는 창(save-to-study.tsx; 서버 학습실이면 실제 배치, 샘플은 목업). */
+.save-study-btn { display: inline-flex; align-items: center; gap: var(--space-2); }
+.save-study-btn .ico, .save-study-btn svg { flex: none; }
+.save-study { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.save-study-file { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.save-study-file > span { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.save-study-folders { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }
+.save-study-folders legend { padding: 0; margin-bottom: var(--space-2); font-weight: 600; }
+.save-study-folders label { display: flex; align-items: center; gap: var(--space-2); min-height: var(--hit); cursor: pointer; }
+.save-study-note { margin: 0; color: var(--muted, inherit); }
+.save-study-actions { justify-content: flex-end; }
+.save-study-where { max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted, inherit); }
+.save-study-new { display: flex; gap: var(--space-2); min-width: 0; }
+.save-study-new input { flex: 1; min-width: 0; }
+.save-study-failed { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.save-study-failed p, .save-study-error { margin: 0; color: var(--danger, inherit); }
+
+.file-row .file-row-actions { margin-top: 0; flex-wrap: nowrap; }

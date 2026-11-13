@@ -1,0 +1,137 @@
+[
+  {
+    "file": "lectures/ai-11-1.mp4",
+    "bytes": 481121,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/ai-11-1.webm",
+    "bytes": 514112,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/ai-11-1.jpg",
+    "bytes": 30061,
+    "seconds": 0.04
+  },
+  {
+    "file": "lectures/ai.mp4",
+    "bytes": 472236,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/ai.webm",
+    "bytes": 504128,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/ai.jpg",
+    "bytes": 29632,
+    "seconds": 0.04
+  },
+  {
+    "file": "lectures/bi.mp4",
+    "bytes": 470185,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/bi.webm",
+    "bytes": 504064,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/bi.jpg",
+    "bytes": 33223,
+    "seconds": 0.04
+  },
+  {
+    "file": "lectures/algo.mp4",
+    "bytes": 464999,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/algo.webm",
+    "bytes": 499259,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/algo.jpg",
+    "bytes": 32867,
+    "seconds": 0.04
+  },
+  {
+    "file": "lectures/db.mp4",
+    "bytes": 459568,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/db.webm",
+    "bytes": 496332,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/db.jpg",
+    "bytes": 30423,
+    "seconds": 0.04
+  },
+  {
+    "file": "lectures/oss.mp4",
+    "bytes": 459519,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/oss.webm",
+    "bytes": 497657,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/oss.jpg",
+    "bytes": 31193,
+    "seconds": 0.04
+  },
+  {
+    "file": "lectures/se.mp4",
+    "bytes": 465069,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/se.webm",
+    "bytes": 499216,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/se.jpg",
+    "bytes": 30634,
+    "seconds": 0.04
+  },
+  {
+    "file": "lectures/secu.mp4",
+    "bytes": 469752,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/secu.webm",
+    "bytes": 504374,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/secu.jpg",
+    "bytes": 31672,
+    "seconds": 0.04
+  },
+  {
+    "file": "lectures/sec.mp4",
+    "bytes": 471326,
+    "seconds": 75
+  },
+  {
+    "file": "lectures/sec.webm",
+    "bytes": 503753,
+    "seconds": 75.008
+  },
+  {
+    "file": "lectures/sec.jpg",
+    "bytes": 34210,
+    "seconds": 0.04
+  }
+]

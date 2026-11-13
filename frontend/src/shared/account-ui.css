@@ -1,0 +1,72 @@
+/* My account, file box, server document preview, study chat and LLM consent (backend mode).
+   Layout only; colours come from tokens.css. Avatar initials use the ink with the higher contrast
+   on each colour (at least 4.3:1). */
+
+.avatar.acct-avatar { flex: none; text-transform: uppercase; }
+.acct-avatar.is-lg { width: 72px; height: 72px; font-size: var(--text-xl); }
+.avatar-bg-tomato { background: var(--avatar-tomato); color: var(--avatar-ink-light); }
+.avatar-bg-tangerine { background: var(--avatar-tangerine); color: var(--avatar-ink-dark); }
+.avatar-bg-pumpkin { background: var(--avatar-pumpkin); color: var(--avatar-ink-dark); }
+.avatar-bg-mango { background: var(--avatar-mango); color: var(--avatar-ink-dark); }
+.avatar-bg-banana { background: var(--avatar-banana); color: var(--avatar-ink-dark); }
+.avatar-bg-chick { background: var(--avatar-chick); color: var(--avatar-ink-dark); }
+.avatar-bg-avocado { background: var(--avatar-avocado); color: var(--avatar-ink-dark); }
+.avatar-bg-pistachio { background: var(--avatar-pistachio); color: var(--avatar-ink-dark); }
+.avatar-bg-basil { background: var(--avatar-basil); color: var(--avatar-ink-light); }
+.avatar-bg-eucalyptus { background: var(--avatar-eucalyptus); color: var(--avatar-ink-dark); }
+.avatar-bg-sage { background: var(--avatar-sage); color: var(--avatar-ink-dark); }
+.avatar-bg-peacock { background: var(--avatar-peacock); color: var(--avatar-ink-dark); }
+.avatar-bg-cobalt { background: var(--avatar-cobalt); color: var(--avatar-ink-dark); }
+.avatar-bg-blueberry { background: var(--avatar-blueberry); color: var(--avatar-ink-light); }
+.avatar-bg-lavender { background: var(--avatar-lavender); color: var(--avatar-ink-dark); }
+.avatar-bg-light-purple { background: var(--avatar-light-purple); color: var(--avatar-ink-dark); }
+.avatar-bg-amethyst { background: var(--avatar-amethyst); color: var(--avatar-ink-dark); }
+.avatar-bg-grape { background: var(--avatar-grape); color: var(--avatar-ink-light); }
+.avatar-bg-purple { background: var(--avatar-purple); color: var(--avatar-ink-light); }
+.avatar-bg-cherry-blossoms { background: var(--avatar-cherry-blossoms); color: var(--avatar-ink-light); }
+.avatar-bg-light-pink { background: var(--avatar-light-pink); color: var(--avatar-ink-dark); }
+.avatar-bg-cocoa { background: var(--avatar-cocoa); color: var(--avatar-ink-light); }
+.avatar-bg-graphite { background: var(--avatar-graphite); color: var(--avatar-ink-light); }
+.avatar-bg-birch-tree { background: var(--avatar-birch-tree); color: var(--avatar-ink-dark); }
+
+.acct { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+.acct-status { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
+.acct-status:empty { display: none; }
+.acct-status[role="alert"] { color: var(--danger); }
+.acct-contact { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; padding: var(--space-4) var(--space-5); border-radius: var(--radius-md); background: var(--surface-2); }
+.acct-contact dt { color: var(--text-2); }
+.acct-contact dd { margin: 0; min-width: 0; }
+.acct-edit > summary { cursor: pointer; min-height: var(--hit); display: flex; align-items: center; font-weight: var(--weight-semibold); }
+.acct-form, .acct-stepup { display: flex; flex-direction: column; gap: var(--space-3); }
+.acct-stepup { padding: var(--space-3) var(--space-4); border: var(--border-w) solid var(--border); border-radius: var(--radius-md); }
+.acct-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.acct-fieldset > legend { padding: 0; margin-bottom: var(--space-2); font-weight: var(--weight-semibold); }
+.acct-times { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.acct-times[hidden] { display: none; }
+.acct-sync { display: flex; flex-direction: column; gap: var(--space-1); }
+.acct-sync .btn-row, .acct-sync .tiny { margin: 0; }
+
+/* Server person avatar (shared/avatar-remote.js): the photo covers the initials once it loads. */
+.person-avatar { position: relative; overflow: hidden; }
+.person-avatar__img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.person-avatar.has-photo > .person-avatar__text { visibility: hidden; }
+
+.srv-preview { min-width: 0; }
+.srv-preview__page { display: block; width: 100%; height: auto; background: var(--preview-paper); }
+.srv-preview__figure { margin: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.srv-preview__image { display: block; max-width: 100%; height: auto; border-radius: var(--radius-md); }
+.srv-preview-page { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.srv-preview-page h1 { margin: 0; overflow-wrap: anywhere; }
+.srv-preview-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: var(--space-5); align-items: start; }
+.srv-overview { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); border: var(--border-w) solid var(--border); border-radius: var(--radius-md); min-width: 0; overflow-wrap: anywhere; }
+.srv-overview h2 { margin: 0; font-size: var(--text-lg); }
+@media (max-width: 1023px) { .srv-preview-layout { grid-template-columns: minmax(0, 1fr); } }
+.fc-thumb-img { grid-area: 1 / 1; width: 100%; height: 100%; object-fit: cover; }
+
+.pf-llm { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) var(--space-5); border: var(--border-w) solid var(--border); border-radius: var(--radius-md); min-width: 0; overflow-wrap: anywhere; scroll-margin-top: var(--space-9); }
+.pf-llm h3 { margin: 0; }
+.pf-llm__terms { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-4); margin: 0; }
+.pf-llm__terms dt { color: var(--text-2); }
+.pf-llm__terms dd { margin: 0; min-width: 0; }
+.pf-llm__scope { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding-top: var(--space-2); border-top: var(--border-w) solid var(--border); }
+.pf-llm__scope .pf-actions { margin-left: auto; }

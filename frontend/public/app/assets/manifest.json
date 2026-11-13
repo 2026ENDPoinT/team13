@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "note": "Original exports from the ASTRA x STack Figma file. Replace a file in place; screens reference these paths.",
+  "slots": [
+    { "id": "brand.logo", "path": "/app/assets/logo/stk-brand-logo-80.png", "width": 40, "height": 40, "objectFit": "contain", "density": "2x" },
+    { "id": "brand.logo.mobile", "path": "/app/assets/logo/stk-brand-logo-64.png", "width": 32, "height": 32, "objectFit": "contain", "density": "2x" },
+    { "id": "cover.magenta", "path": "/app/assets/covers/cover-magenta-sphere-716x430.png", "width": 233, "height": 140, "objectFit": "cover", "density": "2x" },
+    { "id": "cover.pale", "path": "/app/assets/covers/cover-pale-discs-716x430.png", "width": 233, "height": 140, "objectFit": "cover", "density": "2x" },
+    { "id": "cover.orbs", "path": "/app/assets/covers/cover-purple-orbs-467x280.png", "width": 233, "height": 140, "objectFit": "cover", "density": "2x" },
+    { "id": "cover.waves", "path": "/app/assets/covers/cover-navy-waves-467x280.png", "width": 233, "height": 140, "objectFit": "cover", "density": "2x" },
+    { "id": "cover.wing", "path": "/app/assets/covers/cover-purple-wing-467x280.png", "width": 233, "height": 140, "objectFit": "cover", "density": "2x" },
+    { "id": "icon.home", "path": "/app/assets/svg/icon-home-22.svg", "width": 22, "height": 22, "objectFit": "contain" },
+    { "id": "icon.book", "path": "/app/assets/svg/icon-book-22.svg", "width": 22, "height": 22, "objectFit": "contain" },
+    { "id": "icon.course", "path": "/app/assets/svg/icon-course-22.svg", "width": 22, "height": 22, "objectFit": "contain" },
+    { "id": "icon.bell", "path": "/app/assets/svg/icon-bell-24.svg", "width": 24, "height": 24, "objectFit": "contain" },
+    { "id": "icon.mail", "path": "/app/assets/svg/icon-mail-24.svg", "width": 24, "height": 24, "objectFit": "contain" },
+    { "id": "icon.calendar", "path": "/app/assets/svg/icon-calendar-24.svg", "width": 24, "height": 24, "objectFit": "contain" },
+    { "id": "icon.chevron-left", "path": "/app/assets/svg/icon-chevron-left-16.svg", "width": 16, "height": 16, "objectFit": "contain" },
+    { "id": "icon.chevron-right", "path": "/app/assets/svg/icon-chevron-right-16.svg", "width": 16, "height": 16, "objectFit": "contain" },
+    { "id": "icon.caret", "path": "/app/assets/svg/icon-caret-down-12.svg", "width": 12, "height": 12, "objectFit": "contain" },
+    { "id": "icon.sliders", "path": "/app/assets/svg/icon-sliders-22.svg", "width": 22, "height": 22, "objectFit": "contain" },
+    { "id": "icon.plus", "path": "/app/assets/svg/icon-plus-box-16.svg", "width": 16, "height": 16, "objectFit": "contain" },
+    { "id": "icon.mark", "path": "/app/assets/svg/icon-stk-linear-mark-15.svg", "width": 15, "height": 15, "objectFit": "contain" },
+    { "id": "icon.app", "path": "/app/assets/svg/icon-app-mark-15.svg", "width": 15, "height": 15, "objectFit": "contain" },
+    { "id": "icon.pen", "path": "/app/assets/icons/icon-pen-36.png", "width": 18, "height": 18, "objectFit": "contain", "density": "2x" },
+    { "id": "icon.toggle", "path": "/app/assets/icons/icon-toggle-36.png", "width": 18, "height": 18, "objectFit": "contain", "density": "2x" },
+    { "id": "photo.campus", "path": "/app/assets/photos/campus.webp", "width": 886, "height": 223, "objectFit": "cover", "source": "campus-on, 학교 포털 이미지. 공개 배포 전 사용 허가 확인" },
+    { "id": "photo.writing", "path": "/app/assets/photos/summary-writing.webp", "width": 1000, "height": 751, "objectFit": "cover", "source": "campus-on, Unsplash License" },
+    { "id": "photo.library", "path": "/app/assets/photos/summary-library.webp", "width": 1000, "height": 586, "objectFit": "cover", "source": "campus-on, Unsplash License" }
+  ]
+}

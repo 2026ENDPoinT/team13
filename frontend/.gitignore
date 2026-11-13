@@ -1,0 +1,11 @@
+node_modules/
+.private/
+verification/local/
+*.log
+.env*
+!.env.example
+dist/
+
+coverage/
+reports/
+.stryker-tmp/

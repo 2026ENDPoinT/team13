@@ -1,0 +1,327 @@
+// Page-by-page summary view for server PDFs (student study room and professor
+// preview). Summary text is model output: it is turned into React elements and
+// text only — never innerHTML. Links are shown as "text (url)" plain text,
+// $…$ math stays literal text.
+import { useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { imageRefresher, initialPageImage, pageImageStep, type ImageRefresher } from "./page-image-retry.ts";
+
+const TAGS: Record<string, string> = { core: "핵심", support: "보충", background: "배경", meta: "안내" };
+
+// `code` | $$math$$ | $math$ | **bold** | *italic* | [text](url)
+const INLINE = /(`[^`\n]+`)|(\$\$[^$]+\$\$|\$[^$\n]+\$)|(\*\*(?=\S)[\s\S]+?\*\*)|(\*(?=[^\s*])[^*\n]+?\*)|(\[[^\]\n]+\]\([^)\s]+\))/g;
+
+/** Inline markdown (`code`, **bold**, *italic*, [text](url) as plain text) → React nodes. */
+export function inline(text: unknown): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  const source = String(text);
+  for (const match of source.matchAll(INLINE)) {
+    const at = match.index ?? 0;
+    if (at > last) out.push(source.slice(last, at));
+    const [token, code, math, bold, italic, link] = match;
+    if (code) out.push(<code key={at}>{code.slice(1, -1)}</code>);
+    else if (math) out.push(math);
+    else if (bold) out.push(<strong key={at}>{inline(bold.slice(2, -2))}</strong>);
+    else if (italic) out.push(<em key={at}>{inline(italic.slice(1, -1))}</em>);
+    else if (link) {
+      const close = link.indexOf("](");
+      out.push(`${link.slice(1, close)} (${link.slice(close + 2, -1)})`);
+    } else out.push(token);
+    last = at + token.length;
+  }
+  if (last < source.length) out.push(source.slice(last));
+  return out;
+}
+
+function lines(rows: string[]): ReactNode[] {
+  return rows.map((row, index) => [index ? <br key="br" /> : null, ...inline(row)]);
+}
+
+type Block =
+  | { kind: "p"; rows: string[] }
+  | { kind: "heading"; text: string }
+  | { kind: "ul" | "ol"; start: string | null; items: string[] };
+
+/** Minimal markdown → React: paragraphs, line breaks, lists, **bold**, *italic*, `code`. */
+export function markdown(text: unknown): ReactNode {
+  const rows = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const blocks: Block[] = [];
+  let paragraph: string[] = [];
+  let list: Extract<Block, { kind: "ul" | "ol" }> | null = null;
+  const flushParagraph = () => {
+    if (paragraph.length) blocks.push({ kind: "p", rows: paragraph });
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (list) blocks.push(list);
+    list = null;
+  };
+  for (const raw of rows) {
+    const row = raw.trimEnd();
+    const bullet = /^\s*[-*+]\s+(.*)$/.exec(row);
+    const number = bullet ? null : /^\s*(\d{1,3})[.)]\s+(.*)$/.exec(row);
+    if (!row.trim()) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    if (bullet || number) {
+      flushParagraph();
+      const kind = bullet ? "ul" : "ol";
+      if (!list || list.kind !== kind) {
+        flushList();
+        list = { kind, start: number && number[1] !== "1" ? number[1] : null, items: [] };
+      }
+      list.items.push(bullet ? bullet[1] : number ? number[2] : "");
+      continue;
+    }
+    flushList();
+    const heading = /^\s*#{1,6}\s+(.*)$/.exec(row);
+    if (heading) {
+      flushParagraph();
+      blocks.push({ kind: "heading", text: heading[1] });
+      continue;
+    }
+    paragraph.push(row.trim());
+  }
+  flushParagraph();
+  flushList();
+  return (
+    <div className="md">
+      {blocks.map((block, index) => {
+        if (block.kind === "p") return <p key={index}>{lines(block.rows)}</p>;
+        if (block.kind === "heading") return <p key={index} className="md-heading"><strong>{inline(block.text)}</strong></p>;
+        const items = block.items.map((item, at) => <li key={at}>{inline(item)}</li>);
+        return block.kind === "ul"
+          ? <ul key={index}>{items}</ul>
+          : <ol key={index} start={block.start ? Number(block.start) : undefined}>{items}</ol>;
+      })}
+    </div>
+  );
+}
+
+/** Page image `NNN.jpg` under a server image base ("/doc/<hex>/"). */
+export function pageFile(base: string, page: number): string {
+  return `${base}${String(page).padStart(3, "0")}.jpg`;
+}
+
+/** One step of the summary story (`story[]`). */
+export interface SummaryBeat {
+  from: number;
+  to: number;
+  title?: string;
+  problem?: string;
+  answer?: string;
+  tradeoff?: string;
+  extra?: string;
+  bridge?: string;
+}
+
+/** One page of the summary (`slides[]`). */
+export interface SummarySlide {
+  page: number;
+  tag?: string;
+  title?: string;
+  explain?: string;
+}
+
+export interface PageSummary {
+  question?: string;
+  story?: SummaryBeat[];
+  slides?: SummarySlide[];
+  /** page → reason it needs review. */
+  review?: Record<string, string | null> | null;
+  warnings?: (string | null)[];
+}
+
+export interface SummaryViewOptions {
+  /** "/doc/<hex>/" or null. */
+  pageImageBase?: string | null;
+  /** Refetches the summary (renews image cookies) and resolves to the new base. */
+  refreshImages?: () => Promise<string | null> | string | null;
+}
+
+function SummaryPart({ label, value }: { label: string; value?: string }) {
+  if (!value) return null;
+  return (
+    <div className="page-summary__part">
+      <span className="page-summary__label">{label}</span>
+      {markdown(value)}
+    </div>
+  );
+}
+
+function BeatView({ beat }: { beat: SummaryBeat }) {
+  const range = beat.from === beat.to ? `${beat.from}쪽` : `${beat.from}–${beat.to}쪽`;
+  return (
+    <li className="page-summary__beat">
+      <h4><span className="page-summary__range">{range}</span>{" "}{inline(beat.title || "")}</h4>
+      <SummaryPart label="질문" value={beat.problem} />
+      <SummaryPart label="설명" value={beat.answer} />
+      <SummaryPart label="장단점" value={beat.tradeoff} />
+      <SummaryPart label="더 알아보기" value={beat.extra} />
+      <SummaryPart label="다음으로" value={beat.bridge} />
+    </li>
+  );
+}
+
+/**
+ * summary: { question, story: Beat[], slides: Slide[], review?, warnings? }
+ * options.pageImageBase: "/doc/<hex>/" or null.
+ * options.refreshImages(): refetches the summary (renews image cookies) and resolves
+ *   to the new base; a failed image reloads after it (see page-image-retry.ts).
+ */
+export function summaryView(summary: PageSummary, options: SummaryViewOptions = {}): ReactNode {
+  return <SummaryView summary={summary} options={options} />;
+}
+
+function SummaryView({ summary, options }: { summary: PageSummary; options: SummaryViewOptions }) {
+  const slides = Array.isArray(summary.slides) ? [...summary.slides].sort((a, b) => a.page - b.page) : [];
+  const story = Array.isArray(summary.story) ? summary.story : [];
+  const review = summary.review && typeof summary.review === "object" ? summary.review : null;
+  const warnings = Array.isArray(summary.warnings) ? summary.warnings.filter((text): text is string => Boolean(text)) : [];
+  const { pageImageBase } = options;
+  // Callers pass a fresh closure each render; the shared refetch reads the latest one.
+  const latest = useRef(options);
+  useEffect(() => {
+    latest.current = options;
+  });
+  const [refreshed] = useState(() => imageRefresher(() => {
+    const now = latest.current;
+    return now.refreshImages ? now.refreshImages() : now.pageImageBase ?? null;
+  }));
+  const reviewRows = review
+    ? Object.entries(review).filter(([, reason]) => reason).sort((a, b) => Number(a[0]) - Number(b[0]))
+    : [];
+  return (
+    <div className="page-summary">
+      {warnings.length ? (
+        <section className="page-summary__warnings" aria-label="확인할 점">
+          <h4>확인할 점</h4>
+          <ul>{warnings.map((text, index) => <li key={index}>{inline(text)}</li>)}</ul>
+        </section>
+      ) : null}
+      {reviewRows.length ? (
+        <section className="page-summary__warnings" aria-label="다시 확인할 쪽">
+          <h4>다시 확인할 쪽</h4>
+          <ul>{reviewRows.map(([page, reason]) => <li key={page}><strong>{`${page}쪽 `}</strong>{String(reason)}</li>)}</ul>
+        </section>
+      ) : null}
+      {summary.question ? (
+        <section className="page-summary__question" aria-label="핵심 질문">
+          <span className="page-summary__label">핵심 질문</span>
+          {markdown(summary.question)}
+        </section>
+      ) : null}
+      {story.length ? (
+        <section className="page-summary__story" aria-label="흐름">
+          <h4>흐름</h4>
+          <ol>{story.map((beat, index) => <BeatView key={index} beat={beat} />)}</ol>
+        </section>
+      ) : null}
+      {slides.length ? (
+        <section className="page-summary__slides" aria-label="쪽별 설명">
+          {slides.map((slide, index) => {
+            const note = review && review[String(slide.page)];
+            const tag = slide.tag && TAGS[slide.tag] ? slide.tag : "core";
+            return (
+              <article key={`${slide.page}-${index}`} className={`page-summary__slide tag-${tag}`}>
+                <header>
+                  <span className="page-summary__page">{`${slide.page}쪽`}</span>
+                  <span className="page-summary__tag">{TAGS[tag]}</span>
+                  <h4>{inline(slide.title || "")}</h4>
+                </header>
+                {pageImageBase ? (
+                  <PageImage
+                    key={pageImageBase} base={pageImageBase} page={slide.page} refresh={refreshed}
+                    alt={`${slide.page}쪽 이미지`} imageClass="page-summary__image" errorClass="page-summary__note page-image-failed"
+                  />
+                ) : null}
+                {markdown(slide.explain || "")}
+                {note ? <p className="page-summary__review" role="note"><strong>검토 필요 · </strong>{note}</p> : null}
+              </article>
+            );
+          })}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+interface PageImageProps {
+  base: string;
+  page: number;
+  /** The viewer's shared refetch (reissues the delivery cookie) and its memory of bases that already failed. */
+  refresh: ImageRefresher;
+  alt: string;
+  imageClass?: string;
+  errorClass: string;
+  /** Wraps the loaded image (the lesson viewer puts it in its zoom button); not applied to the failure message. */
+  wrap?: (image: ReactNode) => ReactNode;
+}
+
+/**
+ * A server page image that survives an expired delivery cookie: on error it refetches through `refresh` and remounts
+ * the `<img>` once; if that fails too it says so and offers one manual retry per press (no automatic loop). A page
+ * whose base already failed after a refresh goes straight to the message.
+ *
+ * Focus: the retry button stays the same element while it refetches; when the image comes back focus moves to the
+ * control around it (the zoom button) or to the image, and back to the retry button if it fails again.
+ */
+export function PageImage({ base, page, refresh, alt, imageClass, errorClass, wrap }: PageImageProps) {
+  const [state, dispatch] = useReducer(pageImageStep, base, (start) => initialPageImage(start, refresh.isBroken(start)));
+  // Set by a press of the retry button: focus follows the result until the image loads.
+  const keepFocus = useRef(false);
+  const retryButton = useRef<HTMLButtonElement>(null);
+  const image = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    if (state.phase !== "refreshing") return;
+    let live = true;
+    void refresh.refresh().then((next) => {
+      if (live) dispatch({ type: "refreshed", base: next });
+    });
+    return () => {
+      live = false;
+    };
+  }, [state.phase, refresh]);
+  useEffect(() => {
+    if (state.phase === "failed") refresh.markBroken(state.base);
+    if (!keepFocus.current) return;
+    if (state.phase === "failed") retryButton.current?.focus({ preventScroll: true });
+    else if (state.phase === "show") {
+      const img = image.current;
+      const target = img && (img.closest<HTMLElement>("button, a[href]") ?? img);
+      target?.focus({ preventScroll: true });
+    }
+  }, [state.phase, state.attempt, state.base, refresh]);
+  if (state.phase !== "show") {
+    const busy = state.phase === "refreshing";
+    return (
+      <span className={errorClass} role="status">
+        <span>{busy ? `${page}쪽 이미지를 다시 불러오는 중입니다.` : `${page}쪽 이미지를 불러오지 못했습니다.`}</span>
+        <button
+          ref={retryButton} type="button" className="btn btn-ghost" aria-disabled={busy ? "true" : undefined}
+          onClick={() => {
+            if (busy) return;
+            keepFocus.current = true;
+            dispatch({ type: "retry" });
+          }}
+        >
+          {busy ? "불러오는 중…" : "다시 불러오기"}
+        </button>
+      </span>
+    );
+  }
+  const img = (
+    <img
+      ref={image} key={state.attempt} className={imageClass} src={pageFile(state.base, page)} alt={alt}
+      tabIndex={wrap ? undefined : -1} loading="lazy" decoding="async"
+      onLoad={() => {
+        keepFocus.current = false;
+        refresh.markLoaded(state.base);
+      }}
+      onError={() => dispatch({ type: "error", broken: refresh.isBroken(state.base) })}
+    />
+  );
+  return wrap ? wrap(img) : img;
+}

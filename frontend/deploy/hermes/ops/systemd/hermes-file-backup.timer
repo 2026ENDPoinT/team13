@@ -1,0 +1,10 @@
+[Unit]
+Description=Hermes file backup at 05:00 KST
+
+[Timer]
+OnCalendar=*-*-* 20:00:00 UTC
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
