@@ -2,7 +2,8 @@
 # 이미지 하나를 역할별로 실행한다(ADR-0019, architecture.md 4.3절). 인자는 역할 이름 하나다.
 #   api        HTTP API. 8080에서 듣는다
 #   worker     배경 작업(worker 프로필). HTTP API는 container 안의 127.0.0.1에만 연다
-#   converter  격리한 문서 변환 process(com.stackcorp.converter.ConverterServer). 8090에서 듣는다. CONVERTER_SOFFICE가 있는
+#   converter  격리한 문서 변환 process(com.stackcorp.converter.ConverterServer). 8090에서 듣고, 상태 확인은 container 안의
+#              127.0.0.1:8092에서만 답한다. CONVERTER_SOFFICE가 있는
 #              이미지(target converter)는 office 문서도 받는다(ADR-0033)
 #   transcoder 격리한 영상 변환 process(com.stackcorp.transcoder.TranscoderServer, ffmpeg). 8091에서 듣는다
 # 역할 이름은 command 인자로만 정한다. 환경 변수의 SPRING_PROFILES_ACTIVE보다 command 인자가 우선한다.

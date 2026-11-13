@@ -228,14 +228,39 @@ class SummaryPipelineTests {
 	void sendsNoImagesAndFlagsTextlessPagesWhenModelIsTextOnly() {
 		FakeLlm honest = honest(2);
 		FakeLlm llm = new FakeLlm(honest::complete, false);
-		List<SourceDocument.Page> pages = List.of(new SourceDocument.Page(1, "Slide 1 text", false, 3),
-				new SourceDocument.Page(2, "", false, 3));
+		List<SourceDocument.Page> pages = List.of(new SourceDocument.Page(1, "Slide 1 text", false, 3, false),
+				new SourceDocument.Page(2, "", false, 3, false));
 
 		GenerateResult result = run(llm, new FakeDocument("sha-1", pages));
 
 		assertThat(llm.log).flatExtracting((r) -> r.messages().getFirst().content())
 			.noneMatch((c) -> c instanceof LlmContent.Image);
 		assertThat(result.review()).containsOnlyKeys(2);
+	}
+
+	@Test
+	void sendsAPageWhoseImageIsUnavailableAsTextOnlyEvenToAVisionModel() {
+		FakeLlm llm = honest(3);
+		List<SourceDocument.Page> pages = List.of(new SourceDocument.Page(1, "Slide 1 text", false, 3, false),
+				new SourceDocument.Page(2, "Slide 2 text", false, 3, true),
+				new SourceDocument.Page(3, "Slide 3 text", false, 3, false));
+
+		GenerateResult result = run(llm, new FakeDocument("sha-1", pages));
+
+		List<LlmContent> sent = llm.log.stream()
+			.filter((r) -> r.purpose() == Purpose.PAGES)
+			.flatMap((r) -> r.messages().getFirst().content().stream())
+			.toList();
+		// 대체 그림 쪽(p2)의 이미지는 보내지 않고, 나머지 쪽의 이미지만 보낸다.
+		assertThat(sent).filteredOn((c) -> c instanceof LlmContent.Image)
+			.extracting((c) -> (int) ((LlmContent.Image) c).data()[3])
+			.containsExactly(1, 3);
+		assertThat(sent).filteredOn((c) -> c instanceof LlmContent.Text t && t.text().startsWith("── p2 "))
+			.singleElement()
+			.satisfies((c) -> assertThat(((LlmContent.Text) c).text()).contains("Slide 2 text", "이미지 없이 추출 텍스트만"));
+		assertThat(result.pack().slides()).hasSize(3);
+		assertThat(result.review()).containsOnlyKeys(2);
+		assertThat(result.review().get(2)).contains("이미지로 바꾸지 못해");
 	}
 
 	// ── 가짜 ──
@@ -255,7 +280,7 @@ class SummaryPipelineTests {
 
 	private static List<SourceDocument.Page> pages(int pageCount) {
 		return IntStream.rangeClosed(1, pageCount)
-			.mapToObj((n) -> new SourceDocument.Page(n, "Slide " + n + " text", false, 3))
+			.mapToObj((n) -> new SourceDocument.Page(n, "Slide " + n + " text", false, 3, false))
 			.toList();
 	}
 
@@ -322,7 +347,7 @@ class SummaryPipelineTests {
 
 		@Override
 		public byte[] modelImage(int page) {
-			return new byte[] { 'j', 'p', 'g' };
+			return new byte[] { 'j', 'p', 'g', (byte) page };
 		}
 
 	}

@@ -1,6 +1,5 @@
 package com.stackcorp.converter;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.file.Path;
@@ -17,7 +16,8 @@ import java.util.concurrent.TimeoutException;
  * 외부 실행 파일 하나를 고정한 인자 목록으로 실행하고 제한 시간 안에 끝나기를 기다린다(FILES-12).
  * <ul>
  * <li>shell을 거치지 않는다. 인자 목록의 첫 값은 실행 파일의 절대 경로여야 한다</li>
- * <li>환경 변수는 비운 뒤 넘긴 값만 넣는다. 표준 입력은 /dev/null이고 표준 출력과 오류는 버린다. 출력에 문서 내용이 섞일 수 있기 때문이다</li>
+ * <li>환경 변수는 비운 뒤 넘긴 값만 넣는다. 표준 입력은 시작하자마자 닫고(/dev/null처럼 바로 EOF) 표준 출력과 오류는 버린다. 출력에
+ * 문서 내용이 섞일 수 있기 때문이다</li>
  * <li>기다리는 동안 자식 process를 계속 기록한다. 제한 시간이 지나면 기록한 자식과 process를 모두 강제로 끝낸다. 정상 종료한
  * 뒤에도 남은 자식은 끝낸다. 기록하기 전에 생기고 사라진 손자 process는 놓칠 수 있다</li>
  * </ul>
@@ -44,7 +44,6 @@ final class BoundedProcess {
 			throw new IllegalArgumentException("실행 파일은 절대 경로로 지정해야 합니다.");
 		}
 		ProcessBuilder builder = new ProcessBuilder(command).directory(directory.toFile())
-			.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")))
 			.redirectOutput(ProcessBuilder.Redirect.DISCARD)
 			.redirectError(ProcessBuilder.Redirect.DISCARD);
 		builder.environment().clear();
@@ -53,6 +52,8 @@ final class BoundedProcess {
 		Set<ProcessHandle> seen = new LinkedHashSet<>();
 		long deadline = System.nanoTime() + timeout.toNanos();
 		try {
+			// Windows에는 /dev/null이 없어 pipe를 닫는 것으로 같은 효과를 낸다.
+			process.getOutputStream().close();
 			while (true) {
 				process.descendants().forEach(seen::add);
 				if (process.waitFor(POLL_MILLIS, TimeUnit.MILLISECONDS)) {

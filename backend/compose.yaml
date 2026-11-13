@@ -114,17 +114,27 @@ services:
     command: [converter]
     # soffice가 남긴 손자 process를 거둔다. converter의 java가 PID 1이면 강제로 끝낸 process가 zombie로 남는다.
     init: true
-    # LibreOffice의 작업 디렉터리(입력, profile, 결과 PDF)는 작업마다 /tmp에 만들고 지운다.
+    # LibreOffice의 작업 디렉터리(입력, profile, 결과 PDF)와 PDF 변환 자식 JVM의 작업 디렉터리(입력, 쪽 이미지)는 작업마다 /tmp에
+    # 만들고 지운다.
     tmpfs:
       - /tmp:size=768m,mode=1777
     environment:
       CONVERTER_PORT: "8090"
+      # GET /health만 답하는 port. container 안의 127.0.0.1에만 열고 변환 port와 thread를 나누지 않는다. 본문을 보내지 않거나
+      # 응답을 읽지 않는 요청이 변환 thread를 모두 붙잡아도 healthcheck는 답을 받는다(#11).
+      CONVERTER_HEALTH_PORT: "8092"
       CONVERTER_OFFICE_TIMEOUT_SECONDS: "120"
-      # container 메모리의 나머지는 soffice가 쓴다. soffice의 주소 공간 상한은 CONVERTER_OFFICE_MEMORY_BYTES(기본 3 GiB)다.
-      JAVA_OPTS: "-XX:MaxRAMPercentage=30"
+      # PDF는 문서마다 heap을 묶은 자식 JVM이 그린다. 부모 heap(2048m의 15%)은 요청 본문과 /avatar만 다룬다. 자식(heap 768 MiB +
+      # JVM 자체 약 150 MiB)과 soffice는 차례로 돌아 한꺼번에 쓰지 않는다. soffice의 주소 공간 상한은
+      # CONVERTER_OFFICE_MEMORY_BYTES(기본 3 GiB)다.
+      CONVERTER_RENDER_HEAP_MB: "768"
+      CONVERTER_RENDER_TIMEOUT_SECONDS: "300"
+      # 정상 쪽은 단계 하나가 2초 안에 끝난다. 그리기가 넘은 쪽은 바로 대체 그림이 된다(README).
+      CONVERTER_RENDER_STEP_TIMEOUT_SECONDS: "20"
+      JAVA_OPTS: "-XX:MaxRAMPercentage=15"
     networks: [conversion]
     healthcheck:
-      test: ["CMD", "astra-health", "8090", "/health"]
+      test: ["CMD", "astra-health", "8092", "/health"]
       interval: 10s
       timeout: 5s
       retries: 3
