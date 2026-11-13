@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { seedState, activities, type AppState } from "./data.ts";
-import { onSignOut } from "./shared/backend.ts";
+import { mayStoreUserData, onSignOut } from "./shared/backend.ts";
 
 const KEY = "astra-state";
 let state = load();
@@ -65,6 +65,9 @@ export function getState(): AppState {
 }
 
 export function save() {
+  // This tab still holds a user another tab has signed out (it catches up on the storage event): writing now
+  // would put that user's search words and input back for the next one.
+  if (!mayStoreUserData()) return;
   try {
     localStorage.setItem(KEY, JSON.stringify({ ...state, toast: "" }));
     if (state.themeMode === "light" || state.themeMode === "dark") localStorage.setItem("astra-theme", state.themeMode);

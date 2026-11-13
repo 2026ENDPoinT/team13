@@ -191,19 +191,79 @@ export function currentUserId(): string | null {
   return state.status === "ready" && state.me && state.me.userId != null ? String(state.me.userId) : null;
 }
 
-/**
- * Calls `fn` each time the signed-in user goes away: logout, an expired session (`anon`), or another
- * user signing in. A reload of the same user, a failed probe (`off`) and sample mode never call it.
- * For data kept beyond memory (localStorage) that must not reach the next user of the tab.
- */
-export function onSignOut(fn: () => void): () => boolean {
-  let user = currentUserId();
-  return subscribe((next) => {
-    if (next.status === "off") return;
-    const id = next.status === "ready" && next.me && next.me.userId != null ? String(next.me.userId) : null;
-    if (user != null && id !== user) fn();
-    user = id;
+// ---------- data kept for one user beyond memory ----------
+// Server screens keep some of the signed-in user's input in localStorage (search words, filters, document
+// pages). `OWNER_KEY` records whose it is, so a different user (or nobody) found on the first settled
+// `anon`/`ready` of a page load clears it, even when the previous user closed the tab without logging out.
+const OWNER_KEY = "astra-data-owner";
+const signOutHandlers = new Set<() => void>();
+// The user whose data this tab holds; undefined until this tab first settled on `anon` or `ready`.
+let tabOwner: string | null | undefined;
+
+function storedOwner(): string | null {
+  try {
+    return localStorage.getItem(OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeOwner(id: string | null): void {
+  try {
+    if (id == null) localStorage.removeItem(OWNER_KEY);
+    else localStorage.setItem(OWNER_KEY, id);
+  } catch {
+    /* private mode: nothing of the user was stored either */
+  }
+}
+
+function signOut(): void {
+  for (const fn of [...signOutHandlers]) {
+    try {
+      fn();
+    } catch {
+      /* one handler must not keep the others from clearing */
+    }
+  }
+}
+
+function settleOwner(id: string | null): void {
+  const stored = storedOwner();
+  if ((stored != null && stored !== id) || (tabOwner != null && tabOwner !== id)) signOut();
+  tabOwner = id;
+  storeOwner(id);
+}
+
+subscribe((next) => {
+  if (next.status === "off") return;
+  settleOwner(next.status === "ready" && next.me && next.me.userId != null ? String(next.me.userId) : null);
+});
+
+// Another tab logged out or signed in as someone else: drop this tab's copy at once, then re-read the shared session.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== OWNER_KEY || tabOwner == null || event.newValue === tabOwner) return;
+    tabOwner = event.newValue;
+    signOut();
+    void connect();
   });
+}
+
+/**
+ * Registers `fn` to clear one kind of data kept for the signed-in user beyond memory. It runs when that
+ * user goes: logout, an expired session, another user signing in (also across reloads and tabs). A reload
+ * of the same user, a failed probe (`off`) and sample mode never run it.
+ */
+export function onSignOut(fn: () => void): void {
+  signOutHandlers.add(fn);
+}
+
+/**
+ * False while this tab holds a user's data that is no longer the stored owner's (another tab logged out or
+ * signed in as someone else and this tab has not caught up): it must not write that data back.
+ */
+export function mayStoreUserData(): boolean {
+  return tabOwner === undefined || tabOwner === storedOwner();
 }
 
 /** The institution time zone id ("Asia/Seoul", "UTC", "+09:00"); the backend default until read. */
@@ -338,11 +398,18 @@ export async function loginWithEclass(studentId: string | number | null | undefi
   return connect();
 }
 
+export const LOGOUT_FAILED = "로그아웃하지 못했습니다. 아직 로그인되어 있습니다. 잠시 뒤 다시 시도하세요.";
+
+/**
+ * Ends the server session: 204, or 401 (the session was already gone), counts as ended; then reload as
+ * `anon`. Any other outcome (no connection, 5xx, 403) leaves the session and every local copy as they
+ * are and throws an Error with `LOGOUT_FAILED`.
+ */
 export async function logout(): Promise<BackendSnapshot> {
   try {
     await apiSend("POST", "/api/auth/logout");
-  } catch {
-    /* the session is dropped locally either way */
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 401)) throw new Error(LOGOUT_FAILED);
   }
   devUsers.clear();
   update({ status: "anon", me: null, courses: [] });

@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { Link, GoButton } from "../../router.tsx";
+import { useSyncExternalStore, type ReactNode } from "react";
+import { Link, GoButton, serverLogoutConfirmed } from "../../router.tsx";
 import { render as repaint } from "../../store.ts";
 import { Icon } from "../../ui/icon.tsx";
 import { EmptyState, Table } from "../../ui/kit.tsx";
@@ -16,7 +16,7 @@ import { renderCourseStudy } from "./course-study.tsx";
 import { studyRoot, sampleSummary } from "./study-files.tsx";
 import { renderRecording } from "./recording.tsx";
 import { commandBar, planPreview } from "./command-bar.tsx";
-import { backendStatus, backendState } from "../../shared/backend.ts";
+import { backendStatus, backendState, subscribe as onBackendChange } from "../../shared/backend.ts";
 import { profiles, peekAccount } from "../../shared/account-remote.ts";
 import { courseCards, specialCard, termLabel } from "./course-cards.tsx";
 import { serverHomeCourses, serverAsideTodo, homeLoginPanel } from "./home-server.tsx";
@@ -390,11 +390,18 @@ function renderSitemap(ctx: ScreenCtx): ReactNode {
   );
 }
 
-function logoutView(): ReactNode {
+function LogoutView() {
+  const status = useSyncExternalStore(onBackendChange, backendStatus);
+  // Claim a server logout only on the entry pushed after one the server confirmed, and never while signed in
+  // (back to this entry after signing in again, or the address opened directly).
+  const text = status === "ready" ? "ASTRA 서버에 로그인되어 있습니다. 로그아웃하려면 내 메뉴의 로그아웃을 누르세요."
+    : serverLogoutConfirmed() ? "ASTRA 서버에서 로그아웃했습니다. 다시 쓰려면 홈에서 로그인하세요."
+    : status === "off" ? "샘플 세션을 닫았습니다. 역할 화면으로 다시 들어가지 않습니다."
+    : "ASTRA 서버에 로그인되어 있지 않습니다.";
   return (
     <section data-area="home">
       <h1>로그아웃</h1>
-      <p className="subhead">{backendStatus() === "off" ? "샘플 세션을 닫았습니다. 역할 화면으로 다시 들어가지 않습니다." : "ASTRA 서버에서 로그아웃했습니다. 다시 쓰려면 홈에서 로그인하세요."}</p>
+      <p className="subhead">{text}</p>
     </section>
   );
 }
@@ -471,7 +478,7 @@ export function render(screen: Screen, ctx: ScreenCtx): ReactNode {
       return ctx.params && ctx.params.has("kj") ? renderCourseStudy(ctx) : studyRoot(ctx);
     case "lecture": return renderRecording(ctx);
     case "sitemap": return renderSitemap(ctx);
-    case "logout": return logoutView();
+    case "logout": return <LogoutView />;
     default: return <section data-area="home"><EmptyState title="이 화면은 홈 영역이 아닙니다" body={screen.id} /></section>;
   }
 }

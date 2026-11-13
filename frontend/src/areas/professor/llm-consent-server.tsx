@@ -174,8 +174,8 @@ function ScopeRow({ item, enabled, decider, policy, courseId, acknowledged, say,
   useEffect(() => () => { live.current = false; }, []);
   const state = !item.granted ? "동의하지 않음"
     : !decider ? "예전에 남긴 동의(효력 없음)"
-    : !enabled ? "동의함 · 외부 AI 기능이 꺼져 있어 지금은 쓰이지 않음"
-    : item.current ? "동의함" : "처리 조건이 바뀌어 다시 동의해야 합니다";
+    : !item.current ? "처리 조건이 바뀌어 다시 동의해야 합니다"
+    : enabled ? "동의함" : "동의함 · 외부 AI 기능이 꺼져 있어 지금은 쓰이지 않음";
 
   async function grant() {
     if (granting) return;

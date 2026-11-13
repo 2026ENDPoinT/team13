@@ -13,7 +13,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type TouchEvent } from "react";
 import { Icon } from "../ui/icon.tsx";
 import { getCoursePdfBlob } from "./course-pdfs.ts";
-import { onSignOut } from "./backend.ts";
+import { mayStoreUserData, onSignOut } from "./backend.ts";
 
 const STORAGE_KEY = "astra-doc-page";
 const VENDOR = new URL("/app/vendor/pdfjs/", location.origin);
@@ -32,7 +32,15 @@ function storedPage(documentId: string): number {
   return Number.isInteger(value) && value > 0 ? value : 0;
 }
 
+// Pages of server documents (`server-file:…`, `course-pdf:srv-…`) belong to the signed-in user: forget them
+// when that user goes, so the next user of the tab neither starts on them nor learns what was read.
+function serverDocument(documentId: string): boolean {
+  return documentId.startsWith("server-file:") || documentId.startsWith("course-pdf:srv-");
+}
+
 function writePage(documentId: string, page: number) {
+  // A tab still showing a user another tab has signed out must not write that user's page back.
+  if (serverDocument(documentId) && !mayStoreUserData()) return;
   try {
     const pages = readPages();
     pages[documentId] = page;
@@ -42,12 +50,10 @@ function writePage(documentId: string, page: number) {
   }
 }
 
-// Pages of server documents (`server-file:…`, `course-pdf:srv-…`) belong to the signed-in user: forget them
-// when that user goes, so the next user of the tab neither starts on them nor learns what was read.
 onSignOut(() => {
   try {
     const pages = readPages();
-    for (const id of Object.keys(pages)) if (id.startsWith("server-file:") || id.startsWith("course-pdf:srv-")) delete pages[id];
+    for (const id of Object.keys(pages)) if (serverDocument(id)) delete pages[id];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(pages));
   } catch {
     /* private mode: nothing was stored */
