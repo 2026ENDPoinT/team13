@@ -1,5 +1,45 @@
 # Handoff
 
+## 2026-11-14 목업: "오늘 할 일 전부 해줘" → 기계학습·고급웹 Plan 자동 시작
+
+### 작업 내용
+- 요청: 목업 상태에서 "오늘 할 일 전부 해줘"를 입력하면 기계학습 → 고급웹프로그래밍 순으로 Plan 스택에 쌓고 자동으로 진행.
+- 전에는 `/api/assistant`(AI)를 거쳐 키가 없으면 실패했고, 계획이 나와도 Accept를 눌러야 했다. 이제 `command-bar.tsx`의 `submitCommand`(백엔드 미연결 분기)에서 `isTodayAllRequest(text)`(`aliases.ts`)가 맞으면 AI를 부르지 않고 `todayDeadlinePlan()`(`plan.ts`)으로 `createRun` → `startRun`을 바로 호출한다. 열린 계획 확인(Accept) 단계는 없고 트레이가 열린다.
+- "오늘 할 일" = 홈 히어로가 세는 사흘 안 마감 활동(`myDayGroups().soon`, 시험·완료 제외). 샘플에서는 `lec-11-1`(기계학습 11주 1차시) → `rep-web`(고급웹 과제). 영상 → 과제 정렬(`orderPlan`)이라 이 순서가 나온다. 영상은 끝나면 다음 단계로 자동 이동하고, 과제는 "확인 필요"(제출은 직접).
+- 과목·유형이 붙은 문장("데베 강의 전부 해줘" 등), "전부 해줘"만 있는 문장은 이 지름길에 걸리지 않고 기존 AI/해석 경로를 탄다. 처리할 일이 없으면 "오늘 처리할 일이 없어요."를 보인다.
+
+### 변경 파일
+- `src/shared/assistant/aliases.ts`(`isTodayAllRequest`), `src/shared/assistant/plan.ts`(`todayDeadlinePlan`), `src/areas/home/command-bar.tsx`
+- 테스트 `tests/unit/today-all-request.test.ts`(새)
+
+### 검증
+- `npm run typecheck` 통과. 관련 테스트 4파일 87건 통과.
+- AI 키·게이트웨이 없이 `node server.mjs --dev --port 4391`로 브라우저 확인: 입력 → `/api/assistant` 호출 0회, 기계학습 플레이어로 이동, 트레이 `Plan 0/2 재생 중`(영상 기계학습 → 과제 고급웹프로그래밍). 2x로 영상을 끝내자 고급웹 과제 화면으로 자동 이동, `Plan 1/2`·과제 "확인 필요", 콘솔 오류 없음.
+
+### 남은 작업
+- 백엔드 연결(로그인) 홈은 이 지름길을 쓰지 않는다(자동 계획 미지원 정책 유지).
+- 다른 날짜로 샘플 데이터(`TODAY`)가 바뀌면 "오늘 할 일" 구성도 바뀌므로 `today-all-request.test.ts`의 기대값(`lec-11-1`, `rep-web`)을 같이 봐야 한다.
+
+## 2026-11-14 녹음 중 화면 하단 실시간 전사
+
+### 작업 내용
+- 요청: 녹음 중 화면(`LiveView`) 하단에 전사가 쭉 이어져 보이게.
+- 백엔드에 실시간 전사 API가 없어(README 계약은 저장 후 결과만), 브라우저 음성 인식(Web Speech API, `ko-KR`)으로 화면에만 표시한다. 새 `src/shared/live-transcript.ts`가 인식기를 켜고(침묵으로 끝나면 300ms 뒤 다시 켬), 확정 문장은 녹음 시각과 함께 줄로 쌓고 말하는 중인 문장은 흐리게 보인다. 일시정지에서 끄고 다시 시작에서 켜며, 저장·중지에서 줄을 지운다(`course-recordings.ts`의 `startRecording`·`pauseRecording`·`resumeRecording`·`finish`).
+- 화면: 버튼 아래 `실시간 전사` 상자(높이 최대 320px, 맨 아래면 새 줄을 따라가고 위로 올려 읽으면 멈춤). 탭 소리 녹음·미지원 브라우저·권한 거부/네트워크 오류는 이유를 안내하고 녹음은 계속된다. 시작 화면 문구의 "자동 전사는 연결되지 않았습니다"를 바꿨다.
+- 한계: 저장되지 않는다(저장된 녹음의 전사는 여전히 서버가 만든 결과). Chrome·Edge는 음성을 브라우저 제공사 서버로 보내 인식하며 이를 화면에 안내했다. Firefox·Safari 일부는 미지원.
+
+### 변경 파일
+- `src/shared/live-transcript.ts`(새), `src/shared/course-recordings.ts`, `src/areas/home/recording.tsx`, `src/areas/home/home.css`
+- 테스트 `tests/unit/live-transcript.test.ts`(새), `vitest.config.ts`(coverage include)
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 29파일 1421건 통과.
+- Chromium에서 마이크 스트림과 인식기를 가짜로 바꿔 확인: 녹음 시작 시 상자 표시, 확정 줄·진행 중 문장 표시, 15줄 뒤 맨 아래로 자동 스크롤, 중지·저장 뒤 상자 사라짐, 콘솔 오류 없음.
+
+### 남은 작업
+- 실제 마이크·실제 Chrome 음성 인식 정확도와 일시정지·다시 시작은 브라우저에서 확인하지 못했다(일시정지·재시작은 단위 테스트만).
+- 서버 저장용 전사가 필요하면 백엔드가 스트리밍/업로드 후 전사 API를 제공해야 한다.
+
 ## 2026-11-14 런타임 점검 5 결함 수정(F1·F2·F3·F5·F6·F7)
 
 ### 작업 내용
@@ -26,6 +66,18 @@
 
 ### 남은 작업
 - 결정 필요: 파일함에 파일을 넣을 화면이 없으므로 "파일함에서 첨부"를 남길지. 지금은 시드 파일과 다른 경로로 들어간 파일만 고를 수 있다.
+
+## 2026-11-14 프론트 보안 점검(코드 변경 없음)
+
+### 작업 내용
+- 정적 점검(grep + 코드 읽기). XSS 싱크(`dangerouslySetInnerHTML`은 정적 SVG 1곳), `target=_blank`, `location.assign`, localStorage·IndexedDB, CSP·헤더, 서비스워커, 프록시 헤더, `npm audit --omit=dev`(0건), 벤더 pdf.js(5.4.394, `isEvalSupported:false`)를 확인했다.
+- 발견: (1) `/api/assistant`가 무인증이고 속도 제한이 `socket.remoteAddress` 기준이라 터널 뒤에서는 전 사용자가 한 버킷을 공유할 수 있음, (2) 학교 비밀번호를 `POST /api/auth/eclass-login`으로 직접 받음(정책·신뢰 위험), (3) `meetingUrl` href 무검증(`learning.tsx`, `professor.tsx`; CSP가 막아 실질 위험 낮음), (4) `sanitizeRichSource`는 정규식 블랙리스트(렌더가 React 노드라 현재는 안전), (5) 개발 로그인 차단이 `cf-connecting-ip` 헤더 유무에 의존.
+
+### 변경 파일
+- 없음(handoff.md만)
+
+### 남은 작업
+- 백엔드는 점검하지 않았다: `returnTo` 서버측 검증, dev 로그인 운영 비활성, eclass-login의 학교 서버 접속 여부.
 
 ## 2026-11-14 로그인은 포커스된 모달 하나로만 (본문·내 메뉴의 로그인 폼 전부 제거)
 
