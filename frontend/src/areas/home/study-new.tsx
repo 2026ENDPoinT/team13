@@ -3,7 +3,8 @@ import type { Course } from "../../data.ts";
 import { navigate } from "../../router.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { saveCoursePdf } from "../../shared/course-pdfs.ts";
-import { activeRecording, startRecording, onRecordingEvent } from "../../shared/course-recordings.ts";
+import { activeRecording, startRecording } from "../../shared/course-recordings.ts";
+import { backendStatus } from "../../shared/backend.ts";
 import { placeItem, type StudyFolder } from "../../shared/study-folders.ts";
 import { recordingHref, notifyStudyChanged, type CreatorApi } from "./study-files.tsx";
 import { setRecordingError } from "./recording.tsx";
@@ -24,6 +25,8 @@ export function createNewMenu({ course, folder, say, nameFolder }: NewMenuOption
 
 function NewMenu({ course, folder, say, nameFolder }: NewMenuOptions) {
   const [open, setOpen] = useState(false);
+  // Only while the study room is on the server: in offline mode every folder is a browser folder, as before.
+  const browserOnlyFolder = Boolean(folder && folder.local);
   const [uploading, setUploading] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -63,13 +66,18 @@ function NewMenu({ course, folder, say, nameFolder }: NewMenuOptions) {
     if (!file) return;
     const title = file.name.replace(/\.pdf$/i, "").trim() || file.name;
     setUploading(true);
-    say("PDF의 페이지와 텍스트를 분석하고 이 브라우저에 저장하고 있습니다.");
+    say(backendStatus() === "ready" ? "PDF를 ASTRA 서버에 올리고 있습니다." : "PDF의 페이지와 텍스트를 분석하고 이 브라우저에 저장하고 있습니다.");
     saveCoursePdf({ file, courseId: course.id, title })
-      .then((record) => {
-        if (folder) placeItem(record.id, folder.id);
-        say(record.status === "no-text"
+      .then(async (record) => {
+        const added = record.status === "no-text"
           ? `"${title}"을 추가했습니다. 추출할 텍스트가 없어 원본으로만 확인할 수 있습니다.`
-          : `"${title}"을 추가했습니다.`);
+          : `"${title}"을 추가했습니다.`;
+        try {
+          if (folder) await placeItem(record.id, folder.id);
+          say(added);
+        } catch (error) {
+          say(`${added} 폴더에 넣지 못해 과목 폴더에 두었습니다. ${error instanceof Error ? error.message : String(error)}`, true);
+        }
         notifyStudyChanged();
       })
       .catch((error: unknown) => say(error instanceof Error ? error.message : String(error), true))
@@ -86,17 +94,9 @@ function NewMenu({ course, folder, say, nameFolder }: NewMenuOptions) {
       openRecorder();
       return;
     }
-    // The recorder screen saves the file later; place it in this folder once it exists.
-    const off = onRecordingEvent((event) => {
-      if (event.type === "saved") {
-        if (folder && event.record.courseId === course.id) placeItem(event.record.id, folder.id);
-        off();
-      } else if (event.type === "error") off();
-    });
-    // Started inside the click: browsers open the mic prompt only for a user gesture.
-    startRecording({ courseId: course.id, source: "mic" })
+    // Started inside the click: browsers open the mic prompt only for a user gesture. The recording is saved into this folder.
+    startRecording({ courseId: course.id, source: "mic", folderId: folder ? folder.id : null })
       .catch((error: unknown) => {
-        off();
         setRecordingError(error instanceof Error ? error.message : String(error));
       })
       .then(openRecorder);
@@ -120,8 +120,12 @@ function NewMenu({ course, folder, say, nameFolder }: NewMenuOptions) {
         >
           <Icon name="upload" /><span>PDF·문서 업로드</span>
         </button>
-        <button type="button" role="menuitem" className="study-new-item" onClick={onRecord}>
-          <Icon name="mic" /><span>강의 녹음</span>
+        <button
+          type="button" role="menuitem" className="study-new-item" onClick={onRecord}
+          title={browserOnlyFolder ? "이 폴더는 이 브라우저에만 있어 녹음도 이 브라우저에만 저장됩니다. 서버로는 ‘내 계정으로 옮기기’로 옮깁니다." : undefined}
+        >
+          {/* Said before the recording starts: a browser-only folder keeps its recording in this browser. */}
+          <Icon name="mic" /><span>{browserOnlyFolder ? "강의 녹음 (이 브라우저에만 저장)" : "강의 녹음"}</span>
         </button>
         {folder ? null : <div className="study-new-sep" role="separator" />}
         {folder ? null : (

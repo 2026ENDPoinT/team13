@@ -4,7 +4,7 @@
 // 샘플 요약을 실제 자료처럼 보이지 않는다. `off`이면 null을 돌려주어 샘플 요약과 녹음 화면이 그대로
 // 그려진다. 응답은 메모리 캐시(remote-cache.ts)에만 두고 세션이 바뀌면 버린다.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { courses, studyMaterials, type Course } from "../../data.ts";
+import { courseById, studyMaterials, type Course } from "../../data.ts";
 import { hrefFor, find } from "../../manifest.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { getState, save, render } from "../../store.ts";
@@ -44,6 +44,11 @@ const summaries = createResource<PublishedSummary | null, [courseId: Id, fileId:
 const overviews = createResource<FileOverview | null, [courseId: Id, fileId: Id]>((courseId, fileId) => fileOverview(courseId, fileId));
 
 const studyHomeHref = () => hrefFor(find("study_home"));
+/** `kj`의 과목: 서버 과목 보기를 먼저, 없으면 샘플 과목. 어느 쪽에도 없으면 undefined. */
+function courseOf(kj: string): Course | undefined {
+  const course = courseById(kj);
+  return course.missing || course.id !== kj ? undefined : course;
+}
 const folderHref = (kj: string) => hrefFor(find("study_home"), { kj });
 const documentHref = (kj: string, id: string) => hrefFor(find("study_home"), { kj, doc: id });
 
@@ -111,7 +116,7 @@ export function serverStudySummary(ctx: ScreenCtx, fallback: () => ReactNode): R
   if (status === "off") return fileId && !backendSettled() ? <Waiting fallback={fallback} /> : null;
   if (!fileId) {
     const item = studyMaterials.find((row) => row.id === params.get("m")) || studyMaterials[0];
-    const course = courses.find((row) => row.id === item.courseId);
+    const course = courseOf(item.courseId);
     if (status === "anon") return <SummaryShell course={course}>{backendPanel({ text: LOGIN_SUMMARY })}</SummaryShell>;
     if (!courseIdFor(item.courseId)) return null;
     // 연결된 과목의 샘플 ID: 샘플 문장을 실제 자료처럼 보이지 않는다.
@@ -125,7 +130,7 @@ export function serverStudySummary(ctx: ScreenCtx, fallback: () => ReactNode): R
     );
   }
   const kj = params.get("kj") || "";
-  const course = courses.find((row) => row.id === kj);
+  const course = courseOf(kj);
   if (!course) {
     return (
       <section className="study" data-area="home">
@@ -303,7 +308,7 @@ export function serverStudyLecture(ctx: ScreenCtx, fallback: () => ReactNode): R
   const status = backendStatus();
   if (status === "off") return backendSettled() ? null : <Waiting fallback={fallback} />;
   const kj = params.get("kj") || "";
-  const course = courses.find((row) => row.id === kj);
+  const course = courseOf(kj);
   if (!course) {
     return (
       <section className="study rec" data-area="home">
