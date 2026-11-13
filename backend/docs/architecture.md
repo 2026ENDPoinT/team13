@@ -280,7 +280,7 @@ flowchart LR
 | `GET /api/me` | 로그인한 사용자 | `userId`, `name`, `role`, `breakGlass`, `stepUpMethod`(이 session의 재인증 수단: `idp` → `GET /api/auth/reauth`, `totp` → `POST /api/me/step-up/totp`, 로컬 실행의 `dev`, 없으면 null) |
 | `GET /api/me/profile` | 로그인한 사용자 | 이름, 소속, 학년, 연락처와 원천, 아바타(EP-0270). `avatar.photo`는 마지막으로 올린 사진의 `state`(processing\|ready\|failed), 지금 보이는 사진의 `url`, 실패 `errorCode`(not_image\|too_large\|rejected\|unavailable\|failed)이고, 올린 적이 없으면 null. `registrarSyncAvailable`은 학사 동기화 명령을 시도할 수 있는지(학사시스템 port가 있고 break-glass가 아님)다. 내정보를 돌려주는 명령도 같다 |
 | `PUT /api/me/profile` | 로그인한 사용자 | `{avatarColor, shortName, version}`. 24색 allowlist, 약칭 2글자. 읽은 `version`이 다르면 409(EP-0271, EP-0278) |
-| `PUT /api/me/contact` | 로그인한 사용자, 최근 재인증 | `{phone, email}`. 빈 값은 그 연락처를 지운다(둘 다 비워도 된다). 값이 있으면 형식이 틀릴 때 400 `invalid_request`. 학사 원천 연락처면 409 `contact_managed_by_registrar`(EP-0266) |
+| `PUT /api/me/contact` | 로그인한 사용자, 최근 재인증 | `{phone, email}`. 두 필드 모두 문자열로 보낸다. 빈 문자열이나 공백뿐인 문자열은 그 연락처를 지운다(둘 다 비워도 된다). 필드가 없거나 null이면, 또는 값의 형식이 틀리면 400 `invalid_request`. 학사 원천 연락처면 409 `contact_managed_by_registrar`(EP-0266) |
 | `POST /api/me/profile/sync` | 로그인한 사용자(break-glass는 404) | 학사시스템 port로 이름, 소속, 학년, 연락처를 다시 읽어 저장하고 내정보를 돌려준다(EP-0279). 연동이 없으면 503 `not_configured`, 학사시스템에 없으면 409 `registrar_record_not_found`, 장애·형식 오류는 503 `registrar_unavailable`. 사용자당 10분에 5번 |
 | `POST /api/me/profile/image` | 로그인한 사용자 | multipart `file` 하나(PNG·JPEG, 5MB 이하, 화면이 정사각형으로 자른 사진). 202 `{state: processing}`. 이미지가 아니면 400 `not_image`, 크면 413 `too_large`. 대기 중인 앞 사진은 버린다. 바꾸는 명령이라 `Idempotency-Key`를 받지 않는다. 10분에 10번(EP-0273~EP-0276) |
 | `DELETE /api/me/profile/image` | 로그인한 사용자 | 사진을 지우고 색상형으로 돌아간다. 색상과 약칭은 그대로다. 내정보를 돌려준다(EP-0278) |

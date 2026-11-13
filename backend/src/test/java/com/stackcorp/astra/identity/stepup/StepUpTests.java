@@ -183,6 +183,45 @@ class StepUpTests extends OidcIntegrationTest {
 	}
 
 	@Test
+	void firstContactSaveWithBothBlankCreatesAnEmptyLocalRow() throws Exception {
+		reauthenticate(this.token, this.ref);
+		assertThat(contactRows()).isZero();
+
+		contact(this.client, "{\"phone\":\"\",\"email\":\" \"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()))
+			.andExpect(jsonPath("$.contact.source").value("local"))
+			.andExpect(jsonPath("$.contact.editable").value(true));
+		assertThat(contactRows()).isOne();
+		assertThat(storedContact()).containsExactly(null, null);
+		assertThat(this.jdbc.sql("SELECT contact_source FROM user_contacts WHERE user_id = :id")
+			.param("id", this.userId)
+			.query(String.class)
+			.single()).isEqualTo("LOCAL");
+	}
+
+	@Test
+	void missingOrNullContactFieldsAreRefusedAndClearNothing() throws Exception {
+		reauthenticate(this.token, this.ref);
+		contact(this.client, CONTACT).andExpect(status().isOk());
+
+		// 일부만 보낸 본문이 다른 연락처를 지우지 않는다. 지우려면 빈 문자열을 보낸다.
+		contact(this.client, "{\"email\":\"a@b.example\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("전화번호 형식이 올바르지 않습니다."));
+		contact(this.client, "{\"phone\":\"010-4444-5555\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("이메일 형식이 올바르지 않습니다."));
+		contact(this.client, "{\"phone\":null,\"email\":\"a@b.example\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		contact(this.client, "{\"phone\":\"010-4444-5555\",\"email\":null}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		contact(this.client, "{}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		assertThat(storedContact()).containsExactly("010-2222-3333", "new@school.example");
+	}
+
+	@Test
 	void rejectsReauthenticationThatDoesNotProveThisUserAgain() throws Exception {
 		String other = "2026" + ThreadLocalRandom.current().nextInt(10_000_000, 99_999_999);
 		this.data.userWithRef(other, "STUDENT");
@@ -244,6 +283,13 @@ class StepUpTests extends OidcIntegrationTest {
 		return this.jdbc.sql("SELECT phone_number, email_address FROM user_contacts WHERE user_id = :id")
 			.param("id", this.userId)
 			.query((rs, n) -> Arrays.asList(rs.getString(1), rs.getString(2)))
+			.single();
+	}
+
+	private int contactRows() {
+		return this.jdbc.sql("SELECT COUNT(*) FROM user_contacts WHERE user_id = :id")
+			.param("id", this.userId)
+			.query(Integer.class)
 			.single();
 	}
 

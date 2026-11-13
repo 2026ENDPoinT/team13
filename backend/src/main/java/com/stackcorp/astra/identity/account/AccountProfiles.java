@@ -147,7 +147,7 @@ class AccountProfiles {
 
 	/**
 	 * 연락처를 바꾼다(EP-0266). 학사 원천(ACADEMIC) 연락처는 학사시스템에서 바꾸고 동기화한다. 연락처가 없거나 로컬 원천일 때만 바꾼다.
-	 * null은 그 연락처를 지운다(NULL로 저장).
+	 * null은 그 연락처를 지운다(NULL로 저장). 연락처 행이 없으면 LOCAL 행을 만든다.
 	 * @throws ApiException 409 {@code contact_managed_by_registrar}
 	 */
 	@Transactional
