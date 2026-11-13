@@ -25,6 +25,10 @@
 .activity-copy b, .activity-copy .tiny, .activity-status { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-status { max-width: 120px; }
 .activity[aria-disabled="true"] { cursor: default; }
+/* A school e-Class row: a plain link out of ASTRA, marked next to its type label. */
+.activity-ext { color: var(--text-2); white-space: nowrap; }
+.activity-ext .ico { display: inline-flex; vertical-align: -4px; width: 16px; height: 16px; }
+.activity-ext .ico svg { width: 16px; height: 16px; }
 .swatch { width: 44px; height: 36px; border-radius: var(--radius-sm); }
 .check { color: var(--success); font-weight: var(--weight-bold); }
 

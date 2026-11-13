@@ -24,18 +24,31 @@ export interface LectureItem {
   state?: VideoState;
 }
 
-/** A week activity of `GET …/weeks`. */
+/**
+ * A week activity of `GET …/weeks`. Native activities have a numeric `activityId` and the server `type`
+ * (`learning_activities.activity_type`) and no `origin`. Activities imported from the school's e-Class have
+ * `origin: "school"`, a string `activityId` (`school-…`, never a native id), the display `type`
+ * (`video|material|report|test|survey|zoom|post|…`), the school's own `schoolType`, the caller's `done`, and `schoolUrl`.
+ */
 export interface WeekActivity {
-  activityId: number;
+  activityId: number | string;
   type: string;
   title: string;
   openAt?: string | null;
   closeAt?: string | null;
   published?: boolean;
-  phase?: string;
+  phase?: string | null;
   assignmentId?: number | null;
   quizId?: number | null;
   surveyId?: number | null;
+  origin?: "school";
+  schoolType?: string | null;
+  schoolKind?: string | null;
+  done?: boolean | null;
+  attendance?: string | null;
+  learningTimeSec?: number | null;
+  offline?: boolean | null;
+  schoolUrl?: string | null;
 }
 
 export interface CourseWeek {
@@ -52,8 +65,9 @@ export interface CourseWeeks {
   weeks?: CourseWeek[];
 }
 
-/** A `lecture_weeks` activity with its week number. */
+/** A native `lecture_weeks` activity with its week number. */
 export interface LectureRow extends WeekActivity {
+  activityId: number;
   weekNo: number;
 }
 
@@ -68,6 +82,7 @@ export interface ActivityFile {
 
 /** `GET …/activities/{id}`. */
 export interface ActivityDetail extends WeekActivity {
+  activityId: number;
   weekNo: number;
   description?: string | null;
   files?: ActivityFile[];
@@ -305,12 +320,13 @@ export async function lectureForEdit(courseId: Id, activityId: Id, minVersion: n
   throw new Error("강의 정보를 불러오지 못했습니다.");
 }
 
-/** The `lecture_weeks` activities of a week list, flattened with their week number. */
+/** The native `lecture_weeks` activities of a week list, flattened with their week number. Imported school rows are not among them. */
 export function lectureRows(weeks: CourseWeek[] | null | undefined): LectureRow[] {
   const rows: LectureRow[] = [];
   for (const week of Array.isArray(weeks) ? weeks : []) {
     for (const activity of Array.isArray(week.activities) ? week.activities : []) {
-      if (activity.type === "lecture_weeks") rows.push({ ...activity, weekNo: week.weekNo });
+      const { activityId } = activity;
+      if (activity.type === "lecture_weeks" && activity.origin !== "school" && typeof activityId === "number") rows.push({ ...activity, activityId, weekNo: week.weekNo });
     }
   }
   return rows;
