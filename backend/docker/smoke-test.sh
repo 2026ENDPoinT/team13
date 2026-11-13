@@ -52,7 +52,10 @@ pass "GET /api/auth/csrf answers through the api container"
 
 # 3-1. 프론트엔드 서버(Frontend-final server.mjs)를 거친 상태 변경 요청. 그 proxy는 Host를 api 주소로 바꾸고, 브라우저의 Origin과
 #      Sec-Fetch-Site를 그대로 넘기며 X-Forwarded-Host·Proto를 붙인다. 여기서 curl이 보내는 Host(127.0.0.1:port)가 그 바뀐 Host다.
-#      허용 Origin에서 온 요청은 Origin·CSRF 검사를 지나 인증 단계의 401이 되고, 다른 Origin은 X-Forwarded-Host를 맞춰도 403이다.
+#      이 단계가 보이는 것: 배포한 .env의 허용 Origin에서 온 요청은 Host가 바뀌어도 Origin·CSRF 검사를 지나 인증 단계의 401이 되고,
+#      목록에 없는 Origin은 403이다. 허용 목록이 있으면 검사는 Origin만 보므로, X-Forwarded-Host를 믿지 않는다는 성질은 여기서
+#      확인하지 않는다. 그것은 허용 목록이 빈 자기 origin 비교에서 실제 Tomcat으로
+#      StackBackendApplicationTests.selfOriginCheckIgnoresForwardedHostEvenWhenItMatchesTheOrigin이 확인한다.
 frontend_origin="$(docker compose exec -T api env | sed -n 's/^ASTRA_SESSION_ALLOWED_ORIGINS=//p' | cut -d, -f1 | tr -d '\r ')"
 [[ -n "${frontend_origin}" ]] || fail "api has no ASTRA_SESSION_ALLOWED_ORIGINS"
 xsrf="$(sed -n 's/^[Ss]et-[Cc]ookie: XSRF-TOKEN=\([^;]*\).*/\1/p' <<<"${headers}" | head -n 1 | tr -d '\r')"
@@ -69,11 +72,18 @@ status="$(through_frontend_proxy "https://evil.example" "${body}")"
 [[ "${status}" == 403 ]] && jq -e '.detail | contains("출처")' "${body}" >/dev/null \
 	|| fail "POST from another origin answered ${status}, expected 403 from the origin check: $(cat "${body}")"
 rm -f "${body}"
-pass "a mutating request from ${frontend_origin} passes the origin check behind the proxy; another origin is refused"
+pass "a mutating request from the allowed origin ${frontend_origin} passes the origin and CSRF checks with Host rewritten; an unlisted origin is refused"
 
-# 3-2. /doc, /vod 전달 cookie 서명이 없으면 api가 시작하지 않는다(ADR-0009). 1번에서 api가 떴으므로 서명이 있다.
-docker compose exec -T api env | grep -qx 'ASTRA_DELIVERY_REQUIRED=true' || fail "api does not require a /doc, /vod signer"
-pass "api started with a /doc, /vod cookie signer"
+# 3-2. /doc, /vod 전달 cookie 서명. 이 구성에는 로그인한 사용자와 변환한 문서가 없어 cookie를 받아 /doc를 열어 볼 수 없다.
+#      대신 두 가지를 본다. 떠 있는 api는 ASTRA_DELIVERY_REQUIRED=true로 시작했다. 같은 이미지와 .env에서 서명만 끄면 api가
+#      시작하지 않고 무엇을 넣을지 알린다. 그러므로 1번에서 healthy가 된 api에는 서명기가 있다(ADR-0009 8번).
+docker compose exec -T api env | grep -qx 'ASTRA_DELIVERY_REQUIRED=true' || fail "api does not run with ASTRA_DELIVERY_REQUIRED=true"
+if unsigned="$(timeout 240 docker compose run --rm --no-deps -e ASTRA_DELIVERY_ORIGIN_ENABLED=false api 2>&1)"; then
+	fail "api started without a /doc, /vod cookie signer"
+fi
+grep -q 'astra.delivery.required=true' <<<"${unsigned}" \
+	|| fail "api without a signer did not fail with the delivery message: $(tail -n 20 <<<"${unsigned}")"
+pass "api refuses to start without a /doc, /vod cookie signer, so the healthy api has one"
 
 # 4. /actuator는 공개 port의 경로에 없다.
 status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' "http://${api_port}/actuator/health")"
