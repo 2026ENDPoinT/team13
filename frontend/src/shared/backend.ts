@@ -239,12 +239,14 @@ subscribe((next) => {
   settleOwner(next.status === "ready" && next.me && next.me.userId != null ? String(next.me.userId) : null);
 });
 
-// Another tab logged out or signed in as someone else: drop this tab's copy at once, then re-read the shared session.
+// Another tab logged out or signed in as someone else: a tab that held a user's data drops its copy at once;
+// a signed-out tab holds none and only follows. Either way, re-read the shared session.
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
-    if (event.key !== OWNER_KEY || tabOwner == null || event.newValue === tabOwner) return;
+    if (event.key !== OWNER_KEY || tabOwner === undefined || event.newValue === tabOwner) return;
+    const held = tabOwner;
     tabOwner = event.newValue;
-    signOut();
+    if (held != null) signOut();
     void connect();
   });
 }
@@ -260,10 +262,11 @@ export function onSignOut(fn: () => void): void {
 
 /**
  * False while this tab holds a user's data that is no longer the stored owner's (another tab logged out or
- * signed in as someone else and this tab has not caught up): it must not write that data back.
+ * signed in as someone else and this tab has not caught up): it must not write that data back. A tab that
+ * holds no user's data (sample mode, not settled yet, signed out) may always save.
  */
 export function mayStoreUserData(): boolean {
-  return tabOwner === undefined || tabOwner === storedOwner();
+  return tabOwner == null || tabOwner === storedOwner();
 }
 
 /** The institution time zone id ("Asia/Seoul", "UTC", "+09:00"); the backend default until read. */

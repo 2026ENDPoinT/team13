@@ -225,17 +225,22 @@ export interface FollowOptions {
   resetScroll?: boolean;
 }
 
+// A server logout in flight: further 로그아웃 clicks are ignored (one POST, one logged-out history entry).
+let loggingOut = false;
+
 /** What an in-app link does when clicked: navigate, switching role or logging out when asked. */
 export function followLink(href: string, opts: FollowOptions = {}) {
   if (opts.logout) {
     // Signed in to the server: end that session first (as the backend strip's 로그아웃 does). A confirmed end
     // empties every per-user cache and saved input (`onSignOut`), then the logged-out page shows; a failed one
     // keeps the user where they are, still signed in, and says so.
+    if (loggingOut) return;
     if (backendStatus() === "ready") {
+      loggingOut = true;
       logoutBackend().then(
         () => navigate("/ilos/lo/logout.acl", { logout: true, serverLogout: true }),
         (error: unknown) => toast(error instanceof Error ? error.message : String(error)),
-      );
+      ).finally(() => { loggingOut = false; });
     } else navigate("/ilos/lo/logout.acl", { logout: true });
     return;
   }
