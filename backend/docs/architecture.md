@@ -55,6 +55,7 @@
 | [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음, 내 문서(PDF)는 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 바이트는 업로드 흐름(용도 `study_recording`·`study_document`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 내보낸다 |
 | [ADR-0042](adr/0042-school-activity-import.md) | 학번·학교 비밀번호 로그인 때 그 학생의 학교 session으로 과목마다 학교 강의실 첫 화면을 차례로 읽어 주차·학습활동 목록과 본인 완료 표시를 두고, 학생의 강의실 주차 목록에 `origin: "school"` 행으로 붙인다. 로그인은 짧게만 기다리고 나머지는 뒤에서 이어 가며, 학교 session은 그 작업이 끝나면 버린다. 내용(파일, 영상, 제출물)은 가져오지 않고 학교 e-Class에서 연다 |
 | [ADR-0043](adr/0043-school-content.md) | 학교 로그인으로 열린 학교 session(쿠키)을 STack session에 붙여 메모리에 두고(로그아웃·만료 때 닫는다), 학생이 STack에서 학교 자료·공지·과제를 열 때 그 학생의 학교 session으로 학교 상세를 읽어 서비스 자료·공지·과제 모양으로 준다. 학교 파일(자료·공지·과제 첨부)은 학생이 열 때 받아 과목 파일(용도 `school_file`)로 저장해 같은 과목 구성원이 서비스 파일 경로로 함께 연다. 학생 본인이 낸 과제 파일은 주인 있는 학교 파일이라 그 학생만 연다. 목록과 할 일은 학교 쪽 상태를 바꾸지 않는 화면이나 로그인 때 가져온 행만 쓰고(공지의 안 읽은 수도 그 목록에서 센다), 영상 학습창·2차 인증·출석 요청, 공지 확인, 제출은 부르지 않는다 |
+| [ADR-0044](adr/0044-screen-assistant.md) | 화면 AI 도우미(`POST /api/assistant`)는 백엔드가 맡는다. 브라우저는 문장과 지금 위치만 보내고, 분명한 명령(강의실 이동, 할 일 목록, 오늘 마감, 다음 할 일)은 규칙으로, 나머지는 서버가 로그인한 사용자의 과목·할 일·마감·공지로 만든 목록을 모델에 한 번 보내 고르게 한다. 모델은 요청 안에서만 쓰는 이름으로만 고르고 서버가 그 이름을 화면 주소로 바꾼다. 같은 모델 port와 설정, 외부 AI 스위치를 쓰고, 사용자별·전체 한도, 20초 제한, 감사 기록(본문 없음)을 둔다 |
 
 ## 2. 부하 가정
 
@@ -151,7 +152,7 @@ flowchart LR
 | `summary` | 강의 자료의 쪽별 요약 생성 작업, 후보 확인, 게시, 조회 | `files`, `identity` |
 | `integration` | 학교 IdP, 학사 동기화, AI, 외부 allowlist client | port를 정의한 모듈의 공개 API(`identity`, `catalog`, `learning`, `files`, `summary`) |
 | `shared` | 오류 형식, requestId, 요청 제한, 멱등 원장, 감사 기록. 목록 query 규칙은 첫 페이지 목록과 함께 만든다 | 없음. 모든 모듈이 쓸 수 있다 |
-| `home` | 메인 화면 집계 조회(`/api/me/home`), 담당자 메인(`/api/me/teaching`), 할 일 목록, 캘린더. 쓰기 없음 | `catalog`, `learning`, `assessment`, `communication`의 공개 API. 어떤 모듈도 `home`에 의존하지 않는다 |
+| `home` | 메인 화면 집계 조회(`/api/me/home`), 담당자 메인(`/api/me/teaching`), 할 일 목록, 캘린더, 화면 AI 도우미(`POST /api/assistant`). 도메인 쓰기 없음(도우미의 감사 기록만 쓴다) | `catalog`, `learning`, `assessment`, `communication`의 공개 API, 도우미의 모델 port(`summary.api.LlmClient`). 어떤 모듈도 `home`에 의존하지 않는다 |
 
 의존 방향은 [db/README.md](../db/README.md) 2.1절의 FK 방향을 따른다. 순환은 의존 역전으로 끊는다. 이벤트를 써도 listener가 발행 측 타입을 참조하면 의존이 생기므로 순환을 끊지 못한다.
 
@@ -159,6 +160,7 @@ flowchart LR
 - 캘린더: 학사일정은 `catalog`, 활동 마감은 `learning`에 있어 둘을 함께 읽는 `GET /api/me/calendar`는 `home`에 둔다. 시간표는 `catalog`의 테이블만 쓰므로 `catalog`에 둔다.
 - 할 일: 별도 테이블 없이 활성 수강 × 공개 활동 × serverTime으로 계산한다([reference/db/design/20_catalog.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/db/design/20_catalog.md)). 계산에 `learning`, `assessment`가 필요하므로 `home`에 둔다.
 - 담당자 메인: 채점 대기(`assessment.api.GradingQueue`), 변환 중·실패 영상(`learning.api.PendingVideos`), 답을 기다리는 질문(`communication.api.OpenQuestions`), 처리할 신청(`catalog.api.EnrollmentRequests`)을 각 모듈이 과목 ID 목록 하나로 세어 주고 `home`이 모은다. 과제 채점 대기는 수강생 명단이 필요하므로 `assessment`가 `catalog.api.CourseRosters`의 여러 과목 조회로 명단을 읽는다.
+- 화면 AI 도우미: 답에 쓰는 과목, 할 일, 마감, 공지가 모두 `home`이 이미 모으는 자료라 `home`에 둔다. 가져온 학교 활동과 공지는 `learning`이 `learning.api.SchoolCourseItems`로 가져온 행만 내준다(학교에 요청하지 않는다). 모델 호출은 `summary`가 공개한 `LlmClient` port 하나를 쓰고 다른 client를 두지 않는다. 외부 AI 스위치는 `astra.llm.enabled`와 port bean이 있는지로 `summary`의 `LlmGate.available`과 같이 본다([ADR-0044](adr/0044-screen-assistant.md)).
 - 외부 연동: `identity`가 `ExternalIdentityProvider` 같은 포트를 공개 API로 정의하고 `integration`이 구현한다. 다른 모듈도 외부 결과가 필요하면 같은 방식을 쓴다.
 - 요약과 전달: `summary`가 `LlmClient` port를, `files`가 문서 변환 port와 전달 서명 port를 공개 API로 정의하고 `integration`이 구현한다. S3를 읽고 쓰는 모듈은 `files` 하나다([ADR-0007](adr/0007-confidential-content-placement.md)).
 - 활동 쪽 목록과 평가 ID: 주차 목록, 할 일, 캘린더의 행이 과제·퀴즈·설문 화면으로 바로 이어지도록 `learning`이 `learning.api.ActivityTargets` port를 정의하고 `assessment`가 구현한다. `learning`은 `assessment`에 의존하지 않는다. 활동 ID를 모아 쿼리 한 번으로 묻는다.
@@ -510,6 +512,7 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 | `GET /api/me/todo?courseId=&cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수. 평가 활동에는 `assignmentId`·`quizId`·`surveyId` 중 하나. 학교 e-Class에서 가져온 과제·시험·설문(마감이 있고, 열렸고, 만료·오프라인 표시가 없고, 본인 완료 표시가 없는 것)이 같은 순서로 섞이고 `activityId: "school-<id>"`, `origin: "school"`, `schoolUrl`을 가진다(평가 ID 없음, 학교에 요청하지 않는다). `courseId`를 주면 그 과목만(내 과목이 아니면 404, 담당 과목이면 비어 있다). cursor는 같은 `courseId`로만 이어 보낸다 |
 | `GET /api/me/todo/count?courseId=` | 로그인한 사용자 | `{serverTime, total, truncated}`. 목록과 같은 값을 항목 없이. `courseId`는 목록과 같다 |
 | `GET /api/me/teaching` | 로그인한 사용자. 담당 과목만 센다 | 담당자 메인(교수 홈의 통계 줄, 확인할 일, 다가오는 일정). 원본에 같은 화면이 없는 새 계약이다. `courses[]`는 담당 과목마다 채점 대기 과제 수와 제출 수, 채점 대기 퀴즈 수와 응시 수, 변환 실패·변환 중 영상 콘텐츠 수, 답을 기다리는 질문 수, 처리할 신청 수(처리 권한이 없으면 null). `tasks[]`는 그 행(유형, 과목, 제목, 수, `activityId`·`assignmentId`·`quizId`·`questionId`), `upcoming[]`은 지금부터 14일 안에 시작(`open`)하거나 마감(`close`)하는 담당 과목 활동이고 행은 `GET /api/me/calendar`의 활동과 같은 속성에 `event`, `at`을 더했다. 담당 과목이 없으면(학생) 목록이 모두 비어 있다. 404를 쓰지 않는 것은 `/api/me/home`이 담당 과목에 빈 할 일을 주는 것과 맞춘 것이다 |
+| `POST /api/assistant` | 로그인한 사용자(CSRF token 필요) | 화면 AI 도우미([ADR-0044](adr/0044-screen-assistant.md)). 본문 `{text, context?: {courseId?, activityId?, history?: [{text, say}]}}`(16 KiB 이하, 그 밖의 필드는 400). 응답 `{say, actions: [{label, href, external}] (5개 이하), source: rule\|model}`. `href`는 화면 주소이고, 가져온 학교 영상·자료·과제·공지도 STack 상세다. `external: true`는 STack 화면이 없는 가져온 시험·설문 등의 학교 e-Class 주소뿐이다. 규칙 답은 모델을 부르지 않는다. 모델 답은 그 사용자의 과목, 할 일, 7일 안의 마감, 지금 과목의 이번 주와 다음 주 마감과 가져온 학교 활동, 최근 공지(가져온 학교 공지 포함)만 보낸다. 413 `body_too_large`, 429 `rate_limited`(`Retry-After`), 503 `llm_disabled`(`astra.assistant.enabled=false`면 모두, 외부 AI가 꺼졌거나 제공자가 없으면 모델 답만), 502 `assistant_upstream_error`·`assistant_invalid_response`, 504 `assistant_timeout`. 요청마다 감사 기록 `assistant.ask` |
 
 담당자 메인의 수는 각 모듈이 정한다. 과제 채점 대기는 수강생 명단(`CourseRosters`)에 있는 학생의 최종 제출 가운데 과제 성적 항목 점수가 빈 것이다. 과제 목록의 `submittedCount`에서 성적부의 `gradedCount`를 뺀 규칙과 같고, 수강을 취소한 학생의 제출은 성적부에서 채점할 수 없으므로 세지 않는다. 퀴즈는 퀴즈 목록의 `awaitingGradingCount`(수동 채점을 기다리는 응시)다. 영상은 지우지 않은 콘텐츠의 `video_state`가 `failed` 또는 `processing`인 것이다. 질문은 답글이 없고 해결로 표시하지 않았고 FAQ가 아닌 질의응답 질문이다. 신청은 신청 목록(`GET /api/courses/{courseId}/enrollment-requests`)과 같이 교수와 비정규 담당자만 처리하는 비정규 `PENDING`, 청강 `REQUESTED`다. 지운 활동, 폐강 과목은 넣지 않는다. 과목 수와 관계없이 쿼리는 14개 이하이고(DB 시계, 과목, 채점 대기 5, 영상 1, 질문 2, 신청 1, 마감 1, 시작 1, 평가 ID 1), `TeachingApiTests`가 DB 문장 수로 확인한다. 확인할 일의 질문은 오래 기다린 순서로 20개, 전체는 100개, 다가오는 일정은 50개까지이고 넘으면 `tasksTruncated`, `upcomingTruncated`다. 과목별 수는 자르지 않는다.
 
