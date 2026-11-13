@@ -1,0 +1,42 @@
+# ADR-0040 학습실의 내 폴더와 강의 녹음은 서버에 소유자 한 사람의 것으로 두고, 녹음 바이트는 업로드 흐름으로 받아 소유자에게만 구간 응답으로 내보낸다
+
+## 상태
+채택 (2026-11-13)
+
+## 맥락
+프론트엔드 학습실은 로그인한 사용자에게도 두 가지를 브라우저에만 둔다. 다른 기기에서는 보이지 않는다.
+
+- 폴더와 배치(`public/app/shared/study-folders.js`, localStorage): 과목 학습실 안의 한 단계 폴더(`id`, `courseId`, 같은 과목 안에서 겹치지 않는 `name`, `createdAt`)와 항목 ID → 폴더 ID 사전. 배치가 없는 항목은 과목 맨 위에 있다. 둘 수 있는 항목은 서버 강의자료 PDF(`srv-<fileId>`)와 녹음이다. 화면은 폴더 만들기와 항목 두기만 한다.
+- 강의 녹음(`public/app/shared/course-recordings.js`, IndexedDB): 마이크·탭 녹음과 가져온 오디오 파일. 제목, 출처(`mic`, `tab`, `audio`), MIME, 크기, 길이(ms), 녹음 시작 일시, 바이트, 가져온 파일 이름. 목록, 재생(탐색), 내려받기, 지우기를 한다. "Nothing is uploaded"라고 적혀 있다.
+
+소유자는 둘을 서버에 두기로 했다. 녹음은 학생 본인의 개인 콘텐츠다. 강의 녹음은 수업 중 다른 사람의 목소리와 교수자의 강의를 담는다.
+
+이미 있는 것: 업로드 흐름과 용도별 정책([ADR-0010](0010-upload-acceptance.md)), 내용 단위 악성코드 검사([ADR-0018](0018-malware-scan-clamd.md)), 파일 참조와 GC([ADR-0011](0011-material-deletion.md)), 멱등 원장과 version 전제 조건([ADR-0012](0012-idempotency-ledger-and-audit.md), ADR-0011 2번), 사용자별 사용량 행으로 차례를 정하는 개인 파일함([ADR-0028](0028-filebox.md)).
+
+## 결정
+1. **자리**: `files` 모듈의 `files.studyroom` 패키지에 둔다. S3를 읽고 쓰는 모듈은 `files` 하나이고([ADR-0007](0007-confidential-content-placement.md)), 업로드·검사·파일 참조·파일함이 이미 거기 있으며, 과목 구성원 확인에 쓰는 `catalog`에 이미 의존한다. 강의자료를 지금 읽을 수 있는지는 `files.api.FileAccess`(부모 모듈의 판정)로 묻는다. 새 모듈 의존이 생기지 않는다. 학습 대화(`study_chats`, `summary`)와 이름을 가르려고 테이블과 경로는 `study_room`이다.
+2. **API**: `/api/me/study-room/**`. 사용자는 session에서만 정한다. 과목 보기 하나(`GET …/courses/{courseId}`)가 폴더, 녹음, 배치, 사용량을 함께 준다. 화면이 한 과목을 그릴 때 읽는 것이 이 넷이기 때문이다. 경로, 본문, 오류 코드, 프론트엔드 함수별 대응과 첫 로그인 가져오기는 [architecture.md](../architecture.md) 7.21절에 있다.
+3. **소유와 권한**: 폴더, 녹음, 배치는 소유자 한 사람의 것이다. 남의 ID는 없는 ID와 같은 404이고, 남의 ID가 섞인 요청은 아무것도 바꾸지 않는다(SEC-08). 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목 구성원이어야 하고, 강의자료 배치는 폴더 과목에서 그 파일을 읽을 수 있어야 한다. 읽기, 이름 바꾸기, 순서 바꾸기, 지우기는 소유만 본다. 담당 교수, 조교, 운영자, break-glass 관리자가 남의 학습실을 읽는 경로는 없다.
+4. **차례와 엇갈림**: 한 사용자의 학습실 변경은 새 테이블 `study_room_quotas`의 그 사용자 행을 먼저 `FOR UPDATE`로 잠근 뒤 READ COMMITTED transaction에서 하고, 교착이나 잠금 대기 초과면 통째로 다시 한다(3번까지). 파일함(ADR-0028 2번)과 같은 방식이다. 잠금 순서는 `study_room_quotas → study_room_folders → study_room_recordings → study_room_placements → file_blobs → files → upload_sessions`다. 이름 바꾸기, 지우기, 배치는 `If-Match`로 version을 받는다(없으면 428, 다르면 409 `version_conflict`). 배치가 없는 항목에 두는 요청은 `If-Match: "0"`이다(출석 칸의 version과 같은 규칙). 순서 바꾸기는 header 하나에 version을 여러 개 담지 못하므로 본문에 그 과목 폴더 전부를 새 순서와 version으로 받는다(ADR-0028 10번). 목록이 지금 폴더와 다르면 409 `folder_set_changed`다. 그래서 두 탭이 같은 version으로 옮기거나 순서를 바꾸면 하나만 반영되고 다른 하나는 409를 받아 다시 읽는다.
+5. **폴더**: 과목마다 한 단계다. 이름은 1~60자, 경로 구분자와 제어 문자는 받지 않고, 같은 과목 안에서 대소문자 구분 없이 유일하다(DB 제약, 409 `name_conflict`). 새 폴더는 끝에 붙는다(`folder_position` = 최대 + 1). 과목마다 50개까지(`astra.study-room.max-folders-per-course`). 만들기는 `Idempotency-Key`를 받는다(공용 원장). 폴더를 지우면 그 안의 배치도 지워 항목이 과목 맨 위로 돌아간다. 녹음은 지우지 않는다.
+6. **녹음 바이트**: 새 업로드 용도 `study_recording`(`upload_policies`, multipart)으로 받는다. 이름 정규화, 확장자 목록(`webm, ogg, mp3, m4a, mp4, wav, aac, flac`), 크기 상한, 내용 signature 검사(`ContentInspector`에 오디오 규칙을 더했다), SHA-256 중복 제거, 검사기 상태는 다른 업로드와 같다. 업로드 기록과 같은 transaction에서 용량을 잡고 `study_room_recordings` 행(과 폴더가 있으면 배치)을 만들고 업로드를 `attached`로 둔다. 파일은 과목 없이(`files.course_id` NULL) 기록하고 첨부하지 않는다. `FileAccess`는 첨부 부모가 있는 파일만 허락하므로 과목 파일 내려받기, 미리보기, 썸네일, 요약, 학습 대화, 첨부 확정, 파일함 다시 쓰기 어느 것도 이 파일을 열지 못한다.
+   - 재생 MIME은 서버가 내용으로 판정한 형식의 audio 형식(`audio/webm`, `audio/ogg`, `audio/mpeg`, `audio/mp4`, `audio/wav`, `audio/aac`, `audio/flac`)이다. client의 `Content-Type`은 쓰지 않는다.
+   - 제목(1~200자), 출처, 길이(1 ms~24시간), 녹음 시작 일시(지금 + 5분보다 늦지 않음)는 브라우저가 잰 값을 그대로 둔다. 서버는 오디오를 해석하지 않는다.
+   - `Idempotency-Key`는 업로드 key이고, 요청 지문에 과목, 제목, 출처, 길이, 시작 일시, 폴더를 넣는다. 같은 key에 다른 값이면 409 `idempotency_conflict`다. 첫 로그인 가져오기의 재시도가 녹음을 두 번 만들지 않는다.
+   - 크기 상한은 50 MB다. 검사기가 받는 크기(`astra.scan.clamd.max-stream-bytes` 64 MB, ADR-0018)보다 작아야 검사가 끝나기 때문이다. Opus 48 kbit/s면 2시간 20분쯤이다. 브라우저 기본 bitrate로는 75분 강의가 넘을 수 있어 화면이 `audioBitsPerSecond`를 정한다.
+   - 스트림 업로드(`/api/uploads/stream`)는 쓰지 않았다. 50 MB는 multipart 상한 안이고, 스트림 업로드에는 업로드 기록과 같은 transaction에서 용량과 행을 잡는 자리(`Placement`)가 없다. 상한을 검사기 한도 위로 올리면 그때 그 자리를 스트림 업로드에 더한다.
+7. **재생**: `GET …/recordings/{id}/content`는 소유자만 받는다. Range 하나(`bytes=a-b`, `a-`, `-n`)는 206과 `Content-Range`로 그 구간만 S3 ranged GET으로 흘려 보내 오디오 탐색이 된다. 내용 밖이면 416과 `Content-Range: bytes */size`, 여러 구간이나 형식이 틀린 header는 무시하고 200 전체다(RFC 9110 14.2). 응답 header는 다른 내려받기와 같다(`attachment`, `nosniff`, `CSP sandbox`, `private, no-store`). media element는 `Content-Disposition`과 관계없이 재생한다. 검사 전이면 409 `not_ready`, 거부했으면 409 `content_rejected`다. 감사 기록은 처음부터 읽는 요청만 남긴다. 탐색마다 남기면 재생 한 번에 수십 행이 된다.
+8. **용량**: 사용자마다 녹음 바이트 합 2 GB(`astra.study-room.quota`)와 녹음 500개(`max-recordings`)다. `study_room_quotas`에 잠근 뒤 세므로 동시에 올려도 넘지 않는다. 파일함 용량(`filebox_quotas`)과 따로 둔다. 파일함 화면이 보여 주는 사용량은 파일함 항목의 합이어야 하고, 녹음은 파일함 항목이 아니다. 같은 내용을 두 번 올려도 녹음마다 센다. 사용자가 보는 것은 녹음이기 때문이다.
+9. **지우기**: 폴더와 배치는 행을 지운다. 학습 기록도 아니고 다른 행이 가리키지 않는다. 녹음은 행과 배치를 지우고 `FileReferences.release`로 파일 참조를 놓고 업로드를 `deleted`로 둔다. 마지막 참조였으면 저장소 GC가 유예 시간 뒤 원본을 지운다(ADR-0011 5번). 사용량은 바로 준다. 감사 기록(`study_room.*`)에는 대상 ID만 남고 이름과 제목은 남지 않는다. 삭제 표시로 남기는 규칙([db/README.md](../db/README.md) 4절)을 따르지 않은 이유: 이 행들은 본인만 보는 개인 콘텐츠의 이름과 배치이고, 사용자가 지운 제목과 폴더 이름을 남기면 지우라는 요청을 따르지 않는 셈이 된다. 누가 언제 지웠는지는 감사 기록이 남는다.
+10. **강의자료가 사라지거나 과목을 잃으면**: 강의자료 배치는 지우지 않고 목록에서 뺀다. 자료를 숨겼다가 다시 열거나 수강이 돌아오면 다시 보인다. 지운 파일의 배치는 행으로 남지만 다시 보이지 않고, 폴더를 지울 때 함께 지워진다. 과목을 잃어도 내 폴더와 녹음은 남고, 내가 보고 받고 고치고 지울 수 있다(`GET …/recordings`는 모든 과목의 내 녹음이다). 새로 만들기만 막힌다.
+11. **LLM**: 녹음은 전사, 요약, 학습 대화, 모델 호출 어디에도 들어가지 않는다. 기존 동의 규칙([ADR-0032](0032-llm-consent-and-study-chat.md))은 교수자가 자기 강의 자료를 외부 모델에 보내는 데 대한 교수자 동의이고, 학생 녹음(다른 학생과 교수자의 목소리가 섞인 개인 콘텐츠)은 그 범위가 아니다. 녹음 파일은 첨부 부모가 없어 요약 작업과 학습 대화가 파일을 고르는 `FileAccess`를 통과하지 못한다.
+12. **보존**: 녹음과 폴더는 소유자가 지울 때까지 둔다. 학기가 끝나거나 과목을 잃어도 지우지 않는다. 기관 보존 정책이 없어 날짜를 지어내지 않는다(SC-07). 이 저장소에는 계정 삭제 흐름이 없다. 새 테이블은 `users`를 cascade 없이 가리키므로 사용자 행은 학습실 행이 남아 있는 동안 지워지지 않는다. 계정 삭제를 만들 때 그 흐름이 같은 transaction에서 녹음 파일 참조를 놓고(9번) 학습실 행을 지운다.
+
+## 결과와 트레이드오프
+- 다른 기기에서 같은 폴더와 녹음을 본다. 녹음은 학교 저장소에 남으므로 브라우저 고지("이 브라우저에만 저장")는 프론트엔드가 바꿔야 한다.
+- 녹음 업로드는 검사기가 판정할 때까지 재생할 수 없다(poll 간격 10초와 검사 시간). 화면은 `scanning`을 보여 주고 다시 읽는다.
+- 50 MB를 넘는 녹음은 받지 않는다. 더 긴 녹음을 받으려면 clamd `StreamMaxLength`와 `max-stream-bytes`를 함께 올리고 스트림 업로드에 기록 자리를 더해야 한다.
+- 폴더 순서는 화면에 순서 바꾸기가 생기기 전까지 만든 순서와 같다. 폴더 안 항목의 순서는 서버가 정하지 않는다(화면이 업로드·녹음 일시로 정렬한다).
+- 지운 강의자료의 배치 행은 폴더를 지울 때까지 남는다. 행 하나의 크기라 따로 정리하지 않는다.
+- 녹음 재생은 api가 S3에서 읽어 흘려 보낸다. CDN signed cookie(ADR-0009)로 넘기지 않은 이유: 소유자 한 사람만 받는 객체에 경로 단위 cookie를 발급하면 소유 판정이 요청마다가 아니라 cookie TTL 단위가 되고, 오디오는 작아 api 대역폭 부담이 작다.
+- 요청 제한 counter는 process 메모리에 있다(architecture.md 8절).

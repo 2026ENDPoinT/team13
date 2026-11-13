@@ -24,11 +24,14 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.ResultMatcher;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -541,6 +544,45 @@ class ScanFlowTests extends IntegrationTest {
 				SELECT reference_count, blob_state, CAST(purged_at IS NOT NULL AS SIGNED) AS purged FROM file_blobs
 				 WHERE file_blob_id = :id
 				""").param("id", blobId).query().singleRow();
+	}
+
+	@Test
+	void studyRoomRecordingsWaitForTheScannerAndInfectedOnesNeverPlay() throws Exception {
+		byte[] clean = ("OggS clean recording " + UUID.randomUUID()).getBytes(StandardCharsets.US_ASCII);
+		byte[] infected = ("OggS " + FakeClamd.EICAR + UUID.randomUUID()).getBytes(StandardCharsets.ISO_8859_1);
+		long ok = ApiClient.json(recording(clean, status().isCreated()).andExpect(jsonPath("$.state").value("scanning")))
+			.get("id")
+			.asLong();
+		long bad = ApiClient.json(recording(infected, status().isCreated()).andExpect(jsonPath("$.state").value("scanning")))
+			.get("id")
+			.asLong();
+		this.student.get("/api/me/study-room/recordings/" + ok + "/content")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("not_ready"));
+
+		drain();
+
+		this.student.get("/api/me/study-room/recordings/" + ok).andExpect(jsonPath("$.state").value("ready"));
+		this.student.get("/api/me/study-room/recordings/" + ok + "/content")
+			.andExpect(status().isOk())
+			.andExpect(content().bytes(clean));
+		this.student.get("/api/me/study-room/recordings/" + bad).andExpect(jsonPath("$.state").value("rejected"));
+		this.student.get("/api/me/study-room/recordings/" + bad + "/content")
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("content_rejected"));
+		// 거부한 내용은 다시 올려도 저장하지 않는다.
+		recording(infected, status().isUnprocessableContent()).andExpect(jsonPath("$.code").value("content_rejected"));
+	}
+
+	private ResultActions recording(byte[] content, ResultMatcher expected) throws Exception {
+		return this.student
+			.send(MockMvcRequestBuilders.multipart("/api/me/study-room/courses/" + this.course + "/recordings")
+				.file(new MockMultipartFile("file", "lecture.ogg", "audio/ogg", content))
+				.param("title", "녹음")
+				.param("source", "audio")
+				.param("durationMs", "1000")
+				.param("recordedAt", "2026-11-12T05:00:00Z"))
+			.andExpect(expected);
 	}
 
 	private ApiClient instructor() {

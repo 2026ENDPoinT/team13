@@ -152,7 +152,8 @@ class UploadService {
 			.orElseThrow(() -> rejected("content_mismatch", "파일 내용이 확장자와 맞지 않습니다."));
 		String sha = inspected.sha256();
 		String fingerprint = clientKey == null ? null
-				: fingerprint(purposeCode, courseId, name, size, sha, folderId);
+				: placement.request() == null ? fingerprint(purposeCode, courseId, name, size, sha, folderId)
+						: Idempotency.fingerprint(new PlacedUploadRequest(purposeCode, name, size, sha, placement.request()));
 		if (clientKey != null) {
 			Optional<Upload> replay = this.records.findByKey(userId, clientKey).map((k) -> sameRequest(k, fingerprint));
 			if (replay.isPresent()) {
@@ -337,6 +338,14 @@ class UploadService {
 	}
 
 	/**
+	 * 업로드와 함께 기록하는 행의 값(학습실 녹음의 과목, 제목, 길이 등)까지 같은 요청인지 보는 업로드의 지문 정규형.
+	 *
+	 * @param placed {@link Placement#request()}가 돌려준 값
+	 */
+	record PlacedUploadRequest(String purpose, String name, long sizeBytes, String sha256, Object placed) {
+	}
+
+	/**
 	 * 업로드를 어디에 둘지 정하는 쪽이 업로드 기록과 같은 transaction에서 하는 일. 파일함은 앞에서 용량을 잡고 뒤에서 항목을 만든다.
 	 * 잠금 순서를 지키도록 before는 blob을 잠그기 전에 부른다.
 	 */
@@ -349,6 +358,14 @@ class UploadService {
 		}
 
 		default void after(long fileId, long uploadId, String name) {
+		}
+
+		/**
+		 * 업로드와 함께 기록하는 값. null이 아니면 멱등 업로드의 요청 지문에 넣어, 같은 key로 같은 파일을 다른 값과 보내면 409
+		 * {@code idempotency_conflict}가 된다. 기본은 null이고 지문은 {@link UploadService#fingerprint}다.
+		 */
+		default Object request() {
+			return null;
 		}
 
 	}

@@ -63,6 +63,18 @@ public class ObjectStore {
 		}
 	}
 
+	/**
+	 * 객체의 한 구간(first~last, 둘 다 포함)만 읽는다. 오디오 탐색처럼 Range 요청에 답할 때 쓴다. 호출한 쪽이 stream을 닫는다.
+	 */
+	public Optional<InputStream> openRange(Bucket bucket, String key, long first, long last) {
+		try {
+			return Optional.of(this.s3.getObject((b) -> b.bucket(name(bucket)).key(key).range("bytes=" + first + "-" + last)));
+		}
+		catch (NoSuchKeyException ex) {
+			return Optional.empty();
+		}
+	}
+
 	public Optional<byte[]> get(Bucket bucket, String key) {
 		try {
 			return Optional.of(this.s3.getObjectAsBytes((b) -> b.bucket(name(bucket)).key(key)).asByteArray());
