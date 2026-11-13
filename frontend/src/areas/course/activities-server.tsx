@@ -23,7 +23,7 @@ import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
 import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import { todoLabel, koDateTime } from "../../shared/home-remote.ts";
 import { serverActivityHref } from "../../shared/activity-links.ts";
-import { windowText, lectureMessage, PROGRESS_STATE, ACTIVITY_PHASE, type CourseWeek } from "../../shared/lectures-remote.ts";
+import { windowText, lectureMessage, PROGRESS_STATE, ACTIVITY_PHASE, type CourseWeek, type WeekActivity } from "../../shared/lectures-remote.ts";
 import { materialMessage, courseFiles, filesKey, loadMoreFiles, type CourseFiles, type MaterialFile } from "../../shared/materials-remote.ts";
 import { assignmentMessage, periodText, PHASE as REPORT_PHASE, STATUS as REPORT_STATUS } from "../../shared/assignments-remote.ts";
 import { quizMessage, PHASE as QUIZ_PHASE, ATTEMPT_STATUS } from "../../shared/quizzes-remote.ts";
@@ -100,9 +100,9 @@ function weekRange(week: { startsOn?: string | null; endsOn?: string | null } | 
 function periodOf(row: ActivityRow): string {
   // The row's item is the server record of its type; this screen reads only ServerItem fields.
   const item = row.item as ServerItem;
-  if (row.type === "report") return periodText(item);
-  if (row.type === "video") return windowText(item);
-  if (row.type === "material") return row.openAt ? `${koDateTime(row.openAt)} 공개` : "";
+  if (!row.school && row.type === "report") return periodText(item);
+  if (!row.school && row.type === "video") return windowText(item);
+  if (!row.school && row.type === "material") return row.openAt ? `${koDateTime(row.openAt)} 공개` : "";
   if (!row.closeAt) return row.openAt ? `${koDateTime(row.openAt)} ~` : "";
   return row.openAt ? `${koDateTime(row.openAt)} ~ ${koDateTime(row.closeAt)}` : `~ ${koDateTime(row.closeAt)}`;
 }
@@ -121,8 +121,39 @@ function lectureState(row: ActivityRow, item: ServerItem, instructor: boolean): 
   return [phase, `진도 ${percent}% · 인정 기준 충족 ${met}/${progress.length}`].filter(Boolean).join(" · ");
 }
 
+/** 학습시간(초) "25분 5초", "1시간 2분". 수가 아니면 빈 글. */
+function learningTime(seconds: unknown): string {
+  const total = typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : null;
+  if (total == null) return "";
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h ? `${h}시간 ${m}분` : m ? `${m}분${s ? ` ${s}초` : ""}` : `${s}초`;
+}
+
+/**
+ * 학교 e-Class에서 가져온 행의 상태: 본인 완료(`done`), 미완료(진행 중인데 `done: false`), 아니면 서버 시계의 구간.
+ * 영상은 출석 차시와 학습시간, 시험은 오프라인 표시를 붙이고, 끝에 그 행이 e-Class에서 열린다는 것을 적는다.
+ */
+function schoolState(row: ActivityRow): string {
+  // A school row's item is its week activity.
+  const item = row.item as WeekActivity;
+  const phase = ACTIVITY_PHASE[row.phase || ""] || "";
+  const own = row.done ? "완료" : row.missing ? "미완료" : phase || (row.href ? "e-Class" : "열 수 없음");
+  const time = row.type === "video" ? learningTime(item.learningTimeSec) : "";
+  return [
+    own,
+    row.done && row.phase && row.phase !== "open" ? phase : "",
+    row.type === "video" && item.attendance ? `출석 ${item.attendance}` : "",
+    time ? `학습시간 ${time}` : "",
+    item.offline === true ? "오프라인" : "",
+    row.href ? "e-Class에서 열기" : "e-Class 주소 없음",
+  ].filter(Boolean).join(" · ");
+}
+
 /** 행 오른쪽의 상태 글. 학생은 본인 상태와 서버 phase, 담당자는 서버의 수. */
 function stateText(row: ActivityRow, instructor: boolean): string {
+  if (row.school) return schoolState(row);
   // The row's item is the server record of its type; this screen reads only ServerItem fields.
   const item = row.item as ServerItem;
   const status = item.status || "";
@@ -163,7 +194,7 @@ function rowNode(row: ActivityRow, kj: string): ReactNode {
   const label = TYPE_LABEL[type] || todoLabel(row.kind);
   const state = stateText(row, instructorIn(kj));
   const detail = [label, row.weekNo == null ? "" : `${row.weekNo}주`, periodOf(row), state].filter(Boolean).join(" · ");
-  return <CompactActivityRow key={row.key} id={row.key} type={type} title={row.title} label={label} href={row.href} done={row.done} status={row.type === "other" ? "열 수 없음" : state.split(" · ")[0]} detail={detail} />;
+  return <CompactActivityRow key={row.key} id={row.key} type={type} title={row.title} label={label} href={row.href} done={row.done} status={row.type === "other" ? "열 수 없음" : state.split(" · ")[0]} detail={detail} external={row.school === true} />;
 }
 
 /** 실패한 부분 목록 안내와 다시 받기. 받아 둔 내용이 있으면 그것은 그대로 보인다. */
@@ -252,7 +283,9 @@ function RemoteRoom({ screen, ctx, course }: { screen: Screen; ctx: ScreenCtx; c
     );
   }
 
-  const next = rows.find((row) => row.href && row.missing) || rows.find((row) => row.href && row.ongoing && !row.done);
+  // 이어서 학습하기는 이 서비스의 행이 먼저다. 학교에서 가져온 행만 있는 과목에서만 다음 학교 행(새 탭)으로 간다.
+  const pool = rows.some((row) => !row.school) ? rows.filter((row) => !row.school) : rows;
+  const next = pool.find((row) => row.href && row.missing) || pool.find((row) => row.href && row.ongoing && !row.done);
   return (
     <RoomLayout
       courseId={kj}
@@ -262,6 +295,7 @@ function RemoteRoom({ screen, ctx, course }: { screen: Screen; ctx: ScreenCtx; c
       meta={[course.en, course.time, course.code].filter(Boolean).join(" · ")}
       tags={roomTags(course, rows)}
       nextHref={next?.href}
+      nextExternal={next?.school === true}
       types={present.map((key) => [key, TYPE_LABEL[key] || todoLabel(key)])}
       type={type}
       status={status}

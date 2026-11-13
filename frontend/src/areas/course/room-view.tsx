@@ -19,6 +19,8 @@ interface RoomLayoutProps {
   meta: string;
   tags: string[];
   nextHref?: string | null;
+  /** `nextHref`가 학교 e-Class 주소다: 새 탭의 일반 링크로 열고 그것을 알린다. */
+  nextExternal?: boolean;
   types: [string, string][];
   type: string;
   status: string;
@@ -41,7 +43,7 @@ export function CoursePlanLink({ courseId }: { courseId: string }) {
 
 /** 목업과 서버는 내용만 전달하고 강의실의 DOM·버튼·주차 표현은 여기서 함께 쓴다. */
 export function RoomLayout(props: RoomLayoutProps) {
-  const { courseId, term, title, instructor, meta, tags, nextHref, types, type, status, weeks, week, unit, onFilter, onWeek, children } = props;
+  const { courseId, term, title, instructor, meta, tags, nextHref, nextExternal, types, type, status, weeks, week, unit, onFilter, onWeek, children } = props;
   return (
     <section className="crs" data-area="course">
       <article className="crs-hero">
@@ -54,7 +56,9 @@ export function RoomLayout(props: RoomLayoutProps) {
           <p className="crs-hero-meta">{meta}</p>
           <div className="crs-tags">{tags.map((tag) => <span key={tag} className="crs-tag">{tag}</span>)}</div>
         </div>
-        {nextHref ? <Link href={nextHref} className="btn btn-primary">이어서 학습하기</Link> : null}
+        {!nextHref ? null : nextExternal
+          ? <a href={nextHref} className="btn btn-primary" target="_blank" rel="noopener noreferrer" aria-label="이어서 학습하기 — 학교 e-Class에서 열기(새 탭)">이어서 학습하기<Icon name="ext" /></a>
+          : <Link href={nextHref} className="btn btn-primary">이어서 학습하기</Link>}
       </article>
       <CoursePlanLink courseId={courseId} />
       <div className="crs-filters">

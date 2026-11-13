@@ -146,7 +146,8 @@ export function roomEntry(courseId: Id): RoomEntry {
   };
   const lectures = byActivity(dataOf(lectureCatalog, courseKey(courseId)));
   const weeks = weeksOf(weeksData).map((week): RoomWeek => {
-    const rows = list(week.activities).map((activity) => {
+    // 학교 e-Class에서 가져온 행(`origin: "school"`)은 그 사용자 본인의 학교 활동이라 담당자의 공개·삭제 명령 대상이 아니다.
+    const rows = list(week.activities).filter((activity) => activity.origin !== "school").map((activity) => {
       const type = activity.type;
       if (type === "lecture_weeks") return rowOf(type, week.weekNo, activity, null, lectures.get(activity.activityId) || null);
       const pool = pools[type] as Map<number | string | undefined, RoomItem> | undefined; // only four types have a pool

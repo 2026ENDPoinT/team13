@@ -67,6 +67,26 @@
 ### 남은 작업
 - 없음.
 
+## 2026-11-14 강의실·학습활동 목록: 학교 e-Class에서 가져온 활동을 실제 행으로(새 탭 링크)
+
+### 작업 내용
+- 백엔드(`STAC-000-school-activities`, 아직 병합 전)가 `GET /api/courses/{id}/weeks`의 주차 안에 학교에서 가져온 활동을 `origin: "school"`, 문자열 `activityId`(`school-…`), 화면 유형 `type`(`video|material|report|test|survey|zoom|post|…`), `schoolType`, 본인 `done`, `phase`, `attendance`, `learningTimeSec`, `offline`, `schoolUrl`로 붙여 준다. 지금까지는 이 행이 "열 수 없음"이었다.
+- `activitySnapshot`: `origin === "school"` 행은 그 화면 유형의 행이 된다. `done`은 `done === true`, 진행 중은 `phase === "open"`, 미제출은 진행 중이고 `done === false`이며 자료·오프라인 시험이 아닐 때. 주차 표시(영상·과제·시험·설문), 강의실 종류·진행중·미제출 필터, 학습활동 목록 필터(51–56)에 모두 들어간다.
+- 링크 규칙: `schoolUrl`의 origin이 정확히 `https://eclass.seoultech.ac.kr`(기본 포트, 사용자 정보 없음)일 때만 링크다(`schoolHref`). 그 밖(`http:`, 다른·비슷한 호스트, `javascript:`, 상대 주소)은 지금처럼 누를 수 없는 행이고 상세에 "e-Class 주소 없음"이 붙는다.
+- 링크 행은 라우터 `Link`가 아닌 일반 `<a target="_blank" rel="noopener noreferrer">`이다. 유형 옆에 "· e-Class ↗" 표시, 접근 가능한 이름은 "제목, 유형, 상태 — 학교 e-Class에서 열기(새 탭)". 상태는 완료·미완료·구간, 상세에 영상은 `출석 …`·`학습시간 …`, 시험은 "오프라인", 끝에 "e-Class에서 열기".
+- "이어서 학습하기"는 이 서비스의 행이 먼저다. 학교 행만 있는 과목에서만 다음 학교 행을 새 탭 링크로 연다(`RoomLayout.nextExternal`).
+- 다른 주차 목록 독자: `WeekActivity.activityId`를 `number | string`로 넓히고, `lectureRows`(학습실 영상 카드)는 숫자 ID의 네이티브 `lecture_weeks`만, 교수 강의실(`course-room-remote.ts#roomEntry`)은 학교 행을 빼서 공개·삭제 명령 대상이 되지 않게 했다. 할 일·캘린더·홈·파일모음·어시스턴트는 주차 목록을 읽지 않아 바뀌지 않는다. 학교 행이 없는 응답은 그대로다.
+
+### 변경 파일
+- `src/shared/course-activities-remote.ts`(`SCHOOL_ORIGIN`, `schoolHref`, 학교 행 매핑), `src/areas/course/activities-server.tsx`(`schoolState`, 기간, 이어서 학습하기), `src/shared/activity-row.tsx`(`external`), `src/areas/course/room-view.tsx`(`nextExternal`), `src/areas/course/course.css`(`.activity-ext`), `src/shared/lectures-remote.ts`(`WeekActivity` 필드, `lectureRows`), `src/shared/course-room-remote.ts`, `tests/integration/school-activities.test.ts`
+
+### 검증
+- `origin/main`(bf60783) 위로 rebase한 뒤: `npm run typecheck` 오류 없음, `npm test` 24파일 1373개 통과(새 9개, 기존 테스트 수정 없음), `npm run build` 성공.
+- 브라우저(ego-browser, `server.mjs --port 4194` + `ASTRA_API_ORIGIN`로 띄운 계약 견본 stub): 1·2·9주(9주는 학교에만 있는 주) 행, 종류 칩(영상·과제·자료·시험·Zoom·설문·글), 영상·글·미제출·진행중 필터, 학습활동 목록 영상·과제·미제출 필터에 학교 행이 들어감. 링크 행 `target="_blank"`, `rel="noopener noreferrer"`, 다른 호스트 주소 행은 `div[aria-disabled]`. 학교 행을 누르면 새 탭에 학교 연결 주소가 열리고(`window.opener === null`) 원래 탭은 강의실에 남는다. 학교 로그인 없는 브라우저에서는 학교가 "과목을 선택하세요." 경고 뒤 `/ilos/index.jsp`로 보냈다(견본 SEQ).
+
+### 남은 작업
+- 백엔드 `dev`에 대한 실제 응답 확인은 통과했다(가져온 행이 모두 올바른 속성의 링크, 필터 수가 API와 일치). 백엔드에 전할 것: `phase`가 null이고 `done`이 null인 행(Zoom 등)은 상태가 "e-Class"로만 보인다. `done: null`(가져오기가 못 본 행)과 `false`를 화면에서 구분하지 않는다(미제출에서 빠질 뿐). 학교 연결 주소는 학교 로그인이 없으면 로그인 화면이 아니라 경고 뒤 첫 화면으로 간다.
+
 ## 2026-11-14 홈 추천 문장 버튼 4개: 한 줄 고정 + 세로 가운데 정렬
 
 ### 작업 내용
