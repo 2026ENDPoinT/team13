@@ -1,17 +1,27 @@
 package com.stackcorp.astra.identity.api;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolMaterial;
+
 /**
  * 학번·비밀번호 확인({@link SchoolPasswordVerifier#verify})으로 열린 학교 e-Class session으로 학생의 강의실을 읽는 손잡이. 학교
  * session 쿠키는 이 객체의 메모리에만 있고 저장하거나 로그·예외·다른 객체로 내보내지 않는다(SC-07).
  * <ul>
- * <li>한 객체는 한 주인만 쓴다. 쓰려는 쪽은 먼저 {@link #claim()}이 true인지 본다. 주인은 다 쓰면 {@link #close()}로 쿠키를 버린다.
- * 로그인 요청을 받은 쪽은 응답 전에 {@code claim()}이 true면(아무도 가져가지 않았으면) 바로 닫는다.</li>
- * <li>학교 강의실은 session에 과목 하나가 묶이는 구조라 요청을 차례로 보낸다. 동시에 부르지 않는다.</li>
+ * <li>한 객체는 한 주인만 닫는다. 주인이 되려는 쪽은 먼저 {@link #claim()}이 true인지 본다. 로그인에 성공하면 identity가 STack
+ * session에 묶어 가져가고({@link SchoolSessions}) 그 session이 끝날 때 닫는다. 로그인 요청을 받은 쪽은 응답 전에 {@code claim()}이
+ * true면(아무도 가져가지 않았으면) 바로 닫는다. 다른 쪽은 닫지 않고 읽기만 한다.</li>
+ * <li>학교 강의실은 session에 과목 하나가 묶이는 구조라 요청을 차례로 보낸다. 구현은 한 객체의 읽기를 하나씩 차례로 처리한다.</li>
+ * <li>목록 읽기({@link #read}, {@link #files})는 학교 쪽 상태를 바꾸지 않는다. 상세 읽기와 파일 받기는 학교에서 조회수나 읽음 표시가
+ * 바뀔 수 있으므로, 그 학생이 STack에서 그 항목을 열었을 때만 그 학생의 손잡이로 부른다. 로그인 때, 뒤에서 도는 작업, 미리 읽기로
+ * 부르지 않는다.</li>
+ * <li>영상 학습창(출석·학습시간을 학교에 보내는 요청)과 2차 인증에 닿는 요청은 보내지 않는다.</li>
  * </ul>
  */
 public interface SchoolCourseRooms {
@@ -28,7 +38,27 @@ public interface SchoolCourseRooms {
 	 */
 	SchoolCourseRoom read(String courseKey, Duration requestTimeout, Duration remaining);
 
-	/** 쿠키를 버린다. 여러 번 불러도 된다. 닫은 뒤 {@link #read}는 실패한다. */
+	/**
+	 * 과목의 파일모음({@code files_list.acl}): 자료·과제에 붙은 파일 전체. 목록 화면이라 학교 쪽 상태를 바꾸지 않는다.
+	 * @throws SchoolLoginException {@code EXPIRED}면 학교 session이 끝났다
+	 */
+	List<SchoolFile> files(String courseKey, Duration requestTimeout, Duration remaining);
+
+	/**
+	 * 자료 하나의 상세와 첨부 목록. 학교에서 그 자료의 조회수가 하나 는다.
+	 * @param itemId 학교 자료 번호(강의실 목록 링크의 {@code n})
+	 * @throws SchoolLoginException {@code NOT_FOUND}면 학교가 그 자료를 보여 주지 않았다
+	 */
+	SchoolMaterial material(String courseKey, String itemId, Duration requestTimeout, Duration remaining);
+
+	/**
+	 * 첨부 파일 하나를 받아 {@code target}에 쓴다.
+	 * @param maxBytes 이보다 크면 받지 않는다({@code UNAVAILABLE} {@code too_large})
+	 */
+	SchoolDownload download(String courseKey, SchoolFile file, long maxBytes, Path target, Duration requestTimeout,
+			Duration remaining);
+
+	/** 쿠키를 버린다. 여러 번 불러도 된다. 닫은 뒤 읽기는 {@code EXPIRED}로 실패한다. */
 	void close();
 
 	/**

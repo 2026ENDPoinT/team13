@@ -10,8 +10,8 @@ import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.SchoolCourse;
  * {@code learning}이 그다음({@link #LEARNING_ORDER}) 강의실 학습활동 목록을 가져온다.
  * @param userId 로그인한 내부 사용자
  * @param courses 학교 메인 화면의 수강과목. 읽지 못했으면 비어 있다
- * @param rooms 학교 강의실을 읽는 손잡이. 없으면 null. 쓰려면 {@link SchoolCourseRooms#claim()}으로 가져가고 다 쓰면 닫는다. 이 사건이
- * 끝난 뒤에는 남기지 않는다
+ * @param rooms 학교 강의실을 읽는 손잡이. 없으면 null. 받은 쪽은 읽기만 하고 닫지 않는다. identity가 로그인한 STack session에 붙여
+ * 두고({@link SchoolSessions}) 그 session이 끝날 때 닫는다
  */
 public record SchoolLoginSucceeded(long userId, List<SchoolCourse> courses, SchoolCourseRooms rooms) {
 

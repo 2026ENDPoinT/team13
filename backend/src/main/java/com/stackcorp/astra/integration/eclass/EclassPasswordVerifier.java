@@ -2,6 +2,7 @@ package com.stackcorp.astra.integration.eclass;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.URI;
@@ -14,6 +15,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.IllegalCharsetNameException;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.UnsupportedCharsetException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.cert.CertificateFactory;
@@ -26,6 +29,7 @@ import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -38,6 +42,9 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolMaterial;
 import com.stackcorp.astra.identity.api.SchoolCourseRooms;
 import com.stackcorp.astra.identity.api.SchoolCourseRooms.SchoolCourseRoom;
 import com.stackcorp.astra.identity.api.SchoolLoginException;
@@ -52,6 +59,11 @@ import com.stackcorp.astra.identity.api.SchoolPasswordVerifier;
  * 그것을 닫으면 버린다. 학교 session을 저장하거나 다른 확인에 다시 쓰지 않는다.</li>
  * <li>강의실은 과목을 session에 묶는 요청({@code eclass_room2.acl}) 뒤 강의실 첫 화면({@code submain_form.acl})을 열어 읽는다.
  * 화면 해석은 {@link CourseRoomPage}다.</li>
+ * <li>강의실 안의 내용(파일모음, 자료 상세, 첨부 받기)은 과목을 묶은 뒤 같은 session으로 읽는다. 해석은 {@link SchoolContentPages}다.
+ * 이 class는 읽기 요청만 보낸다. 다음은 부르지 않는다(학교에 학습·출석을 알리거나 학교의 확인 절차를 건너뛰는 요청): 영상
+ * {@code online_view_navi}·{@code online_view_hisno}·{@code online_view_at}·{@code online_view_time}·{@code online_view_status}·
+ * {@code online_view_check}·{@code online_view_replace_*}·{@code online_learning*}, {@code accessone.hellolms.com},
+ * {@code secondauth/*}, {@code activity_continue_update}, {@code notice_confirm}, 글·댓글·제출 쓰기와 지우기.</li>
  * <li>로그인 form이 사라졌다는 것만으로 성공을 판단하지 않는다. 메인 화면이 로그인한 화면인지 확인한다.</li>
  * <li>redirect는 직접 따라가고 설정한 origin의 {@code /ilos/} 경로만 허용한다. 응답 본문은 2 MiB까지만 읽는다.</li>
  * <li>학교 서버가 중간 인증서(Thawte TLS RSA CA G1)를 보내지 않아 JDK 기본 신뢰 목록만으로는 연결되지 않는다. 그 중간 인증서를 이
@@ -75,6 +87,21 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 	private static final String ROOM = "/ilos/cls/st/submain/submain_form.acl";
 
 	private static final Pattern ROOM_ERROR = Pattern.compile("\"isError\"\s*:\s*(?:true|\"true\"|\"Y\")");
+
+	/** 학교 session이 끝났거나 다른 사용자로 바뀌었다는 JSON 응답({@code stRoomAuthCheck}가 로그인·로그아웃으로 보내는 코드). */
+	private static final Pattern NO_SESSION = Pattern
+		.compile("\"messageCode\"\\s*:\\s*\"(?:E_NOSESSION|E_USER_NOT_SAME)\"");
+
+	private static final String FILES = "/ilos/cls/st/files/files_list.acl";
+
+	private static final String MATERIAL = "/ilos/cls/st/material/lecture_material_view_form.acl";
+
+	private static final String FILE_LIST = "/ilos/cls/st/co/efile_list.acl";
+
+	private static final String DOWNLOAD = "/ilos/co/efile_download.acl";
+
+	/** 학교 활동·파일 번호. 숫자나 대문자·숫자 키다. */
+	private static final Pattern ITEM_ID = Pattern.compile("[0-9A-Za-z]{1,40}");
 
 	private static final int MAX_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -158,7 +185,7 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 			}
 		}
 		return new SchoolAccount(studentId, name, department, grade, MainPageCourses.read(check.document()),
-				new Rooms(session, check.url()));
+				new Rooms(session, check.url(), studentId));
 	}
 
 	/** 과목 하나의 강의실 첫 화면을 읽는다. 과목을 session에 묶은 뒤 같은 session으로 강의실 화면을 연다. */
@@ -167,17 +194,98 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		if (year == null) {
 			throw unavailable("room_key");
 		}
-		URI bind = resolve(this.base, ROOM_BIND);
-		Page bound = session.request(bind, "POST", "KJKEY=" + encode(courseKey) + "&returnData=json&returnURI="
-				+ encode(ROOM) + "&encoding=utf-8", true, referer);
+		session.boundKey = null;
+		bind(session, referer, courseKey);
+		Page room = session.request(resolve(this.base, ROOM), "GET", null, false, referer);
+		if (signedOut(room)) {
+			throw expired("room_signed_out");
+		}
+		return CourseRoomPage.read(room.document(), courseKey, year, this.base);
+	}
+
+	/**
+	 * 과목을 학교 session에 묶는다. 강의실 안의 화면·조각 요청은 묶인 과목에 대해 답한다. 이 session이 이미 그 과목에 묶여 있으면 보내지
+	 * 않는다(이 session은 이 서버만 쓴다).
+	 */
+	private void bind(Session session, URI referer, String courseKey) {
+		if (courseKey.equals(session.boundKey)) {
+			return;
+		}
+		Page bound = session.request(resolve(this.base, ROOM_BIND), "POST", "KJKEY=" + encode(courseKey)
+				+ "&returnData=json&returnURI=" + encode(ROOM) + "&encoding=utf-8", true, referer);
+		if (signedOut(bound)) {
+			throw expired("bind_signed_out");
+		}
 		if (ROOM_ERROR.matcher(bound.body()).find()) {
 			throw unavailable("room_denied");
 		}
-		Page room = session.request(resolve(this.base, ROOM), "GET", null, false, referer);
-		if (loginForm(room.document()) || loginPath(room.url())) {
-			throw unavailable("room_signed_out");
+		session.boundKey = courseKey;
+	}
+
+	/** 파일모음 목록. 목록 화면이라 학교 쪽 상태를 바꾸지 않는다. */
+	private List<SchoolFile> files(Session session, URI referer, String courseKey) {
+		bind(session, referer, courseKey);
+		Page list = session.request(resolve(this.base, FILES), "POST", "SCH_VALUE=&encoding=utf-8", true, referer);
+		requireSignedIn(list);
+		return SchoolContentPages.files(list.document());
+	}
+
+	/** 자료 상세와 첨부 목록. 학교에서 조회수가 는다. 이어 보기 기록({@code activity_continue_update.acl})은 보내지 않는다. */
+	private SchoolMaterial material(Session session, URI referer, String courseKey, String itemId, String studentId) {
+		if (!ITEM_ID.matcher(itemId).matches()) {
+			throw notFound("item");
 		}
-		return CourseRoomPage.read(room.document(), courseKey, year, this.base);
+		Integer year = CourseRoomPage.yearOf(courseKey);
+		bind(session, referer, courseKey);
+		Page detail = session.request(resolve(this.base, MATERIAL + "?ARTL_NUM=" + itemId + "&encoding=utf-8"), "GET",
+				null, true, referer);
+		requireSignedIn(detail);
+		String contentSeq = SchoolContentPages.contentSeq(detail.body());
+		List<SchoolFile> files = List.of();
+		if (contentSeq != null) {
+			files = attachments(session, referer, courseKey, studentId, contentSeq, "lecture_material", itemId);
+		}
+		return SchoolContentPages.material(detail.document(), files, year == null ? 0 : year);
+	}
+
+	/** {@code efile_list.acl}: 내용 하나의 첨부 목록 조각. */
+	private List<SchoolFile> attachments(Session session, URI referer, String courseKey, String studentId,
+			String contentSeq, String activityType, String activityItemId) {
+		Page list = session.request(resolve(this.base, FILE_LIST),
+				"POST", "ud=" + encode(studentId) + "&ky=" + encode(courseKey) + "&pf_st_flag=2&CONTENT_SEQ="
+						+ encode(contentSeq) + "&encoding=utf-8",
+				true, referer);
+		requireSignedIn(list);
+		return SchoolContentPages.attachments(list.document(), activityType, activityItemId);
+	}
+
+	private SchoolDownload download(Session session, URI referer, String courseKey, String studentId, SchoolFile file,
+			long maxBytes, Path target) {
+		if (!ITEM_ID.matcher(file.fileSeq()).matches() || !ITEM_ID.matcher(file.contentSeq()).matches()) {
+			throw notFound("file");
+		}
+		bind(session, referer, courseKey);
+		URI url = resolve(this.base, DOWNLOAD + "?FILE_SEQ=" + encode(file.fileSeq()) + "&CONTENT_SEQ="
+				+ encode(file.contentSeq()) + "&ky=" + encode(courseKey) + "&ud=" + encode(studentId) + "&pf_st_flag=2");
+		return session.download(url, referer, maxBytes, target);
+	}
+
+	private static boolean signedOut(Page page) {
+		return loginForm(page.document()) || loginPath(page.url()) || NO_SESSION.matcher(page.body()).find();
+	}
+
+	private static void requireSignedIn(Page page) {
+		if (signedOut(page)) {
+			throw expired("signed_out");
+		}
+	}
+
+	private static SchoolLoginException expired(String reason) {
+		return new SchoolLoginException(Kind.EXPIRED, reason);
+	}
+
+	private static SchoolLoginException notFound(String reason) {
+		return new SchoolLoginException(Kind.NOT_FOUND, reason);
 	}
 
 	private static Element authenticationForm(Document doc) {
@@ -311,6 +419,9 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 
 		private long deadline;
 
+		/** 지금 이 session에 묶인 학교 과목 키. 모르면 null */
+		private String boundKey;
+
 		private Duration requestTimeout;
 
 		/** 지금부터 {@code total} 안에 끝내고, 요청 하나는 {@code perRequest}를 넘지 않는다. */
@@ -398,20 +509,115 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 			}
 		}
 
+		/**
+		 * 첨부 파일 하나를 {@code target}에 받는다. 학교는 받기 주소({@code efile_download.acl})에서 실제 받기 주소
+		 * ({@code file_download_v2.acl})로 넘긴다. 그 주소는 경로 앞에 {@code /}가 겹쳐 오므로 하나로 줄여 같은 origin의
+		 * {@code /ilos/} 경로일 때만 따라간다. 학교가 파일 대신 화면(로그인 화면, 오류 화면)을 돌려주면 받지 않는다. 크기가
+		 * {@code maxBytes}를 넘으면 받는 도중에 끊는다.
+		 */
+		SchoolDownload download(URI url, URI referer, long maxBytes, Path target) {
+			return download(url, referer, maxBytes, target, 0);
+		}
+
+		private SchoolDownload download(URI url, URI referer, long maxBytes, Path target, int redirects) {
+			long remaining = this.deadline - System.nanoTime();
+			if (remaining <= 0) {
+				throw unavailable("timeout");
+			}
+			HttpRequest.Builder builder = HttpRequest.newBuilder(url)
+				.timeout(Duration.ofNanos(remaining))
+				.header("User-Agent", "ASTRA-eclass-login/1.0")
+				.header("Referer", referer.toString())
+				.GET();
+			try {
+				for (Map.Entry<String, List<String>> header : this.cookies.get(url, Map.of()).entrySet()) {
+					for (String value : header.getValue()) {
+						builder.header(header.getKey(), value);
+					}
+				}
+				HttpResponse<InputStream> response = EclassPasswordVerifier.this.client.send(builder.build(),
+						HttpResponse.BodyHandlers.ofInputStream());
+				try (InputStream in = response.body()) {
+					this.cookies.put(url, response.headers().map());
+					int status = response.statusCode();
+					if (status >= 300 && status < 400) {
+						String location = response.headers().firstValue("Location").orElse("").strip();
+						if (location.isBlank() || redirects >= MAX_REDIRECTS) {
+							throw unavailable("redirect");
+						}
+						URI next = URI.create(url.resolve(location.replaceFirst("^(https?://[^/]+)?/{2,}", "$1/"))
+							.toString());
+						if (loginPath(next)) {
+							throw expired("signed_out");
+						}
+						return download(resolve(url, next.toString()), url, maxBytes, target, redirects + 1);
+					}
+					if (status == 404) {
+						throw notFound("file");
+					}
+					if (status < 200 || status >= 300) {
+						throw unavailable("status_" + status);
+					}
+					String type = response.headers().firstValue("Content-Type").orElse("").toLowerCase(Locale.ROOT);
+					if (type.startsWith("text/html") || type.startsWith("application/json")) {
+						byte[] head = in.readNBytes(MAX_BODY_BYTES);
+						String html = new String(head, charset(response));
+						Page page = new Page(url, Jsoup.parse(html, url.toString()), html);
+						throw signedOut(page) ? expired("signed_out") : notFound("file");
+					}
+					long declared = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+					if (declared > maxBytes) {
+						throw unavailable("too_large");
+					}
+					long written = 0;
+					try (OutputStream out = Files.newOutputStream(target)) {
+						byte[] buffer = new byte[64 * 1024];
+						for (int read; (read = in.read(buffer)) != -1;) {
+							written += read;
+							if (written > maxBytes) {
+								throw unavailable("too_large");
+							}
+							if (System.nanoTime() > this.deadline) {
+								throw unavailable("timeout");
+							}
+							out.write(buffer, 0, read);
+						}
+					}
+					if (written == 0 || (declared >= 0 && declared != written)) {
+						throw unavailable("truncated");
+					}
+					return new SchoolDownload(written);
+				}
+			}
+			catch (IOException | IllegalArgumentException ex) {
+				throw new SchoolLoginException(Kind.UNAVAILABLE, "io", ex);
+			}
+			catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				throw unavailable("interrupted");
+			}
+		}
+
 	}
 
-	/** 확인으로 열린 학교 session으로 강의실을 읽는 손잡이. cookie는 {@link Session} 안에만 있다. */
+	/**
+	 * 확인으로 열린 학교 session으로 강의실을 읽는 손잡이. cookie는 {@link Session} 안에만 있다. 읽기는 하나씩 차례로 한다(과목이
+	 * session에 묶이는 구조).
+	 */
 	private final class Rooms implements SchoolCourseRooms {
 
 		private final AtomicBoolean claimed = new AtomicBoolean();
 
 		private final URI referer;
 
+		private final String studentId;
+
 		private Session session;
 
-		Rooms(Session session, URI referer) {
+		Rooms(Session session, URI referer, String studentId) {
 			this.session = session;
 			this.referer = referer;
+			this.studentId = studentId;
 		}
 
 		@Override
@@ -421,14 +627,51 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 
 		@Override
 		public synchronized SchoolCourseRoom read(String courseKey, Duration requestTimeout, Duration remaining) {
+			return room(open(requestTimeout, remaining), this.referer, courseKey);
+		}
+
+		@Override
+		public synchronized List<SchoolFile> files(String courseKey, Duration requestTimeout, Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.files(open(requestTimeout, remaining), this.referer,
+					courseKey));
+		}
+
+		@Override
+		public synchronized SchoolMaterial material(String courseKey, String itemId, Duration requestTimeout,
+				Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.material(open(requestTimeout, remaining), this.referer,
+					courseKey, itemId, this.studentId));
+		}
+
+		@Override
+		public synchronized SchoolDownload download(String courseKey, SchoolFile file, long maxBytes, Path target,
+				Duration requestTimeout, Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.download(open(requestTimeout, remaining), this.referer,
+					courseKey, this.studentId, file, maxBytes, target));
+		}
+
+		private Session open(Duration requestTimeout, Duration remaining) {
 			if (this.session == null) {
-				throw unavailable("closed");
+				throw expired("closed");
 			}
 			if (requestTimeout.isNegative() || requestTimeout.isZero() || remaining.isNegative() || remaining.isZero()) {
 				throw unavailable("timeout");
 			}
 			this.session.limit(requestTimeout, remaining);
-			return room(this.session, this.referer, courseKey);
+			return this.session;
+		}
+
+		// 학교가 401/403으로 막은 내용은 그 학생에게 열리지 않은 것으로 본다(로그인 확인의 REJECTED와 다르다).
+		private <T> T content(Supplier<T> read) {
+			try {
+				return read.get();
+			}
+			catch (SchoolLoginException ex) {
+				if (ex.kind() == Kind.REJECTED) {
+					throw notFound(ex.getMessage());
+				}
+				throw ex;
+			}
 		}
 
 		@Override

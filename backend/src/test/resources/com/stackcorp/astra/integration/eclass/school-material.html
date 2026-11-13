@@ -1,0 +1,155 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+$(function() {
+  setSelectActivity("lecture_material", "1000005");
+  setMenuSubmit("lecture_material", "1000005", true);
+  
+  $.ajax({
+    url: "/ilos/cls/st/co/efile_list.acl",
+    type: "POST",
+    data: { 
+      ud : "20269999",
+      ky : "A202639999904001",
+      pf_st_flag : "2",
+      CONTENT_SEQ : "SYNKEY1000006",
+      encoding : "utf-8"
+          },
+    async: false,
+    success: function(html){
+            $("#tbody_file").append(html);
+            if($("#tbody_file").find("a").length > 0){
+              $("#tbody_file").show();
+            }
+      },
+    error : ajaxErrorMsg
+  });
+  
+  $(".editor_content").setEditorView();
+});
+</script>
+
+    <section class="container">
+      <article class="article">
+        <div class="view_header">
+          <div class="view_menu">
+            <a class="font_subtitle3 menu_icon lecture_material" href="#" onclick="viewActivityPage('/ilos/cls/st/material/lecture_material_view_form.acl', 'lecture_material', '1000005', event);" target="_self">자료</a>
+          </div>
+          <div class="view_title_wrap">
+            <div class="view_title">
+              <span class="font_headline2">텍스트16</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="view_body">
+          <table class="bbsview">
+            <caption>글 상세보기</caption>
+            <colgroup>
+              <col style="width:160px;">
+              <col>
+            </colgroup>
+            <tbody>
+              <tr>
+                <th scope="row">공개일</th>
+                <td class="font_body2">2026.09.29 (화) 오전 7:48</td>
+              </tr>
+              <tr>
+                <th scope="row">작성자</th>
+                <td class="font_body2">텍스트17</td>
+              </tr>
+              <tr>
+                <th scope="row">조회수</th>
+                <td class="count font_body2">
+                  <span class="view">227</span>
+                </td>
+              </tr>
+               <tr>
+               <td class="textviewer font_body1" colspan="2">
+                 <div class="editor_content"><p>텍스트18</p><p>텍스트19</p></div>
+                 
+                 <div id="tbody_file" class="attach_container"></div>
+                                  
+               </td>
+             </tr>
+            </tbody>
+          </table>
+          
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+$(function(){
+  qnaListForm();
+});
+function qnaListForm(){
+  $.ajax({
+    url: "/ilos/cls/st/qna/activity_qna_list_form.acl",
+    type: "POST",
+    data: {
+      T_MENU_ID : "lecture_material",
+      T_ARTL_NUM : "1000005",
+      T_SUB_ARTL_NUM : "",
+      encoding : "utf-8"
+    },
+    async: true,
+    success: function(data) {
+      $("#qna_list_form").html(data);
+    },
+    error: ajaxErrorMsg
+  });
+  
+}
+</script>
+
+<div id="qna_list_form" class="qna_list_form"></div>
+        </div>
+      </article>
+      
+      <div class="top_btn_wrap">
+        <button class="scroll_top_btn" type="button" title="" onkeypress="this.onclick;"></button>
+      </div>
+    </section>

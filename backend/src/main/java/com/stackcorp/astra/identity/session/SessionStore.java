@@ -29,9 +29,12 @@ public class SessionStore {
 
 	private final Devices devices;
 
-	SessionStore(JdbcClient jdbc, Devices devices) {
+	private final SchoolSessionRegistry schoolSessions;
+
+	SessionStore(JdbcClient jdbc, Devices devices, SchoolSessionRegistry schoolSessions) {
 		this.jdbc = jdbc;
 		this.devices = devices;
+		this.schoolSessions = schoolSessions;
 	}
 
 	/**
@@ -79,12 +82,16 @@ public class SessionStore {
 				""").param("id", sessionId).update();
 	}
 
-	/** @param reason LOGOUT|EXPIRED|ADMIN 등 user_sessions.revoke_reason 값 */
+	/**
+	 * 폐기하고 그 session에 붙인 학교 e-Class session을 닫는다.
+	 * @param reason LOGOUT|EXPIRED|ADMIN 등 user_sessions.revoke_reason 값
+	 */
 	public void revoke(long sessionId, String reason) {
 		this.jdbc.sql("""
 				UPDATE user_sessions SET revoked_at = CURRENT_TIMESTAMP(3), revoke_reason = :reason
 				 WHERE session_id = :id AND revoked_at IS NULL
 				""").param("reason", reason).param("id", sessionId).update();
+		this.schoolSessions.forget(sessionId);
 	}
 
 	/**

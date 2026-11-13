@@ -55,6 +55,9 @@ final class ContentInspector {
 			case "xlsx" -> when(startsWith(head, ZIP), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 			case "hwpx" -> when(startsWith(head, ZIP), "application/hwp+zip");
 			case "hwp" -> when(startsWith(head, OLE), "application/x-hwp");
+			case "ppt" -> when(startsWith(head, OLE), "application/vnd.ms-powerpoint");
+			case "doc" -> when(startsWith(head, OLE), "application/msword");
+			case "xls" -> when(startsWith(head, OLE), "application/vnd.ms-excel");
 			case "txt" -> when(plainText(head), "text/plain");
 			case "mp4" -> when(isoBrand(head).filter((brand) -> !QUICKTIME_BRAND.equals(brand)).isPresent(), "video/mp4");
 			case "mov" -> when(isoBrand(head).filter(QUICKTIME_BRAND::equals).isPresent(), "video/quicktime");
