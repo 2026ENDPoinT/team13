@@ -77,7 +77,7 @@ function ServerUsage({ courseId }: { courseId: number | string }) {
   const usage = view && view.usage;
   if (!usage) return null;
   const full = usage.usedBytes >= usage.quotaBytes
-    ? "서버의 녹음 저장 공간이 가득 찼습니다. 새 녹음은 서버에 저장되지 않고 이 브라우저에 보관됩니다. 오래된 녹음을 지워 공간을 비우세요."
+    ? "서버의 학습실 저장 공간이 가득 찼습니다. 새 녹음은 서버에 저장되지 않고 이 브라우저에 보관됩니다. 오래된 녹음이나 PDF를 지워 공간을 비우세요."
     : usage.recordingCount >= usage.maxRecordings
       ? `녹음은 ${usage.maxRecordings}개까지 저장할 수 있습니다. 새 녹음은 서버에 저장되지 않고 이 브라우저에 보관됩니다. 오래된 녹음을 지우세요.`
       : "";

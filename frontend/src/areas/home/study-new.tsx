@@ -3,6 +3,7 @@ import type { Course } from "../../data.ts";
 import { navigate } from "../../router.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { saveCoursePdf } from "../../shared/course-pdfs.ts";
+import { saveStudyDocument, uploadsToStudyRoom } from "../../shared/study-documents.ts";
 import { activeRecording, startRecording } from "../../shared/course-recordings.ts";
 import { backendStatus } from "../../shared/backend.ts";
 import { placeItem, type StudyFolder } from "../../shared/study-folders.ts";
@@ -66,6 +67,28 @@ function NewMenu({ course, folder, say, nameFolder }: NewMenuOptions) {
     if (!file) return;
     const title = file.name.replace(/\.pdf$/i, "").trim() || file.name;
     setUploading(true);
+    if (uploadsToStudyRoom(course.id)) {
+      // A student's own PDF: stored privately in this study room (never a course material, never sent to a model).
+      // A browser-only folder cannot be named to the server: the PDF goes to the course root and is placed here.
+      say("PDF를 내 학습실에 올리고 있습니다.");
+      const serverFolder = folder && !folder.local ? folder.id : null;
+      saveStudyDocument({ file, courseId: course.id, title, folderId: serverFolder })
+        .then(async (record) => {
+          const added = record.state === "ready"
+            ? `"${record.title}"을 내 학습실에 올렸습니다.`
+            : `"${record.title}"을 내 학습실에 올렸습니다. 바이러스 검사가 끝나면 열 수 있습니다.`;
+          try {
+            if (folder && folder.local) await placeItem(record.id, folder.id);
+            say(added);
+          } catch (error) {
+            say(`${added} 폴더에 넣지 못해 과목 폴더에 두었습니다. ${error instanceof Error ? error.message : String(error)}`, true);
+          }
+          notifyStudyChanged();
+        })
+        .catch((error: unknown) => say(error instanceof Error ? error.message : String(error), true))
+        .finally(() => setUploading(false));
+      return;
+    }
     say(backendStatus() === "ready" ? "PDF를 ASTRA 서버에 올리고 있습니다." : "PDF의 페이지와 텍스트를 분석하고 이 브라우저에 저장하고 있습니다.");
     saveCoursePdf({ file, courseId: course.id, title })
       .then(async (record) => {

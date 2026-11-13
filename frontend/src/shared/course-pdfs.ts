@@ -5,6 +5,7 @@
 import { backendStatus, subscribe } from "./backend.ts";
 import type { RemotePdfRecord } from "./course-pdfs-remote.ts";
 import { isRemotePdfId, saveRemotePdf, listRemotePdfs, getRemotePdfBlob, deleteRemotePdf } from "./course-pdfs-remote.ts";
+import { isStudyDoc, isStudyDocId, getStudyDocumentBlob, type StudyDocRecord } from "./study-documents.ts";
 
 /** One parsed PDF page. */
 export interface PdfPage {
@@ -356,16 +357,16 @@ export async function listCoursePdfs(courseId: string | null | undefined): Promi
 }
 
 /**
- * Server records arrive without page text. Fetch the original and extract pages,
- * excerpts and keywords in this browser (kept in memory) so the document card
- * and viewer work as for local PDFs. Local records are returned unchanged.
+ * Server records and the student's study-room documents arrive without page text. Fetch the original and extract
+ * pages, excerpts and keywords in this browser (kept in memory) so the document card and viewer work as for local
+ * PDFs. Local records are returned unchanged.
  */
-export async function ensureCoursePdfText<R extends CoursePdfRecord | null | undefined>(record: R): Promise<R> {
-  if (!record || !record.remote || record.pageCount != null) return record;
+export async function ensureCoursePdfText<R extends CoursePdfRecord | StudyDocRecord | null | undefined>(record: R): Promise<R> {
+  if (!record || !(record.remote || isStudyDoc(record)) || record.pageCount != null) return record;
   const cached = remoteText.get(record.id);
   if (cached) return Object.assign(record, await cached);
   const job = (async (): Promise<PdfSummary> => {
-    const blob = await getRemotePdfBlob(record.id);
+    const blob = await getCoursePdfBlob(record.id);
     if (!blob) throw new Error("서버에서 원본 PDF를 찾지 못했습니다.");
     return summarize(await parsePdf(blob));
   })();
@@ -389,6 +390,7 @@ export async function ensureCoursePdfText<R extends CoursePdfRecord | null | und
 
 export async function getCoursePdfBlob(id: string | null | undefined): Promise<Blob | null> {
   if (isRemotePdfId(id)) return getRemotePdfBlob(id);
+  if (isStudyDocId(id)) return getStudyDocumentBlob(id);
   const entry = await readStored<{ id: string; blob: Blob } | undefined>("files", String(id || ""));
   return entry?.blob || null;
 }
