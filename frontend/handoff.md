@@ -1,5 +1,24 @@
 # Handoff
 
+## 2026-11-14 학교 e-Class 공지: 목록·상세(연 공지만 학교에서 읽기), 첨부, 읽음·확인 안 보냄
+
+### 작업 내용
+- 백엔드(`STAC-000-school-content` 440aee5, §5b)는 학생의 `GET …/notices`에 학교 공지를 `noticeId: "school-<n>"`, `origin: "school"`, `expired`, `schoolUrl`로 붙이고, `GET …/notices/school-<n>`이 열 때만 학교에서 읽는다(학교에서 읽음 처리). 학교 공지에는 `read`·`confirm`이 없다.
+- 목록: 학교 공지에 "학교 e-Class", 기간 지난 공지에 "기간 지남". 조회 수가 없으면 칸을 그리지 않는다. 링크는 `id=school-<n>` 그대로.
+- 상세 창: 열 때 한 번만 읽고(포커스 새로고침 없음), 텍스트 본문·작성자·게시일·첨부(미리보기·내려받기, `shared/school-files.tsx`의 `SchoolFileRow`, 자료 상세와 같이 씀), "e-Class에서 열기"와 닫기. 확인 버튼 없음. 연 뒤 받아 둔 목록에서도 읽음으로 바꾼다(요청 없음).
+- 오류: 409 `school_signin_required` 다시 로그인, 502 다시 시도, 404는 지금처럼 "찾을 수 없음".
+- `CourseNotice.noticeId`는 `number | string`. `markNoticeRead`·`confirmNotice`는 학교 ID에 요청을 만들지 않는다. 교수 공지 목록은 `isNativeNotice`로 STack 공지만 쓴다. #25의 `followNoticeRead`는 숫자 ID일 때만 부른다.
+
+### 변경 파일
+- `src/shared/notices-remote.ts`, `src/areas/course/notices-server.tsx`, `src/areas/professor/notices-server.tsx`, `src/shared/school-files.tsx`(새), `src/shared/school-content.tsx`(`schoolFilesOf` 인자), `src/areas/learning/activity-server.tsx`(`SchoolFileRow` 옮김), `tests/integration/school-notices.test.ts`(새)
+
+### 검증
+- `origin/main`(8da31b8) 위에서 `npm run typecheck` 오류 없음, `npm test` 33파일 1452개 통과(새 5개, 기존 테스트 수정 없음), `npm run build` 성공.
+- 실제 실행(로컬 백엔드 440aee5 `bootTestRun` 18480/18481, `course_code` NULL 처리, 프론트 `http://localhost:4193`, 본인 계정 학교 로그인 1번): 과목 10개(안 읽은 공지 0). 한 과목 공지 목록 1행이 학교 공지(표시·`id=school-<n>` 링크, "undefined" 없음). 이미 읽은 그 공지 하나를 열어 작성자·게시일·조회·첨부 1개, 본문 2문단, e-Class 링크(`_blank`, `noopener noreferrer`), 닫기, 확인 버튼 없음. 백엔드 요청 기록: 목록 GET 3번, 상세 GET 1번(연 것), `POST …/read`·`…/confirm` 0번.
+
+### 남은 작업
+- 학교 공지 첨부의 미리보기·내려받기는 실제로 눌러 보지 않았다(자료와 같은 줄, #24에서 확인). 409 `school_signin_required`는 Vitest로만 확인.
+
 ## 2026-11-14 공지를 읽으면 왼쪽 메뉴 "공지사항" 수가 새로 고침 없이 줄어든다
 
 ### 작업 내용

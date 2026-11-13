@@ -1,6 +1,8 @@
 // Course notice list and detail from the ASTRA backend (status `anon` or `ready`).
 // `anon` shows only the login strip: sample notices are not mixed into a connected course.
-// Opening a notice sends `read` once; `confirm` comes only from the confirm button.
+// Opening a notice sends `read` once; `confirm` comes only from the confirm button. A notice imported from the
+// school's e-Class (`id=school-<n>`) is read from the school only when its dialog opens (that marks it read at the
+// school); STack sends no `read`/`confirm` for it and shows its attachments and the e-Class link instead of a confirm.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Course } from "../../data.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
@@ -15,9 +17,12 @@ import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { visitList } from "../../shared/board-list.tsx";
 import { koDate, koDateTime } from "../../shared/home-remote.ts";
 import {
-  NOTICE_PAGE, listKey, noticeKey, noticeLists, noticeDetails, markNoticeRead, confirmNotice, noticeMessage, noticeFlags,
+  NOTICE_PAGE, listKey, noticeKey, noticeLists, noticeDetails, markNoticeRead, confirmNotice, noticeMessage, noticeFlags, isSchoolNotice,
+  rememberSchoolNoticeOpened,
   type CourseNotice,
 } from "../../shared/notices-remote.ts";
+import { schoolFilesOf, schoolProblemOf, SchoolLink, SchoolProblemNote } from "../../shared/school-content.tsx";
+import { SchoolFileRow } from "../../shared/school-files.tsx";
 import type { CourseParts } from "./course.tsx";
 import { RetryButton } from "./groups-server.tsx";
 
@@ -26,16 +31,17 @@ const missing = (error: unknown) => error instanceof ApiError && error.status ==
 
 function noticeCard(notice: CourseNotice, href: string): ReactNode {
   return (
-    <article key={notice.noticeId} className={`crs-post${notice.read ? " is-read" : ""}`}>
+    <article key={String(notice.noticeId)} className={`crs-post${notice.read ? " is-read" : ""}`} data-notice={String(notice.noticeId)}>
       <Link className="crs-post-link" href={href}>
         <div>
           <h2>{notice.title}</h2>
           {notice.excerpt ? <p>{notice.excerpt}</p> : null}
           <div className="crs-post-meta">
+            {isSchoolNotice(notice.noticeId) ? <span className="crs-kind">학교 e-Class</span> : null}
             {noticeFlags(notice).map((flag) => <span key={flag} className="crs-kind">{flag}</span>)}
             {notice.published && !notice.read ? <span className="crs-kind crs-kind-new">안 읽음</span> : null}
             <span>{notice.publishedAt ? koDate(notice.publishedAt) : "게시 전"}</span>
-            <span>{`조회 ${notice.viewCount}`}</span>
+            {notice.viewCount == null ? null : <span>{`조회 ${notice.viewCount}`}</span>}
             {notice.readCount == null && notice.confirmCount == null ? null : <span>{`열람 ${notice.readCount ?? 0} · 확인 ${notice.confirmCount ?? 0}`}</span>}
           </div>
         </div>
@@ -154,15 +160,16 @@ function shell(body: ReactNode): ReactNode {
 export function remoteNoticeDialog(ctx: ScreenCtx, course: Course): ReactNode {
   if (backendStatus() === "anon") return shell(<div className="crs-dialog"></div>);
   const courseId = courseIdFor(course.id);
-  const noticeId = Number(ctx.params && ctx.params.get("id"));
-  if (!courseId || !Number.isInteger(noticeId) || noticeId < 1) {
+  const raw = (ctx.params && ctx.params.get("id")) || "";
+  const noticeId: number | string = isSchoolNotice(raw) ? raw : Number(raw);
+  if (!courseId || (typeof noticeId === "number" && (!Number.isInteger(noticeId) || noticeId < 1))) {
     return shell(<div className="crs-dialog"><EmptyState title="공지를 찾을 수 없습니다" body="목록으로 돌아가 다시 선택해 주세요." /></div>);
   }
   return shell(<NoticeDetail kj={course.id} courseId={courseId} noticeId={noticeId} />);
 }
 
 /** "공지를 확인했습니다" (`POST …/confirm`, idempotent). */
-function ConfirmButton({ courseId, noticeId }: { courseId: number | string; noticeId: number }) {
+function ConfirmButton({ courseId, noticeId }: { courseId: number | string; noticeId: number | string }) {
   const [busy, setBusy] = useState(false);
   const live = useRef(true);
   useEffect(() => {
@@ -186,8 +193,9 @@ function ConfirmButton({ courseId, noticeId }: { courseId: number | string; noti
   return <Button kind="primary" disabled={busy} onClick={confirm}>{busy ? "확인하는 중…" : "공지를 확인했습니다"}</Button>;
 }
 
-function NoticeDetail({ kj, courseId, noticeId }: { kj: string; courseId: number | string; noticeId: number }) {
+function NoticeDetail({ kj, courseId, noticeId }: { kj: string; courseId: number | string; noticeId: number | string }) {
   const key = noticeKey(courseId, noticeId);
+  const school = isSchoolNotice(noticeId);
   const load = () => void noticeDetails.load(key, courseId, noticeId);
   const entry = useResource(noticeDetails, key);
   const [readNote, setReadNote] = useState("");
@@ -196,7 +204,13 @@ function NoticeDetail({ kj, courseId, noticeId }: { kj: string; courseId: number
   });
   const notice = entry && entry.data;
   useEffect(() => {
-    if (!notice || notice.read) return;
+    if (!notice) return;
+    if (isSchoolNotice(noticeId)) {
+      // Opening it marked it read at the school; the lists show that without asking again.
+      rememberSchoolNoticeOpened(courseId, noticeId);
+      return;
+    }
+    if (notice.read) return;
     let live = true;
     markNoticeRead(courseId, noticeId).catch((error: unknown) => {
       if (live) setReadNote(`읽음 표시를 남기지 못했습니다. ${noticeMessage(error)}`);
@@ -207,10 +221,32 @@ function NoticeDetail({ kj, courseId, noticeId }: { kj: string; courseId: number
   }, [notice, courseId, noticeId]);
 
   let body: ReactNode;
-  if (!notice) {
+  if (entry && entry.error && schoolProblemOf(entry.error)) {
+    body = <SchoolProblemNote error={entry.error} schoolUrl={notice && notice.schoolUrl} retry={load} />;
+  } else if (!notice) {
     if (!entry || !entry.error) body = <LoadingState title="공지를 불러오는 중입니다" />;
     else if (missing(entry.error)) body = <EmptyState title="공지를 찾을 수 없습니다" body="삭제되었거나 볼 수 있는 권한이 없습니다." />;
     else body = <ErrorState title="공지를 불러오지 못했습니다" body={noticeMessage(entry.error)} actions={<RetryButton reload={load} />} />;
+  } else if (school) {
+    const files = schoolFilesOf(notice);
+    body = (
+      <div data-school-notice={String(noticeId)}>
+        <h3 className="crs-dialog-title">{notice.title}</h3>
+        <div className="crs-post-meta">{["학교 e-Class", ...noticeFlags(notice)].map((flag) => <span key={flag} className="crs-kind">{flag}</span>)}</div>
+        {meta([
+          notice.authorName ? ["작성자", notice.authorName] : null,
+          notice.publishedAt ? ["게시일", koDateTime(notice.publishedAt)] : null,
+          notice.viewCount == null ? null : ["조회", String(notice.viewCount)],
+          ["첨부", files.length ? `${files.length}개` : "없음"],
+        ])}
+        {prose(notice.body)}
+        {files.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={notice.schoolUrl} />)}
+        <div className="crs-form-actions">
+          <SchoolLink url={notice.schoolUrl} />
+          <Button kind="secondary" onClick={closeDialog}>닫기</Button>
+        </div>
+      </div>
+    );
   } else {
     const instructor = roleIn(kj) === "INSTRUCTOR";
     const flags = noticeFlags(notice);
