@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -100,6 +101,26 @@ class DeepgramSpeechToTextTests {
 	}
 
 	@Test
+	void theAudioStreamIsClosedWhenTheProviderAnswersBeforeReadingTheBody() throws Exception {
+		this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		this.server.createContext("/v1/listen", (exchange) -> {
+			// 본문을 읽지 않고 바로 거절한다(key 거부, 요청 한도 등).
+			exchange.sendResponseHeaders(401, -1);
+			exchange.close();
+		});
+		this.server.start();
+		DeepgramSpeechToText client = new DeepgramSpeechToText(
+				properties(URI.create("http://127.0.0.1:" + this.server.getAddress().getPort()), "multi"));
+		long size = 256L * 1024 * 1024;
+		Endless audio = new Endless(size);
+		assertThatThrownBy(() -> client.transcribe(new Audio("audio/webm", size, () -> audio)))
+			.isInstanceOf(SpeechToTextException.class);
+		assertThat(audio.closed).isTrue();
+		assertThat(audio.read).isLessThan(size);
+		client.close();
+	}
+
+	@Test
 	void anUnreachableProviderIsANetworkFailure() {
 		DeepgramSpeechToText client = new DeepgramSpeechToText(properties(URI.create("http://127.0.0.1:1"), "multi"));
 		assertThatThrownBy(() -> client.transcribe(new Audio("audio/webm", 1, () -> new ByteArrayInputStream(new byte[1]))))
@@ -146,6 +167,46 @@ class DeepgramSpeechToTextTests {
 	private static DeepgramProperties properties(URI url, String language) {
 		return new DeepgramProperties(KEY, url, "nova-3", language, List.of("ko", "en"), Duration.ofSeconds(10),
 				DataSize.ofMegabytes(1));
+	}
+
+	/** 저장소 stream 대신: 끝없이 0을 주고 닫혔는지와 읽힌 바이트 수를 센다. */
+	private static final class Endless extends InputStream {
+
+		private final long size;
+
+		volatile long read;
+
+		volatile boolean closed;
+
+		Endless(long size) {
+			this.size = size;
+		}
+
+		@Override
+		public int read() throws IOException {
+			byte[] one = new byte[1];
+			return read(one, 0, 1) < 0 ? -1 : one[0];
+		}
+
+		@Override
+		public int read(byte[] buffer, int offset, int length) throws IOException {
+			if (this.closed) {
+				throw new IOException("closed");
+			}
+			if (this.read >= this.size) {
+				return -1;
+			}
+			int n = (int) Math.min(length, this.size - this.read);
+			java.util.Arrays.fill(buffer, offset, offset + n, (byte) 0);
+			this.read += n;
+			return n;
+		}
+
+		@Override
+		public void close() {
+			this.closed = true;
+		}
+
 	}
 
 }

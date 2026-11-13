@@ -4,14 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assumptions.assumeThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -24,7 +28,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
@@ -32,13 +38,18 @@ import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.files.api.SpeechToText.Transcript;
 import com.stackcorp.astra.files.api.SpeechToText.Utterance;
 import com.stackcorp.astra.files.api.SpeechToTextException;
+import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.studyroom.RecordingStudyFakes.FakeSpeechToText;
 import com.stackcorp.astra.files.studyroom.RecordingStudyFakes.SwitchableTextModel;
+import com.stackcorp.astra.shared.audit.AuditLog;
+import com.stackcorp.astra.shared.schedule.SchedulerLock;
 import com.stackcorp.astra.summary.FakeLlm;
 import com.stackcorp.astra.summary.api.LlmRequest;
 import com.stackcorp.astra.summary.api.LlmResponse;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 학습실 녹음의 전사·요약(ADR-0041). 프론트엔드 계약(Frontend-final README "녹음 전사·요약 연동 계약")이 구분하는 상태를 모두 응답으로
@@ -74,6 +85,24 @@ class RecordingStudyApiTests extends IntegrationTest {
 
 	@Autowired
 	RecordingJobRecords jobs;
+
+	@Autowired
+	ObjectStore store;
+
+	@Autowired
+	JsonMapper jsonMapper;
+
+	@Autowired
+	PlatformTransactionManager transactionManager;
+
+	@Autowired
+	AuditLog audit;
+
+	@Autowired
+	SchedulerLock schedulerLock;
+
+	@Autowired
+	MeterRegistry meters;
 
 	long course;
 
@@ -317,7 +346,7 @@ class RecordingStudyApiTests extends IntegrationTest {
 		// 길게 선언했지만 실제는 30초: 실제 길이만 청구하고 결과를 낸다.
 		long overstated = id(upload("600000"));
 		this.speech.script = (audio, bytes) -> new Transcript(30.0, List.of(new Utterance(40, "끝")));
-		assertThat(this.runner.runOnce()).isTrue();
+		drain();
 		JsonNode ready = detail(overstated).get("transcription");
 		assertThat(ready.get("status").asString()).isEqualTo("ready");
 		// 실제 길이 밖의 시각은 실제 길이로 자른다.
@@ -327,7 +356,7 @@ class RecordingStudyApiTests extends IntegrationTest {
 		// 10초로 선언했지만 실제는 1시간: 실제 길이를 청구하고 결과는 내주지 않는다.
 		long understated = id(upload("10000"));
 		this.speech.script = (audio, bytes) -> new Transcript(3600.0, List.of(new Utterance(1, "몰래")));
-		assertThat(this.runner.runOnce()).isTrue();
+		drain();
 		JsonNode withheld = detail(understated);
 		assertThat(withheld.get("transcription").toString()).doesNotContain("몰래").contains("실제 길이가 올릴 때 알린 길이와 달라");
 		assertThat(withheld.get("summary").get("status").asString()).isEqualTo("failed");
@@ -338,7 +367,7 @@ class RecordingStudyApiTests extends IntegrationTest {
 		// 실제 길이가 상한을 넘으면 too_long이다.
 		long hidden = id(upload("10800000"));
 		this.speech.script = (audio, bytes) -> new Transcript(10900.0, List.of(new Utterance(1, "길다")));
-		assertThat(this.runner.runOnce()).isTrue();
+		drain();
 		assertThat(detail(hidden).get("transcription").get("message").asString())
 			.isEqualTo("녹음이 180분보다 길어 전사하지 않았습니다.");
 	}
@@ -394,23 +423,126 @@ class RecordingStudyApiTests extends IntegrationTest {
 	}
 
 	@Test
-	void deletingDuringProcessingDiscardsTheResultAndRemovesTheJobs() throws Exception {
-		long id = id(upload("60000"));
+	void deletingAnUnderstatedRecordingDuringProcessingStillChargesTheRealLength() throws Exception {
+		// 1초로 선언한 1시간 녹음을 처리하는 사이 지운다. 결과와 작업은 사라지지만 제공자가 잰 길이는 청구한다.
+		long id = id(upload("1000"));
 		this.speech.script = (audio, bytes) -> {
-			try {
-				this.owner.send(MockMvcRequestBuilders.delete(BASE + "/recordings/" + id).header("If-Match", "\"1\""))
-					.andExpect(status().isNoContent());
-			}
-			catch (Exception ex) {
-				throw new IllegalStateException(ex);
-			}
-			return FakeSpeechToText.lecture(audio, bytes);
+			deleteRecording(id);
+			return new Transcript(3600.0, List.of(new Utterance(1, "몰래")));
 		};
 		assertThat(this.runner.runOnce()).isTrue();
 		assertThat(jobRows(id)).isZero();
 		this.owner.get(BASE + "/recordings/" + id).andExpect(status().isNotFound());
-		// 제공자는 이미 처리했으므로 잡아 둔 사용량(선언 길이)은 남는다.
-		assertThat(this.jobs.usageSeconds(this.ownerId)).isEqualTo(60);
+		assertThat(this.jobs.usageSeconds(this.ownerId)).isEqualTo(3600);
+
+		// 그래서 되풀이해도 한도에 걸린다: 하루 300분을 다 쓰면 다음 녹음은 보내기 전에 거절한다.
+		usage(LocalDate.now(), 300 * 60);
+		long next = id(upload("1000"));
+		this.speech.calls.clear();
+		assertThat(this.runner.runOnce()).isFalse();
+		assertThat(this.speech.calls).isEmpty();
+		assertThat(detail(next).get("transcription").get("message").asString()).contains("오늘 전사할 수 있는 녹음 시간");
+	}
+
+	@Test
+	void aSummaryOlderThanAQueuedTranscriptionRunsFirst() throws Exception {
+		long first = id(upload("5000"));
+		assertThat(this.runner.runOnce()).isTrue();
+		long second = id(upload("5000"));
+		assertThat(this.runner.runOnce()).isTrue();
+		assertThat(detail(first).get("summary").get("status").asString()).isEqualTo("ready");
+		assertThat(detail(second).get("transcription").get("status").asString()).isEqualTo("queued");
+	}
+
+	@Test
+	void pollRunsClaimedJobsInParallel() throws Exception {
+		long a = id(upload("5000"));
+		long b = id(upload("5000"));
+		CountDownLatch together = new CountDownLatch(2);
+		AtomicBoolean parallel = new AtomicBoolean(true);
+		this.speech.script = (audio, bytes) -> {
+			together.countDown();
+			try {
+				if (!together.await(20, TimeUnit.SECONDS)) {
+					parallel.set(false);
+				}
+			}
+			catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+			}
+			return FakeSpeechToText.lecture(audio, bytes);
+		};
+		// 전사 둘이 함께 돌아야 둘 다 latch를 지난다. 끝난 뒤 생긴 요약도 같은 dispatch에서 잡을 수 있다.
+		assertThat(this.runner.dispatch()).isGreaterThanOrEqualTo(2);
+		for (long id : List.of(a, b)) {
+			awaitStatus(id, "transcription", "ready");
+		}
+		assertThat(parallel.get()).isTrue();
+		this.runner.dispatch();
+		for (long id : List.of(a, b)) {
+			awaitStatus(id, "summary", "ready");
+		}
+	}
+
+	@Test
+	void aSummaryCutAtTheOutputLimitFailsAtOnceWithItsOwnSentence() throws Exception {
+		long id = id(upload("5000"));
+		this.llm.reset((request) -> new LlmResponse("{\"overview\": \"잘", LlmResponse.StopReason.MAX_TOKENS,
+				new LlmResponse.Usage(10, 4000)));
+		drain();
+		assertThat(detail(id).get("summary").get("message").asString())
+			.isEqualTo("요약 모델의 결과가 길이 상한에서 잘려 요약을 만들지 못했습니다.");
+		assertThat(this.llm.log).hasSize(1);
+	}
+
+	@Test
+	void aReplayedOrFiledUploadAlsoStartsQueued() throws Exception {
+		long folder = json(this.owner.postJson(BASE + "/courses/" + this.course + "/folders", "{\"name\":\"강의\"}")
+			.andExpect(status().isCreated())).get("id").asLong();
+		byte[] audio = StudyRoomApiTests.webm();
+		String at = Instant.now().minusSeconds(60).toString();
+		JsonNode first = json(this.owner.send(multipart(audio, "5000").param("recordedAt", at)
+			.param("folderId", Long.toString(folder))
+			.header("Idempotency-Key", "rec-study-1")).andExpect(status().isCreated()));
+		JsonNode replay = json(this.owner.send(multipart(audio, "5000").param("recordedAt", at)
+			.param("folderId", Long.toString(folder))
+			.header("Idempotency-Key", "rec-study-1")).andExpect(status().isCreated()));
+		assertThat(replay.get("id").asLong()).isEqualTo(first.get("id").asLong());
+		for (JsonNode response : List.of(first, replay)) {
+			assertThat(response.get("transcription").toString()).isEqualTo("{\"status\":\"queued\"}");
+			assertThat(response.get("summary").toString()).isEqualTo("{\"status\":\"queued\"}");
+		}
+		assertThat(jobRows(first.get("id").asLong())).isEqualTo(2);
+	}
+
+	@Test
+	void aRunningJobKeepsItsLeaseWhileItOutlivesTheLeaseLength() throws Exception {
+		long id = id(upload("5000"));
+		RecordingStudyRunner other = runner("runner-b", Duration.ofSeconds(3), Duration.ofMillis(500));
+		try {
+			AtomicReference<String> seen = new AtomicReference<>();
+			this.speech.script = (audio, bytes) -> {
+				try {
+					Thread.sleep(4500);
+				}
+				catch (InterruptedException ex) {
+					Thread.currentThread().interrupt();
+				}
+				// lease 3초를 넘겼지만 갱신해 왔으므로 회수되지 않는다.
+				this.runner.recoverExpired();
+				seen.set(this.jdbc.sql("""
+						SELECT CONCAT(job_state, ':', lease_owner, ':', lease_expires_at > CURRENT_TIMESTAMP(3))
+						  FROM study_room_recording_jobs WHERE study_room_recording_id = :id AND job_kind = 'transcription'
+						""").param("id", id).query(String.class).single());
+				return FakeSpeechToText.lecture(audio, bytes);
+			};
+			assertThat(other.runOnce()).isTrue();
+			assertThat(seen.get()).isEqualTo("processing:runner-b:1");
+			assertThat(detail(id).get("transcription").get("status").asString()).isEqualTo("ready");
+		}
+		finally {
+			other.close();
+		}
 	}
 
 	@Test
@@ -439,13 +571,15 @@ class RecordingStudyApiTests extends IntegrationTest {
 		for (int i = 0; i < 3; i++) {
 			ids.add(id(upload("5000")));
 		}
+		// 이름이 다른 두 worker(lease 소유자)가 함께 잡는다.
+		RecordingStudyRunner other = runner("runner-b", Duration.ofHours(2), Duration.ofHours(1));
 		ExecutorService pool = Executors.newFixedThreadPool(2);
 		try {
 			List<Future<?>> runs = new ArrayList<>();
-			for (int t = 0; t < 2; t++) {
+			for (RecordingStudyRunner worker : List.of(this.runner, other)) {
 				runs.add(pool.submit(() -> {
 					for (int i = 0; i < 10; i++) {
-						this.runner.runOnce();
+						worker.runOnce();
 					}
 				}));
 			}
@@ -455,6 +589,7 @@ class RecordingStudyApiTests extends IntegrationTest {
 		}
 		finally {
 			pool.shutdownNow();
+			other.close();
 		}
 		drain();
 		assertThat(this.speech.calls).hasSize(3);
@@ -502,16 +637,47 @@ class RecordingStudyApiTests extends IntegrationTest {
 	}
 
 	private ResultActions upload(String durationMs, byte[] content) throws Exception {
-		return this.owner.send(MockMvcRequestBuilders.multipart(BASE + "/courses/" + this.course + "/recordings")
-			.file(new MockMultipartFile("file", "lecture.webm", "audio/webm", content))
-			.param("title", "강의 녹음 제목")
-			.param("source", "mic")
-			.param("durationMs", durationMs)
-			.param("recordedAt", Instant.now().toString()));
+		return this.owner.send(multipart(content, durationMs).param("recordedAt", Instant.now().toString()));
+	}
+
+	/** recordedAt 없는 업로드 요청. 같은 Idempotency-Key로 다시 보내려면 부르는 쪽이 같은 recordedAt을 넣는다. */
+	private MockMultipartHttpServletRequestBuilder multipart(byte[] content, String durationMs) {
+		MockMultipartHttpServletRequestBuilder request = MockMvcRequestBuilders
+			.multipart(BASE + "/courses/" + this.course + "/recordings")
+			.file(new MockMultipartFile("file", "lecture.webm", "audio/webm", content));
+		request.param("title", "강의 녹음 제목").param("source", "mic").param("durationMs", durationMs);
+		return request;
 	}
 
 	private JsonNode detail(long id) throws Exception {
 		return json(this.owner.get(BASE + "/recordings/" + id).andExpect(status().isOk()));
+	}
+
+	private void deleteRecording(long id) {
+		try {
+			this.owner.send(MockMvcRequestBuilders.delete(BASE + "/recordings/" + id).header("If-Match", "\"1\""))
+				.andExpect(status().isNoContent());
+		}
+		catch (Exception ex) {
+			throw new IllegalStateException(ex);
+		}
+	}
+
+	/** executor에서 도는 작업이 그 상태가 될 때까지 기다린다. */
+	private void awaitStatus(long id, String job, String status) throws Exception {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+		while (!status.equals(detail(id).get(job).get("status").asString())) {
+			assertThat(System.nanoTime()).as("%s of %d becomes %s", job, id, status).isLessThan(deadline);
+			Thread.sleep(100);
+		}
+	}
+
+	/** 이름과 lease가 다른 worker 하나. 같은 원장을 함께 쓴다. 쓴 뒤 close한다. */
+	private RecordingStudyRunner runner(String workerId, Duration lease, Duration renewal) {
+		return new RecordingStudyRunner(this.jobs, this.store, this.speech, this.model, this.jsonMapper,
+				this.transactionManager, this.audit, new RecordingStudyProperties(180, 300, 1800, 4, 24000,
+						Duration.ofHours(1), lease, renewal, 4, Duration.ofMinutes(1), workerId),
+				this.schedulerLock, this.meters);
 	}
 
 	private void due(long recordingId) {

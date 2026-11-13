@@ -94,19 +94,31 @@ final class DeepgramSpeechToText implements SpeechToText, AutoCloseable {
 		if (!available()) {
 			throw new SpeechToTextException(Code.CONFIG, "Deepgram key가 설정되지 않았습니다.");
 		}
+		// 원본 stream은 여기서 열고 언제나 닫는다. HttpClient는 끝까지 읽거나 읽다 실패할 때만 닫으므로, 제공자가 본문을 다 받기 전에
+		// 답하거나(401, 429 등) 연결이 끊기면 저장소 연결이 남는다.
+		InputStream source;
+		try {
+			source = audio.opener().open();
+		}
+		catch (IOException ex) {
+			throw new SpeechToTextException(Code.NETWORK, "원본을 열지 못했습니다.", ex);
+		}
+		try {
+			return send(audio, source);
+		}
+		finally {
+			closeQuietly(source);
+		}
+	}
+
+	private Transcript send(Audio audio, InputStream source) {
 		HttpRequest request = HttpRequest.newBuilder(this.endpoint)
 			.header("authorization", "Token " + this.properties.apiKey())
 			.header("content-type", audio.mimeType())
 			.header("accept", "application/json")
 			.timeout(this.properties.timeout())
-			.POST(HttpRequest.BodyPublishers.fromPublisher(HttpRequest.BodyPublishers.ofInputStream(() -> {
-				try {
-					return audio.opener().open();
-				}
-				catch (IOException ex) {
-					throw new UncheckedIOException(ex);
-				}
-			}), audio.sizeBytes()))
+			.POST(HttpRequest.BodyPublishers.fromPublisher(HttpRequest.BodyPublishers.ofInputStream(() -> source),
+					audio.sizeBytes()))
 			.build();
 		HttpResponse<InputStream> response;
 		try {

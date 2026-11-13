@@ -52,7 +52,7 @@ class LlmTextModel implements TextModel {
 	public String complete(String system, String user, int maxOutputTokens) {
 		LlmClient client = this.llm.getIfAvailable();
 		if (client == null) {
-			throw new TextModelException(false, "모델 제공자가 설정되지 않았습니다.", null);
+			throw new TextModelException(TextModelException.Kind.CONFIG, "모델 제공자가 설정되지 않았습니다.", null);
 		}
 		LlmRequest request = new LlmRequest(LlmRequest.Purpose.RECORDING, system,
 				List.of(new LlmMessage(LlmMessage.Role.USER, List.of(new LlmContent.Text(user)))), maxOutputTokens);
@@ -65,16 +65,18 @@ class LlmTextModel implements TextModel {
 			tokens(model, "input", response.usage().inputTokens());
 			tokens(model, "output", response.usage().outputTokens());
 			if (response.stopReason() == LlmResponse.StopReason.MAX_TOKENS) {
-				throw new TextModelException(true, "모델 응답이 출력 상한에서 잘렸습니다.", null);
+				throw new TextModelException(TextModelException.Kind.TRUNCATED, "모델 응답이 출력 상한에서 잘렸습니다.", null);
 			}
 			if (response.text() == null || response.text().isBlank()) {
-				throw new TextModelException(true, "모델 응답에 글이 없습니다.", null);
+				throw new TextModelException(TextModelException.Kind.UNAVAILABLE, "모델 응답에 글이 없습니다.", null);
 			}
 			return response.text();
 		}
 		catch (LlmException ex) {
 			outcome = MetricTags.code(ex.code().name());
-			throw new TextModelException(ex.retryable() || ex.code() == LlmException.Code.PROTOCOL,
+			throw new TextModelException(
+					ex.retryable() || ex.code() == LlmException.Code.PROTOCOL ? TextModelException.Kind.UNAVAILABLE
+							: TextModelException.Kind.CONFIG,
 					"모델 호출이 실패했습니다 (" + ex.code().name().toLowerCase(Locale.ROOT) + ")", ex);
 		}
 		finally {

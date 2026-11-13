@@ -36,6 +36,8 @@ final class RecordingStudyFailures {
 
 	static final String INVALID_OUTPUT = "invalid_output";
 
+	static final String OUTPUT_TRUNCATED = "output_truncated";
+
 	static final String INTERRUPTED = "interrupted";
 
 	static final String INTERNAL = "internal";
@@ -51,6 +53,7 @@ final class RecordingStudyFailures {
 			Map.entry(MODEL_CONFIG, "요약 모델 설정에 문제가 있어 요약을 만들지 못했습니다. 관리자에게 알려 주세요."),
 			Map.entry(MODEL_UNAVAILABLE, "요약 모델이 응답하지 않아 요약을 만들지 못했습니다."),
 			Map.entry(INVALID_OUTPUT, "요약 모델의 결과가 형식에 맞지 않아 요약을 만들지 못했습니다."),
+			Map.entry(OUTPUT_TRUNCATED, "요약 모델의 결과가 길이 상한에서 잘려 요약을 만들지 못했습니다."),
 			Map.entry(INTERRUPTED, "처리하던 서버가 멈춰 끝내지 못했습니다."),
 			Map.entry(INTERNAL, "서버 오류로 처리하지 못했습니다."));
 

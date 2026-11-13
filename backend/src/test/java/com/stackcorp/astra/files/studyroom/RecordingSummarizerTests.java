@@ -97,6 +97,16 @@ class RecordingSummarizerTests {
 	}
 
 	@Test
+	void onlyPairedEmphasisAndCodeWrappersAndHeadingsAreRemoved() {
+		assertThat(RecordingSummarizer.plain("**핵심** 개념과 `map` 함수", 100)).isEqualTo("핵심 개념과 map 함수");
+		assertThat(RecordingSummarizer.plain("## 정리", 100)).isEqualTo("정리");
+		assertThat(RecordingSummarizer.plain("2**10 = 1024", 100)).isEqualTo("2**10 = 1024");
+		assertThat(RecordingSummarizer.plain("a**2 + b**2 = c**2", 100)).isEqualTo("a**2 + b**2 = c**2");
+		assertThat(RecordingSummarizer.plain("__init__ 메서드와 x_y", 100)).isEqualTo("__init__ 메서드와 x_y");
+		assertThat(RecordingSummarizer.plain("C# 언어, 3 # 4", 100)).isEqualTo("C# 언어, 3 # 4");
+	}
+
+	@Test
 	void transcriptsAreTrimmedClampedAndOrdered() {
 		Transcription transcription = RecordingTranscripts.build(List.of(new Utterance(7.019, "뒤\u200b 말"),
 				new Utterance(-1, "앞"), new Utterance(3, "\t"), new Utterance(99, "넘침")), 8.5);

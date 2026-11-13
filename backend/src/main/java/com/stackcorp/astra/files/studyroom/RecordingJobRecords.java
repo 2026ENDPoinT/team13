@@ -18,7 +18,7 @@ class RecordingJobRecords {
 
 	private static final String CLAIMED = """
 			SELECT j.study_room_recording_job_id, j.owner_user_id, j.study_room_recording_id, r.course_id, j.job_kind,
-			       j.attempt_count, r.duration_ms, r.audio_mime_type, f.file_size_bytes, b.storage_key
+			       j.attempt_count, r.duration_ms, r.audio_mime_type, f.file_size_bytes, b.storage_key, j.next_attempt_at
 			  FROM study_room_recording_jobs j
 			  JOIN study_room_recordings r ON r.study_room_recording_id = j.study_room_recording_id
 			  JOIN files f ON f.file_id = r.file_id
@@ -279,9 +279,23 @@ class RecordingJobRecords {
 			.single();
 	}
 
+	/** 이 작업 행이 남아 있는지. 처리 중에 결과를 버렸을 때 녹음을 지운 것인지 lease를 잃은 것인지 가른다. */
+	boolean exists(long jobId) {
+		return this.jdbc.sql("SELECT COUNT(*) FROM study_room_recording_jobs WHERE study_room_recording_job_id = :id")
+			.param("id", jobId)
+			.query(Long.class)
+			.single() > 0;
+	}
+
+	/** DB 날짜(기관 시간대). 사용량을 잡아 둔 날짜로 쓴다. */
+	java.sql.Date today() {
+		return this.jdbc.sql("SELECT CURRENT_DATE").query(java.sql.Date.class).single();
+	}
+
 	private static Claimed claimed(java.sql.ResultSet rs, int n) throws java.sql.SQLException {
 		return new Claimed(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getLong(4), RecordingJobKind.of(rs.getString(5)),
-				rs.getInt(6) + 1, rs.getLong(7), rs.getString(8), rs.getLong(9), rs.getString(10));
+				rs.getInt(6) + 1, rs.getLong(7), rs.getString(8), rs.getLong(9), rs.getString(10), rs.getTimestamp(11),
+				null);
 	}
 
 	/**
@@ -295,9 +309,24 @@ class RecordingJobRecords {
 	 *
 	 * @param attempt 이번 실행이 몇 번째인지(1부터)
 	 * @param durationMs 올릴 때 보낸 길이(client 값)
+	 * @param nextAttemptAt 잡을 때 고르는 순서(전사와 요약을 함께 오래된 순으로)
+	 * @param reservation 전사면 잡을 때 사용량에 잡아 둔 초와 날짜. 행이 지워져도 worker가 실제 길이로 고칠 수 있게 들고 있다
 	 */
 	record Claimed(long jobId, long owner, long recordingId, long courseId, RecordingJobKind kind, int attempt,
-			long durationMs, String mimeType, long sizeBytes, String storageKey) {
+			long durationMs, String mimeType, long sizeBytes, String storageKey, java.sql.Timestamp nextAttemptAt,
+			Running reservation) {
+
+		Claimed reserved(Running reservation) {
+			return new Claimed(this.jobId, this.owner, this.recordingId, this.courseId, this.kind, this.attempt,
+					this.durationMs, this.mimeType, this.sizeBytes, this.storageKey, this.nextAttemptAt, reservation);
+		}
+
+		/** 잡는 순서: 다음 시도 시각, 그다음 ID. */
+		boolean before(Claimed other) {
+			int byTime = this.nextAttemptAt.compareTo(other.nextAttemptAt);
+			return byTime != 0 ? byTime < 0 : this.jobId < other.jobId;
+		}
+
 	}
 
 	/** @param reservedOn 사용량을 잡아 둔 날짜. 요약이면 null */

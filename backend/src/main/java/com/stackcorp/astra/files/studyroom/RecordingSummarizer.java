@@ -68,7 +68,14 @@ final class RecordingSummarizer {
 
 	private static final Pattern CONTROL = Pattern.compile("[\\p{Cc}\\p{Cf}&&[^\\n\\t ]]");
 
-	private static final Pattern MARKUP = Pattern.compile("\\*\\*|__|`+|^\\s*#{1,6}\\s+", Pattern.MULTILINE);
+	// 낱말 경계에서 짝을 이룬 **강조**와 `코드`만 벗긴다. 2**10, a**2 + b**2, __init__ 같은 글은 그대로 둔다.
+	private static final Pattern BOLD = Pattern.compile("(?<![\\w*])\\*\\*(?=\\S)(.+?)(?<=\\S)\\*\\*(?![\\w*])",
+			Pattern.UNICODE_CHARACTER_CLASS);
+
+	private static final Pattern CODE = Pattern.compile("(?<![\\w`])`(?=[^`\\s])([^`]+?)(?<=\\S)`(?![\\w`])",
+			Pattern.UNICODE_CHARACTER_CLASS);
+
+	private static final Pattern HEADING = Pattern.compile("^\\s*#{1,6}\\s+", Pattern.MULTILINE);
 
 	private static final Pattern SPACE = Pattern.compile("\\s+");
 
@@ -237,10 +244,12 @@ final class RecordingSummarizer {
 		return value;
 	}
 
-	/** 일반 텍스트로: 제어 문자와 Markdown 표지를 빼고 공백을 하나로, 상한에서 자른다(code point 경계). */
+	/** 일반 텍스트로: 제어 문자, 짝을 이룬 강조·코드 표지, 줄머리 제목 표지를 빼고 공백을 하나로, 상한에서 자른다(code point 경계). */
 	static String plain(String raw, int max) {
 		String value = CONTROL.matcher(raw).replaceAll("");
-		value = MARKUP.matcher(value).replaceAll("");
+		value = HEADING.matcher(value).replaceAll("");
+		value = BOLD.matcher(value).replaceAll("$1");
+		value = CODE.matcher(value).replaceAll("$1");
 		value = SPACE.matcher(value).replaceAll(" ").strip();
 		if (value.codePointCount(0, value.length()) > max) {
 			value = value.substring(0, value.offsetByCodePoints(0, max - 1)).strip() + "…";
