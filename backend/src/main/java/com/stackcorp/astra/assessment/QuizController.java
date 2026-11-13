@@ -227,7 +227,8 @@ class QuizController {
 	private InstructorQuiz instructorView(Quiz quiz, LocalDateTime now) {
 		List<Question> questions = this.records.questions(quiz.quizId());
 		Counts counts = this.attempts.counts(List.of(quiz.quizId())).getOrDefault(quiz.quizId(), new Counts(0, 0, 0));
-		return new InstructorQuiz(Info.of(quiz, questions.size()), quiz.settings().revision(), quiz.phase(now).code(), now,
+		return new InstructorQuiz(Info.of(quiz, questions.size(), true), quiz.settings().revision(),
+				quiz.phase(now).code(), now,
 				this.records.hasAttempts(quiz.quizId()), counts.inProgress(), counts.finished(), counts.awaitingGrading(),
 				questions.stream().map(InstructorQuestion::of).toList());
 	}
@@ -242,7 +243,8 @@ class QuizController {
 		// 공개 전에는 점수를 읽지도 않는다. 응답에 들어갈 길을 만들지 않는다(SEC-14).
 		BigDecimal score = release.scores() ? this.attempts.grade(quiz.settings().gradeItemId(), userId).orElse(null)
 				: null;
-		return new StudentQuiz(Info.of(quiz, this.records.questionCounts(List.of(quiz.quizId())).getOrDefault(quiz.quizId(), 0)),
+		return new StudentQuiz(
+				Info.of(quiz, this.records.questionCounts(List.of(quiz.quizId())).getOrDefault(quiz.quizId(), 0), false),
 				quiz.phase(now).code(), now, canStart, own.size(),
 				own.stream().map((a) -> AttemptSummary.of(a, release)).toList(), score);
 	}
@@ -420,19 +422,23 @@ class QuizController {
 	record OptionRequest(String text, Boolean correct) {
 	}
 
-	/** 담당자와 학생에게 같은 퀴즈 정보. 정답과 문항 내용은 들어 있지 않다. */
+	/**
+	 * 담당자와 학생에게 같은 퀴즈 정보. 정답과 문항 내용은 들어 있지 않다.
+	 * @param gradeItemId 이 퀴즈의 성적 항목. 담당자에게만 있다. 항목 점수표({@code GET /api/courses/{courseId}/gradebook/items/{itemId}})를
+	 * 바로 연다
+	 */
 	record Info(long quizId, long activityId, int weekNo, String title, String description, LocalDateTime openAt,
 			LocalDateTime closeAt, boolean published, String examType, Integer timeLimitMinutes, Integer attemptLimit,
 			boolean shuffleQuestions, BigDecimal maxScore, int questionCount, LocalDateTime resultReleaseAt,
-			boolean answersVisible) {
+			boolean answersVisible, @JsonInclude(JsonInclude.Include.NON_NULL) Long gradeItemId) {
 
-		static Info of(Quiz quiz, int questionCount) {
+		static Info of(Quiz quiz, int questionCount, boolean instructor) {
 			QuizActivity activity = quiz.activity();
 			return new Info(quiz.quizId(), activity.activityId(), activity.weekNo(), activity.title(),
 					activity.description(), activity.openAt(), activity.closeAt(), activity.published(),
 					quiz.settings().examType(), quiz.settings().durationMinutes(), quiz.settings().attemptLimit(),
 					quiz.settings().shuffle(), quiz.settings().maxScore(), questionCount, quiz.settings().releaseAt(),
-					quiz.settings().answersVisible());
+					quiz.settings().answersVisible(), instructor ? quiz.settings().gradeItemId() : null);
 		}
 
 	}
@@ -490,21 +496,24 @@ class QuizController {
 	 * 목록 항목. 담당자에게는 응시 수를, 학생에게는 본인 상태를 담는다.
 	 *
 	 * @param status 학생의 마지막 응시 상태: not_started, in_progress, submitted, graded. 담당자 응답에는 없다
+	 * @param gradeItemId 이 퀴즈의 성적 항목. 담당자 응답에만 있다
 	 */
 	record QuizItem(long quizId, long activityId, int weekNo, String title, LocalDateTime openAt, LocalDateTime closeAt,
 			boolean published, String examType, String phase, @JsonInclude(JsonInclude.Include.NON_NULL) String status,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Integer attemptsUsed,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Integer inProgressCount,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Integer finishedCount,
-			@JsonInclude(JsonInclude.Include.NON_NULL) Integer awaitingGradingCount) {
+			@JsonInclude(JsonInclude.Include.NON_NULL) Integer awaitingGradingCount,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long gradeItemId) {
 
+		/** @param counts 담당자에게만. 없으면 학생 항목이다 */
 		static QuizItem of(Quiz q, LocalDateTime now, String status, Integer attemptsUsed, Counts counts) {
 			QuizActivity activity = q.activity();
 			return new QuizItem(q.quizId(), activity.activityId(), activity.weekNo(), activity.title(), activity.openAt(),
 					activity.closeAt(), activity.published(), q.settings().examType(), q.phase(now).code(), status,
 					attemptsUsed,
 					counts == null ? null : counts.inProgress(), counts == null ? null : counts.finished(),
-					counts == null ? null : counts.awaitingGrading());
+					counts == null ? null : counts.awaitingGrading(), counts == null ? null : q.settings().gradeItemId());
 		}
 
 	}
