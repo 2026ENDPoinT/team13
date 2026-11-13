@@ -13520,6 +13520,248 @@
    ]
   },
   {
+   "_id": "DhvWB9H6fgxmNfyXS",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "school_file_lists",
+   "name": "학교 파일모음 목록 읽기",
+   "position": {
+    "x": 10130,
+    "y": 50
+   },
+   "keys": {
+    "pks": [],
+    "fks": [
+     {
+      "_id": "JhheEfZTyffkJB6t2",
+      "name": "과목 ID",
+      "pName": "course_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "과목 ID",
+      "relEntity": "4RHRxFgn3tkTjfqW6",
+      "relFieldId": "kkFaq35H5vzyLELFL",
+      "relType": "ZERO_OR_ONE"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "jsSaJKZexdQHPSCxA",
+     "name": "학교 파일모음 목록을 마지막으로 읽은 일시",
+     "pName": "listed_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 파일모음 목록을 마지막으로 읽은 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "kibt5dPv8uRE8piQH",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "school_files",
+   "name": "학교 강의실 파일",
+   "position": {
+    "x": 10130,
+    "y": 222
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "zYam4CNzffKZon54K",
+      "name": "학교 파일 ID",
+      "pName": "school_file_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "학교 파일 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "jF8gGiC4HEupcBbDh",
+     "name": "과목 ID",
+     "pName": "course_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "과목 ID",
+     "relEntity": "4RHRxFgn3tkTjfqW6",
+     "relFieldId": "kkFaq35H5vzyLELFL",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "yFxWuLQJJi3KCeoA3",
+     "name": "학교 파일 키",
+     "pName": "file_seq",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 파일 키(FILE_SEQ)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "4aRJA6T3G2nAhFCjr",
+     "name": "학교 내용 키(CONTENT_SEQ). 받기 요청에 쓴다",
+     "pName": "content_seq",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 내용 키(CONTENT_SEQ). 받기 요청에 쓴다",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "mKE6nAAAZoiLGdFZt",
+     "name": "파일이 붙은 학교 학습활동의 메뉴 ID",
+     "pName": "school_type",
+     "domain": "",
+     "type": "VARCHAR(30)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "파일이 붙은 학교 학습활동의 메뉴 ID(lecture_material|report 등)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "LWECegEefABtBajCu",
+     "name": "파일이 붙은 학교 학습활동 번호",
+     "pName": "school_item_id",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "파일이 붙은 학교 학습활동 번호",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "3uwEGNR5EAx88eAsY",
+     "name": "학교 화면의 파일 이름",
+     "pName": "file_name",
+     "domain": "",
+     "type": "VARCHAR(300)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 화면의 파일 이름",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "n8cZT73o3CCT8ZYve",
+     "name": "학교 화면 크기 표시의 근사값",
+     "pName": "size_bytes",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "학교 화면 크기 표시의 근사값(byte)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "LCLYFqAm8DkgevoK4",
+     "name": "학교 화면의 과목 안 순서",
+     "pName": "sort_order",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 화면의 과목 안 순서(0부터)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "fbAMWfjBhRYBz8Duw",
+     "name": "받아 둔 사본의 첨부 그룹(파일 하나). 받기 전에는 NULL",
+     "pName": "attachment_group_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "받아 둔 사본의 첨부 그룹(파일 하나). 받기 전에는 NULL",
+     "relEntity": "SZLmXPwMERnFbic5D",
+     "relFieldId": "pAPGL4ActhDETSQvq",
+     "relType": "ZERO_OR_ONE"
+    },
+    {
+     "_id": "65qEPaodSfm68sxMN",
+     "name": "받아 둔 사본 파일 ID. 받기 전에는 NULL",
+     "pName": "file_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "받아 둔 사본 파일 ID. 받기 전에는 NULL",
+     "relEntity": "bxoZkn979ue2k9gpi",
+     "relFieldId": "tQ3z9cXG7sFPkGYM7",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "ijrGdgXeG2avfriMM",
+     "name": "사본을 받은 일시",
+     "pName": "copied_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "사본을 받은 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ons7t7qCMkmnd8NxC",
+     "name": "학교 목록에서 마지막으로 본 일시",
+     "pName": "listed_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "학교 목록에서 마지막으로 본 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "Xvoxn3fH7BEe8tHmo",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "FMShChi9EhL3gfTBb",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "secondary_auth_challenges",

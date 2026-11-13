@@ -85,9 +85,11 @@ class LearningController {
 
 	private final SchoolActivities schoolActivities;
 
+	private final SchoolContent schoolContent;
+
 	LearningController(JdbcClient jdbc, LearningAccess access, MaterialFiles materialFiles, ActivityTargets targets,
 			MaterialService materials, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit,
-			SchoolActivities schoolActivities) {
+			SchoolActivities schoolActivities, SchoolContent schoolContent) {
 		this.jdbc = jdbc;
 		this.access = access;
 		this.materialFiles = materialFiles;
@@ -97,6 +99,7 @@ class LearningController {
 		this.idempotency = idempotency;
 		this.audit = audit;
 		this.schoolActivities = schoolActivities;
+		this.schoolContent = schoolContent;
 	}
 
 	/**
@@ -164,7 +167,12 @@ class LearningController {
 		return List.copyOf(all.values());
 	}
 
-	/** 자료 목록. 최근 등록순. 자료마다 구간과 파일별 요약 게시 여부가 있다. 권한 판정 뒤 쿼리는 넷(시계, 자료, 첨부, 게시 여부)이다. */
+	/**
+	 * 자료 목록. 최근 등록순. 자료마다 구간과 파일별 요약 게시 여부가 있다. 권한 판정 뒤 쿼리는 넷(시계, 자료, 첨부, 게시 여부)이다.
+	 * <p>
+	 * 학생에게는 학교 강의실의 자료({@link SchoolContent}, ADR-0043)를 서비스 자료 뒤에 학교 화면 순서로 붙인다. 학교 자료는
+	 * {@code activityId}가 {@code "school-<id>"}이고 {@code origin: "school"}이다.
+	 */
 	@GetMapping("/api/courses/{courseId}/materials")
 	ResponseEntity<MaterialList> materials(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		boolean instructor = role(actor, courseId) == CourseRole.INSTRUCTOR;
@@ -181,7 +189,24 @@ class LearningController {
 			.toList();
 		Map<Long, List<MaterialFile>> files = this.materialFiles
 			.of(rows.stream().map(ActivityRow::attachmentGroupId).filter(Objects::nonNull).toList());
-		return ok(new MaterialList(now, rows.stream().map((row) -> MaterialView.of(row, files(files, row), now)).toList()));
+		List<MaterialItem> items = new ArrayList<>(
+				rows.stream().map((row) -> (MaterialItem) MaterialView.of(row, files(files, row), now)).toList());
+		if (!instructor) {
+			items.addAll(this.schoolContent.materials(actor, courseId, now));
+		}
+		return ok(new MaterialList(now, items));
+	}
+
+	/**
+	 * 학교 강의실 학습활동의 상세(ADR-0043). 자료는 학생의 학교 session으로 학교 상세를 읽어 본문과 첨부를 준다. 학교 session이 없거나
+	 * 끝났으면 409 {@code school_signin_required}다.
+	 */
+	@GetMapping("/api/courses/{courseId}/activities/school-{schoolActivityId}")
+	ResponseEntity<SchoolContent.SchoolActivityView> schoolActivity(@AuthenticationPrincipal Actor actor,
+			@PathVariable long courseId, @PathVariable long schoolActivityId) {
+		return ResponseEntity.ok()
+			.cacheControl(CacheControl.noStore())
+			.body(this.schoolContent.activity(actor, courseId, schoolActivityId, this.access.now()));
 	}
 
 	/** 활동 상세. 자료, 영상, 평가 활동 모두 이 경로다. 구간과 판정에 쓴 DB 시각(serverTime)이 있고, 평가 활동이면 과제·퀴즈·설문 ID가 있다. */
@@ -442,7 +467,11 @@ class LearningController {
 	/**
 	 * @param serverTime 구간 판정에 쓴 DB 시각
 	 */
-	record MaterialList(LocalDateTime serverTime, List<MaterialView> items) {
+	record MaterialList(LocalDateTime serverTime, List<MaterialItem> items) {
+	}
+
+	/** 자료 목록의 한 줄. 서비스 자료({@link MaterialView})이거나 학교 자료({@link SchoolContent.SchoolMaterialView})다. */
+	sealed interface MaterialItem permits MaterialView, SchoolContent.SchoolMaterialView {
 	}
 
 	/**
@@ -450,7 +479,8 @@ class LearningController {
 	 * @param version 수정·삭제할 때 If-Match로 보내는 값
 	 */
 	record MaterialView(long activityId, int weekNo, String title, String description, LocalDateTime openAt,
-			boolean published, String phase, Instant createdAt, List<MaterialFile> files, int version) {
+			boolean published, String phase, Instant createdAt, List<MaterialFile> files,
+			int version) implements MaterialItem {
 
 		static MaterialView of(ActivityRow row, List<MaterialFile> files, LocalDateTime now) {
 			return new MaterialView(row.activity().activityId(), row.weekNo(), row.title(), row.description(),

@@ -1,8 +1,8 @@
 # DB 설계와 ERD 작업 가이드
 
-ASTRA 재구현용 MySQL 8 스키마(123 테이블, FK 247개)를 어떻게 읽고, 바꾸고, ERDCloud ERD에 반영하는지 정한 문서다. 사람과 에이전트 모두 이 문서의 절차를 따른다. 경로는 이 레포 루트 기준이고, `reference/`는 [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈이다(`git submodule update --init`).
+ASTRA 재구현용 MySQL 8 스키마(125 테이블, FK 251개)를 어떻게 읽고, 바꾸고, ERDCloud ERD에 반영하는지 정한 문서다. 사람과 에이전트 모두 이 문서의 절차를 따른다. 경로는 이 레포 루트 기준이고, `reference/`는 [ASTRA-Reference](https://github.com/STack-Corp/ASTRA-Reference) 서브모듈이다(`git submodule update --init`).
 
-- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`ASTRA DB`). 2026-11-12 기준 ERDCloud 화면에는 `V1__baseline.sql`의 97 테이블까지만 올라가 있다. `db/erdcloud/snapshot.json`은 모든 마이그레이션을 적용한 123 테이블이고, 6절대로 올려야 화면이 같아진다.
+- ERD A, ASTRA 목표 모델(MySQL, 이 문서의 대상): https://www.erdcloud.com/d/B5bWYfGmFisJTYLka (`ASTRA DB`). 2026-11-12 기준 ERDCloud 화면에는 `V1__baseline.sql`의 97 테이블까지만 올라가 있다. `db/erdcloud/snapshot.json`은 모든 마이그레이션을 적용한 125 테이블이고, 6절대로 올려야 화면이 같아진다.
 - ERD B(캠퍼스 온, PostgreSQL)는 별개 서비스의 ERD다. 캠퍼스 온 백엔드는 이 레포의 `archive/campus-on` 브랜치에 있고, ERD B 도구와 문서도 그 브랜치의 `db/README.md`에 있다.
 - 근거 표기는 [reference/backend/README.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/backend/README.md)의 `OBSERVED`/`CLIENT`/`INFERRED`/`PROPOSED`/`UNKNOWN`과 화면 명세의 `[추정]`을 그대로 쓴다. DB 설계 대부분은 화면·JS에서 역으로 추론한 `INFERRED`다. 운영 서버의 실제 테이블이 아니다.
 

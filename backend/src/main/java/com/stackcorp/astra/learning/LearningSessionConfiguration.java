@@ -6,7 +6,8 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({ LearningSessionProperties.class, SchoolActivityProperties.class })
+@EnableConfigurationProperties({ LearningSessionProperties.class, SchoolActivityProperties.class,
+		SchoolContentProperties.class })
 class LearningSessionConfiguration {
 
 	@Configuration(proxyBeanMethods = false)
