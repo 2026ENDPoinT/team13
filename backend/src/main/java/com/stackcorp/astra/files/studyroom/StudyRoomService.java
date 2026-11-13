@@ -14,6 +14,7 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.files.Downloads;
 import com.stackcorp.astra.files.FileReferences;
@@ -21,6 +22,7 @@ import com.stackcorp.astra.files.api.FileAccess;
 import com.stackcorp.astra.files.api.FileAction;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
+import com.stackcorp.astra.files.studyroom.RecordingStudyViews.Job;
 import com.stackcorp.astra.files.studyroom.StudyRoomRecords.Folder;
 import com.stackcorp.astra.files.studyroom.StudyRoomRecords.Placement;
 import com.stackcorp.astra.files.studyroom.StudyRoomRecords.Quota;
@@ -99,10 +101,12 @@ class StudyRoomService {
 
 	private final StudyRoomProperties properties;
 
+	private final RecordingStudy recordingStudy;
+
 	StudyRoomService(StudyRoomRecords records, StudyRecordingUploads uploads, FileReferences references,
 			ObjectStore store, FileAccess access, CourseMemberships memberships, RateLimiter rateLimiter,
 			Idempotency idempotency, AuditLog audit, PlatformTransactionManager transactionManager,
-			StudyRoomProperties properties) {
+			StudyRoomProperties properties, RecordingStudy recordingStudy) {
 		this.records = records;
 		this.uploads = uploads;
 		this.references = references;
@@ -115,6 +119,7 @@ class StudyRoomService {
 		this.transaction = new TransactionTemplate(transactionManager);
 		this.transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 		this.properties = properties;
+		this.recordingStudy = recordingStudy;
 	}
 
 	// ---------- 읽기 ----------
@@ -143,7 +148,8 @@ class StudyRoomService {
 	}
 
 	RecordingView recording(long owner, long id) {
-		return RecordingView.of(this.records.recording(owner, id).orElseThrow(ApiException::notFound));
+		Recording recording = this.records.recording(owner, id).orElseThrow(ApiException::notFound);
+		return RecordingView.of(recording, this.recordingStudy.of(owner, id));
 	}
 
 	// ---------- 폴더 ----------
@@ -402,6 +408,8 @@ class StudyRoomService {
 							.orElseThrow(StudyRoomService::extensionNotAllowed);
 						long id = StudyRoomService.this.records.insertRecording(owner, courseId, fileId, meta.title(),
 								meta.source(), mimeType, meta.durationMs(), meta.recordedAt());
+						// 같은 transaction에서 작업을 만든다. 첫 응답부터 queued다(ADR-0041).
+						StudyRoomService.this.recordingStudy.created(owner, id);
 						if (meta.folderId() != null) {
 							StudyRoomService.this.records.insertPlacement(owner, meta.folderId(), null, id);
 						}
@@ -447,7 +455,12 @@ class StudyRoomService {
 		inTransaction(() -> {
 			this.records.lockQuota(owner);
 			Recording recording = this.records.recording(owner, id).orElseThrow(ApiException::notFound);
-			if (recording.version() != version || this.records.deleteRecording(owner, id, version) == 0) {
+			if (recording.version() != version) {
+				throw versionConflict();
+			}
+			// 작업과 결과를 녹음 행보다 먼저 지운다. 처리 중인 worker의 기록은 행이 없어 버려진다(ADR-0041).
+			this.recordingStudy.deleted(owner, id);
+			if (this.records.deleteRecording(owner, id, version) == 0) {
 				throw versionConflict();
 			}
 			if (this.references.release(recording.fileId())) {
@@ -656,14 +669,24 @@ class StudyRoomService {
 	 * @param createdAt 녹음 시작 일시(올릴 때 보낸 recordedAt)
 	 * @param fileName 가져온 오디오 파일(source audio)의 이름. 녹음이면 null
 	 * @param state ready, scanning(검사 중, 재생 불가), rejected(검사에서 거부)
+	 * @param transcription 전사 작업(ADR-0041). 녹음 하나를 돌려주는 응답(상세, 업로드, 제목 바꾸기)에만 있고, 작업이 없거나 목록과
+	 * 과목 보기면 키 자체가 없다
+	 * @param summary 요약 작업. transcription과 같다
 	 */
 	record RecordingView(long id, long courseId, String title, String source, String mimeType, long sizeBytes,
-			long durationMs, Instant createdAt, String fileName, String state, int version) {
+			long durationMs, Instant createdAt, String fileName, String state, int version,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Job transcription,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Job summary) {
 
+		/** 목록과 과목 보기: 전사·요약을 싣지 않는다. */
 		static RecordingView of(Recording r) {
+			return of(r, Map.of());
+		}
+
+		static RecordingView of(Recording r, Map<RecordingJobKind, Job> jobs) {
 			return new RecordingView(r.id(), r.courseId(), r.title(), r.source(), r.mimeType(), r.sizeBytes(),
 					r.durationMs(), r.recordedAt(), "audio".equals(r.source()) ? r.fileName() : null, r.state(),
-					r.version());
+					r.version(), jobs.get(RecordingJobKind.TRANSCRIPTION), jobs.get(RecordingJobKind.SUMMARY));
 		}
 
 	}
