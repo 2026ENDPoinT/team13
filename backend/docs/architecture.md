@@ -370,20 +370,20 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `POST /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 요약 생성 요청. 202. `Idempotency-Key` 지원 |
+| `POST /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자. 요청한 사람이 결정권자(담당자 명단의 교수, 비정규 담당자)여야 하고 조교는 403 `llm_decider_required` | 요약 생성 요청. 202. 요청한 사람의 `page_summary` 동의가 없으면 409 `llm_consent_required`. `Idempotency-Key` 지원 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 최근 작업 20개 |
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}` | 담당자 | 작업 상태와 진행 쪽 수 |
-| `POST /api/courses/{courseId}/summary-jobs/{jobId}/cancel` · `/retry` | 담당자 | 취소, 실패·취소한 작업 재시도 |
+| `POST /api/courses/{courseId}/summary-jobs/{jobId}/cancel` · `/retry` | 담당자. 재시도는 생성 요청과 같이 결정권자만 하고 조교는 작업 상태와 상관없이 403 `llm_decider_required` | 취소, 실패·취소한 작업 재시도 |
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}/result` | 담당자 | 게시 전 후보와 원본 대조가 필요한 쪽 |
-| `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시 |
+| `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시. 게시한 사람이 학습 대화의 책임 교수자다. 조교가 게시하면 그 파일의 학습 대화는 열리지 않고, 결정권자가 다시 게시해야 열린다 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary` | 열람 가능한 사람 | 게시본, `pageImageBase`, 쪽 이미지 signed cookie |
 | `DELETE /api/courses/{courseId}/files/{fileId}/summary` | 담당자 | 게시 내리기. 파일 요약과 학습 대화도 닫힌다 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary/overview` | 열람 가능한 사람 | 자료 상세의 파일 요약(게시본의 질문과 흐름, 모델 호출 없음) |
 | `GET /api/llm/policy` | 로그인 사용자 | 제공자 처리 조건, 고지 판, profile 지문, 외부 LLM 사용 여부 |
-| `GET /api/courses/{courseId}/llm-consents` | 담당 교수자 | 내 범위별 동의와 현재 profile과의 일치 여부 |
-| `PUT /api/courses/{courseId}/llm-consents/{scope}` | 담당 교수자 | 동의(`page_summary`, `study_chat`). 본 고지 판·지문, 국외 이전·학습 이용 확인 |
-| `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 담당 교수자 | 철회. 대기 작업·질문 취소, 게시본은 유지 |
-| `GET /api/courses/{courseId}/llm-usage` | 담당 교수자 | 과목의 호출 수·token 합계와 오늘의 학습 대화 예산 |
+| `GET /api/courses/{courseId}/llm-consents` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 내 범위별 동의. `current`는 동의한 profile이 지금 profile과 같은지다. `canGrant`는 내가 이 과목에서 동의할 수 있는지(결정권자인지)이고, `false`면 남은 동의 행도 효력이 없다 |
+| `PUT /api/courses/{courseId}/llm-consents/{scope}` | 담당자 명단의 그 과목 교수, 비정규 담당자. 다른 담당자(조교)는 403 `llm_decider_required` | 동의(`page_summary`, `study_chat`). 본 고지 판·지문, 국외 이전·학습 이용 확인 |
+| `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 그 과목의 담당자(교수, 조교, 비정규 담당자). 본인의 동의만 | 철회. 대기 작업·질문 취소, 게시본은 유지. 조교도 효력 없는 자기 동의를 거둘 수 있다 |
+| `GET /api/courses/{courseId}/llm-usage` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 과목의 호출 수·token 합계와 오늘의 학습 대화 예산 |
 | `POST /api/courses/{courseId}/files/{fileId}/study-chats` | 열람 가능한 사람 | 대화 열기. 게시본과 게시자의 `study_chat` 동의 필요. `Idempotency-Key` 지원 |
 | `GET /api/courses/{courseId}/files/{fileId}/study-chats?before=` | 열람 가능한 사람 | 그 파일에서 내가 연 대화(20개씩, ID 내림차순). `{items, nextBefore}`이고 다음 쪽이 없으면 `nextBefore`는 null |
 | `GET` · `DELETE /api/courses/{courseId}/study-chats/{chatId}` | 대화 소유자 | 대화 보기, 지우기(본문 객체까지) |
@@ -803,7 +803,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
 | 성적 평가요소 | 평가요소(`grade_criteria`)와 평가요소 점수는 화면 근거가 없어 만들지 않았다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 오프라인 시험 점수는 퀴즈 쪽 일괄 저장으로 넣는다([ADR-0037](adr/0037-quiz-regrade-and-assessment-deletion.md)) | 평가요소는 채점 화면 요구가 생길 때 정한다 |
-| 수강신청 정책 미정 항목 | 대기자 명단과 자동 승격, 청강 정원·기간, 졸업생·대학원생 신청대상 판정(identity에 구분 없음), 조교의 승인 위임, 카운터와 원장의 대사 job(C-22)이 없다. 비정규 강의소개는 HTML이라 내보내지 않는다([ADR-0026](adr/0026-enrollment-seat-accounting.md)) | 학사 담당과 정책을 정한 뒤 WAITLISTED 순번, `users`의 신분 구분, 위임 권한을 더한다. 강의소개는 서버 HTML 정규화(SC-08)와 함께 연다 |
+| 수강신청 정책 미정 항목 | 대기자 명단과 자동 승격, 청강 정원·기간, 졸업생·대학원생 신청대상 판정(identity에 구분 없음), 조교의 승인 위임(외부 LLM 처리 동의 위임도 같다, [ADR-0032](adr/0032-llm-consent-and-study-chat.md) 4번), 카운터와 원장의 대사 job(C-22)이 없다. 비정규 강의소개는 HTML이라 내보내지 않는다([ADR-0026](adr/0026-enrollment-seat-accounting.md)) | 학사 담당과 정책을 정한 뒤 WAITLISTED 순번, `users`의 신분 구분, 위임 권한을 더한다. 강의소개는 서버 HTML 정규화(SC-08)와 함께 연다 |
 | 알림 거두기 의무 | 대상을 숨기는 변경마다 만든 쪽이 `Notifications.withdraw`를 불러야 한다. 부르지 않으면 지운 활동의 알림이 남는다. 공지, 자료, 과제(비공개, 삭제), 질의응답 답글, 쪽지 회수는 부른다. 알림 유형이 없는 활동(온라인 강의, 퀴즈, 설문)은 알림을 만들지 않는다(ADR-0027) | 알림을 만드는 활동 유형을 더할 때 숨기는 명령(비공개, 삭제, 예약으로 되돌림)에서 같은 transaction으로 부른다 |
 | 알림 push | 알림은 목록을 다시 불러야 보인다. 헤더 배지는 `unread-count`를 주기적으로 부른다 | WebSocket fan-out(8절)을 붙일 때 알림 행을 만든 뒤 보낸다 |
 | 게시판 남은 범위 | 과목에 열린게시판을 하나만 둔다. 질의응답의 학습활동 연결(EP-0059, EP-0060), 메인 화면의 게시판 안 읽은 수가 없다. 과목 밖 첨부(알림마당, 쪽지)에는 쪽 이미지 미리보기와 요약이 없다. 쪽지 첨부는 모든 사본이 지워져도 파일이 남는다(누구도 읽지 못한다, [ADR-0035](adr/0035-community-operators-and-outside-course-files.md)) | 담당자 게시판 관리를 만들 때 넣는다. 과목 밖 미리보기가 필요하면 과목 없는 미리보기 경로를 같은 방식으로 둔다. 쪽지 첨부 해제는 읽은 쪽지 보존 기간(`purge_after_at`)과 함께 정한다 |

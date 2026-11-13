@@ -13,7 +13,7 @@ import com.stackcorp.astra.summary.api.CourseStaff;
  * <ul>
  * <li>배포 스위치 {@code astra.llm.enabled}가 켜져 있다.</li>
  * <li>책임 교수자가 그 과목, 그 범위에 지금 배포의 제공자 profile로 동의했고 철회하지 않았다.</li>
- * <li>그 교수자가 지금도 과목 담당이다.</li>
+ * <li>그 교수자가 지금도 과목의 결정권자다({@link CourseStaff#isDecider}). 조교와 수강만 확정된 교수·조교의 동의는 효력이 없다.</li>
  * </ul>
  * 책임 교수자는 쪽별 요약이면 생성을 요청한 교수자, 학습 대화면 그 파일의 요약을 게시한 교수자다. api는 명령을 받을 때, worker는
  * 모델을 부르기 전마다 다시 확인한다.
@@ -74,7 +74,7 @@ public class LlmGate {
 		}
 		if (courseId == null || responsibleUserId == null
 				|| !this.consents.hasCurrent(courseId, responsibleUserId, scope, profile().digest())
-				|| !this.staff.isInstructor(responsibleUserId, courseId)) {
+				|| !this.staff.isDecider(responsibleUserId, courseId)) {
 			return Optional.of(CONSENT);
 		}
 		return Optional.empty();

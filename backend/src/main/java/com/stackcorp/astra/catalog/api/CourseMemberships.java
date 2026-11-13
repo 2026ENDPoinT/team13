@@ -11,6 +11,12 @@ public interface CourseMemberships {
 
 	Optional<CourseRole> roleOf(long userId, long courseId);
 
+	/**
+	 * 과목의 결정권자다. 담당자 명단(course_instructors)에 교수(PROFESSOR)나 비정규 담당자(MANAGER)로 올라 있다. 수강 신청을
+	 * 처리하는 사람과 같다(ADR-0026). 조교, 교수·조교로 수강만 확정된 사람은 INSTRUCTOR여도 아니다. 폐강한 과목에서는 누구도 아니다.
+	 */
+	boolean isDecider(long userId, long courseId);
+
 	enum CourseRole {
 		/** 교수, 조교, 비정규 과정 담당자 */
 		INSTRUCTOR,

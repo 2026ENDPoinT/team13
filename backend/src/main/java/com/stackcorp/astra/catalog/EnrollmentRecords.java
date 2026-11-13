@@ -211,7 +211,8 @@ class EnrollmentRecords {
 
 	/**
 	 * 사용자가 그 과목의 교수 또는 비정규 담당자로 등록돼 있으면 그 역할. 조교는 신청을 처리하지 않는다. 폐강한 과목에는 처리할 사람이
-	 * 없다({@link MembershipRule}).
+	 * 없다({@link MembershipRule}). 과목의 결정권자 판정이다. 외부 LLM 처리 동의도 이 판정을 쓴다
+	 * ({@link CourseMembershipQueries#isDecider}).
 	 */
 	Optional<String> deciderRole(long userId, long courseId) {
 		return this.jdbc.sql("""
