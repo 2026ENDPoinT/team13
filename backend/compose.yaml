@@ -48,6 +48,13 @@ services:
     command: [api]
     # api와 worker는 같은 신뢰 경계(같은 host, 같은 instance role)에 있어 같은 env file을 받는다. converter는 받지 않는다.
     env_file: .env
+    environment:
+      # 브라우저는 api에 직접 오지 않는다. 앞단(CloudFront, 또는 /api·/doc·/vod를 넘기는 프론트엔드 서버 Frontend-final server.mjs)이
+      # Host를 바꾸거나 https를 http로 넘기므로 앱은 요청에서 브라우저의 origin을 알 수 없다. 허용 Origin을 비워 두면 GET은 되고
+      # POST·PUT·DELETE만 모두 403이 되므로, 값이 없으면 compose가 구성을 거부한다(ADR-0004 4번).
+      ASTRA_SESSION_ALLOWED_ORIGINS: "${ASTRA_SESSION_ALLOWED_ORIGINS:?set ASTRA_SESSION_ALLOWED_ORIGINS in .env to the public frontend origin, e.g. https://eclass.stack-edu.com}"
+      # /doc, /vod cookie 서명(CloudFront 또는 앱 직접 응답)이 없으면 시작하지 않는다(ADR-0009). 없으면 쪽 이미지와 영상이 열리지 않는다.
+      ASTRA_DELIVERY_REQUIRED: "true"
     networks: [egress, data]
     ports:
       - "${ASTRA_API_BIND:-127.0.0.1}:${ASTRA_API_PORT:-8080}:8080"

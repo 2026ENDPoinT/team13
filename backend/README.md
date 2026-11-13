@@ -355,13 +355,14 @@ PIN/QR 출석의 보안 값이다([ADR-0030](docs/adr/0030-attendance-and-smart-
 | `ASTRA_BREAK_GLASS_PASSWORD_HASH` | 없음 | `{bcrypt}...` 형식의 비밀번호 hash |
 | `ASTRA_BREAK_GLASS_TOTP_SECRET` | 없음 | RFC 6238 TOTP secret(Base32) |
 | `ASTRA_ECLASS_LOGIN_BASE_URL` | 없음 | 학교 e-Class origin(예: `https://eclass.seoultech.ac.kr`). 있으면 `POST /api/auth/eclass-login`이 열리고 `GET /api/auth/methods`에 `eclassPassword`가 나온다. 비밀번호는 학교 확인 요청 한 번에만 쓰고 저장하지 않는다. 학교 서버가 보내지 않는 중간 인증서(Thawte TLS RSA CA G1)를 이 client의 신뢰 목록에 더한다 |
-| `ASTRA_SESSION_ALLOWED_ORIGINS` | 없음 | 상태를 바꾸는 요청에 허용하는 Origin(쉼표 구분). 비우면 요청 자신의 origin만 허용한다 |
+| `ASTRA_SESSION_ALLOWED_ORIGINS` | 없음 | 상태를 바꾸는 요청에 허용하는 Origin(쉼표 구분). 브라우저가 보내는 모양(`scheme://host[:port]`, 소문자, 기본 port와 끝의 `/` 없이) 그대로 적고, 다른 모양이면 앱이 시작하지 않는다. 비우면 요청 자신의 origin만 허용하는데, proxy 뒤에서는 앱이 보는 Host·scheme이 브라우저의 것과 달라 POST·PUT·DELETE가 모두 403이 된다. 그래서 compose 구성은 이 값을 요구한다(아래 "컨테이너로 실행") |
 | `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES` | 없음 | 이 CIDR(쉼표 구분)에서 온 연결에서만 `CloudFront-Viewer-Address`를 브라우저 주소로 쓴다. CloudFront VPC origin이 있는 app subnet을 넣는다. 비우면 header를 믿지 않고 연결한 쪽 주소를 쓴다 |
 | `ASTRA_CLOUDFRONT_BASE_URL` | 없음 | 서비스 도메인(https). signed cookie 정책의 resource 기준 |
 | `ASTRA_CLOUDFRONT_KEY_PAIR_ID` | 없음 | CloudFront key group의 public key ID. 없으면 signed cookie를 발급하지 않는다 |
 | `ASTRA_CLOUDFRONT_PRIVATE_KEY` | 없음 | PKCS#8 PEM RSA 개인 key. `ASTRA_CLOUDFRONT_KEY_PAIR_ID`를 넣으면 필수이고, 없거나 비어 있으면 앱이 시작하지 않는다 |
 | `ASTRA_DELIVERY_ORIGIN_ENABLED` | `false` | CloudFront 없이 앱이 `/doc`, `/vod`를 직접 응답한다. CloudFront 서명과 함께 켤 수 없다 |
-| `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY` | 없음 | 위 방식의 cookie 서명 key(Base64, 32 byte 이상). 비밀값이다 |
+| `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY` | 없음 | 위 방식의 cookie 서명 key(Base64, 32 byte 이상). 비밀값이다. 없거나 Base64가 아니면 앱이 시작하지 않는다 |
+| `ASTRA_DELIVERY_REQUIRED` | `false` | `true`면 `/doc`, `/vod` cookie 서명(CloudFront 또는 앱 직접 응답)이 없을 때 시작하지 않는다. 서명이 없으면 쪽 이미지와 영상이 열리지 않는다. compose 구성은 api에 `true`로 고정한다 |
 
 브라우저는 먼저 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키를 받고, 상태를 바꾸는 요청마다 그 값을 `X-XSRF-TOKEN` header로 보낸다.
 
@@ -455,10 +456,14 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 - 로그는 stdout의 JSON(ECS) 한 줄이다. `docker compose logs api`로 본다.
 - container는 uid 10001로 실행하고 root filesystem은 읽기 전용이다. 쓰기는 `/tmp`(tmpfs)와 transcoder의 `/work` volume에만 한다. 이미지에는 transcoder가 쓰는 ffmpeg가 들어 있고 다른 역할은 실행하지 않는다.
 - 저장소는 S3 API면 된다. AWS S3와 instance role이면 bucket 이름만 넣고, S3 호환 저장소면 `ASTRA_STORAGE_ENDPOINT`, `ASTRA_STORAGE_ACCESS_KEY`, `ASTRA_STORAGE_SECRET_KEY`, `ASTRA_STORAGE_PATH_STYLE=true`를 넣는다. 이 구성은 저장소를 띄우지 않는다. EC2에서 container가 instance role을 쓰려면 instance metadata의 hop limit이 2여야 한다. 그러면 bridge network의 모든 container가 instance metadata에 닿으므로, host firewall이 `egress` network(bridge `astra-egress`, api와 worker만 붙는다)에서 온 것만 통과시킨다([ADR-0020](docs/adr/0020-terraform-layout.md) 6번). Terraform으로 만든 EC2에는 이 규칙이 있다. 다른 host에서 instance role을 쓰면 같은 규칙을 직접 넣는다.
-- CloudFront 없이 문서와 영상을 보이려면 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)).
+- api에는 두 설정이 꼭 있어야 하고, 없으면 뜨지 않는다. 브라우저는 api에 직접 오지 않고 앞단을 거치기 때문이다. 앞단은 둘 중 하나다.
+  - Terraform 배포: CloudFront가 TLS를 끝내고 `/api/*`를 api로, `/doc/*`·`/vod/*`를 delivery bucket으로 보낸다. 배포 문서가 `.env`에 `ASTRA_SESSION_ALLOWED_ORIGINS`(서비스 주소)와 CloudFront 서명 key를 넣는다([infra/README.md](infra/README.md)).
+  - CDN 없는 단일 host: 프론트엔드 서버(STack-Frontend `server.mjs`)가 같은 host의 127.0.0.1에서 `/api/**`, `/doc/**`, `/vod/**`를 api로 넘긴다(`ASTRA_API_ORIGIN=http://127.0.0.1:8080`). 이 proxy는 Host를 api 주소로 바꾸고 `X-Forwarded-Host`를 붙이지만, 앱은 누구나 보낼 수 있는 `X-Forwarded-*`를 믿지 않는다. 그래서 `ASTRA_SESSION_ALLOWED_ORIGINS`에 브라우저 주소창의 origin(예: `https://eclass.stack-edu.com`)을 넣고, `/doc`, `/vod`는 앱이 직접 응답하도록 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)). [.env.example](.env.example)이 이 구성이다.
+
+  `ASTRA_SESSION_ALLOWED_ORIGINS`가 없으면 `docker compose`가 구성을 거부한다. compose는 api에 `ASTRA_DELIVERY_REQUIRED=true`를 넣으므로 `/doc`, `/vod` 서명이 없으면 api가 시작하지 않고 무엇을 넣을지 로그에 남긴다.
 - `docker compose stop`은 api가 처리 중인 요청을 끝낼 때까지, worker가 실행 중인 요약 작업을 `interrupted`로 닫을 때까지 최대 75초를 기다린다.
 
-[docker/smoke-test.sh](docker/smoke-test.sh)는 띄운 구성의 healthcheck, 공개 port, converter·transcoder의 network 차단과 비밀값 없음, 구성 파일의 network 경계(`egress`에는 api·worker만, clamav는 worker와만), transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, LibreOffice가 converter에만 있고 docx를 쪽으로 바꾸는지, 종료 처리를 확인한다. `scan` 프로필이 떠 있으면 clamav와 freshclam의 실제 도달 범위도 본다. EC2 host에서 실행하면 instance metadata token을 api와 worker만 받는지 보고, 다른 host에서는 이 단계를 건너뛴다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 하고 host에 `jq`가 있어야 한다.
+[docker/smoke-test.sh](docker/smoke-test.sh)는 `ASTRA_SESSION_ALLOWED_ORIGINS`가 없으면 compose가 구성을 거부하는지, 띄운 구성의 healthcheck, 공개 port, Host를 바꾸는 프론트엔드 proxy를 거친 상태 변경 요청이 허용 Origin이면 Origin 검사를 지나고 다른 Origin이면 403인지, converter·transcoder의 network 차단과 비밀값 없음, 구성 파일의 network 경계(`egress`에는 api·worker만, clamav는 worker와만), transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, LibreOffice가 converter에만 있고 docx를 쪽으로 바꾸는지, 종료 처리를 확인한다. `scan` 프로필이 떠 있으면 clamav와 freshclam의 실제 도달 범위도 본다. EC2 host에서 실행하면 instance metadata token을 api와 worker만 받는지 보고, 다른 host에서는 이 단계를 건너뛴다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 하고 host에 `jq`가 있어야 한다.
 
 ## CI
 

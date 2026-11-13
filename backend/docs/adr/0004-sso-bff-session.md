@@ -14,7 +14,7 @@ Reference는 session principal을 유일한 actor로 쓰고, 요청 본문의 �
 1. 백엔드가 학교 IdP의 client가 된다. OIDC면 Spring Security `oauth2-client`, SAML이면 `saml2-service-provider`를 쓴다. `identity`가 `ExternalIdentityProvider` 포트를 정의하고 `integration`이 프로토콜별 adapter를 구현한다.
 2. IdP 토큰은 서버에만 둔다. 브라우저에는 opaque session 쿠키(`HttpOnly`, `Secure`, `SameSite=Lax`)와 CSRF 토큰만 준다. DB에는 session token의 hash만 저장한다. SAML HTTP-POST 응답은 cross-site POST라 `Lax` 쿠키가 전송되지 않으므로, SAML이면 로그인 전 요청 상태를 `RelayState` 기준 저장소에 두거나 로그인 전용 쿠키만 `SameSite=None`으로 둔다.
 3. 외부 IdP의 subject와 내부 `users`를 연결하는 컬럼이나 테이블은 V1 baseline에 없다. `user_credentials`는 비밀번호 자격증명용이다. IdP가 학번·교번을 주면 `users.external_ref`(학사 식별자, UNIQUE)가 연결 키 후보다. IdP 프로토콜과 전달 속성이 정해지면 [db/README.md](../../db/README.md) 5절 절차로 연결 구조를 정한다.
-4. state를 바꾸는 요청은 CSRF 토큰과 `Origin`을 검사한다. 로그아웃은 `POST`다.
+4. state를 바꾸는 요청은 CSRF 토큰과 `Origin`을 검사한다. 로그아웃은 `POST`다. 허용 Origin(`astra.session.allowed-origins`)이 비어 있으면 요청 자신의 origin만 받는다. 배포에서는 브라우저가 앞단(CloudFront, 또는 `/api`를 넘기는 프론트엔드 서버)을 거쳐 오고 앞단이 Host나 scheme을 바꾸므로 이 비교가 맞지 않는다. 앱은 누구나 보낼 수 있는 `X-Forwarded-Host`로 자기 origin을 정하지 않고, 배포가 허용 Origin을 명시한다. compose 구성은 이 값이 없으면 시작하지 않는다.
 5. 모든 요청은 session principal로 인증하고, 모듈별 `Policy`가 객체 단위로 인가한다. 기본은 거부다.
 6. 학교 IdP 장애에 대비해 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA를 강제한다. 일반 사용자의 로컬 비밀번호는 만들지 않는다.
 7. 웹에는 JWT를 쓰지 않는다. 모바일 앱을 붙일 때 그 채널의 토큰 방식을 따로 결정한다.

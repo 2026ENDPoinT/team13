@@ -16,6 +16,13 @@ pass() {
 	echo "ok: $*"
 }
 
+# 0. 허용 Origin이 없으면 compose가 구성을 거부하고 무엇이 빠졌는지 알린다. shell 환경 변수가 .env보다 앞선다.
+if missing="$(ASTRA_SESSION_ALLOWED_ORIGINS='' docker compose config --quiet 2>&1)"; then
+	fail "compose accepted an empty ASTRA_SESSION_ALLOWED_ORIGINS"
+fi
+grep -q 'ASTRA_SESSION_ALLOWED_ORIGINS' <<<"${missing}" || fail "compose refused the config without naming ASTRA_SESSION_ALLOWED_ORIGINS: ${missing}"
+pass "compose refuses to start api without ASTRA_SESSION_ALLOWED_ORIGINS"
+
 # 1. 모든 서비스가 healthcheck를 통과할 때까지 기다린다.
 docker compose up --detach --wait --wait-timeout 420 || {
 	docker compose ps
@@ -42,6 +49,31 @@ headers="$(curl --silent --show-error --fail --max-time 10 --dump-header - --out
 	|| fail "GET /api/auth/csrf failed"
 grep -qi '^set-cookie: XSRF-TOKEN=' <<<"${headers}" || fail "GET /api/auth/csrf did not set XSRF-TOKEN"
 pass "GET /api/auth/csrf answers through the api container"
+
+# 3-1. 프론트엔드 서버(Frontend-final server.mjs)를 거친 상태 변경 요청. 그 proxy는 Host를 api 주소로 바꾸고, 브라우저의 Origin과
+#      Sec-Fetch-Site를 그대로 넘기며 X-Forwarded-Host·Proto를 붙인다. 여기서 curl이 보내는 Host(127.0.0.1:port)가 그 바뀐 Host다.
+#      허용 Origin에서 온 요청은 Origin·CSRF 검사를 지나 인증 단계의 401이 되고, 다른 Origin은 X-Forwarded-Host를 맞춰도 403이다.
+frontend_origin="$(docker compose exec -T api env | sed -n 's/^ASTRA_SESSION_ALLOWED_ORIGINS=//p' | cut -d, -f1 | tr -d '\r ')"
+[[ -n "${frontend_origin}" ]] || fail "api has no ASTRA_SESSION_ALLOWED_ORIGINS"
+xsrf="$(sed -n 's/^[Ss]et-[Cc]ookie: XSRF-TOKEN=\([^;]*\).*/\1/p' <<<"${headers}" | head -n 1 | tr -d '\r')"
+through_frontend_proxy() {
+	curl --silent --max-time 10 --output "$2" --write-out '%{http_code}' --request POST \
+		--header "Origin: $1" --header 'Sec-Fetch-Site: same-origin' --header "X-Forwarded-Host: ${1#*://}" \
+		--header 'X-Forwarded-Proto: https' --header "X-XSRF-TOKEN: ${xsrf}" --cookie "XSRF-TOKEN=${xsrf}" \
+		"http://${api_port}/api/auth/logout"
+}
+body="$(mktemp)"
+status="$(through_frontend_proxy "${frontend_origin}" "${body}")"
+[[ "${status}" == 401 ]] || fail "POST from ${frontend_origin} through a Host-rewriting proxy answered ${status}, expected 401: $(cat "${body}")"
+status="$(through_frontend_proxy "https://evil.example" "${body}")"
+[[ "${status}" == 403 ]] && jq -e '.detail | contains("출처")' "${body}" >/dev/null \
+	|| fail "POST from another origin answered ${status}, expected 403 from the origin check: $(cat "${body}")"
+rm -f "${body}"
+pass "a mutating request from ${frontend_origin} passes the origin check behind the proxy; another origin is refused"
+
+# 3-2. /doc, /vod 전달 cookie 서명이 없으면 api가 시작하지 않는다(ADR-0009). 1번에서 api가 떴으므로 서명이 있다.
+docker compose exec -T api env | grep -qx 'ASTRA_DELIVERY_REQUIRED=true' || fail "api does not require a /doc, /vod signer"
+pass "api started with a /doc, /vod cookie signer"
 
 # 4. /actuator는 공개 port의 경로에 없다.
 status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' "http://${api_port}/actuator/health")"
