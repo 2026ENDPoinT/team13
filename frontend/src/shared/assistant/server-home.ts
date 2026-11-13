@@ -58,17 +58,3 @@ export function serverPrompts(actions: readonly ServerAction[]): string[] {
   const activityCommands = own.filter((action) => commands.get(action.command) === 1).slice(0, 2).map((action) => action.command);
   return [TODO_COMMAND, ...activityCommands, ...(classroomCommand ? [classroomCommand] : [])];
 }
-
-const compact = (text: string) => text.toLowerCase().replace(/\s+/g, "");
-
-/** Conservative commands: open one known STack item, never pretend to play, submit, or execute a plan; never leave for the school. */
-export function serverActionForCommand(text: string, all: readonly ServerAction[]): ServerAction | null {
-  const actions = all.filter((action) => !action.external);
-  const query = compact(text);
-  const exact = actions.filter((action) => query === compact(action.command) || query === compact(`${action.title} 열어줘`));
-  if (exact.length) return exact.length === 1 ? exact[0] : null;
-  if (query === "다음활동열어줘" || query === "다음할일열어줘") return actions[0] || null;
-  if (query !== "마감임박한과제열어줘") return null;
-  return actions.filter((action) => action.item.type === "report" && action.urgent)
-    .sort((a, b) => wallMs(a.item.closeAt) - wallMs(b.item.closeAt))[0] || null;
-}

@@ -5,20 +5,11 @@ import { currentRole, routeFor } from "../routes.ts";
 import { progressOf, sayFor, hrefFor, isDone, assistantOf, surveyDone } from "./activity-context.ts";
 import type { AssistantRequest, AssistantResult, MatchedTerms, ResultKind } from "./activity-context.ts";
 import { buildPlan, orderPlan, createRun, runState, stopRun } from "./plan.ts";
+import { assistantFailure, isAssistantResponse, postAssistant } from "./request.ts";
 
 type Navigate = (href: string) => void;
 
-/** The JSON body `/api/assistant` answers (validated in `ask`). */
-interface AssistantResponse {
-  kind: ResultKind;
-  intent: string | null;
-  courseId: string | null;
-  targets: string[];
-  say: string;
-}
-
 const normalize = (text: string | null | undefined): string => String(text || "").toLowerCase().replace(/\s+/g, "");
-const intents = new Set<string | null>(["video", "report", "test", "survey", "material", "zoom", "course", "plan"]);
 
 function isRevision(targets: readonly string[]): boolean {
   return targets.length > 0 && new Set(targets).size === targets.length
@@ -55,36 +46,28 @@ export async function ask(text: string, { signal }: { signal?: AbortSignal } = {
   const cancel = () => controller.abort();
   if (signal?.aborted) cancel();
   else signal?.addEventListener("abort", cancel, { once: true });
-  // 서버 쪽 제한(ASSISTANT_TIMEOUT_MS, 배포값 20초)보다 길게 둔다. 서버가 먼저 끝내야 실패 이유가 화면에 남는다.
+  // 서버 쪽 제한(백엔드 ASTRA_ASSISTANT_TIMEOUT, 로컬 중계 ASSISTANT_TIMEOUT_MS: 배포값 20초)보다 길게 둔다.
+  // 서버가 먼저 끝내야 실패 이유가 화면에 남는다.
   const timer = setTimeout(() => controller.abort(), 25000);
   try {
-    const response = await fetch("/api/assistant", {
-      method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-      body: JSON.stringify({ text, today: TODAY,
-        courses: activeCourses.map(({ id, ko, en }) => ({ id, ko, en })),
-        activities: available.map((activity) => ({
-          id: activity.id, courseId: activity.courseId, type: activity.type, title: activity.title,
-          due: activity.due, status: isDone(activity.id) || surveyDone(state, activity.id) ? "done" : activity.status,
-          progress: progressOf(activity, state.player?.positions),
-        })),
-        context: {
-          history: state.assistant?.date === TODAY ? assistantOf(state).conversation || [] : [],
-          todayTargets: buildPlan().filter((id) => !isDone(id) && !surveyDone(state, id)),
-          currentActivityId: typeof location === "undefined" ? null : new URLSearchParams(location.search).get("n"),
-          run: run?.date === TODAY && run.status !== "stopped"
-            ? { status: run.status, cursor: run.cursor, activityIds: run.steps.map((step) => step.activityId) } : null,
-        },
-      }),
-    });
-    if (!response.ok) return failure(response.status === 503
-      ? "AI 연결이 설정되지 않았습니다"
-      : response.status === 429 ? "AI 요청이 많습니다 잠시 후 다시 시도하세요" : "AI 요청을 처리하지 못했습니다");
-    // Validated field by field below before use.
-    const data = (await response.json()) as AssistantResponse | null;
-    if (!data || !["go", "choose", "plan", "revise", "reject", "none", "clarify"].includes(data.kind) || typeof data.say !== "string"
-      || (!["none", "clarify", "reject"].includes(data.kind) && !intents.has(data.intent)) || !Array.isArray(data.targets)) {
-      return failure("AI 응답을 처리하지 못했습니다");
-    }
+    const reply = await postAssistant({ text, today: TODAY,
+      courses: activeCourses.map(({ id, ko, en }) => ({ id, ko, en })),
+      activities: available.map((activity) => ({
+        id: activity.id, courseId: activity.courseId, type: activity.type, title: activity.title,
+        due: activity.due, status: isDone(activity.id) || surveyDone(state, activity.id) ? "done" : activity.status,
+        progress: progressOf(activity, state.player?.positions),
+      })),
+      context: {
+        history: state.assistant?.date === TODAY ? assistantOf(state).conversation || [] : [],
+        todayTargets: buildPlan().filter((id) => !isDone(id) && !surveyDone(state, id)),
+        currentActivityId: typeof location === "undefined" ? null : new URLSearchParams(location.search).get("n"),
+        run: run?.date === TODAY && run.status !== "stopped"
+          ? { status: run.status, cursor: run.cursor, activityIds: run.steps.map((step) => step.activityId) } : null,
+      },
+    }, controller.signal);
+    if (!reply.ok) return failure(assistantFailure(reply.status, reply.retryAfter));
+    const data = reply.data;
+    if (!isAssistantResponse(data)) return failure("AI 응답을 처리하지 못했습니다");
     if (data.kind === "revise" || data.kind === "reject") {
       const current = runState();
       if (!baseRunId || current?.id !== baseRunId || current.status !== baseRunStatus
