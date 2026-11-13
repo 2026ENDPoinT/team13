@@ -18,8 +18,8 @@ import { renderRecording } from "./recording.tsx";
 import { commandBar, focusCommand, planPreview } from "./command-bar.tsx";
 import { backendStatus, subscribe as onBackendChange } from "../../shared/backend.ts";
 import { courseCards, specialCard, termLabel } from "./course-cards.tsx";
-import { serverHomeCourses, serverAsideTodo, homeLoginPanel, serverHomeGreeting, serverMyDay } from "./home-server.tsx";
-import { serverCatalog, serverCourseList, serverCatalogDetail, catalogLoginPanel } from "./catalog-server.tsx";
+import { serverHomeCourses, serverAsideTodo, serverHomeGreeting, serverMyDay } from "./home-server.tsx";
+import { serverCatalog, serverCourseList, serverCatalogDetail } from "./catalog-server.tsx";
 import { serverTodayClasses } from "./calendar-server.tsx";
 import { remoteCommunityBoard } from "./community-server.tsx";
 import { serverCommunitySurveys } from "./surveys-server.tsx";
@@ -172,7 +172,6 @@ function renderHome(ctx: ScreenCtx): ReactNode {
       <h2 className="section-label">수강과목</h2>
       {ready ? serverHomeCourses() : <>
         <p className="term">2학기</p>
-        {backendStatus() === "anon" ? homeLoginPanel(false) : null}
         {courseCards(enrolled, "home")}
       </>}
     </section>
@@ -203,7 +202,6 @@ function renderCourseList(screen: Screen, ctx: ScreenCtx): ReactNode {
         <div><h1>{title}</h1><p className="term tight">{label}</p></div>
         {pageSearch(ctx, scope)}
       </div>
-      {backendStatus() === "anon" ? catalogLoginPanel() : null}
       {term === "special-enrolled"
         ? <div className="cards">{list.map(specialCard)}</div>
         : courseCards(list, "enrolled")}
@@ -229,7 +227,6 @@ function renderCatalog(screen: Screen, ctx: ScreenCtx): ReactNode {
         <h1>{title}</h1>
         {pageSearch(ctx, scope)}
       </div>
-      {backendStatus() === "anon" ? catalogLoginPanel() : null}
       <div className="filters">
         <Link href={hrefFor(find(kind === "special" ? "22_nonregular_list" : "20_regular_list"))} className={`chip${!screen.openOnly && !screen.dept ? " on all" : ""}`}>전체</Link>
         {kind === "special"
@@ -255,7 +252,6 @@ function renderDetail(screen: Screen, ctx: ScreenCtx): ReactNode {
   const recruiting = course.kind === "special" && (course.open || screen.id === "24b_nonregular_view_open");
   return (
     <section className="detail" data-area="home">
-      {backendStatus() === "anon" ? catalogLoginPanel() : null}
       <div className={`detail-hero ${course.gradient}`}>
         <CoverImage course={course} width={960} height={220} />
         <p className="k">{course.kind === "special" ? "비정규과목" : termLabel(course.term)}</p>

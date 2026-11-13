@@ -3,7 +3,7 @@ import { Button, EmptyState, ErrorState, LoadingState, Badge } from "../../ui/ki
 import { Link } from "../../router.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor, offers, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { courseById } from "../../data.ts";
@@ -19,7 +19,6 @@ import {
   type ActivityDetail, type LectureItem, type ItemProgress, type ProgressWeek, type StartedSession, type HeartbeatResult, type EndedSession,
 } from "../../shared/lectures-remote.ts";
 
-const LOGIN_TEXT = "ASTRA 서버에 로그인하면 이 과목의 강의를 보고 학습할 수 있습니다.";
 const HLS_MODULE = "/app/vendor/hlsjs/hls.light.min.mjs";
 const RETRY_FIRST_MS = 5000;
 const missing = (error: unknown): boolean => error instanceof ApiError && error.status === 404;
@@ -39,7 +38,7 @@ function useGate(kj: string): ReactNode {
     void connectBackend().then(() => { if (live) setSettled(true); });
     return () => { live = false; };
   }, [status]);
-  if (status === "anon") return backendPanel({ text: LOGIN_TEXT });
+  if (status === "anon") return SIGNED_OUT;
   if (status === "off") return !settled && !backendSettled()
     ? <LoadingState title="ASTRA 서버에 연결하는 중입니다" />
     : <EmptyState title="활동을 찾을 수 없습니다" body="ASTRA 서버에 연결되어 있지 않습니다. 목록에서 다른 활동을 선택해 보세요." />;

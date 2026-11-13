@@ -1,5 +1,43 @@
 # Handoff
 
+## 2026-11-14 로그인은 포커스된 모달 하나로만 (본문·내 메뉴의 로그인 폼 전부 제거)
+
+### 작업 내용
+- 요청: 내 메뉴 드롭다운·수강과목 등 화면 사이사이에 끼어 있는 로그인 폼을 없애고, 로그인은 포커스가 갇히는 모달 하나로만 한다.
+- `backendPanel()`(본문에 끼는 로그인 줄)과 호출처 전부(학생·교수·공통 약 45곳, `homeLoginPanel`·`catalogLoginPanel`·`loginPanel` 포함)를 삭제했다. 로그인 폼은 `BackendLoginForm`(`shared/backend-prompt.tsx`)이 `entry-login.tsx` 모달 안에서만 그린다.
+- 모달 동작 변경: 서버 세션이 `anon`인 동안 항상 뜬다(이전: 탭당 한 번, 닫을 수 있음). × 버튼·Escape·배경 클릭으로 닫히지 않고, 로그인 성공(`ready`)하면 사라지며 세션 만료 시 다시 뜬다. 포커스는 ID 입력에 가고 Tab은 모달 안을 순환하며 배경 클릭에도 포커스를 잃지 않는다. `sessionStorage` 표시 기록은 없앴다. `off`(샘플 모드)·`ready`에서는 뜨지 않는다.
+- 닫을 수 없게 한 이유: 본문·메뉴의 로그인 폼을 없앴으므로 닫으면 다시 로그인할 방법이 없다.
+- "로그인이 필요한 화면"을 판정하던 `blocked`/`gate` 반환값은 null(=진행)과 구분돼야 해서, 본문에 아무것도 그리지 않는 `SIGNED_OUT`(`backend-prompt.tsx`)을 대신 쓴다. 쓰이지 않게 된 `LOGIN*` 문구 상수·`gate`/`useGate`의 `loginText` 인자·`.backend-login.is-compact`·`.msg-gate` CSS·`QNA_LOGIN`도 삭제했다. 내 메뉴 팝업(`ProfileMenu`)의 로그인 폼도 제거.
+
+### 변경 파일
+- `src/shared/backend-prompt.tsx`, `entry-login.tsx`, `backend-ui.css`, `board-list.tsx`, `src/App.tsx`, `src/areas/{course,home,learning,professor}/*-server.tsx` 등 호출처, `home/dialogs.tsx`, `learning/learning.css`, `README.md`
+- 테스트: `entry-login.test.ts`(새 동작으로 재작성), `backend-prompt-layout.test.ts`(`BackendLoginForm`), `home-layout.test.ts`(익명 홈에 로그인 폼 없음 추가), `course-room-layout.test.ts`(문구 대신 폼 없음 확인)
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 1364개 통과.
+- Chromium(1280×800, `127.0.0.1:4190`에 `fetch`를 익명 응답으로 바꿔 모달 유도): 첫 접속에 모달이 뜨고 ID에 포커스, 닫기 버튼 없음, Escape·배경 클릭 뒤에도 유지, Tab은 모달 안 순환. 홈·수강과목·알림 팝업(`pop=notify`)·플레이어 화면에서 모달 밖 `.backend-login` 0개. 콘솔 오류 없음.
+- 실제 로그인 요청·학교 서버·교수 화면은 브라우저에서 확인하지 못했다(교수 화면은 타입 검사·기존 테스트까지만).
+
+### 남은 작업
+- 커밋·푸시하지 않았다. 이전 항목(샘플 플레이어 버튼 정리, 내 메뉴 로그인 폼 제거)도 같은 작업 트리에 있다.
+
+## 2026-11-14 샘플 플레이어: 강의내용·질의하기·단원으로 삭제, 전체화면 버튼 우측 끝
+
+### 작업 내용
+- 샘플 플레이어(`SamplePlayer`) 하단 도구 줄에서 "강의내용"·"질의하기"·"단원으로" 버튼을 없앴다. 일반·전체화면 모두 해당(단원으로는 전체화면에서도 남아 있었음). 전체화면 버튼은 `.player-full`의 `margin-left: auto`로 줄 맨 오른쪽에 붙는다.
+- 버튼과 함께 쓰이지 않게 된 코드 삭제: `changePanel`·`ask`·`openUnit`, `playerPanel` 타입, 하단 시트(`.player-sheet*` CSS 포함), 미사용 `currentRole`/`routeFor` import. `state.playerPanel`·`draft.playerNotes`는 읽는 곳이 없어졌다(브라우저에 저장돼 있던 값은 그대로 남는다).
+- 서버 강의 플레이어(`lectures-server.tsx`)의 "강의 목록으로" 링크는 다른 화면이라 건드리지 않았다.
+
+### 변경 파일
+- `src/areas/learning/learning.tsx`, `learning.css`, `video-study.css`
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 1365개 통과.
+- Chromium 1200×800(`127.0.0.1:4190`, 샘플 플레이어): 일반·전체화면 모두 버튼이 1x·1.25x·1.5x·2x·자막·전체화면뿐이고 전체화면 버튼이 줄 오른쪽 끝(간격 0), 시트 없음, 콘솔 오류 없음.
+
+### 남은 작업
+- 커밋·푸시하지 않았다.
+
 ## 2026-11-14 로그인 홈 전체화면에서 로고 클릭 시 일반 모드 복귀
 
 ### 작업 내용

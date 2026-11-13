@@ -11,7 +11,7 @@ import { toast } from "../../store.ts";
 import type { Course } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { resetAttachments, type AttachMemo } from "../../shared/attach-picker.tsx";
 import {
   sendMessage, isNotAllowed, isUncertain, isAttachmentNotReady, messageMessage, screenBytes, ROLE_LABEL, MAX_TITLE, MAX_BODY_BYTES, MAX_RECIPIENTS,
@@ -49,12 +49,12 @@ function memoOf(courseId: number | string): Memo {
 export function serverMessageFields(_ctx: ScreenCtx, course: Course, _parts?: unknown): ReactNode {
   if (backendStatus() === "anon") {
     // The sample form is hidden: a message kept only in this browser would look sent.
-    return <div className="stack">{backendPanel({ text: "ASTRA 서버에 로그인하면 이 과목의 수강생에게 쪽지를 보낼 수 있습니다." })}</div>;
+    return SIGNED_OUT;
   }
   const courseId = courseIdFor(course.id);
-  if (!courseId) return <div className="stack">{backendPanel()}<EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목의 구성원에게만 쪽지를 보낼 수 있습니다." /></div>;
+  if (!courseId) return <div className="stack"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목의 구성원에게만 쪽지를 보낼 수 있습니다." /></div>;
   if (roleIn(course.id) !== "INSTRUCTOR") {
-    return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 과목 구성원에게 쪽지를 보낼 수 있습니다.</p></div>;
+    return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 과목 구성원에게 쪽지를 보낼 수 있습니다.</p></div>;
   }
   return <MessageScreen courseId={Number(courseId)} />;
 }
@@ -63,7 +63,6 @@ function MessageScreen({ courseId }: { courseId: number }) {
   const [sentKey, setSentKey] = useState(0);
   return (
     <div className="stack">
-      {backendPanel()}
       <MessageForm courseId={courseId} onSent={() => setSentKey((n) => n + 1)} />
       <div className="sheet" data-pf-sent-box="">
         <h2>보낸 쪽지</h2>

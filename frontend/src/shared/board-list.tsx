@@ -10,7 +10,7 @@ import { hrefFor, find } from "../manifest.ts";
 import { readQuery, writeQuery } from "./query.tsx";
 import { ApiError } from "./api.ts";
 import { backendStatus, courseIdFor } from "./backend.ts";
-import { backendPanel } from "./backend-prompt.tsx";
+import { SIGNED_OUT } from "./backend-prompt.tsx";
 import { freshVisit, useResource, type Resource } from "./remote-cache.ts";
 import { koDate } from "./home-remote.ts";
 import { QNA_PAGE, QNA_STATUS, qnaListKey, qnaLists, boardMessage } from "./boards-remote.ts";
@@ -18,7 +18,6 @@ import type { BoardPost, Id, QnaFilter } from "./boards-remote.ts";
 import type { Course } from "../data.ts";
 import type { ScreenCtx } from "../types.ts";
 
-export const QNA_LOGIN = "ASTRA 서버에 로그인하면 이 과목의 질의응답을 서버에서 불러옵니다.";
 const SEARCH_DELAY = 300;
 const STATUS_LABEL: Record<string, string> = { all: "전체", faq: "FAQ", solved: "해결", unsolved: "미해결" };
 const COUNT_FIELD: Record<string, string> = { all: "total", faq: "faq", solved: "solved", unsolved: "unsolved" };
@@ -115,8 +114,8 @@ function SearchField({ label, ctx, scope }: { label: string; ctx: ScreenCtx; sco
 }
 
 /** What to show instead of server data (`anon`, unlinked course), or null. */
-export function gate(course: Pick<Course, "id">, loginText: string): ReactNode | null {
-  if (backendStatus() === "anon") return backendPanel({ text: loginText });
+export function gate(course: Pick<Course, "id">): ReactNode | null {
+  if (backendStatus() === "anon") return SIGNED_OUT;
   if (!courseIdFor(course.id)) return <EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 게시판을 볼 수 있습니다." />;
   return null;
 }
@@ -159,7 +158,7 @@ function filterParams(f: QnaFilter, page: number): Record<string, string | null>
  * (`45_room_qna_list` for students, `pf_qna` for the instructor); the detail opens over it.
  */
 export function qnaSection(ctx: ScreenCtx, course: Course, screenId: string): ReactNode {
-  const blocked = gate(course, QNA_LOGIN);
+  const blocked = gate(course);
   return (
     <div className="crs-remote-board">
       {blocked ?? <QnaBoard ctx={ctx} course={course} courseId={courseIdFor(course.id) ?? ""} screenId={screenId} />}

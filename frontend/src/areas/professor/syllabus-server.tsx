@@ -9,7 +9,7 @@ import type { Course } from "../../data.ts";
 import { Button, EmptyState, ErrorState, Field, LoadingState } from "../../ui/kit.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendState, backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { toast } from "../../store.ts";
 import {
@@ -551,7 +551,7 @@ function SyllabusEditor({ course, courseId }: { course: Course; courseId: number
 
 /** 강의계획서 편집 화면(백엔드 모드): 계획서 시트와 내 강사 정보 시트. `course`는 샘플 과목 객체다(`.id` = 과목 키). */
 export function serverSyllabusEditor(course: Course): ReactNode {
-  if (backendStatus() === "anon") return backendPanel({ text: "ASTRA 서버에 로그인하면 이 과목의 강의계획서를 서버에서 고칠 수 있습니다." });
+  if (backendStatus() === "anon") return SIGNED_OUT;
   const courseId = courseIdFor(course.id);
   if (!courseId) return <EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목을 강의실에서 고른 뒤 다시 열어 주세요." />;
   if (roleIn(course.id) !== "INSTRUCTOR") return <EmptyState title="강의계획서를 고칠 수 없습니다" body="이 과목의 담당 교수만 강의계획서를 고칠 수 있습니다." />;

@@ -23,8 +23,7 @@ let host: HTMLDivElement;
 let root: Root;
 let trigger: HTMLButtonElement;
 function Harness() {
-  const login = useEntryLogin();
-  return login.open ? createElement(EntryLoginDialog, { onClose: login.dismiss }) : null;
+  return useEntryLogin() ? createElement(EntryLoginDialog) : null;
 }
 function notify() {
   const next: BackendSnapshot = { status: auth.status, settled: true, me: null, courses: [], methods: ["eclassPassword"] };
@@ -59,25 +58,25 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-it("서버 익명 응답 뒤 한 번 열리고 Escape·재렌더·같은 탭 재접속 뒤 다시 열리지 않는다", async () => {
+it("서버 익명 응답이면 열리고 ID에 포커스하며 Escape·배경 클릭·재렌더로 닫히지 않는다", async () => {
   expect(host.querySelector('[role="dialog"]')).toBeNull();
   await status("anon");
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull();
   expect(document.activeElement).toBe(host.querySelector('[name="studentId"]'));
   expect(document.body.style.overflow).toBe("hidden");
+  expect(host.querySelector('[aria-label="닫기"]')).toBeNull();
   key("Escape");
-  expect(host.querySelector('[role="dialog"]')).toBeNull();
-  expect(document.activeElement).toBe(trigger);
-  expect(document.body.style.overflow).toBe("");
+  act(() => host.querySelector<HTMLDivElement>(".modal-back")!.click());
   await act(async () => root.render(createElement(StrictMode, null, createElement(Harness))));
-  act(() => root.unmount());
-  await mount();
-  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull();
 });
 
-it("복원된 로그인 세션과 이후 세션 만료에는 자동 로그인 창을 열지 않는다", async () => {
+it("로그인된 세션에는 열리지 않고 세션이 만료(anon)되면 다시 열린다", async () => {
   await status("ready");
-  await status("anon");
   expect(host.querySelector('[role="dialog"]')).toBeNull();
+  await status("anon");
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(document.body.style.overflow).toBe("hidden");
 });
 
 it("실패 시 입력을 재시도할 수 있고 성공하면 창을 닫는다", async () => {
@@ -99,19 +98,18 @@ it("실패 시 입력을 재시도할 수 있고 성공하면 창을 닫는다",
   await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
   expect(auth.login).toHaveBeenLastCalledWith("9901", "correct-password");
   expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(document.body.style.overflow).toBe("");
 });
 
-it("Tab 포커스가 모달 안을 순환하고 배경 클릭으로 닫을 수 있다", async () => {
+it("Tab 포커스가 모달 안을 순환하고 바깥으로 나가지 않는다", async () => {
   await status("anon");
-  const close = host.querySelector<HTMLButtonElement>('[aria-label="닫기"]')!;
+  const id = host.querySelector<HTMLInputElement>('[name="studentId"]')!;
   const submit = host.querySelector<HTMLButtonElement>('[type="submit"]')!;
-  close.focus();
+  id.focus();
   key("Tab", true);
   expect(document.activeElement).toBe(submit);
   key("Tab");
-  expect(document.activeElement).toBe(close);
+  expect(document.activeElement).toBe(id);
   trigger.focus();
   expect(host.contains(document.activeElement)).toBe(true);
-  act(() => host.querySelector<HTMLDivElement>(".modal-back")!.click());
-  expect(host.querySelector('[role="dialog"]')).toBeNull();
 });

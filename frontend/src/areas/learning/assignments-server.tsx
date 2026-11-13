@@ -9,7 +9,6 @@ import { Link, closeDialog } from "../../router.tsx";
 import { toast } from "../../store.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { useResource } from "../../shared/remote-cache.ts";
 import { koDateTime, ddayAt } from "../../shared/home-remote.ts";
 import {
@@ -24,7 +23,6 @@ import type { UploadView } from "../../shared/uploads-remote.tsx";
 import { fileboxAttach } from "../../shared/filebox-attach.tsx";
 import type { Screen, ScreenCtx } from "../../types.ts";
 
-const LOGIN_TEXT = "ASTRA 서버에 로그인하면 이 과목의 과제를 보고 제출할 수 있습니다.";
 const DRAFT_DELAY = 2000;
 const MAX_UPLOADS = 5;
 const MAX_BODY = 50000;
@@ -143,7 +141,7 @@ function useGate(kj: string | undefined): Gate {
       live = false;
     };
   }, [probing]);
-  if (status === "anon") return { view: backendPanel({ text: LOGIN_TEXT }), off: false };
+  if (status === "anon") return { view: null, off: false };
   if (status === "off") {
     if (off) return { view: null, off: true };
     if (probing) return { view: <LoadingState title="ASTRA 서버에 연결하는 중입니다" />, off: false };

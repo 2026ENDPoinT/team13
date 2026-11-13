@@ -12,7 +12,6 @@ import { Icon } from "../../ui/icon.tsx";
 import { Badge, Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { createResource, freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { listCoursePdfs, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
 import { getPublishedSummary, summaryMessage, type ServerSummary } from "../../shared/course-pdfs-remote.ts";
@@ -27,8 +26,6 @@ import { wallFormat } from "../../shared/home-remote.ts";
 
 type Id = number | string;
 
-const LOGIN_SUMMARY = "ASTRA 서버에 로그인하면 이 과목의 자료 요약을 볼 수 있습니다.";
-const LOGIN_LECTURE = "ASTRA 서버에 로그인하면 이 과목의 영상 강의와 진도를 볼 수 있습니다.";
 
 /** A published summary as the server sends it: the page-image base comes with it. */
 interface PublishedSummary extends ServerSummary {
@@ -116,7 +113,7 @@ export function serverStudySummary(ctx: ScreenCtx, fallback: () => ReactNode): R
   if (!fileId) {
     const item = studyMaterials.find((row) => row.id === params.get("m")) || studyMaterials[0];
     const course = courseOf(item.courseId);
-    if (status === "anon") return <SummaryShell course={course}>{backendPanel({ text: LOGIN_SUMMARY })}</SummaryShell>;
+    if (status === "anon") return <SummaryShell course={course} />;
     if (!courseIdFor(item.courseId)) return null;
     // 연결된 과목의 샘플 ID: 샘플 문장을 실제 자료처럼 보이지 않는다.
     return (
@@ -138,7 +135,7 @@ export function serverStudySummary(ctx: ScreenCtx, fallback: () => ReactNode): R
       </section>
     );
   }
-  if (status === "anon") return <SummaryShell course={course}>{backendPanel({ text: LOGIN_SUMMARY })}</SummaryShell>;
+  if (status === "anon") return <SummaryShell course={course} />;
   const courseId = courseIdFor(kj);
   if (!courseId) {
     return (
@@ -150,7 +147,7 @@ export function serverStudySummary(ctx: ScreenCtx, fallback: () => ReactNode): R
   return <ServerSummaryView key={`${kj}:${fileId}`} course={course} courseId={courseId} fileId={fileId} />;
 }
 
-function SummaryShell({ course, children }: { course: Course | undefined; children: ReactNode }) {
+function SummaryShell({ course, children }: { course: Course | undefined; children?: ReactNode }) {
   return (
     <section className="study study-summary" data-area="home">
       {course ? <Crumbs course={course} /> : null}
@@ -314,7 +311,7 @@ export function serverStudyLecture(ctx: ScreenCtx, fallback: () => ReactNode): R
       </section>
     );
   }
-  if (status === "anon") return <LectureShell course={course}>{backendPanel({ text: LOGIN_LECTURE })}</LectureShell>;
+  if (status === "anon") return <LectureShell course={course} />;
   const courseId = courseIdFor(kj);
   if (!courseId) {
     return (
@@ -326,7 +323,7 @@ export function serverStudyLecture(ctx: ScreenCtx, fallback: () => ReactNode): R
   return <ServerLecture key={`${kj}:${activityId}`} course={course} courseId={courseId} activityId={activityId} />;
 }
 
-function LectureShell({ course, children }: { course: Course; children: ReactNode }) {
+function LectureShell({ course, children }: { course: Course; children?: ReactNode }) {
   return (
     <section className="study rec study-lecture" data-area="home">
       <Crumbs course={course} />

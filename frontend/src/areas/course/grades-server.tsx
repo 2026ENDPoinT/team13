@@ -9,7 +9,6 @@ import { Link } from "../../router.tsx";
 import { EmptyState, ErrorState, LoadingState, Table } from "../../ui/kit.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { readQuery } from "../../shared/query.tsx";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
@@ -19,7 +18,6 @@ import { attendanceViews, attendanceKey, attendanceMessage } from "../../shared/
 import type { CourseParts } from "./course.tsx";
 import { RetryButton } from "./groups-server.tsx";
 
-const LOGIN = "ASTRA 서버에 로그인하면 이 과목의 성적을 서버에서 불러옵니다.";
 const SEARCH_DELAY = 300;
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
@@ -103,7 +101,7 @@ function AttendanceBlock({ courseId }: { courseId: number | string }) {
 /** 강의실 성적 화면(백엔드 모드). `parts`는 course.tsx의 head·searchBox와 검색어 범위다. */
 export function remoteGrades(screen: Screen, ctx: ScreenCtx, course: Course, parts: CourseParts): ReactNode {
   if (backendStatus() === "anon") {
-    return <section className="crs crs-grades" data-area="course">{parts.head("성적", "chart", null)}{backendPanel({ text: LOGIN })}</section>;
+    return <section className="crs crs-grades" data-area="course">{parts.head("성적", "chart", null)}</section>;
   }
   const courseId = courseIdFor(course.id);
   if (!courseId) {

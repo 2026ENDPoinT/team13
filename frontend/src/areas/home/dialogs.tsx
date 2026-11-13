@@ -9,11 +9,10 @@ import type { Activity, SampleNotification } from "../../data.ts";
 import { boardRows, dday, typeLabel, typeIcon, activityHref, openTodos, myDayGroups } from "../../shared/format.ts";
 import type { BoardRow, MyDayGroup, MyDayGroups } from "../../shared/format.ts";
 import { currentRole, routeFor } from "../../shared/routes.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { backendState, backendStatus } from "../../shared/backend.ts";
 import { profiles, peekAccount, useAccount } from "../../shared/account-remote.ts";
 import type { Role, ScreenCtx } from "../../types.ts";
-import { serverTodoList, homeLoginPanel } from "./home-server.tsx";
+import { serverTodoList } from "./home-server.tsx";
 import { serverApplyBody } from "./catalog-server.tsx";
 import { serverNotifications } from "./notifications-server.tsx";
 import { remoteMaterialDialog, remoteInquiryDialog, remoteInquiryWriteDialog, remoteMaterialWriteDialog } from "./community-server.tsx";
@@ -199,7 +198,6 @@ function ProfileMenu({ ctx }: { ctx: ScreenCtx }) {
           <MenuLink href={routeFor(currentRole(), "pop", { pop: "settings" })} label="설정" />
           <Link className="menu-item" href="/ilos/lo/logout.acl" logout><span>로그아웃</span></Link>
         </div>
-        {backendPanel({ compact: true, text: "ASTRA 서버에 로그인하면 서버에 등록된 자료와 쪽별 요약을 사용할 수 있습니다." })}
       </div>
     </div>
   );
@@ -217,7 +215,6 @@ function todoDialog(ctx: ScreenCtx): ReactNode {
   return (
     <HomeDialog title="할 일" className="todo-modal">
       <div className="tasks">
-        {backendStatus() === "anon" ? homeLoginPanel(true) : null}
         {view
           ? (
             <div className="task-scope">

@@ -98,7 +98,7 @@ function DialogContent({ name, ctx }: { name: string; ctx: ScreenCtx }): ReactNo
 
 export function App() {
   const state = useAppState();
-  const entryLogin = useEntryLogin();
+  const loginRequired = useEntryLogin();
   const screen = currentScreen();
   const params = currentParams();
   const ctx: ScreenCtx = { state, screen, params };
@@ -128,8 +128,8 @@ export function App() {
   }, []);
 
   const key = `${location.pathname}${location.search}`;
-  const dialog = entryLogin.open
-    ? <EntryLoginDialog onClose={entryLogin.dismiss} />
+  const dialog = loginRequired
+    ? <EntryLoginDialog />
     : dialogName ? <DialogContent name={dialogName} ctx={ctx} /> : null;
   return (
     <>

@@ -8,7 +8,6 @@ import { Link, navigate } from "../../router.tsx";
 import { getState, render, toast } from "../../store.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { useResource } from "../../shared/remote-cache.ts";
 import { koDateTime, ddayAt } from "../../shared/home-remote.ts";
 import {
@@ -18,7 +17,6 @@ import {
 import type { AttemptDetail, AttemptSummary, QuizAnswer, QuizDetail, QuizInfo, QuizQuestion, SubmitReceipt } from "../../shared/quizzes-remote.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
 
-const LOGIN_TEXT = "ASTRA 서버에 로그인하면 이 과목의 시험을 보고 응시할 수 있습니다.";
 const TEXT_DELAY = 1200;
 const MAX_TEXT = 2000;
 // An empty short answer is sent as `text: null` (the server stores "no answer"); `saveAnswer`'s type omits null.
@@ -120,7 +118,7 @@ function useGate(kj: string | undefined): Gate {
       live = false;
     };
   }, [probing]);
-  if (status === "anon") return { view: backendPanel({ text: LOGIN_TEXT }), off: false };
+  if (status === "anon") return { view: null, off: false };
   if (status === "off") {
     if (off) return { view: null, off: true };
     if (probing) return { view: <LoadingState title="ASTRA 서버에 연결하는 중입니다" />, off: false };

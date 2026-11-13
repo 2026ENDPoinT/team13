@@ -6,7 +6,6 @@ import { Link, closeDialog } from "../../router.tsx";
 import { Button, Dialog, EmptyState, LoadingState, ErrorState, Pagination } from "../../ui/kit.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { koDateTime, ddayAt } from "../../shared/home-remote.ts";
 import {
@@ -17,7 +16,6 @@ import type { ScreenCtx } from "../../types.ts";
 import { RetryButton } from "./home-server.tsx";
 
 const LIST = "/ilos/main/community/survey_list_form.acl";
-const LOGIN_TEXT = "ASTRA 서버에 로그인하면 대상인 학교 설문을 보고 응답할 수 있습니다.";
 
 const listHref = (page: number): string => (page > 1 ? `${LIST}?page=${page}` : LIST);
 
@@ -47,7 +45,6 @@ export function serverCommunitySurveys(ctx: ScreenCtx): ReactNode {
     return (
       <section className="board" data-area="home">
         <div className="page-head"><h1>설문</h1></div>
-        {backendPanel({ text: LOGIN_TEXT })}
       </section>
     );
   }
@@ -97,7 +94,6 @@ function CommunitySurveys({ page }: { page: number }) {
   return (
     <section className="board" data-area="home">
       <div className="page-head"><h1>설문</h1></div>
-      {backendPanel({ compact: true })}
       <p className="board-count">{count}</p>
       <div className="board-list" aria-live="polite">{list}</div>
       <div>{pager}</div>
@@ -112,7 +108,7 @@ export function communitySurveyDialog(ctx: ScreenCtx): ReactNode {
   return (
     <Dialog title="설문" wide>
       <div className="survey-form">
-        {backendStatus() === "anon" ? backendPanel({ text: LOGIN_TEXT }) : <CommunitySurvey surveyId={surveyId} />}
+        {backendStatus() === "anon" ? null : <CommunitySurvey surveyId={surveyId} />}
       </div>
     </Dialog>
   );

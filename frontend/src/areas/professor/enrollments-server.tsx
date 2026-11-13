@@ -11,7 +11,7 @@ import { courseById, type Course } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, kjOf, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { useResource, type Entry } from "../../shared/remote-cache.ts";
 import {
   myCourses, enrollmentRequests, requestKey, decideEnrollment, isConflict, enrollmentMessage,
@@ -96,7 +96,7 @@ function pageHref(page: number) {
 
 /** 수강생 화면(pf_monitor)의 서버 부분: 처리를 기다리는 수강·청강 신청. */
 export function serverEnrollmentRequests(ctx: ScreenCtx, course: Course): ReactNode {
-  if (backendStatus() === "anon") return backendPanel({ text: "ASTRA 서버에 로그인하면 이 과목의 수강 신청과 청강 신청을 처리할 수 있습니다." });
+  if (backendStatus() === "anon") return SIGNED_OUT;
   const courseId = courseIdFor(course.id);
   if (!courseId) return <EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 신청을 처리할 수 있습니다." />;
   if (roleIn(course.id) !== "INSTRUCTOR") return <EmptyState title="담당 과목이 아닙니다" body="이 과목을 담당하는 교수 계정으로 로그인해야 신청을 처리할 수 있습니다." />;

@@ -6,13 +6,11 @@ import type { Course } from "../../data.ts";
 import { Dialog, EmptyState, ErrorState, LoadingState, Table } from "../../ui/kit.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { syllabi, syllabusKey, syllabusMessage, OUTCOME, type Syllabus, type SyllabusInstructor, type OutcomeLevel } from "../../shared/syllabus-remote.ts";
 import { personAvatar } from "../../shared/avatar-remote.tsx";
 import { RetryButton } from "./groups-server.tsx";
 
-const LOGIN = "ASTRA 서버에 로그인하면 이 과목의 강의계획서를 서버에서 불러옵니다.";
 
 function meta(pairs: [string, unknown][]): ReactNode {
   return (
@@ -96,7 +94,7 @@ function shell(body: ReactNode): ReactNode {
 
 /** 강의계획서 팝업(백엔드 모드). */
 export function remoteSyllabusDialog(course: Course): ReactNode {
-  if (backendStatus() === "anon") return shell(<div className="crs-dialog" aria-live="polite">{backendPanel({ text: LOGIN })}</div>);
+  if (backendStatus() === "anon") return shell(<div className="crs-dialog" aria-live="polite"></div>);
   const courseId = courseIdFor(course.id);
   if (!courseId) {
     return shell(<div className="crs-dialog" aria-live="polite"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 강의계획서를 볼 수 있습니다." /></div>);

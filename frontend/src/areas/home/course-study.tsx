@@ -7,7 +7,6 @@ import { LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { listCoursePdfs, getCoursePdfBlob, ensureCoursePdfText, type CoursePdfRecord, type PdfPage, type PdfSummary } from "../../shared/course-pdfs.ts";
 import { getPublishedSummary, summaryMessage, type RemotePdfRecord, type ServerSummary } from "../../shared/course-pdfs-remote.ts";
 import { backendStatus, backendSettled, connect as connectBackend } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { summaryView } from "../../shared/page-summary.tsx";
 import { createCoursePdfViewer } from "../../shared/document-viewer.tsx";
 import { getFolder, folderOf, folderState, ownerGroup, useStudyRoomStore, type StudyFolder } from "../../shared/study-folders.ts";
@@ -247,7 +246,6 @@ function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
         </div>
         {docId ? back : null}
       </header>
-      {backendPanel()}
       {docId ? <DocumentContent course={course} docId={docId} /> : <FolderFiles course={course} folder={folder} />}
     </section>
   );

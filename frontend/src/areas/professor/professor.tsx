@@ -20,7 +20,6 @@ import { isRemotePdfId, getPublishedSummary, listSummaryJobs, startSummaryJob, g
 import type { RemotePdfRecord, ServerSummary, SummaryJob } from "../../shared/course-pdfs-remote.ts";
 import { forgetMaterialList } from "../../shared/materials-remote.ts";
 import { backendStatus } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { summaryView } from "../../shared/page-summary.tsx";
 import { serverProfessorHome, serverNoticeFields } from "./notices-server.tsx";
 import { serverMaterialList, registrationAttach, registrationPicked, saveRegistrationFromFilebox } from "./materials-server.tsx";
@@ -367,7 +366,6 @@ function linkBtn(href: string, label: string, kind: ButtonKind = "secondary"): R
 function unavailable(title: string, body: string, ...actions: ReactNode[]): ReactNode {
   return (
     <div className="stack">
-      {backendPanel()}
       <EmptyState title={title} body={body} actions={actions.length ? kids(actions) : undefined} />
     </div>
   );
@@ -462,7 +460,6 @@ function ProfessorMain({ ctx }: { ctx: ScreenCtx }) {
         {stat("콘텐츠", String(ctx.state.contents.length))}
       </div>
       <h2 className="section-label">강의과목</h2>
-      {backendStatus() === "anon" ? backendPanel({ text: "ASTRA 서버에 로그인하면 담당 과목과 새 공지를 서버에서 불러옵니다." }) : null}
       {remote ? serverProfessorHome(courseCard, setCount) : <div className="cards">{mine.map(sampleCourseCard)}</div>}
       <h2 className="section-label">확인할 일</h2>
       {openReports.length || waiting.length ? (
@@ -1113,7 +1110,6 @@ function materialFields(course: Course | null, ctx: ScreenCtx): ReactNode {
   // Backend mode: the course's external AI consent sits above the server materials (llm-consent-server.tsx).
   return (
     <div className="stack">
-      {backendPanel()}
       {sheet}
       {status === "ready" ? llmConsentSection(course) : null}
       {status === "ready" ? serverMaterialList(course, summaryJobPanel, { open: param(ctx, "open") }) : null}
@@ -2326,7 +2322,7 @@ function MaterialBody({ activity, course }: { activity: Activity; course: Course
   }, [activity.pdfId, course.id, offline]);
   let pdf: ReactNode = null;
   if (offline) {
-    pdf = <><p className="pf-sub">ASTRA 서버에 등록한 PDF입니다. 서버에 로그인하면 자료와 쪽별 요약을 볼 수 있습니다.</p>{backendPanel()}</>;
+    pdf = <><p className="pf-sub">ASTRA 서버에 등록한 PDF입니다. 서버에 로그인하면 자료와 쪽별 요약을 볼 수 있습니다.</p></>;
   } else if (slot.kind === "loading") pdf = <p className="pf-sub">PDF를 불러오는 중입니다.</p>;
   else if (slot.kind === "missing") pdf = <p>{remoteId ? "ASTRA 서버에서 이 PDF를 찾지 못했습니다. 이 과목의 담당 교수 계정인지 확인하세요." : "저장된 PDF를 찾지 못했습니다."}</p>;
   else if (slot.kind === "error") pdf = <p>PDF를 불러오지 못했습니다.</p>;

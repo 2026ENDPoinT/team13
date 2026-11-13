@@ -11,7 +11,6 @@ import { hrefFor, find } from "../../manifest.ts";
 import { readQuery } from "../../shared/query.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { visitList } from "../../shared/board-list.tsx";
 import { koDate, koDateTime } from "../../shared/home-remote.ts";
@@ -22,7 +21,6 @@ import {
 import type { CourseParts } from "./course.tsx";
 import { RetryButton } from "./groups-server.tsx";
 
-const LOGIN_TEXT = "ASTRA 서버에 로그인하면 이 과목의 공지를 서버에서 불러옵니다.";
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
 
@@ -49,7 +47,7 @@ function noticeCard(notice: CourseNotice, href: string): ReactNode {
 /** The course notice board in backend mode. `parts` are course.tsx's head/searchBox builders. */
 export function remoteNoticeBoard(screen: Screen, ctx: ScreenCtx, course: Course, parts: CourseParts): ReactNode {
   if (backendStatus() === "anon") {
-    return <section className="crs" data-area="course">{parts.head("공지사항", "info", null)}{backendPanel({ text: LOGIN_TEXT })}</section>;
+    return <section className="crs" data-area="course">{parts.head("공지사항", "info", null)}</section>;
   }
   const courseId = courseIdFor(course.id);
   if (!courseId) {
@@ -154,7 +152,7 @@ function shell(body: ReactNode): ReactNode {
 
 /** The notice dialog (`?pop=notice&id=`) in backend mode. */
 export function remoteNoticeDialog(ctx: ScreenCtx, course: Course): ReactNode {
-  if (backendStatus() === "anon") return shell(<div className="crs-dialog">{backendPanel({ text: LOGIN_TEXT })}</div>);
+  if (backendStatus() === "anon") return shell(<div className="crs-dialog"></div>);
   const courseId = courseIdFor(course.id);
   const noticeId = Number(ctx.params && ctx.params.get("id"));
   if (!courseId || !Number.isInteger(noticeId) || noticeId < 1) {

@@ -12,7 +12,7 @@ import { hrefFor, find } from "../../manifest.ts";
 import { ApiError } from "../../shared/api.ts";
 import { freshVisit, useRefreshOnFocus, useResource, useWatch } from "../../shared/remote-cache.ts";
 import { backendStatus, courseIdFor, roleIn } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { CompactActivityRow } from "../../shared/activity-row.tsx";
 import {
   activityParts, loadPart, activitySnapshot, passServerFilter, reloadFailed, serverOwnsCourse, PART_LABEL,
@@ -183,10 +183,6 @@ function failureNotes(snapshot: ActivitySnapshot, parts: ActivityPart[]): ReactN
   );
 }
 
-function loginPanel(text: string): ReactNode {
-  return <section className="crs-week open">{backendPanel({ compact: true, text })}</section>;
-}
-
 // ---------- 강의실 ----------
 
 function roomTags(course: Course, rows: ActivityRow[]): string[] {
@@ -204,7 +200,6 @@ export function remoteRoom(screen: Screen, ctx: ScreenCtx, course: Course): Reac
     return (
       <section className="crs" data-area="course">
         <CoursePlanLink courseId={course.id} />
-        {loginPanel("ASTRA 서버에 로그인하면 이 과목의 주차와 활동을 서버에서 불러옵니다.")}
       </section>
     );
   }
@@ -289,7 +284,7 @@ function RemoteRoom({ screen, ctx, course }: { screen: Screen; ctx: ScreenCtx; c
 
 /** 백엔드 모드의 학습활동 목록 본문(50–56): 서버 활동 전체를 필터에 맞게 주차별로, 8개씩 쪽을 나눈다. */
 export function remoteActivityList(screen: Screen, ctx: ScreenCtx, course: Course, filter: string): ReactNode {
-  if (backendStatus() === "anon") return loginPanel("ASTRA 서버에 로그인하면 이 과목의 학습활동을 서버에서 불러옵니다.");
+  if (backendStatus() === "anon") return SIGNED_OUT;
   return <RemoteActivityList screen={screen} ctx={ctx} kj={course.id} filter={filter} />;
 }
 
@@ -362,7 +357,6 @@ export function remoteFiles(ctx: ScreenCtx, course: Course, { head, searchBox, q
     return (
       <section className="crs" data-area="course">
         {head("파일모음", "file", null)}
-        {loginPanel("ASTRA 서버에 로그인하면 이 과목의 파일을 서버에서 불러옵니다.")}
       </section>
     );
   }

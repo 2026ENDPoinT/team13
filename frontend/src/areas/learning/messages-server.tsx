@@ -1,12 +1,12 @@
-﻿import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Button, Dialog, EmptyState, ErrorState, Field, LoadingState, Badge } from "../../ui/kit.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { Link, closeDialog, navigate } from "../../router.tsx";
 import { toast } from "../../store.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { hrefFor, find } from "../../manifest.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { backendStatus, backendSettled, connect, courseIdFor, backendState, subscribe } from "../../shared/backend.ts";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { useResource, freshVisit } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
@@ -20,7 +20,6 @@ import {
   type MessageDetail, type MessagePerson, type MessageDraft, type RecallResult,
 } from "../../shared/messages-remote.ts";
 
-const LOGIN_TEXT = "ASTRA 서버에 로그인하면 받은 쪽지와 보낸 쪽지를 보고 쪽지를 보낼 수 있습니다.";
 const DRAFT_DELAY = 2000;
 type Mode = { kind: "new"; from: null; messageId: null; key: string }
   | { kind: "reply"; from: "inbox"; messageId: number; key: string }
@@ -100,7 +99,7 @@ function Gate({ children }: { children: ReactNode }): ReactNode {
     if (backendStatus() === "off" && !backendSettled()) void connect().then(() => { if (alive) redraw(); });
     return () => { alive = false; stop(); };
   }, []);
-  if (backendStatus() === "anon") return backendPanel({ text: LOGIN_TEXT });
+  if (backendStatus() === "anon") return SIGNED_OUT;
   if (backendStatus() === "off") {
     if (!backendSettled()) return <LoadingState title="ASTRA 서버에 연결하는 중입니다" />;
     return <EmptyState title="쪽지를 찾을 수 없습니다" body="ASTRA 서버에 연결되어 있지 않습니다. 받은 쪽지 목록에서 다른 쪽지를 선택하세요."
@@ -427,8 +426,7 @@ export function serverMessages(screen: { folder?: string }, ctx: ScreenCtx): Rea
   const params = ctx.params || new URLSearchParams();
   const id = messageIdOf(params.get("id"));
   const mode = modeOf(params);
-  return <div className="msg-app srv-msg"><Tabs folder={folder} /><Gate><div className="msg-gate">{backendPanel({ compact: true })}</div>
-    {folder === "write" ? <div className="compose srv-compose"><Compose key={`${generation}:${mode.key}`} mode={mode} params={params} /></div>
+  return <div className="msg-app srv-msg"><Tabs folder={folder} /><Gate>{folder === "write" ? <div className="compose srv-compose"><Compose key={`${generation}:${mode.key}`} mode={mode} params={params} /></div>
       : <MessagePane folder={folder === "sent" ? "sent" : "inbox"} id={id} />}</Gate></div>;
 }
 /** The box list and the open message; a deleted open message leaves the placeholder until another is chosen. */

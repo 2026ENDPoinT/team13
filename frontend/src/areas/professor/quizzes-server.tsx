@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, shownRows, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
@@ -31,7 +31,6 @@ interface GradingOption extends QuizOption { number?: number; selected?: boolean
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
 const pf = (screenId: string, extra?: Record<string, string>) => routeFor("professor", "screen", { screenId, ...(extra || {}) });
-const LOGIN = "ASTRA 서버에 로그인하면 이 과목의 시험을 서버에 내고 응시를 채점할 수 있습니다.";
 
 function toastNow(text: string) {
   getState().toast = text;
@@ -59,9 +58,9 @@ function Prose({ text }: { text: string | null | undefined }) {
 }
 
 function gate(course: Course): ReactNode {
-  if (backendStatus() === "anon") return <div className="stack">{backendPanel({ text: LOGIN })}</div>;
-  if (!courseIdFor(course.id)) return <div className="stack">{backendPanel()}<EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목에만 시험을 내고 채점할 수 있습니다." /></div>;
-  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 시험을 내고 채점할 수 있습니다.</p></div>;
+  if (backendStatus() === "anon") return SIGNED_OUT;
+  if (!courseIdFor(course.id)) return <div className="stack"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목에만 시험을 내고 채점할 수 있습니다." /></div>;
+  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 시험을 내고 채점할 수 있습니다.</p></div>;
   return null;
 }
 
@@ -251,7 +250,6 @@ export function serverExamFields(ctx: ScreenCtx, course: Course, parts: FormPart
   const edit = Number.isInteger(editId) && editId > 0 ? editId : null;
   return (
     <div className="stack">
-      {backendPanel()}
       <QuizForm key={edit ?? "new"} week={ctx.state.week || 1} course={course} courseId={courseId} editId={edit} parts={parts} />
       <QuizList course={course} courseId={courseId} target="pf_exam_create" />
     </div>
@@ -612,10 +610,9 @@ export function serverExamStatus(ctx: ScreenCtx, course: Course): ReactNode {
   if (blocked) return blocked;
   const courseId = Number(courseIdFor(course.id));
   const quizId = quizIdOf(ctx.params && ctx.params.get("n"));
-  if (!quizId) return <div className="stack">{backendPanel()}<QuizList course={course} courseId={courseId} target="pf_exam_status" /></div>;
+  if (!quizId) return <div className="stack"><QuizList course={course} courseId={courseId} target="pf_exam_status" /></div>;
   return (
     <div className="stack">
-      {backendPanel()}
       <QuizHeader course={course} courseId={courseId} quizId={quizId} screen="pf_exam_status" />
       <AttemptTable course={course} courseId={courseId} quizId={quizId} />
     </div>
@@ -631,18 +628,17 @@ export function serverExamGrade(ctx: ScreenCtx, course: Course): ReactNode {
   if (blocked) return blocked;
   const courseId = Number(courseIdFor(course.id));
   const quizId = quizIdOf(ctx.params && ctx.params.get("n"));
-  if (!quizId) return <div className="stack">{backendPanel()}<QuizList course={course} courseId={courseId} target="pf_exam_grade" /></div>;
+  if (!quizId) return <div className="stack"><QuizList course={course} courseId={courseId} target="pf_exam_grade" /></div>;
   const attemptId = Number((ctx.params && ctx.params.get("attempt")) || "");
   if (!Number.isInteger(attemptId) || attemptId < 1) {
     return (
       <div className="stack">
-        {backendPanel()}
         <QuizHeader course={course} courseId={courseId} quizId={quizId} screen="pf_exam_grade" />
         <AttemptTable course={course} courseId={courseId} quizId={quizId} />
       </div>
     );
   }
-  return <div className="stack">{backendPanel()}<AttemptView key={attemptId} course={course} courseId={courseId} quizId={quizId} attemptId={attemptId} /></div>;
+  return <div className="stack"><AttemptView key={attemptId} course={course} courseId={courseId} quizId={quizId} attemptId={attemptId} /></div>;
 }
 
 /** 시험 정보와 수정·응시 목록·삭제. `screen`은 삭제한 뒤 돌아갈 목록 화면이다. */
@@ -867,12 +863,11 @@ export function serverQuizDetail(ctx: ScreenCtx, course: Course): ReactNode {
   if (blocked) return blocked;
   const courseId = Number(courseIdFor(course.id));
   const quizId = quizIdOf(ctx.params && ctx.params.get("n"));
-  if (!quizId) return <div className="stack">{backendPanel()}<QuizList course={course} courseId={courseId} target="pf_quiz" /></div>;
+  if (!quizId) return <div className="stack"><QuizList course={course} courseId={courseId} target="pf_quiz" /></div>;
   const focus = Number((ctx.params && ctx.params.get("q")) || "") || null;
   const page = Math.max(1, Math.floor(Number(ctx.params && ctx.params.get("page"))) || 1);
   return (
     <div className="stack">
-      {backendPanel()}
       <QuizHeader course={course} courseId={courseId} quizId={quizId} screen="pf_quiz" />
       <QuestionSheet course={course} courseId={courseId} quizId={quizId} focus={focus} page={page} />
     </div>

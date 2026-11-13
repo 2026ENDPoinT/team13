@@ -122,6 +122,13 @@ describe("e-class 로그인 홈", () => {
     expect(host.querySelector(".cards")?.textContent).not.toContain("실제 서버 과목");
   });
 
+  it("서버 익명 상태의 홈에는 로그인 입력을 본문에 끼워 넣지 않는다(로그인은 진입 모달 하나뿐)", async () => {
+    server.status = "anon";
+    await mount();
+    expect(host.querySelector(".backend-login")).toBeNull();
+    expect(host.querySelector('input[name="studentId"], input[type="password"]')).toBeNull();
+  });
+
   it("로그인 홈 전체화면에서 로고를 누르면 홈 이동 대신 일반 모드로 접는다", async () => {
     await mount();
     await act(async () => (host.querySelector('[aria-label="전체 화면으로 보기"]') as HTMLButtonElement).click());

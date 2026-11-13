@@ -1,7 +1,7 @@
-﻿import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Badge, Button, EmptyState, ErrorState, Field, LoadingState, Pagination } from "../../ui/kit.tsx";
 import { courseIdFor, backendState, backendStatus, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { useResource, type Entry } from "../../shared/remote-cache.ts";
 import { ApiError } from "../../shared/api.ts";
 import { groupLists, groupsKey } from "../../shared/groups-remote.ts";
@@ -74,9 +74,9 @@ function ResourceState({ entry, title, reload }: { entry: Entry<unknown> | null;
   return <ErrorState title={`${title} 불러오지 못했습니다`} body={attendanceMessage(entry.error)} actions={<Retry reload={reload} />} />;
 }
 function gate(course: Course): ReactNode {
-  if (backendStatus() === "anon") return <div className="stack">{backendPanel({ text: "ASTRA 서버에 로그인하면 이 과목의 출석을 서버에서 관리할 수 있습니다." })}</div>;
-  if (!courseIdFor(course.id)) return <div className="stack">{backendPanel()}<EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 출석을 관리할 수 있습니다." /></div>;
-  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 출석을 관리할 수 있습니다.</p></div>;
+  if (backendStatus() === "anon") return SIGNED_OUT;
+  if (!courseIdFor(course.id)) return <div className="stack"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 출석을 관리할 수 있습니다." /></div>;
+  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 출석을 관리할 수 있습니다.</p></div>;
   return null;
 }
 function useSessions(courseId: Id, scope: string) {
@@ -210,7 +210,7 @@ function General({ ctx, course, courseId }: { ctx: ScreenCtx; course: Course; co
   const students = data?.students || [];
   const pages = Math.max(1, Math.ceil((data?.total || 0) / (data?.size || ROSTER_PAGE)));
   const hrefForPage = (n: number) => pf("pf_attend", { kj: course.id, ...(sort !== "studentNo" ? { sort } : {}), ...(n > 1 ? { page: String(n) } : {}) });
-  return <div className="stack">{backendPanel()}<Settings courseId={courseId} /><section className="sheet" aria-label="출석부">
+  return <div className="stack"><Settings courseId={courseId} /><section className="sheet" aria-label="출석부">
     <div className="pf-week-head"><h2>출석부</h2><div className="filters" role="group" aria-label="정렬">{ROSTER_SORTS.map(([value, label]) => <Link key={value} href={pf("pf_attend", { kj: course.id, ...(value !== "studentNo" ? { sort: value } : {}) })} className={`chip all${sort === value ? " on" : ""}`} aria-current={sort === value ? "true" : undefined}>{label}</Link>)}</div></div>
     <div className="pf-form"><div className="span-2"><Field label="바꾸는 사유 (칸을 바꿀 때 함께 남습니다)"><input ref={reasonRef} type="text" maxLength={200} value={reason} placeholder="예: 병원 진료 확인서 제출" onChange={(event) => { reasonDraft = event.target.value; setReason(event.target.value); }} /></Field></div></div><Message notice={notice} />
     {!data ? <ResourceState entry={entry} title="출석부를" reload={reload} /> : <>
@@ -345,7 +345,7 @@ function Smart({ ctx, course, courseId }: { ctx: ScreenCtx; course: Course; cour
   const entry = useSessions(courseId, "pf-attend-smart");
   const roundId = positive(param(ctx, "round"));
   const sessions = allSessions(entry?.data);
-  return <div className="stack">{backendPanel()}{!entry?.data ? <ResourceState entry={entry} title="차시를" reload={() => attendanceViews.load(attendanceKey(courseId), courseId)} /> : <>
+  return <div className="stack">{!entry?.data ? <ResourceState entry={entry} title="차시를" reload={() => attendanceViews.load(attendanceKey(courseId), courseId)} /> : <>
     {entry.error ? <Message notice={{ text: attendanceMessage(entry.error), alert: true }} /> : null}
     {roundId ? <RoundPanel key={`${courseId}:${roundId}`} course={course} courseId={courseId} roundId={roundId} sessions={sessions} /> : <><ActiveList course={course} courseId={courseId} sessions={sessions} /><OpenRoundForm course={course} courseId={courseId} sessions={sessions} settings={entry.data.settings} /></>}
   </>}</div>;
@@ -465,7 +465,7 @@ function Sessions({ ctx, course, courseId }: { ctx: ScreenCtx; course: Course; c
   const makeupOf = positive(param(ctx, "makeup"));
   const editing = sessions.find((session) => session.sessionId === editId);
   const [notice, setNotice] = useDraft<Notice>(`session-list:${courseId}`, () => ({ text: "" }));
-  return <div className="stack">{backendPanel()}{!entry?.data ? <ResourceState entry={entry} title="차시를" reload={() => attendanceViews.load(attendanceKey(courseId), courseId)} /> : <>
+  return <div className="stack">{!entry?.data ? <ResourceState entry={entry} title="차시를" reload={() => attendanceViews.load(attendanceKey(courseId), courseId)} /> : <>
     {entry.error ? <Message notice={{ text: attendanceMessage(entry.error), alert: true }} /> : null}
     {editId && !editing ? <p className="pf-sub">고친 차시를 찾지 못했습니다. 삭제되었을 수 있습니다.</p> : null}
     <SessionForm key={`${courseId}:${editing?.sessionId || (makeupOf ? `makeup-${makeupOf}` : "new")}`} course={course} courseId={courseId} sessions={sessions} editing={editing} makeupOf={editing ? null : makeupOf} />

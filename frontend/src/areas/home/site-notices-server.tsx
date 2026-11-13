@@ -11,7 +11,6 @@ import { hrefFor, find } from "../../manifest.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { readQuery, writeQuery } from "../../shared/query.tsx";
 import { backendStatus, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { freshVisit, replaceVisit, useResource } from "../../shared/remote-cache.ts";
 import { useHome, koDate, koDateTime, wallText, type HomeData, type HomeSiteNotice } from "../../shared/home-remote.ts";
 import { serverTime } from "../../shared/lectures-remote.ts";
@@ -117,7 +116,6 @@ export function serverSiteNotices(screen: Screen, ctx: ScreenCtx, head: ReactNod
     return (
       <section className="board srv-site-notices" data-area="home">
         {head}
-        {backendPanel({ text: "ASTRA 서버에 로그인하면 알림마당 공지를 서버에서 불러옵니다." })}
       </section>
     );
   }
@@ -249,7 +247,7 @@ function SiteNoticeList({ screen, ctx, head }: { screen: Screen; ctx: ScreenCtx;
 /** `?pop=notice&id=srv-<noticeId>` in backend mode: body, attachments, explicit read, operator controls. */
 export function serverSiteNoticeDialog(ctx: ScreenCtx): ReactNode {
   if (backendStatus() === "anon") {
-    return dialogShell("공지", <div aria-live="polite" className="srv-site-notice">{backendPanel({ text: "ASTRA 서버에 로그인하면 공지를 볼 수 있습니다." })}</div>);
+    return dialogShell("공지", <div aria-live="polite" className="srv-site-notice"></div>);
   }
   const id = siteNoticeIdOf(ctx.params && ctx.params.get("id"));
   if (!id) {
@@ -546,7 +544,7 @@ export function serverSiteNoticeWriteDialog(ctx: ScreenCtx): ReactNode {
   const id = ref ? siteNoticeIdOf(ref) : null;
   const title = id ? "공지 수정" : "공지 쓰기";
   let body: ReactNode;
-  if (backendStatus() === "anon") body = backendPanel({ text: "ASTRA 서버에 로그인하면 공지를 관리할 수 있습니다." });
+  if (backendStatus() === "anon") body = null;
   else if (ref && !id) body = <EmptyState title="공지를 찾을 수 없습니다" body="목록으로 돌아가 다시 선택해 주세요." />;
   else body = id ? <EditNotice id={id} /> : <NewNotice />;
   return dialogShell(title, <div aria-live="polite">{body}</div>);

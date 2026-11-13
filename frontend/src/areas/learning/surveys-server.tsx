@@ -6,7 +6,6 @@ import { Button, Dialog, EmptyState, ErrorState, LoadingState } from "../../ui/k
 import { Link, closeDialog } from "../../router.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { useResource } from "../../shared/remote-cache.ts";
 import { koDateTime, ddayAt } from "../../shared/home-remote.ts";
 import { surveyDetails, surveyPath, studentSurveyHref, surveyMessage, STATE } from "../../shared/surveys-remote.ts";
@@ -14,7 +13,6 @@ import type { SurveyDetail } from "../../shared/surveys-remote.ts";
 import { surveyForm, resultsSection, surveyReceipt, periodText, phaseBadge, stateBadge, releaseText } from "../../shared/survey-view.tsx";
 import type { Screen, ScreenCtx } from "../../types.ts";
 
-const LOGIN_TEXT = "ASTRA 서버에 로그인하면 이 과목의 설문에 응답할 수 있습니다.";
 const missing = (error: unknown): boolean => error instanceof ApiError && error.status === 404;
 
 /** learning.tsx 도우미. */
@@ -60,7 +58,7 @@ function useGate(kj: string | undefined): Gate {
       live = false;
     };
   }, [probing]);
-  if (status === "anon") return { view: backendPanel({ text: LOGIN_TEXT }), off: false };
+  if (status === "anon") return { view: null, off: false };
   if (status === "off") {
     if (off) return { view: null, off: true };
     if (probing) return { view: <LoadingState title="ASTRA 서버에 연결하는 중입니다" />, off: false };

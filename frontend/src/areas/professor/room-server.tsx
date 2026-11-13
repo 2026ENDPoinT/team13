@@ -9,7 +9,7 @@ import { getState, save, render, toast } from "../../store.ts";
 import type { Course } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { routeFor } from "../../shared/routes.ts";
 import { koDate, koDateTime } from "../../shared/home-remote.ts";
 import {
@@ -49,8 +49,8 @@ export function serverRoom(course: Course | null | undefined): boolean {
 }
 
 function gate(course: Course, text: string): ReactNode {
-  if (backendStatus() === "anon") return <div className="stack">{backendPanel({ text })}</div>;
-  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 강의실 활동을 관리할 수 있습니다.</p></div>;
+  if (backendStatus() === "anon") return SIGNED_OUT;
+  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 강의실 활동을 관리할 수 있습니다.</p></div>;
   return null;
 }
 

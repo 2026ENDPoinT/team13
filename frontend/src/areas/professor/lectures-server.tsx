@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, newRequestKey } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, shownRows, useResource } from "../../shared/remote-cache.ts";
 import { discardUpload, sizeText } from "../../shared/uploads-remote.tsx";
 import {
@@ -356,7 +356,7 @@ interface CreateOptions {
 /** The registration sheet for course `course` (also the video panel of 활동 등록). */
 export function serverLectureCreate(course: Course, { onCreated, weekNo }: CreateOptions = {}): ReactNode {
   const courseId = courseIdFor(course.id);
-  if (backendStatus() === "anon") return backendPanel({ text: "ASTRA 서버에 로그인하면 강의 영상을 서버에 올려 등록할 수 있습니다." });
+  if (backendStatus() === "anon") return SIGNED_OUT;
   if (!courseId) return <p className="pf-sub">이 과목은 ASTRA 서버에 없습니다. 서버에 등록된 과목에서만 강의 영상을 올릴 수 있습니다.</p>;
   if (roleIn(course.id) !== "INSTRUCTOR") return <p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 강의 영상을 등록할 수 있습니다.</p>;
   const slotKey = `create:${courseId}`;
@@ -472,7 +472,7 @@ function poll(courseId: Id, alive: () => boolean) {
 /** 콘텐츠관리: login strip, the registration sheet and the server lecture list of `course`. `open` 강의는 펼쳐 둔다. */
 export function serverLectureManager(course: Course, { weekNo, open }: { weekNo?: number | string; open?: string | null } = {}): ReactNode {
   const status = backendStatus();
-  if (status === "anon") return backendPanel({ text: "ASTRA 서버에 로그인하면 강의 영상을 올리고 변환 상태를 볼 수 있습니다." });
+  if (status === "anon") return SIGNED_OUT;
   const courseId = courseIdFor(course.id);
   if (!courseId) return <EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목을 강의실에서 고른 뒤 다시 열어 주세요." />;
   return (
@@ -798,10 +798,10 @@ function ReloadButton({ load, loading }: { load: () => void; loading: boolean })
  * 진도는 `GET …/lecture-progress/students?activityId=&page=&size=`로 이 강의의 열만, 20명씩 서버가 나눈 쪽으로 받는다(`?page=`).
  */
 export function serverLectureDetail(ctx: ScreenCtx, course: Course): ReactNode {
-  if (backendStatus() === "anon") return backendPanel({ text: "ASTRA 서버에 로그인하면 강의 콘텐츠와 수강생 진도를 볼 수 있습니다." });
+  if (backendStatus() === "anon") return SIGNED_OUT;
   const courseId = courseIdFor(course.id);
   if (!courseId) return <EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목의 강의만 볼 수 있습니다." />;
-  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 수강생 진도를 볼 수 있습니다.</p></div>;
+  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 수강생 진도를 볼 수 있습니다.</p></div>;
   const activityId = lectureIdOf(ctx.params && ctx.params.get("n"));
   if (!activityId) {
     return (

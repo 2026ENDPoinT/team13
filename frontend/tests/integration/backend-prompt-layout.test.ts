@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Backend from "../../src/shared/backend.ts";
@@ -11,7 +11,7 @@ vi.mock("../../src/shared/backend.ts", async (importOriginal) => ({
   loginWithEclass: auth.passwordLogin,
   connect: vi.fn(), loginAs: vi.fn(), personaFor: vi.fn(), startSchoolLogin: vi.fn(), onSignOut: vi.fn(),
 }));
-import { backendPanel } from "../../src/shared/backend-prompt.tsx";
+import { BackendLoginForm } from "../../src/shared/backend-prompt.tsx";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement;
@@ -25,15 +25,9 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
-describe("본문의 공통 인증 안내", () => {
-  it.each(["off", "ready"])("%s에서는 목업에 없는 계정/로그아웃 안내 행을 추가하지 않는다", async (status) => {
-    auth.status = status;
-    await act(async () => root.render(backendPanel({ compact: true })));
-    expect(host.querySelector(".backend-login")).toBeNull();
-  });
-
-  it("익명 세션의 e-class 로그인 폼과 비밀번호 요청·비우기는 유지한다", async () => {
-    await act(async () => root.render(backendPanel()));
+describe("로그인 폼", () => {
+  it("e-class 로그인 폼은 비밀번호 요청 뒤 비밀번호를 비운다", async () => {
+    await act(async () => root.render(createElement(BackendLoginForm, {})));
     const id = host.querySelector<HTMLInputElement>('input[name="studentId"]')!;
     const password = host.querySelector<HTMLInputElement>('input[name="password"]')!;
     expect(id.autocomplete).toBe("username");

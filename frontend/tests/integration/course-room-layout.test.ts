@@ -254,7 +254,7 @@ describe("목업 양식의 서버 강의실", () => {
   it("로그인 대기와 수강 권한 실패에서는 활동을 노출하지 않는다", async () => {
     server.status = "anon";
     await mount("40_room_submain", "bi");
-    expect(host.textContent).toContain("ASTRA 서버에 로그인하면");
+    expect(host.querySelector(".backend-login")).toBeNull();
     expect(host.querySelector(".activity")).toBeNull();
     expect(server.get).not.toHaveBeenCalled();
     server.status = "ready";

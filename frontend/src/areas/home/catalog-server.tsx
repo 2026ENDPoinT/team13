@@ -9,7 +9,6 @@ import { Link, navigate, closeDialog } from "../../router.tsx";
 import { Badge, Button, EmptyState, ErrorState, Field, LoadingState, Pagination, Table, type ButtonKind } from "../../ui/kit.tsx";
 import { courseIdFor, kjOf, subscribe } from "../../shared/backend.ts";
 import { courseCover, courseGradient } from "../../shared/course-view.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { useResource, type Entry, type Resource } from "../../shared/remote-cache.ts";
 import { ApiError } from "../../shared/api.ts";
 import { ddayAt, koDateTime } from "../../shared/home-remote.ts";
@@ -944,9 +943,4 @@ function ApplyBody({ id }: { id: string }) {
     );
   }
   return <div className="srv-apply">{body}</div>;
-}
-
-/** 백엔드 `anon`일 때 카탈로그 화면 위에 두는 로그인 줄. */
-export function catalogLoginPanel(): ReactNode {
-  return backendPanel({ text: "ASTRA 서버에 로그인하면 서버의 과목 목록을 보고 수강 신청과 청강 신청을 할 수 있습니다." });
 }

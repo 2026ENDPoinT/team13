@@ -7,7 +7,6 @@ import { Link, isModifiedClick, navigate } from "../../router.tsx";
 import { Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { currentRole, routeFor } from "../../shared/routes.ts";
 import { backendStatus } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { useUnread } from "../../shared/unread-badges.tsx";
 import { koDateTime } from "../../shared/home-remote.ts";
 import {
@@ -127,7 +126,7 @@ function Row({ item, filter, nextId, say, focusAfter }: RowProps) {
 /** Body of the notification dialog for `name` ("notify" | "notify-unread"). */
 export function serverNotifications(name: string): ReactNode {
   if (backendStatus() !== "ready") {
-    return <div className="ntf">{backendPanel({ text: "ASTRA 서버에 로그인하면 내 알림을 서버에서 불러옵니다." })}</div>;
+    return <div className="ntf"></div>;
   }
   const filter = name === "notify-unread" ? "unread" : "all";
   return <ServerNotifications key={filter} filter={filter} />;

@@ -8,7 +8,6 @@ import { courseById } from "../../data.ts";
 import { getState, render, save } from "../../store.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import {
@@ -19,7 +18,6 @@ import {
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { RetryButton } from "./activity-server.tsx";
 
-const LOGIN = "ASTRA 서버에 로그인하면 이 과목의 출석과 스마트출석을 서버에서 불러옵니다.";
 
 interface Note {
   text: string;
@@ -373,7 +371,7 @@ export function remoteAttendance(screen: Screen, ctx: ScreenCtx, head: ReactNode
   const course = courseOf(ctx);
   const courseId = courseIdFor(course.id);
   let rest: ReactNode;
-  if (backendStatus() === "anon") rest = backendPanel({ text: LOGIN });
+  if (backendStatus() === "anon") rest = null;
   else if (!courseId) rest = <EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 출석을 볼 수 있습니다." />;
   else rest = <AttendanceBody key={courseId} courseId={Number(courseId)} selectedWeek={ctx.state.attendanceWeek} />;
   return (

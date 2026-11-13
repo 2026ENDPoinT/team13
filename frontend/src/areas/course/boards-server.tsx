@@ -21,7 +21,7 @@ import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.t
 import { koDateTime } from "../../shared/home-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
 import { attachPicker, type AttachMemo, type AttachPickerHandle, type ExistingFile } from "../../shared/attach-picker.tsx";
-import { QNA_LOGIN, kindTag, statusTag, authorText, postCard, gate, visitList, qnaSection } from "../../shared/board-list.tsx";
+import { kindTag, statusTag, authorText, postCard, gate, visitList, qnaSection } from "../../shared/board-list.tsx";
 import {
   MAX_UPLOADS, MAX_TITLE, MAX_BODY, COMMENT_BYTES,
   openListKey, postKey, qnaDetails, openLists, openDetails, answerLists, commentLists,
@@ -34,7 +34,6 @@ import {
 import type { CourseParts } from "./course.tsx";
 import { RetryButton } from "./groups-server.tsx";
 
-const OPEN_LOGIN = "ASTRA 서버에 로그인하면 이 과목의 열린게시판을 서버에서 불러옵니다.";
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
 
@@ -344,7 +343,7 @@ export function remoteQnaBoard(screen: Screen, ctx: ScreenCtx, course: Course, p
 
 /** `?pop=qna&id=` (45d) and `?pop=qna-reply&id=` (45e, the answer form open) in backend mode. */
 export function remoteQnaDialog(ctx: ScreenCtx, course: Course, name: string): ReactNode {
-  const blocked = gate(course, QNA_LOGIN);
+  const blocked = gate(course);
   const id = idParam(ctx);
   const courseId = courseIdFor(course.id);
   if (blocked || !id || courseId == null) {
@@ -688,7 +687,7 @@ function AnswerForm({ courseId, id, ctx, instructor }: { courseId: Id; id: numbe
 export function remoteQnaWriteDialog(ctx: ScreenCtx, course: Course): ReactNode {
   const id = idParam(ctx);
   const title = id ? "질문 수정" : "질문 작성";
-  const blocked = gate(course, QNA_LOGIN);
+  const blocked = gate(course);
   const courseId = courseIdFor(course.id);
   if (blocked || courseId == null) return wideShell(title, <div className="crs-dialog">{blocked}</div>);
   if (!id && roleIn(course.id) !== "STUDENT") {
@@ -701,7 +700,7 @@ export function remoteQnaWriteDialog(ctx: ScreenCtx, course: Course): ReactNode 
 export function remoteOpenWriteDialog(ctx: ScreenCtx, course: Course): ReactNode {
   const id = idParam(ctx);
   const title = id ? "글 수정" : "글쓰기";
-  const blocked = gate(course, OPEN_LOGIN);
+  const blocked = gate(course);
   const courseId = courseIdFor(course.id);
   if (blocked || courseId == null) return wideShell(title, <div className="crs-dialog">{blocked}</div>);
   return wideShell(title, <PostForm key={`open:${courseId}:${id || "new"}`} ctx={ctx} courseId={courseId} kind="open" id={id} noun="글" />);
@@ -806,7 +805,7 @@ function PostForm({ ctx, courseId, kind, id, noun }: { ctx: ScreenCtx; courseId:
 
 /** The open board screen (`47_room_open_board_list`) in backend mode. */
 export function remoteOpenBoard(screen: Screen, ctx: ScreenCtx, course: Course, parts: CourseParts): ReactNode {
-  const blocked = gate(course, OPEN_LOGIN);
+  const blocked = gate(course);
   const courseId = courseIdFor(course.id);
   if (blocked || courseId == null) return <section className="crs" data-area="course">{parts.head("열린게시판", "layers", null)}{blocked}</section>;
   return <OpenBoard screen={screen} ctx={ctx} kj={course.id} courseId={courseId} parts={parts} />;
@@ -887,7 +886,7 @@ function Slot({ children }: { children: ReactNode }) {
 
 /** `?pop=board-post&id=` over the open board in backend mode. */
 export function remoteOpenPostDialog(ctx: ScreenCtx, course: Course): ReactNode {
-  const blocked = gate(course, OPEN_LOGIN);
+  const blocked = gate(course);
   const id = idParam(ctx);
   const courseId = courseIdFor(course.id);
   if (blocked || !id || courseId == null) {

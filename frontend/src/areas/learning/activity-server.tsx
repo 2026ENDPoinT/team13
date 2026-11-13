@@ -9,7 +9,7 @@ import { Link } from "../../router.tsx";
 import { hrefFor, find } from "../../manifest.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { lectureDetails, detailKey, ACTIVITY_PHASE, type ActivityDetail, type ActivityFile } from "../../shared/lectures-remote.ts";
@@ -40,7 +40,7 @@ export function RetryButton({ reload }: { reload: () => void }) {
  * 상세·연결 화면의 공통 관문: 대신 보일 내용, 또는 진행해도 되면 null. 연결을 아직 확인하지 못했으면 연결을 시도하고,
  * 끝내 서버가 꺼져 있으면 `offLate`가 참이 된다.
  */
-function useGate(kj: string | undefined, loginText: string): { blocked: ReactNode; offLate: boolean } {
+function useGate(kj: string | undefined): { blocked: ReactNode; offLate: boolean } {
   const [offLate, setOffLate] = useState(false);
   const status = backendStatus();
   const waiting = status === "off" && !backendSettled();
@@ -54,7 +54,7 @@ function useGate(kj: string | undefined, loginText: string): { blocked: ReactNod
       live = false;
     };
   }, [waiting]);
-  if (status === "anon") return { blocked: backendPanel({ text: loginText }), offLate };
+  if (status === "anon") return { blocked: SIGNED_OUT, offLate };
   if (status === "off") {
     return {
       blocked: waiting
@@ -152,7 +152,7 @@ function MaterialLoaded({ kj, courseId, activityId, parts }: { kj: string; cours
 function MaterialDetail({ screen, parts }: { screen: Screen; parts: ActivityParts }) {
   const kj = screen.course || "";
   const activityId = screen.serverMaterial ?? 0;
-  const { blocked, offLate } = useGate(kj, "ASTRA 서버에 로그인하면 이 과목의 자료를 보고 내려받을 수 있습니다.");
+  const { blocked, offLate } = useGate(kj);
   const courseId = courseIdFor(kj);
   let main: ReactNode;
   if (offLate) main = <EmptyState title="활동을 찾을 수 없습니다" body="ASTRA 서버에 연결되어 있지 않습니다." />;
@@ -178,7 +178,7 @@ function ActivityLink({ screen, parts }: { screen: Screen; parts: ActivityParts 
   const kj = screen.course || "";
   const type = screen.serverLink?.type ?? "";
   const activityId = screen.serverLink?.activityId ?? 0;
-  const { blocked, offLate } = useGate(kj, `ASTRA 서버에 로그인하면 이 ${TYPE_NAME[type]}을 열 수 있습니다.`);
+  const { blocked, offLate } = useGate(kj);
   const [view, setView] = useState<LinkView>({ kind: "finding" });
   const [attempt, setAttempt] = useState(0);
   const proceed = !blocked;
@@ -238,7 +238,7 @@ export function sampleInServerCourse(kj: string | null | undefined, what = "활�
   const status = backendStatus();
   if (!kj || status === "off") return null;
   const body = status === "anon"
-    ? backendPanel({ text: "ASTRA 서버에 로그인하면 이 과목의 활동을 서버에서 불러옵니다." })
+    ? null
     : !courseIdFor(kj)
       ? <EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목의 활동만 볼 수 있습니다." />
       : <EmptyState title={`${what}을 찾을 수 없습니다`} body="이 과목은 ASTRA 서버의 활동만 보입니다. 목록에서 다시 선택해 보세요." actions={<Link href={listHref(kj)} className="btn btn-secondary">학습활동 목록</Link>} />;

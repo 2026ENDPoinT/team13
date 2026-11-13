@@ -12,7 +12,7 @@
 .vs-main .player-stage { min-height: 280px; aspect-ratio: 16 / 9; }
 .vs-main .player-page:fullscreen { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
 .vs-main .player-page:fullscreen .player-stage { aspect-ratio: auto; min-height: 0; }
-.vs-main .player-page:fullscreen .player-top, .vs-main .player-page:fullscreen .player-sheet { display: none; }
+.vs-main .player-page:fullscreen .player-top { display: none; }
 .video-study p { margin: 0; }
 .vs-side { min-width: 0; background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
 .vs-side-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4); }

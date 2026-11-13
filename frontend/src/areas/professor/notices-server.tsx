@@ -8,9 +8,9 @@ import { getState, render, toast } from "../../store.ts";
 import { showErrors } from "../../forms.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendState, backendStatus, courseIdFor, roleIn } from "../../shared/backend.ts";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { courseById, type Course } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { freshVisit, shownRows, useResource } from "../../shared/remote-cache.ts";
 import { useHome, reloadHome, memberCourses, koDate, koDateTime, homeMessage } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
@@ -82,19 +82,18 @@ function ProfessorHome({ card, onCount }: { card: (course: Course, unread: numbe
 export function serverNoticeFields(ctx: ScreenCtx, course: Course, _parts?: unknown): ReactNode {
   if (backendStatus() === "anon") {
     // The local sample form is hidden: a notice saved only in this browser would look like a server notice.
-    return <div className="stack">{backendPanel({ text: "ASTRA 서버에 로그인하면 이 과목의 공지를 서버에 쓰고 고칠 수 있습니다." })}</div>;
+    return SIGNED_OUT;
   }
   const courseId = courseIdFor(course.id);
-  if (!courseId) return <div className="stack">{backendPanel()}<EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목에만 공지를 쓸 수 있습니다." /></div>;
+  if (!courseId) return <div className="stack"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목에만 공지를 쓸 수 있습니다." /></div>;
   if (roleIn(course.id) !== "INSTRUCTOR") {
-    return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 공지를 쓰고 고칠 수 있습니다.</p></div>;
+    return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 공지를 쓰고 고칠 수 있습니다.</p></div>;
   }
   const editId = Number((ctx.params && ctx.params.get("edit")) || "");
   const page = Math.max(1, Math.floor(Number(ctx.params && ctx.params.get("page"))) || 1);
   const edit = Number.isInteger(editId) && editId > 0 ? editId : null;
   return (
     <div className="stack">
-      {backendPanel()}
       <NoticeForm key={`${courseId}:${edit || `new:${created}`}`} course={course} courseId={Number(courseId)} editId={edit} />
       <NoticeList course={course} courseId={Number(courseId)} page={page} />
     </div>
@@ -364,14 +363,14 @@ function DeleteNotice({ courseId, noticeId, title, after, disabled }: { courseId
  */
 export function serverCourseNotices(ctx: ScreenCtx): ReactNode {
   if (backendStatus() === "anon") {
-    return <div className="stack">{backendPanel({ text: "ASTRA 서버에 로그인하면 담당 과목의 공지를 보고 고칠 수 있습니다." })}</div>;
+    return SIGNED_OUT;
   }
   const param = (name: string) => (ctx && ctx.params && ctx.params.get(name)) || "";
   const { courses } = backendState();
   const taught = (Array.isArray(courses) ? courses : [])
     .filter((remote) => remote.role === "INSTRUCTOR" && remote.key && courseById(remote.key).id === remote.key);
   if (!taught.length) {
-    return <div className="stack">{backendPanel()}<EmptyState title="담당 과목이 없습니다" body="ASTRA 서버에 이 계정이 담당하는 과목이 없어 공지를 보여 줄 수 없습니다." /></div>;
+    return <div className="stack"><EmptyState title="담당 과목이 없습니다" body="ASTRA 서버에 이 계정이 담당하는 과목이 없어 공지를 보여 줄 수 없습니다." /></div>;
   }
   const chosen = taught.find((remote) => remote.key === param("kj")) || taught[0];
   const course = courseById(chosen.key!);
@@ -379,7 +378,6 @@ export function serverCourseNotices(ctx: ScreenCtx): ReactNode {
   const write = pf("pf_notice_write", { kj: course.id });
   return (
     <div className="stack">
-      {backendPanel()}
       <p className="pf-sub">ASTRA 서버에는 교수용 기관 공지가 아직 없어 담당 과목의 공지를 모아 보여 줍니다.</p>
       <nav aria-label="담당 과목">
         <Tabs items={taught.map((remote) => ({

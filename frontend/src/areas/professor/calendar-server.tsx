@@ -9,7 +9,7 @@ import { Link, GoButton } from "../../router.tsx";
 import { courseById } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { backendState, backendStatus } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { routeFor } from "../../shared/routes.ts";
 import { useResource, type Resource } from "../../shared/remote-cache.ts";
 import { todoKind, todoLabel } from "../../shared/home-remote.ts";
@@ -305,7 +305,7 @@ function TimetableSection({ state }: { state: CalState }) {
 /** `pf_calendar` 백엔드 화면. `anon`이면 로그인 안내만 둔다. */
 export function serverProfessorCalendar(ctx: ScreenCtx): ReactNode {
   if (backendStatus() === "anon") {
-    return <div className="stack">{backendPanel({ text: "ASTRA 서버에 로그인하면 담당 과목의 일정과 수업시간표를 봅니다." })}</div>;
+    return SIGNED_OUT;
   }
   const param = (name: string) => (ctx && ctx.params && ctx.params.get(name)) || "";
   const state: CalState = {
@@ -316,7 +316,6 @@ export function serverProfessorCalendar(ctx: ScreenCtx): ReactNode {
   };
   return (
     <div className="stack">
-      {backendPanel()}
       {state.day ? <DaySection state={state} /> : null}
       <RangeSection state={state} />
       <TimetableSection state={state} />

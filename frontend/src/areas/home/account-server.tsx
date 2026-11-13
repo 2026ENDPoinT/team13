@@ -6,7 +6,6 @@ import { Button, Dialog, ErrorState, Field, LoadingState } from "../../ui/kit.ts
 import { getState, render, save } from "../../store.ts";
 import { systemTheme } from "../../theme.ts";
 import type { ScreenCtx } from "../../types.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { backendStatus, subscribe } from "../../shared/backend.ts";
 import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
@@ -123,7 +122,6 @@ export function serverAccountDialog(name: string, ctx: ScreenCtx): ReactNode {
   if (status !== "ready") {
     return shell(title, (
       <div className="acct">
-        {backendPanel({ text: "ASTRA 서버에 로그인하면 내 계정 정보를 서버에서 불러옵니다." })}
       </div>
     ));
   }

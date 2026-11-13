@@ -5,12 +5,10 @@ import type { Course } from "../../data.ts";
 import { Badge, Button, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { groupLists, groupsKey, groupMessage, GROUP_TYPE, type Group } from "../../shared/groups-remote.ts";
 import type { HeadFn } from "./course.tsx";
 
-const LOGIN = "ASTRA 서버에 로그인하면 내가 속한 그룹을 서버에서 불러옵니다.";
 
 export function RetryButton({ reload }: { reload: () => void }) {
   const [pressed, setPressed] = useState(false);
@@ -39,7 +37,7 @@ function groupCard(group: Group): ReactNode {
 /** 강의실 그룹 화면(백엔드 모드). `head`는 course.tsx의 제목 줄 함수다. */
 export function remoteGroups(course: Course, head: HeadFn): ReactNode {
   if (backendStatus() === "anon") {
-    return <section className="crs" data-area="course">{head("그룹활동", "users", null)}{backendPanel({ text: LOGIN })}</section>;
+    return <section className="crs" data-area="course">{head("그룹활동", "users", null)}</section>;
   }
   const courseId = courseIdFor(course.id);
   if (!courseId) {

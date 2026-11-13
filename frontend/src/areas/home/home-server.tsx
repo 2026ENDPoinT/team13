@@ -6,7 +6,6 @@ import { Icon } from "../../ui/icon.tsx";
 import { Button, EmptyState } from "../../ui/kit.tsx";
 import { hrefFor, find } from "../../manifest.ts";
 import { typeIcon } from "../../shared/format.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import {
   homeEntry, useHome, reloadHome, useTodo, reloadTodo, loadMoreTodo,
   memberCourses, todoKind, todoLabel, todoHref, ddayAt, koDateTime, homeMessage, wallMs, wallParts,
@@ -37,11 +36,6 @@ export function RetryButton({ reload }: { reload: () => void }) {
       다시 불러오기
     </Button>
   );
-}
-
-/** Login strip shown on home screens while the backend is `anon`. */
-export function homeLoginPanel(compact: boolean): ReactNode {
-  return backendPanel({ compact, text: "ASTRA 서버에 로그인하면 수강 과목, 새 공지, 할 일을 서버에서 불러옵니다." });
 }
 
 function waiting<T>(entry: Entry<T> | null): boolean {

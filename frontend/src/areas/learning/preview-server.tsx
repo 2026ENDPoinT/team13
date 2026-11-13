@@ -3,7 +3,6 @@
 // summary next to it when there is one. `anon` shows only the login strip.
 import { useEffect, useState, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { backendStatus, courseIdFor } from "../../shared/backend.ts";
 import { remoteRecord } from "../../shared/course-pdfs-remote.ts";
 import { serverPreview } from "../../shared/preview-remote.tsx";
@@ -23,7 +22,7 @@ export function serverPreviewScreen(ctx: ScreenCtx): ReactNode {
   const fileId = serverFileIdOf(ctx.params && ctx.params.get("n"));
   const status = backendStatus();
   if (!fileId || status === "off") return null;
-  if (status !== "ready") return <section className="srv-preview-page">{backendPanel({ text: "ASTRA 서버에 로그인하면 서버에 등록된 자료를 미리 볼 수 있습니다." })}</section>;
+  if (status !== "ready") return <section className="srv-preview-page"></section>;
   const kj = ctx.params.get("kj") || ctx.state.courseId;
   const courseId = courseIdFor(kj);
   if (!courseId) {

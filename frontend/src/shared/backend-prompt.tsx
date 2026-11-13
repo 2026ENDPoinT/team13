@@ -1,5 +1,5 @@
-// Sign-in prompt for anonymous backend sessions only. Signed-in pages use the same layout as mock pages.
-// Account/logout controls live in the shared header menu, not an extra content row.
+// Sign-in form for anonymous backend sessions. It is drawn only inside the entry login modal (entry-login.tsx);
+// pages never embed it. Account/logout controls live in the shared header menu.
 // Buttons follow `GET /api/auth/methods`: school OIDC navigates to `/api/auth/login`,
 // e-class password login uses one request, and developer personas require `devLogin`.
 // The password is cleared after the request; break-glass login is never offered here.
@@ -9,26 +9,15 @@ import { backendState, connect, loginAs, loginWithEclass, personaFor, offers, st
 
 const UNKNOWN_METHODS = "로그인 방법을 확인하지 못했습니다. 다시 확인을 누르거나 잠시 후 다시 시도하세요.";
 
-export interface BackendPanelOptions {
-  /** Tighter layout (`is-compact`) for narrow columns. */
-  compact?: boolean;
-  /** Replaces the default sign-in explanation. */
-  text?: string;
-}
-
-/** Anonymous backend sessions need a login form; mock and signed-in pages add no layout. */
-export function backendPanel(options: BackendPanelOptions = {}): ReactNode {
-  const { status } = backendState();
-  if (status !== "anon") return null;
-  return <BackendPanel key={status} compact={Boolean(options.compact)} text={options.text} />;
-}
+/** Stands in for a page body behind a "not signed in" gate: the login modal is the only sign-in surface, so pages draw nothing. */
+export const SIGNED_OUT: ReactNode = <></>;
 
 interface Message {
   text: string;
   alert: boolean;
 }
 
-function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
+export function BackendLoginForm({ text }: { text?: string }) {
   const { methods } = backendState();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
@@ -44,7 +33,6 @@ function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
   useEffect(() => {
     if (!busy && message?.alert) passwordRef.current?.focus();
   }, [busy, message]);
-  const compactClass = compact ? " is-compact" : "";
   const say = (next: string, alert = false) => setMessage({ text: next, alert });
 
 
@@ -119,7 +107,7 @@ function BackendPanel({ compact, text }: { compact: boolean; text?: string }) {
     ? "ASTRA 서버에 연결되어 있습니다. 학번과 e-class 비밀번호로 로그인하면 서버에 등록된 자료와 쪽별 요약을 볼 수 있습니다."
     : "ASTRA 서버에 연결되어 있습니다. 로그인하면 서버에 등록된 자료와 쪽별 요약을 볼 수 있습니다.");
   return (
-    <div className={`backend-login${compactClass}`} aria-label="ASTRA 서버 로그인">
+    <div className="backend-login" aria-label="ASTRA 서버 로그인">
       <p className="backend-login__text">{intro}</p>
       {eclass ? (
         <form className="backend-login__form" aria-label="학번과 e-class 비밀번호로 로그인" onSubmit={submitPassword}>

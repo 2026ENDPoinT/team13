@@ -8,7 +8,6 @@ import type { Activity, AppState, Course, Message } from "../../data.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { hrefFor, find } from "../../manifest.ts";
 import { typeLabel, attendStatus, statusLabel, dday, playerHref } from "../../shared/format.ts";
-import { currentRole, routeFor } from "../../shared/routes.ts";
 import { isClosedActivity } from "../../shared/activity-library.ts";
 import { richNodes } from "../../shared/rich-text.tsx";
 import { getActivityFile } from "../../shared/activity-files.ts";
@@ -20,7 +19,6 @@ import { createDocumentViewer } from "../../shared/document-viewer.tsx";
 import { ensurePlayerChrome, PlayerIcon, usePlayControlFade, usePlayerFullscreen, togglePlayerFullscreen } from "../../shared/player-controls.ts";
 import { remoteAssignmentDetail } from "./assignments-server.tsx";
 import { backendStatus } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { serverWeekCalendar, serverTimetable } from "./calendar-server.tsx";
 import { usesServerMessages, serverMessages } from "./messages-server.tsx";
 import { remoteQuizDetail } from "./quizzes-server.tsx";
@@ -40,7 +38,6 @@ declare module "../../data.ts" {
   interface AppState {
     calOffset?: number;
     ttOffset?: number;
-    playerPanel?: string;
     previewZoom?: number;
     summaryOpen?: boolean;
     summaryChoice?: string;
@@ -149,7 +146,6 @@ function renderWeek(ctx: ScreenCtx): ReactNode {
   const start = new Date(2026, 10, 8 + (ctx.state.calOffset || 0) * 7);
   const days = Array.from({ length: 7 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
   return <section>
-    {backendStatus() === "anon" ? backendPanel({ text: "ASTRA 서버에 로그인하면 내 과목의 마감과 학사일정을 서버에서 불러옵니다." }) : null}
     <div className="cal-head"><h1>{`${days[0].getFullYear()}년 ${days[0].getMonth() + 1}월`}</h1><Tabs items={[{ label: "월", href: hrefFor(find("00_main_home")) }, { label: "주", on: true }]} /><div className="cal-nav">
       <button type="button" className="btn btn-ghost" aria-label="이전 주" onClick={() => shift("calOffset", -1)}>‹</button><button type="button" className="btn btn-ghost" aria-label="다음 주" onClick={() => shift("calOffset", 1)}>›</button>
     </div></div>
@@ -172,7 +168,6 @@ function renderTimetable(ctx: ScreenCtx): ReactNode {
   const friday = new Date(monday); friday.setDate(monday.getDate() + 4);
   const names = ["월", "화", "수", "목", "금"];
   return <section className="timetable">{close}
-    {backendStatus() === "anon" ? backendPanel({ text: "ASTRA 서버에 로그인하면 이번 학기 수업 시간을 서버에서 불러옵니다." }) : null}
     <div className="tt-nav"><button type="button" className="btn btn-ghost" aria-label="이전 주" onClick={() => shift("ttOffset", -1)}>‹</button><strong>{`${koDate(monday)} – ${koDate(friday)}`}</strong><button type="button" className="btn btn-ghost" aria-label="다음 주" onClick={() => shift("ttOffset", 1)}>›</button></div>
     <p className="tiny">칸 색은 과목마다 다릅니다. 이 샘플의 요일과 교시는 학기 내내 같고, 화살표는 표시 주만 바꿉니다.</p>
     <div className="tt" role="grid" aria-label="주간 수업시간표"><div className="tt-h" />{names.map((name) => <div key={name} className="tt-h">{name}</div>)}
@@ -271,13 +266,6 @@ function renderPlayer(screen: Screen, ctx: ScreenCtx): ReactNode {
   const blocked = sampleInServerCourse(a ? a.courseId : screen.course, "영상");
   return blocked || <SamplePlayer key={a?.id || "sample"} activity={a} ctx={ctx} />;
 }
-/** `단원으로`: the classroom opens on this lecture's week, unfolded. */
-function openUnit(week: number) {
-  const state = getState();
-  state.week = week;
-  state.draft.closedWeeks = (state.draft.closedWeeks || []).filter((n: number) => n !== week);
-  save();
-}
 function SamplePlayer({ activity: a, ctx }: { activity?: Activity; ctx: ScreenCtx }) {
   const media = mediaForActivity(a), p = ctx.state.player, id = a?.id || media.id;
   const root = useRef<HTMLElement>(null), video = useRef<HTMLVideoElement>(null), play = useRef<HTMLButtonElement>(null);
@@ -285,7 +273,7 @@ function SamplePlayer({ activity: a, ctx }: { activity?: Activity; ctx: ScreenCt
   const [resumeLabel, setResumeLabel] = useState(""), [next, setNext] = useState<ReactNode>(null);
   const token = useRef(completionToken(id));
   const ratio = p.duration ? Math.min(100, Math.round(p.seconds / p.duration * 100)) : 0;
-  const captionsOn = p.captions !== false, panel = ctx.state.playerPanel || "";
+  const captionsOn = p.captions !== false;
   useEffect(() => { ensurePlayerChrome(); }, []);
   useEffect(() => {
     if (!a?.fileId || isClosedActivity(a)) return;
@@ -346,12 +334,6 @@ function SamplePlayer({ activity: a, ctx }: { activity?: Activity; ctx: ScreenCt
       if (item && href) setNext(<Link href={href}>{`다음: ${describe(item).title} →`}</Link>);
     }
   };
-  const changePanel = (name: string) => update((state) => { state.playerPanel = state.playerPanel === name ? "" : name; });
-  const ask = () => {
-    const data = readForm(), question = String(data.playerQ || "").trim();
-    if (!question) return showErrors({ playerQ: "질문을 입력하세요" });
-    update((state) => { state.draft.playerNotes = [...(state.draft.playerNotes || []), question]; state.playerPanel = "ask"; state.toast = "질문을 이 브라우저에 남겼습니다"; });
-  };
   const player = <section ref={root} className="player-page is-open" data-item-open={a?.id || ""}>
     <div className="player-top"><h1>{a ? `[${a.week}주] ${a.title}` : "온라인 강의"}</h1><span className={`attend-pill${ratio >= 90 ? " ok" : ""}`}>{ratio >= 90 ? "출석 완료" : "출석 진행"}</span></div>
     <div className="player-stage" onClick={(event) => { if (!(event.target instanceof Element) || event.target.closest("button, a, input, textarea, select") || !p.playing) return; fade.present(true); }}>
@@ -366,12 +348,8 @@ function SamplePlayer({ activity: a, ctx }: { activity?: Activity; ctx: ScreenCt
       <div className="player-tools">{[1, 1.25, 1.5, 2].map((speed) => <button key={speed} type="button" className={`btn btn-ghost${p.speed === speed ? " on" : ""}`} aria-pressed={p.speed === speed} onClick={() => update((state) => { state.player.speed = speed; })}>{speed}x</button>)}
         <button type="button" className={`btn btn-ghost${captionsOn ? " on" : ""}`} aria-pressed={captionsOn} onClick={() => update((state) => { state.player.captions = state.player.captions === false; })}>자막</button>
         <button type="button" className="btn player-full" data-glyph={fullscreen ? "exit" : "enter"} aria-label={fullscreen ? "전체화면 종료" : "전체화면"} aria-pressed={fullscreen} onClick={() => void togglePlayerFullscreen(root.current)}><PlayerIcon name={fullscreen ? "exit" : "enter"} /></button>
-        {fullscreen ? null : <><button type="button" className={`btn btn-ghost${panel === "notes" ? " on" : ""}`} onClick={() => changePanel("notes")}>강의내용</button><button type="button" className={`btn btn-ghost${panel === "ask" ? " on" : ""}`} onClick={() => changePanel("ask")}>질의하기</button></>}{a ? <Link href={routeFor(currentRole(), "classroom", { kj: a.courseId, special: courseById(a.courseId).kind === "special" })} className="btn btn-secondary" onClick={() => openUnit(a.week)}>단원으로</Link> : null}
       </div>
     </div>
-    {panel && !fullscreen ? <section className="player-sheet" aria-label={panel === "ask" ? "질의하기" : "강의내용"}><div className="player-sheet-h"><h2>{panel === "ask" ? "질의하기" : "강의내용"}</h2><button type="button" className="x" aria-label="닫기" onClick={() => changePanel(panel)}>×</button></div>
-      {panel === "notes" ? <div className="prose"><p>{`${media.course} · ${media.week} · ${media.professor}`}</p>{media.cues.map((cue) => <p key={cue.start}>{`${clock(cue.start)} ${cue.text}`}</p>)}</div> : <div>{(ctx.state.draft.playerNotes || []).map((line: string, i: number) => <p className="note" key={i}>{line}</p>)}<Field label="질문" name="playerQ"><textarea data-name="playerQ" placeholder="이 차시에서 궁금한 점을 적으세요." /></Field><Button kind="primary" onClick={ask}>보내기</Button></div>}
-    </section> : null}
   </section>;
   return a ? videoStudy(courseById(a.courseId), a, player, seek) : player;
 }

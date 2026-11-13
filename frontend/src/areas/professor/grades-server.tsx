@@ -1,7 +1,7 @@
-﻿import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ApiError } from "../../shared/api.ts";
 import { backendState, backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
@@ -89,9 +89,9 @@ const Retry = ({ reload }: { reload: () => Promise<void> }) => {
   }}>다시 불러오기</Button>;
 };
 function gate(course: Course): ReactNode {
-  if (backendStatus() === "anon") return <Stack>{backendPanel({ text: "ASTRA 서버에 로그인하면 이 과목의 성적부를 서버에서 관리할 수 있습니다." })}</Stack>;
-  if (courseIdFor(course.id) == null) return <Stack>{backendPanel()}<EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 성적부를 관리할 수 있습니다." /></Stack>;
-  if (roleIn(course.id) !== "INSTRUCTOR") return <Stack>{backendPanel()}<Note>이 과목을 담당하는 교수 계정으로 로그인해야 성적부를 관리할 수 있습니다.</Note></Stack>;
+  if (backendStatus() === "anon") return SIGNED_OUT;
+  if (courseIdFor(course.id) == null) return <Stack><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 성적부를 관리할 수 있습니다." /></Stack>;
+  if (roleIn(course.id) !== "INSTRUCTOR") return <Stack><Note>이 과목을 담당하는 교수 계정으로 로그인해야 성적부를 관리할 수 있습니다.</Note></Stack>;
   return null;
 }
 
@@ -403,7 +403,7 @@ export function serverGradebook(ctx: ScreenCtx, course: Course): ReactNode {
   if (blocked) return blocked;
   const courseId = courseIdFor(course.id);
   if (courseId == null) return gate(course);
-  return <Stack>{backendPanel()}<Body key={`${session}:${courseId}`} courseId={courseId} page={pageOf(ctx)} itemId={itemOf(ctx)} kj={course.id} /></Stack>;
+  return <Stack><Body key={`${session}:${courseId}`} courseId={courseId} page={pageOf(ctx)} itemId={itemOf(ctx)} kj={course.id} /></Stack>;
 }
 function QuizBody({ course, courseId, quizId, page, hrefForPage }: {
   course: Course; courseId: number; quizId: number; page: number; hrefForPage: (n: number) => string;

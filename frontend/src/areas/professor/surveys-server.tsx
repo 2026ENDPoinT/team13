@@ -9,7 +9,7 @@ import type { Course } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, shownRows, useResource } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
@@ -22,7 +22,6 @@ import { deleteControl } from "./delete-server.tsx";
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
 const pf = (screenId: string, extra?: Record<string, string>) => routeFor("professor", "screen", { screenId, ...(extra || {}) });
-const LOGIN = "ASTRA 서버에 로그인하면 이 과목의 설문을 서버에 만들고 결과를 볼 수 있습니다.";
 
 const toInput = (value: string | null | undefined) => (value ? String(value).slice(0, 16) : "");
 const fromInput = (value: string) => (value ? (value.length === 16 ? `${value}:00` : value) : null);
@@ -189,16 +188,15 @@ function readQuestions(list: DraftQuestion[]): { errors: string[]; questions: Ou
 
 /** `pf_discuss`의 설문 부분(백엔드 모드). `?edit=<surveyId>` 수정, `?n=srv-<surveyId>` 결과. `_parts`는 쓰지 않는다. */
 export function serverSurveyFields(ctx: ScreenCtx, course: Course, _parts?: unknown): ReactNode {
-  if (backendStatus() === "anon") return <div className="stack">{backendPanel({ text: LOGIN })}</div>;
+  if (backendStatus() === "anon") return SIGNED_OUT;
   const remoteId = courseIdFor(course.id);
-  if (!remoteId) return <div className="stack">{backendPanel()}<EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목에만 설문을 만들 수 있습니다." /></div>;
-  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 설문을 만들고 결과를 볼 수 있습니다.</p></div>;
+  if (!remoteId) return <div className="stack"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목에만 설문을 만들 수 있습니다." /></div>;
+  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 설문을 만들고 결과를 볼 수 있습니다.</p></div>;
   const courseId = Number(remoteId);
   const resultsId = surveyIdOf(ctx.params && ctx.params.get("n"));
   if (resultsId) {
     return (
       <div className="stack">
-        {backendPanel()}
         <SurveyHeader course={course} courseId={courseId} surveyId={resultsId} />
         <section className="sheet">
           {resultsSection(courseId, resultsId, { title: "결과 집계" })}
@@ -212,7 +210,6 @@ export function serverSurveyFields(ctx: ScreenCtx, course: Course, _parts?: unkn
   const edit = Number.isInteger(editId) && editId > 0 ? editId : null;
   return (
     <div className="stack">
-      {backendPanel()}
       <SurveyForm key={`${courseId}:${edit || `new:${created}`}`} week={Number(ctx.state.week) || 1} course={course} courseId={courseId} editId={edit} />
       <SurveyList course={course} courseId={courseId} />
     </div>

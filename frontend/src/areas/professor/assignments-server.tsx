@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, shownRows, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
@@ -64,16 +64,15 @@ function Prose({ text }: { text: string }) {
 }
 
 /** Login strip, unmapped course or wrong role: what to show instead of the server screen. */
-function gate(course: Course, loginText: string): ReactNode {
-  if (backendStatus() === "anon") return <div className="stack">{backendPanel({ text: loginText })}</div>;
-  if (!courseIdFor(course.id)) return <div className="stack">{backendPanel()}<EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목에만 과제를 내고 채점할 수 있습니다." /></div>;
+function gate(course: Course): ReactNode {
+  if (backendStatus() === "anon") return SIGNED_OUT;
+  if (!courseIdFor(course.id)) return <div className="stack"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목에만 과제를 내고 채점할 수 있습니다." /></div>;
   if (roleIn(course.id) !== "INSTRUCTOR") {
-    return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 과제를 내고 채점할 수 있습니다.</p></div>;
+    return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 과제를 내고 채점할 수 있습니다.</p></div>;
   }
   return null;
 }
 
-const LOGIN = "ASTRA 서버에 로그인하면 이 과목의 과제를 서버에 내고 제출물을 채점할 수 있습니다.";
 
 /** `datetime-local` value for a server LocalDateTime, and back. */
 const toInput = (value: string | null | undefined) => (value ? String(value).slice(0, 16) : "");
@@ -92,14 +91,13 @@ function useVisit<T>(resource: { peek(key: string): Entry<T> | null }, scope: st
 
 /** `pf_report_create` in backend mode. */
 export function serverReportFields(ctx: ScreenCtx, course: Course, parts: FormParts): ReactNode {
-  const blocked = gate(course, LOGIN);
+  const blocked = gate(course);
   if (blocked) return blocked;
   const courseId = Number(courseIdFor(course.id));
   const editId = Number((ctx.params && ctx.params.get("edit")) || "");
   const edit = Number.isInteger(editId) && editId > 0 ? editId : null;
   return (
     <div className="stack">
-      {backendPanel()}
       <AssignmentForm key={edit ?? `new:${created}`} week={ctx.state.week || 1} course={course} courseId={courseId} editId={edit} parts={parts} />
       <AssignmentList course={course} courseId={courseId} target="pf_report_create" />
     </div>
@@ -355,14 +353,13 @@ function AssignmentList({ course, courseId, target }: { course: Course; courseId
 
 /** `pf_report_status` (and `pf_submissions?n=srv-…`) in backend mode. */
 export function serverSubmissionStatus(ctx: ScreenCtx, course: Course): ReactNode {
-  const blocked = gate(course, LOGIN);
+  const blocked = gate(course);
   if (blocked) return blocked;
   const courseId = Number(courseIdFor(course.id));
   const assignmentId = assignmentIdOf(ctx.params && ctx.params.get("n"));
-  if (!assignmentId) return <div className="stack">{backendPanel()}<AssignmentList course={course} courseId={courseId} target="pf_report_status" /></div>;
+  if (!assignmentId) return <div className="stack"><AssignmentList course={course} courseId={courseId} target="pf_report_status" /></div>;
   return (
     <div className="stack">
-      {backendPanel()}
       <AssignmentHeader course={course} courseId={courseId} assignmentId={assignmentId} screen="pf_report_status" />
       <SubmissionTable course={course} courseId={courseId} assignmentId={assignmentId} />
     </div>
@@ -371,17 +368,17 @@ export function serverSubmissionStatus(ctx: ScreenCtx, course: Course): ReactNod
 
 /** `pf_report_grade` in backend mode: pick an assignment, then a submission. */
 export function serverGrading(ctx: ScreenCtx, course: Course): ReactNode {
-  const blocked = gate(course, LOGIN);
+  const blocked = gate(course);
   if (blocked) return blocked;
   const courseId = Number(courseIdFor(course.id));
   const assignmentId = assignmentIdOf(ctx.params && ctx.params.get("n"));
-  if (!assignmentId) return <div className="stack">{backendPanel()}<AssignmentList course={course} courseId={courseId} target="pf_report_grade" /></div>;
+  if (!assignmentId) return <div className="stack"><AssignmentList course={course} courseId={courseId} target="pf_report_grade" /></div>;
   const submissionId = Number((ctx.params && ctx.params.get("sub")) || "");
   const head = <AssignmentHeader course={course} courseId={courseId} assignmentId={assignmentId} screen="pf_report_grade" />;
   if (!Number.isInteger(submissionId) || submissionId < 1) {
-    return <div className="stack">{backendPanel()}{head}<SubmissionTable course={course} courseId={courseId} assignmentId={assignmentId} /></div>;
+    return <div className="stack">{head}<SubmissionTable course={course} courseId={courseId} assignmentId={assignmentId} /></div>;
   }
-  return <div className="stack">{backendPanel()}{head}<SubmissionView key={submissionId} course={course} courseId={courseId} assignmentId={assignmentId} submissionId={submissionId} /></div>;
+  return <div className="stack">{head}<SubmissionView key={submissionId} course={course} courseId={courseId} assignmentId={assignmentId} submissionId={submissionId} /></div>;
 }
 
 /** Title, phase and counts of one assignment, and the score release switch. */

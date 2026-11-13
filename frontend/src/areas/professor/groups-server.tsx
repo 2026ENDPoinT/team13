@@ -8,7 +8,7 @@ import type { Course } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import {
   GROUP_TYPE, groupLists, groupsKey, courseStudents, studentsKey, createGroup, renameGroup, deleteGroup, addMember, removeMember, moveMember, groupMessage,
@@ -56,7 +56,6 @@ function say(text: string, alert = false) {
 }
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
-const LOGIN = "ASTRA 서버에 로그인하면 이 과목의 그룹을 서버에서 관리할 수 있습니다.";
 
 function Retry({ reload }: { reload: () => void }) {
   const [pressed, setPressed] = useState(false);
@@ -386,10 +385,10 @@ function StudentFinder({ courseId, search, data, error, onChange }: {
 
 /** `pf_team`(백엔드 모드) 본문. */
 export function serverTeams(_ctx: ScreenCtx, course: Course): ReactNode {
-  if (backendStatus() === "anon") return <div className="stack">{backendPanel({ text: LOGIN })}</div>;
+  if (backendStatus() === "anon") return SIGNED_OUT;
   const courseId = courseIdFor(course.id);
-  if (!courseId) return <div className="stack">{backendPanel()}<EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 그룹을 관리할 수 있습니다." /></div>;
-  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 그룹을 관리할 수 있습니다.</p></div>;
+  if (!courseId) return <div className="stack"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목만 그룹을 관리할 수 있습니다." /></div>;
+  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 그룹을 관리할 수 있습니다.</p></div>;
   return <Teams courseId={Number(courseId)} />;
 }
 
@@ -436,7 +435,6 @@ function Teams({ courseId }: { courseId: number }) {
   }
   return (
     <div className="stack">
-      {backendPanel()}
       <p className={status.alert ? "err" : "pf-sub"} role={status.alert ? "alert" : "status"} data-team-status="">{status.text}</p>
       <StudentFinder courseId={courseId} search={search} data={people && people.data} error={people && people.error} onChange={repaint} />
       <div className="stack" aria-live="polite">{body}</div>

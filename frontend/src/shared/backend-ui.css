@@ -21,8 +21,6 @@
 .backend-login__status { flex-basis: 100%; }
 .backend-login__status:empty { display: none; }
 .backend-login__status[role="alert"] { color: var(--danger); }
-.backend-login.is-compact { padding: var(--space-2) var(--space-3); margin-block: var(--space-2); }
-.backend-login.is-compact .backend-login__text { flex-basis: 100%; }
 
 .backend-login__form {
   flex-basis: 100%;
@@ -39,10 +37,8 @@
 .backend-login__dev.is-secondary { padding-top: var(--space-2); border-top: var(--border-w) solid var(--border); }
 .backend-login__dev-label { color: var(--text-2); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
 .backend-login__dev.is-secondary .btn { font-size: var(--text-xs); }
-.backend-login.is-compact .backend-login__field { flex-basis: 100%; }
-.backend-login.is-compact .backend-login__submit { flex: 1 1 100%; }
 
-/* Entry prompt reuses the same authentication form and theme as inline login. */
+/* The entry login modal is the only place the authentication form is drawn. */
 .entry-login .modal-back { align-items: center; }
 .entry-login__modal { width: min(420px, 100%); }
 .entry-login__modal .backend-login { padding: 0; margin: 0; border: 0; background: transparent; gap: var(--space-4); }

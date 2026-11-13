@@ -14,7 +14,6 @@ import type { Screen, ScreenCtx } from "../../types.ts";
 import { readQuery, writeQuery } from "../../shared/query.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, subscribe } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { freshVisit, useResource, type Resource } from "../../shared/remote-cache.ts";
 import { koDate, koDateTime } from "../../shared/home-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
@@ -307,7 +306,6 @@ export function remoteCommunityBoard(screen: Screen, ctx: ScreenCtx, head: React
     return (
       <section className="board" data-area="home">
         {head}
-        {backendPanel({ text: screen.board === "qna" ? "ASTRA 서버에 로그인하면 내 1:1 문의를 서버에서 불러옵니다." : "ASTRA 서버에 로그인하면 자료실을 서버에서 불러옵니다." })}
       </section>
     );
   }
@@ -446,7 +444,7 @@ function idParam(ctx: ScreenCtx): string | null {
 /** `?pop=material&id=` over 자료실 in backend mode. */
 export function remoteMaterialDialog(ctx: ScreenCtx): ReactNode {
   if (backendStatus() === "anon") {
-    return dialogShell("자료실", <div aria-live="polite">{backendPanel({ text: "ASTRA 서버에 로그인하면 자료를 볼 수 있습니다." })}</div>);
+    return dialogShell("자료실", <div aria-live="polite"></div>);
   }
   const id = idParam(ctx);
   if (!id) {
@@ -517,7 +515,7 @@ export function remoteMaterialWriteDialog(ctx: ScreenCtx): ReactNode {
   const id = idParam(ctx);
   const title = id ? "자료 수정" : "자료 등록";
   if (backendStatus() === "anon") {
-    return dialogShell(title, <div className="srv-cq-form">{backendPanel({ text: "ASTRA 서버에 로그인하면 자료를 올릴 수 있습니다." })}</div>);
+    return dialogShell(title, <div className="srv-cq-form"></div>);
   }
   return dialogShell(title, <div className="srv-cq-form">{id ? <MaterialEdit id={id} /> : <MaterialNew />}</div>);
 }
@@ -649,7 +647,7 @@ function MaterialForm({ id, current, stale = null }: { id: string | null; curren
 /** `?pop=inquiry&id=` over 1:1 문의 in backend mode: the question, its replies and, for operators, the answer form. */
 export function remoteInquiryDialog(ctx: ScreenCtx): ReactNode {
   if (backendStatus() === "anon") {
-    return dialogShell("1:1 문의", <div aria-live="polite">{backendPanel({ text: "ASTRA 서버에 로그인하면 내 문의를 볼 수 있습니다." })}</div>);
+    return dialogShell("1:1 문의", <div aria-live="polite"></div>);
   }
   const id = idParam(ctx);
   if (!id) {
@@ -738,7 +736,7 @@ function AnswerForm({ id }: { id: string }) {
 /** `?pop=qna-write` over 1:1 문의 in backend mode: `POST /api/community/qna` with files. */
 export function remoteInquiryWriteDialog(): ReactNode {
   if (backendStatus() === "anon") {
-    return dialogShell("1:1 질문하기", <div className="srv-cq-form">{backendPanel({ text: "ASTRA 서버에 로그인하면 1:1 문의를 보낼 수 있습니다." })}</div>);
+    return dialogShell("1:1 질문하기", <div className="srv-cq-form"></div>);
   }
   return dialogShell("1:1 질문하기", <div className="srv-cq-form"><InquiryForm /></div>);
 }

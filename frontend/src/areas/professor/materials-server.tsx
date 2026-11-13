@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../shared/api.ts";
 import { courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
+import { SIGNED_OUT } from "../../shared/backend-prompt.tsx";
 import { freshVisit, shownRows, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { rememberMaterials, saveRemoteMaterialFromUploads, type RemotePdfRecord } from "../../shared/course-pdfs-remote.ts";
 import {
@@ -15,7 +16,6 @@ import { forgetMaterialList } from "../../shared/materials-remote.ts";
 import { uploadFile, awaitScan, discardUpload, uploadFailure, sizeText, type UploadView } from "../../shared/uploads-remote.tsx";
 import { fileboxAttach, type FileboxAttachOptions } from "../../shared/filebox-attach.tsx";
 import { backendStatus, backendState } from "../../shared/backend.ts";
-import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { routeFor } from "../../shared/routes.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { downloadControl } from "../../shared/uploads-remote.tsx";
@@ -615,9 +615,9 @@ function PlainText({ text }: { text: string }) {
 }
 
 function materialGate(course: Course, text: string): ReactNode {
-  if (backendStatus() === "anon") return <div className="stack">{backendPanel({ text })}</div>;
+  if (backendStatus() === "anon") return SIGNED_OUT;
   if (!courseIdFor(course.id)) return <EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 등록된 과목의 자료만 볼 수 있습니다." />;
-  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack">{backendPanel()}<p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 자료와 요약을 관리할 수 있습니다.</p></div>;
+  if (roleIn(course.id) !== "INSTRUCTOR") return <div className="stack"><p className="pf-sub">이 과목을 담당하는 교수 계정으로 로그인해야 자료와 요약을 관리할 수 있습니다.</p></div>;
   return null;
 }
 
@@ -701,7 +701,7 @@ function ServerMaterialDetail({ course, courseId, activityId, fileId, summaryJob
 
 /** `pf_study`(서버): 담당 과목 고르기, 고른 과목의 외부 AI 처리 동의와 서버 자료(PDF별 쪽별 요약 작업). */
 export function serverStudyRoom(ctx: ScreenCtx, summaryJobPanel: SummaryJobPanel, { frame }: { frame: (course: Course | null, body: ReactNode) => ReactNode }): ReactNode {
-  if (backendStatus() === "anon") return frame(null, <div className="stack">{backendPanel({ text: "ASTRA 서버에 로그인하면 담당 과목의 자료와 쪽별 요약을 관리할 수 있습니다." })}</div>);
+  if (backendStatus() === "anon") return frame(null, SIGNED_OUT);
   const taught = (backendState().courses || [])
     .filter((item) => item.role === "INSTRUCTOR" && item.key && courseById(item.key).id === item.key)
     .map((item) => courseById(item.key as string));
@@ -713,9 +713,8 @@ export function serverStudyRoom(ctx: ScreenCtx, summaryJobPanel: SummaryJobPanel
       return <Link key={item.id} href={pfHref("pf_study", { kj: item.id })} className={`chip all${on ? " on" : ""}`} aria-current={on ? "page" : undefined}>{item.ko}</Link>;
     })}</div>
     : <EmptyState title="담당 과목이 없습니다" body="ASTRA 서버에 이 계정이 담당하는 과목이 없습니다." />;
-  if (!course) return frame(null, <div className="stack">{backendPanel()}{picker}{taught.length ? <p className="pf-sub">과목을 고르면 그 과목의 서버 자료와 쪽별 요약, 외부 AI 처리 동의를 봅니다.</p> : null}</div>);
+  if (!course) return frame(null, <div className="stack">{picker}{taught.length ? <p className="pf-sub">과목을 고르면 그 과목의 서버 자료와 쪽별 요약, 외부 AI 처리 동의를 봅니다.</p> : null}</div>);
   return frame(course, <div className="stack">
-    {backendPanel()}
     {picker}
     {llmConsentSection(course)}
     {serverMaterialList(course, summaryJobPanel)}
