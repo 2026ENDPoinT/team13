@@ -35,8 +35,6 @@
 </p>
 
 > ENDPoinT 해커톤 2026 **Team 13** 제출 저장소입니다. 실제 서비스는 `https://eclass.stack-edu.com`(팀 허용 계정만 접속)에서 돌아가고 있습니다.
->
-> 코드(`backend/`, `frontend/`)는 지금 [`merge/stack-frontend-backend`](https://github.com/2026ENDPoinT/team13/tree/merge/stack-frontend-backend) 브랜치에 있습니다. 이 브랜치가 `main`에 병합되기 전까지 아래의 코드·문서 경로 링크는 그 브랜치에서 열어 주세요.
 
 ---
 
