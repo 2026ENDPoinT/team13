@@ -239,6 +239,10 @@ export function legacyRedirect(hostHeader, rawUrl) {
 
 const ASSISTANT_BODY_LIMIT = 16 * 1024;
 const ASSISTANT_INTENTS = ['video', 'report', 'test', 'survey', 'material', 'zoom', 'course', 'plan'];
+// GEMINI_API_BASE: generateContent 를 보낼 origin(기본 Google). 배포에서는 같은 host 의 agy 게이트웨이를 가리킨다.
+// ASSISTANT_TIMEOUT_MS: 그 요청 하나의 제한 시간(기본 7000).
+const GEMINI_API_BASE = String(process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+const ASSISTANT_TIMEOUT_MS = Number(process.env.ASSISTANT_TIMEOUT_MS) > 0 ? Number(process.env.ASSISTANT_TIMEOUT_MS) : 7000;
 
 function sendJson(req, res, status, body, extra = {}) {
   return sendText(req, res, status, JSON.stringify(body), {
@@ -338,9 +342,9 @@ async function assistant(req, res, limits) {
       [id, courseId, type, title, due ?? null, status ?? null, progress ?? 0]),
     context: input.context,
   };
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const endpoint = `${GEMINI_API_BASE}/v1beta/models/${model}:generateContent`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 7000);
+  const timeout = setTimeout(() => controller.abort(), ASSISTANT_TIMEOUT_MS);
   try {
     const upstream = await fetch(endpoint, {
       method: 'POST',

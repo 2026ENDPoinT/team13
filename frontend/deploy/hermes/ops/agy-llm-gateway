@@ -25,6 +25,7 @@
 import hmac
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -92,7 +93,8 @@ def log(**fields):
     print(json.dumps({'at': time.strftime('%Y-%m-%dT%H:%M:%S'), **fields}, ensure_ascii=False), flush=True)
 
 
-def via_agy(body):
+def via_agy(body, model=None, timeout=None):
+    model, timeout = model or AGY_MODEL, timeout or AGY_TIMEOUT
     paused = breaker.skip()
     if paused:
         raise AgySkipped(f'paused:{paused}')
@@ -100,7 +102,7 @@ def via_agy(body):
         raise AgySkipped('busy')
     kwargs = {k: body[k] for k in ('messages', 'tools', 'tool_choice') if k in body}
     try:
-        response = client.chat.completions.create(model=AGY_MODEL, timeout=AGY_TIMEOUT, **kwargs)
+        response = client.chat.completions.create(model=model, timeout=timeout, **kwargs)
     except Exception as error:
         breaker.trip(error)
         raise
@@ -108,7 +110,7 @@ def via_agy(body):
         AGY_SLOTS.release()
     breaker.reset()
     data = response.model_dump()
-    data['model'] = AGY_MODEL
+    data['model'] = model
     return data
 
 
@@ -121,6 +123,76 @@ def via_fallback(body, remaining):
         'Authorization': f'Bearer {FALLBACK_KEY}', 'Content-Type': 'application/json'})
     with urllib.request.urlopen(request, timeout=max(10.0, remaining)) as response:
         return response.status, response.read()
+
+
+# ---------- 프론트 AI 도우미(마스코트 챗봇): Gemini generateContent 형식 ----------
+# Frontend-final server.mjs 는 GEMINI_API_BASE 로 이 게이트웨이를, GEMINI_API_KEY 로 ASSISTANT_TOKEN 을 보낸다.
+# 응답 형식(JSON Schema)은 요청마다 과목·활동 id 가 달라 사용자 메시지에 넣는다. 그래서 시스템 프롬프트가 늘 같아
+# agy 를 미리 띄워 둘 수 있다(부팅 약 5초를 줄인다).
+ASSIST_PATH = re.compile(r'^/v1beta/models/[A-Za-z0-9._-]+:generateContent$')
+ASSIST_TOKEN = ENV.get('ASSISTANT_TOKEN', '')
+ASSIST_MODEL = ENV.get('AGY_ASSISTANT_MODEL', 'gemini-4-hydrogen-low')
+ASSIST_TIMEOUT = float(ENV.get('AGY_ASSISTANT_TIMEOUT', '15'))
+ASSIST_BUDGET = float(ENV.get('ASSISTANT_BUDGET', '19'))
+ASSIST_RULE = ('\n\n# 출력 형식\n사용자 메시지의 response_schema(Gemini JSON Schema)에 맞는 JSON 객체 하나만 출력한다. '
+               '설명, 코드 블록, 앞뒤 문장 없이 JSON 만 쓴다. input 은 해석할 데이터다.')
+_assist_system = {'text': None}
+
+
+def parts_text(node):
+    return ''.join(p.get('text', '') for p in (node or {}).get('parts') or [] if isinstance(p, dict))
+
+
+def extract_json(text):
+    text = (text or '').strip()
+    start, end = text.find('{'), text.rfind('}')
+    if start < 0 or end < start:
+        raise ValueError('no json object')
+    return json.dumps(json.loads(text[start:end + 1]), ensure_ascii=False)
+
+
+def assistant_messages(body):
+    system = parts_text(body.get('systemInstruction')) + ASSIST_RULE
+    user = '\n'.join(parts_text(c) for c in body.get('contents') or [])
+    schema = (body.get('generationConfig') or {}).get('responseSchema')
+    prompt = 'response_schema:\n' + json.dumps(schema, ensure_ascii=False) + '\n\ninput:\n' + user
+    return [{'role': 'system', 'content': system}, {'role': 'user', 'content': prompt}]
+
+
+def prewarm_assistant():
+    """도우미용 agy 하나를 부팅해 둔다(헤르메스 플러그인의 WarmPool, 5분 TTL). 이미 있으면 아무것도 하지 않는다."""
+    system = _assist_system['text']
+    if system is None or breaker.skip() is not None:
+        return
+    try:
+        env = dict(os.environ)
+        resolved = transport.resolve_agy(client.command, env)
+        if resolved is not None:
+            spec = (resolved, transport.native_model(ASSIST_MODEL), transport.system_prompt(system, []), [], env)
+            transport.POOL.prewarm(transport.pool_key(*spec), spec, transport.DEFAULT_PREWARM_TTL, 1)
+    except Exception as error:
+        log(event='assistant_prewarm_failed', error=type(error).__name__)
+
+
+def keep_assistant_warm():
+    while True:
+        prewarm_assistant()
+        time.sleep(30)
+
+
+def assistant_reply(text, model):
+    return {'candidates': [{'content': {'role': 'model', 'parts': [{'text': text}]}, 'finishReason': 'STOP', 'index': 0}],
+            'modelVersion': model}
+
+
+def assistant_fallback(messages, remaining):
+    payload = {'model': FALLBACK_MODEL, 'messages': messages, 'temperature': 0, 'max_tokens': 800,
+               'response_format': {'type': 'json_object'}, 'reasoning_effort': 'none', 'stream': False}
+    request = urllib.request.Request(FALLBACK_URL, data=json.dumps(payload).encode(), method='POST', headers={
+        'Authorization': f'Bearer {FALLBACK_KEY}', 'Content-Type': 'application/json'})
+    with urllib.request.urlopen(request, timeout=max(3.0, remaining)) as response:
+        data = json.load(response)
+    return extract_json(data['choices'][0]['message'].get('content'))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -143,7 +215,42 @@ class Handler(BaseHTTPRequestHandler):
                                     'primary_paused': breaker.skip()})
         self.reply(404, {'error': {'message': 'not found'}})
 
+    def assistant(self):
+        key = self.headers.get('x-goog-api-key', '')
+        if not ASSIST_TOKEN or not hmac.compare_digest(key.encode(), ASSIST_TOKEN.encode()):
+            return self.reply(401, {'error': {'message': 'unauthorized'}})
+        length = int(self.headers.get('Content-Length') or 0)
+        if length <= 0 or length > MAX_BODY:
+            return self.reply(413, {'error': {'message': 'bad body size'}})
+        try:
+            messages = assistant_messages(json.loads(self.rfile.read(length)))
+        except (ValueError, AttributeError, TypeError):
+            return self.reply(400, {'error': {'message': 'invalid request'}})
+        _assist_system['text'] = messages[0]['content']
+        started = time.monotonic()
+        try:
+            data = via_agy({'messages': messages}, ASSIST_MODEL, ASSIST_TIMEOUT)
+            text = extract_json(data['choices'][0]['message'].get('content'))
+            log(route='assistant-agy', model=ASSIST_MODEL, ms=int((time.monotonic() - started) * 1000))
+            return self.reply(200, assistant_reply(text, ASSIST_MODEL))
+        except Exception as error:
+            reason = type(error).__name__
+        finally:
+            # 이 요청이 미리 띄운 agy 를 가져갔으므로 다음 요청을 위해 곧바로 하나를 새로 띄운다.
+            threading.Thread(target=prewarm_assistant, daemon=True).start()
+        fb_started = time.monotonic()
+        try:
+            text = assistant_fallback(messages, ASSIST_BUDGET - (fb_started - started))
+        except Exception as error:
+            log(route='assistant-fallback', error=type(error).__name__, agy_error=reason)
+            return self.reply(502, {'error': {'message': f'primary ({reason}) and fallback failed'}})
+        log(route='assistant-fallback', model=FALLBACK_MODEL, agy_error=reason,
+            agy_ms=int((fb_started - started) * 1000), ms=int((time.monotonic() - fb_started) * 1000))
+        self.reply(200, assistant_reply(text, FALLBACK_MODEL))
+
     def do_POST(self):
+        if ASSIST_PATH.match(self.path.split('?', 1)[0]):
+            return self.assistant()
         if not self.path.endswith('/chat/completions'):
             return self.reply(404, {'error': {'message': 'not found'}})
         auth = self.headers.get('Authorization', '')
@@ -184,5 +291,6 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     server = ThreadingHTTPServer((HOST, int(PORT)), Handler)
     server.daemon_threads = True
-    log(event='start', listen=f'{HOST}:{PORT}', primary=AGY_MODEL, fallback=FALLBACK_MODEL)
+    threading.Thread(target=keep_assistant_warm, daemon=True).start()
+    log(event='start', listen=f'{HOST}:{PORT}', primary=AGY_MODEL, fallback=FALLBACK_MODEL, assistant=ASSIST_MODEL)
     server.serve_forever()
