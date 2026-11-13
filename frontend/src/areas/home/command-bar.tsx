@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, navigate } from "../../router.tsx";
 import { render } from "../../store.ts";
+import { routeFor } from "../../shared/routes.ts";
+import { markChatUsed, setHeroInputOut } from "../../shared/assistant/chat-state.ts";
 import { Icon } from "../../ui/icon.tsx";
 import { activityById, typeLabel, typeIcon, TODAY } from "../../shared/format.ts";
 import { nextActions, describe } from "../../shared/assistant/resolve.ts";
@@ -20,12 +22,34 @@ let pendingController: AbortController | null = null;
 let sayText = "";
 
 /** The mounted command input: its current text and how to change or focus it. */
-interface CommandInput {
+export interface CommandInput {
   value(): string;
   clear(): void;
   focus(): void;
 }
 let commandInput: CommandInput | null = null;
+/** 다른 화면의 챗봇 도크 입력창(홈 히어로 입력창과 동시에 보이지 않는다). */
+let dockInput: CommandInput | null = null;
+
+export function bindDock(handle: CommandInput | null): void {
+  dockInput = handle;
+}
+
+/** 도크가 그릴 값: 처리 중 여부와 마지막 안내 문장. */
+export function dockStatus(): { busy: boolean; say: string } {
+  return { busy, say: sayText };
+}
+
+/** 입력이 바뀌거나 Esc로 비울 때: 진행 중인 요청을 버리고 안내 문장을 지운다. */
+export function dropPending(): void {
+  pendingController?.abort();
+  inputRevision += 1;
+  sayText = "";
+}
+
+export function submitDock(field: CommandInput): Promise<void> {
+  return submitCommand({ field });
+}
 
 /** Puts the caret in the hero's command input (no-op when it is not mounted). */
 export function focusCommand(): void {
@@ -60,12 +84,9 @@ export function planPreview(): ReactNode {
     return <section className="hero-plan" id="hero-plan-preview" aria-labelledby="hero-plan-title" hidden />;
   }
   const groups = planGroups(run);
-  const sequence = groups.filter((group) => group.steps.length).map((group) => group.label).join(" → ");
   return (
     <section className="hero-plan" id="hero-plan-preview" aria-labelledby="hero-plan-title" data-run={run.id} aria-busy={busy ? "true" : "false"}>
-      <span className="hero-plan-label">시작 전 요약</span>
       <h2 id="hero-plan-title">이 순서로 진행할까요?</h2>
-      <p className="hero-plan-count">{`총 ${run.steps.length}개 · ${sequence} 순서예요`}</p>
       {groups.map((group) => (
         <section key={group.id} className="hero-plan-group" data-group={group.id} aria-labelledby={`hero-plan-${group.id}`}>
           <h3 id={`hero-plan-${group.id}`}>{`${group.label} ${group.steps.length}개`}</h3>
@@ -74,10 +95,14 @@ export function planPreview(): ReactNode {
               <ol className="hero-plan-steps">
                 {group.steps.map(({ step }) => {
                   const detail = describe(step.activityId);
+                  const type = activityById(step.activityId)?.type ?? "report";
                   return (
                     <li key={step.activityId}>
-                      <span className="hero-plan-step">{detail.title}</span>
-                      <span className="hero-plan-meta">{detail.meta}</span>
+                      <span className={`hero-chip t-${type}`} role="img" aria-label={typeLabel(type)} title={typeLabel(type)}><Icon name={typeIcon(type)} /></span>
+                      <span className="hero-plan-text">
+                        <span className="hero-plan-step">{detail.title}</span>
+                        <span className="hero-plan-meta">{detail.meta}</span>
+                      </span>
                     </li>
                   );
                 })}
@@ -169,6 +194,7 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
   const [focused, setFocused] = useState(false);
   const [caretEnd, setCaretEnd] = useState(true);
   const caretToEnd = useRef(false);
+  const cmdRef = useRef<HTMLDivElement>(null);
 
   const change = (next: string) => {
     valueRef.current = next;
@@ -199,6 +225,20 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
     return () => {
       document.removeEventListener("keydown", onSlash);
       if (commandInput === handle) commandInput = null;
+    };
+  }, []);
+
+  // 입력창이 스크롤로 화면 밖에 나가면 셸이 우측 하단에 챗봇 FAB·입력창을 띄운다.
+  useEffect(() => {
+    const node = cmdRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry && setHeroInputOut(!entry.isIntersecting)) render();
+    });
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      setHeroInputOut(false);
     };
   }, []);
 
@@ -285,7 +325,7 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
           </ul>
         )}
       <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{sayText}</p>
-      <div className="cmd" role="search">
+      <div className="cmd" role="search" ref={cmdRef}>
         <div
           className={["cmd-box", listShown ? "has-list" : "", ghost ? "has-ghost" : "", busy ? "is-busy" : ""].filter(Boolean).join(" ")}
           data-completion={ghost ? command : ""}
@@ -406,11 +446,13 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
  * `assistant-ask`: 강의실 명령은 로컬 색인으로 즉시 이동하고, 그 외 입력은 AI에 전달한다.
  * `acceptRun`: the plan preview's Accept (as if "ㄱㄱ" were typed); `command`: the picked suggestion.
  */
-async function submitCommand({ acceptRun, command }: { acceptRun?: string; command?: string }): Promise<void> {
-  const field = commandInput;
+async function submitCommand({ acceptRun, command, field: given }: { acceptRun?: string; command?: string; field?: CommandInput }): Promise<void> {
+  const field = given || commandInput;
   if (!field || busy) return;
+  const docked = Boolean(given);
   const text = acceptRun ? "ㄱㄱ" : field.value().trim();
   if (!text) return;
+  markChatUsed();
   const reply = planReply(text);
   const run = runState();
   if (acceptRun && (acceptRun !== run?.id || run.status !== "ready")) return;
@@ -433,7 +475,7 @@ async function submitCommand({ acceptRun, command }: { acceptRun?: string; comma
   }
   // 현재 계획을 문맥으로 유지한다. 수정·거절·새 요청은 AI 응답이 확정된 뒤 적용한다.
   const revision = inputRevision;
-  const isCurrent = () => commandInput === field && inputRevision === revision && field.value().trim() === text;
+  const isCurrent = () => (commandInput === field || dockInput === field) && inputRevision === revision && field.value().trim() === text;
   const classroom = classroomForCommand(command || text);
   busy = true;
   say("");
@@ -479,12 +521,17 @@ async function submitCommand({ acceptRun, command }: { acceptRun?: string; comma
   sayText = answer.say;
   if (answer.kind === "choose") focusTray();
   refreshTray();
-  const current = commandInput;
+  const current = docked ? dockInput : commandInput;
   if (current) {
     current.clear();
     if (["clarify", "plan", "revise", "reject"].includes(answer.kind)) current.focus();
     if (answer.kind === "plan") sayText = "계획을 요약했어요. Accept를 누르거나 ㄱㄱ · 진행해라고 입력하면 시작해요.";
     if (answer.kind === "revise") sayText = "계획을 수정했어요. 전체 목록을 확인한 뒤 Accept 또는 ㄱㄱ로 시작해 주세요.";
+  }
+  // 계획 요약과 Accept는 홈 히어로에 있다. 다른 화면에서 만든 계획은 홈에서 확인하게 한다.
+  if (docked && (answer.kind === "plan" || answer.kind === "revise")) {
+    navigate(routeFor("student", "home"));
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
   }
   render();
 }

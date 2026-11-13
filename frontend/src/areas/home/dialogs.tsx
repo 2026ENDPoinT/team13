@@ -1,6 +1,6 @@
 import { useRef, type ReactNode } from "react";
-import { Link, navigate, closeDialog, followBackendRole, HOME_PATH } from "../../router.tsx";
-import { getState, save, render, resetState, toast } from "../../store.ts";
+import { Link, navigate, closeDialog } from "../../router.tsx";
+import { getState, save, render, toast } from "../../store.ts";
 import { readForm, showErrors, stamp } from "../../forms.ts";
 import { Icon } from "../../ui/icon.tsx";
 import { Button, Dialog, Field } from "../../ui/kit.tsx";
@@ -149,20 +149,6 @@ function toggleLang(): void {
   render();
 }
 
-function switchRole(role: Role): void {
-  const state = getState();
-  state.role = role;
-  state.toast = role === "professor" ? "교수 화면입니다" : "학생 화면입니다";
-  save();
-  navigate(routeFor(role, "home"), { allowExit: true });
-  followBackendRole(role);
-}
-
-function resetSample(): void {
-  resetState();
-  navigate(HOME_PATH);
-}
-
 function saveAvatar(): void {
   const state = getState();
   const avatar = String(readForm().avatar || "").trim();
@@ -232,14 +218,7 @@ function ProfileMenu({ ctx }: { ctx: ScreenCtx }) {
           <MenuLink href={routeFor(currentRole(), "pop", { pop: "settings" })} label="설정" />
           <Link className="menu-item" href="/ilos/lo/logout.acl" logout><span>로그아웃</span></Link>
         </div>
-        <p className="tiny">샘플 역할</p>
-        <div className="btn-row">
-          <Button kind="secondary" onClick={() => switchRole("student")}>학생</Button>
-          <Button kind="secondary" onClick={() => switchRole("professor")}>교수</Button>
-          {currentRole() === "professor" ? <Button kind="secondary" onClick={() => switchRole("student")}>학생 화면으로 보기</Button> : null}
-        </div>
         {backendPanel({ compact: true, text: "ASTRA 서버에 로그인하면 서버에 등록된 자료와 쪽별 요약을 사용할 수 있습니다." })}
-        <button type="button" className="menu-item" onClick={resetSample}>샘플 데이터 되돌리기</button>
       </div>
     </div>
   );

@@ -13,6 +13,8 @@ import {
   advance, pauseRun, planGroups, progressCount, reorderStep, resumeRun, runState, selectStep, stepStatus, stopRun,
 } from "./assistant/plan.ts";
 import type { AssistantRequest, PlanRun } from "./assistant/activity-context.ts";
+import { chatShut, chatUsed, heroInputOut, toggleChatShut } from "./assistant/chat-state.ts";
+import { currentRole } from "./routes.ts";
 
 interface DragRow {
   index: number;
@@ -603,8 +605,8 @@ function useTrayFocus(): void {
   });
 }
 
-/** 셸이 화면마다 그린다. 요청도 계획도 없으면 아무것도 그리지 않는다. */
-export function AssistantTray({ screen }: { screen: Screen }): ReactNode {
+/** 셸이 화면마다 그린다. 계획·요청함이 없고 챗봇 모드도 아니면 아무것도 그리지 않는다. `dock`은 챗봇 입력창. */
+export function AssistantTray({ screen, dock }: { screen: Screen; dock?: ReactNode }): ReactNode {
   useSyncExternalStore(subscribeTray, trayVersionNow);
   useTrayListeners();
   useTrayFocus();
@@ -612,7 +614,10 @@ export function AssistantTray({ screen }: { screen: Screen }): ReactNode {
   const currentRun = runState();
   const run = currentRun && ["running", "paused"].includes(currentRun.status) && currentRun.steps.length ? currentRun : null;
   const list = requests();
-  if (!list.length && !run) return null;
+  const hasPanel = Boolean(run) || list.length > 0;
+  // 홈은 히어로 입력창이 화면에 보이는 동안은 숨기고, 스크롤로 벗어났을 때 FAB·입력창을 띄운다. 그 밖의 화면은 챗봇 모드일 때.
+  const chat = (screen.kind === "home" ? heroInputOut() : chatUsed()) && currentRole() === "student";
+  if (!hasPanel && !chat) return null;
   const newRun = run && run.id !== openRunId;
   if (newRun) {
     openRunId = run.id;
@@ -632,34 +637,46 @@ export function AssistantTray({ screen }: { screen: Screen }): ReactNode {
     enterPending = true;
   }
   const active = pendingChoice();
-  const enter = enterPending && expanded;
-  const label = run ? "오늘 계획" : "요청함";
-  const pillText = run ? `Plan ${progressCount(run)}/${run.steps.length} · ${runLabel(run)}` : "요청함";
+  const open = hasPanel && expanded;
+  const enter = enterPending && open;
+  const mascot = Boolean(run) || chat;
+  const dockShown = chat && (hasPanel || !chatShut());
+  const label = run ? "오늘 계획" : list.length ? "요청함" : "챗봇";
+  const pillText = run ? `Plan ${progressCount(run)}/${run.steps.length} · ${runLabel(run)}` : list.length ? "요청함" : "챗봇";
+  const pillOpen = hasPanel ? open : dockShown;
   return (
     <section
       ref={trayRef}
       className={`assistant-tray${enter ? " enter" : ""}${isPlayer(screen) ? " on-player" : ""}`}
       aria-label={label}
-      data-open={expanded ? "true" : "false"}
+      data-open={open ? "true" : "false"}
       data-plan={run ? run.status : undefined}
     >
       <button
         type="button"
-        className={`tray-pill${run ? " is-plan" : ""}`}
+        className={`tray-pill${mascot ? " is-mascot" : ""}`}
         data-key="tray-toggle"
-        aria-expanded={expanded ? "true" : "false"}
-        aria-controls="assistant-tray-panel"
-        aria-label={`${label} ${expanded ? "닫기" : "열기"}, ${pillText}`}
+        aria-expanded={pillOpen ? "true" : "false"}
+        aria-controls={hasPanel ? "assistant-tray-panel" : "chat-dock"}
+        aria-label={hasPanel ? `${label} ${open ? "닫기" : "열기"}, ${pillText}` : `챗봇 입력창 ${dockShown ? "닫기" : "열기"}`}
         title={pillText}
-        onClick={toggleTray}
+        onClick={hasPanel ? toggleTray : toggleChat}
       >
-        <span className="tray-toggle-closed" hidden={expanded}>
-          {run ? <Icon name="list-check" /> : <span>{pillText}</span>}
-          {run ? null : <b className="tray-count">{String(list.length)}</b>}
+        <span className="tray-toggle-closed" hidden={open && !mascot}>
+          {mascot
+            ? (
+              <picture>
+                <source media="(prefers-reduced-motion: reduce)" srcSet="/app/assets/mascot/orange-mascot-study-blink-still.png" />
+                <img className="tray-mascot" src="/app/assets/mascot/orange-mascot-study-blink.gif" alt="" width="64" height="64" />
+              </picture>
+            )
+            : <span>{pillText}</span>}
+          {run || !list.length ? null : <b className="tray-count">{String(list.length)}</b>}
         </span>
-        <span className="tray-toggle-open" hidden={!expanded} aria-hidden="true"><Icon name="close" /></span>
+        {mascot ? null : <span className="tray-toggle-open" hidden={!open} aria-hidden="true"><Icon name="close" /></span>}
       </button>
-      <div className="tray-panel" id="assistant-tray-panel" data-key="tray-panel" tabIndex={-1} hidden={!expanded}>
+      {dockShown ? <div className="chat-dock-slot" id="chat-dock">{dock}</div> : null}
+      <div className="tray-panel" id="assistant-tray-panel" data-key="tray-panel" tabIndex={-1} hidden={!open}>
         <div className="tray-head">
           {run ? <strong>{`Plan ${progressCount(run)}/${run.steps.length}`}</strong> : <strong>요청함</strong>}
           {run ? <span className="plan-run-state">{runLabel(run)}</span> : null}
@@ -677,6 +694,13 @@ export function AssistantTray({ screen }: { screen: Screen }): ReactNode {
       </div>
     </section>
   );
+}
+
+/** 계획·요청함 패널이 없을 때 FAB은 챗봇 입력창을 접고 편다. */
+function toggleChat(): void {
+  toggleChatShut();
+  pendingFocus = "tray-toggle";
+  render();
 }
 
 /** 트레이를 다시 그린다. 트레이 안에 포커스가 있으면 같은 버튼(없으면 알약)으로 이어 둔다. */

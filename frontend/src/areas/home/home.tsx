@@ -111,8 +111,10 @@ export function homeHero(ctx: ScreenCtx): ReactNode {
     return (
       <div className={`home-hero${enter ? " enter" : ""}`}>
         <div className="home-hero-copy">
-          <h1>{`${name}님, 안녕하세요.`}</h1>
-          <p>수강과목과 서버에 등록된 학습 일정을 확인하세요.</p>
+          <div className="hero-greet">
+            <h1>{`${name}님, 안녕하세요.`}</h1>
+            <p>수강과목과 서버에 등록된 학습 일정을 확인하세요.</p>
+          </div>
         </div>
       </div>
     );
@@ -122,16 +124,18 @@ export function homeHero(ctx: ScreenCtx): ReactNode {
   return (
     <div className={`home-hero${enter ? " enter" : ""}${heroFull ? " is-full" : ""}`}>
       <div className="home-hero-copy">
-        {soon
-          ? (
-            <h1>
-              {`${student.name}님. 마감이 얼마 남지 않은 일이 `}
-              <GoButton className="hero-count" href={soonHref} title="사흘 안 마감 목록 열기">{`${soon}개`}</GoButton>
-              {" 있습니다."}
-            </h1>
-          )
-          : <h1>{`${student.name}님, 급한 할 일은 없네요!`}</h1>}
-        <p>{`${parseISO(TODAY).getFullYear()}년 ${longDate(TODAY)}`}</p>
+        <div className="hero-greet">
+          {soon
+            ? (
+              <h1>
+                {`${student.name}님. 마감이 얼마 남지 않은 일이 `}
+                <GoButton className="hero-count" href={soonHref} title="사흘 안 마감 목록 열기">{`${soon}개`}</GoButton>
+                {" 있습니다."}
+              </h1>
+            )
+            : <h1>{`${student.name}님, 급한 할 일은 없네요!`}</h1>}
+          <p>{`${parseISO(TODAY).getFullYear()}년 ${longDate(TODAY)}`}</p>
+        </div>
         {commandBar(expandHero)}
       </div>
       {planPreview()}

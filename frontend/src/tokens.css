@@ -140,6 +140,7 @@
   --link: var(--primary-50);
   --wordmark: var(--primary-50);
   --brand-orange: #FF6E05;
+  --on-brand-orange: #1A1206;
   --danger: #ff444e;
   --danger-soft: #3a2224;
   --success: #3dcc8e;
@@ -267,7 +268,7 @@ html[data-theme="light"] {
   --preview-ink: #0F1628;
   --logo-ink: #3659CE;
   --player-bg: #0F1628;
-  --course-cover-filter: none;
+  --course-cover-filter: saturate(0.9) brightness(0.84);
   --hero-photo-filter: none;
   --summary-veil-start: rgba(19, 43, 100, 0.92);
   --summary-veil-end: rgba(15, 30, 57, 0.68);

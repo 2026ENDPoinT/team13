@@ -10,6 +10,7 @@ import { homeNav, infoNav } from "../areas/home/screens.ts";
 import { courseNav, specialCourseNav } from "../areas/course/screens.ts";
 import { professorHomeNav, professorCourseNav } from "../areas/professor/screens.ts";
 import { AssistantTray } from "../shared/assistant-tray.tsx";
+import { ChatDock } from "../areas/home/chat-dock.tsx";
 import { useBadge, unreadLabel, type UnreadKind } from "../shared/unread-badges.tsx";
 import { serverTutorPanel } from "../shared/study-chat-panel.tsx";
 import { backendState, backendStatus, serverCourses } from "../shared/backend.ts";
@@ -346,7 +347,7 @@ export function Shell({ ctx, hero, aside, dialog, children }: ShellProps) {
         <div className="slot">{children}</div>
         {(showAside && !collapsed) || screen.mobileMenu === "aside" ? <aside className="aside">{aside?.()}</aside> : null}
       </div>
-      <AssistantTray screen={screen} />
+      <AssistantTray screen={screen} dock={<ChatDock />} />
       {tutorOpen ? <TechPanel ctx={ctx} /> : null}
       {serverFile ? (
         <button type="button" className={`fab${tutorOpen ? " open" : ""}`} aria-label={tutorOpen ? "테크뇽 닫기" : "테크뇽"} aria-expanded={tutorOpen ? "true" : "false"} onClick={toggleTechnyon}>

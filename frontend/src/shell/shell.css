@@ -285,15 +285,51 @@ html.layout-mobile.aside-open .aside { display: block; position: relative; heigh
 }
 .tray-toggle-closed, .tray-toggle-open { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
 .tray-pill:hover { background: var(--surface-2); border-color: var(--gray-30); }
-.tray-pill.is-plan {
-  display: grid; place-items: center; width: 56px; height: 56px; padding: 0;
-  border-radius: var(--radius-lg); background: var(--accent); color: var(--on-accent); border-color: var(--accent);
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent), var(--shadow-md);
-  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+/* 마스코트 FAB(계획 진행 중이거나 챗봇 모드): GIF의 흰 배경을 그대로 살려 둥근 사각형으로 자른다. 테두리는 box-shadow 고리라 배지가 잘리지 않는다. */
+.tray-pill.is-mascot {
+  position: relative; display: grid; place-items: center; width: 56px; height: 56px; padding: 0; border: 0;
+  border-radius: var(--radius-lg); background: #fff; color: var(--text);
+  box-shadow: 0 0 0 1px var(--border), 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent), var(--shadow-md);
+  transition: box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
-.tray-pill.is-plan .ico, .tray-pill.is-plan svg { display: block; width: 28px; height: 28px; }
-.tray-pill.is-plan:hover { background: var(--accent-press); border-color: var(--accent-press); }
-.tray-pill.is-plan:active { transform: scale(0.97); }
+.tray-pill.is-mascot:hover { background: #fff; box-shadow: 0 0 0 1px var(--accent), 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent), var(--shadow-md); }
+.tray-pill.is-mascot[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--accent), 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent), var(--shadow-md); }
+.tray-pill.is-mascot:active { transform: scale(0.97); }
+.tray-mascot { display: block; width: 64px; height: 64px; max-width: none; margin: -4px; clip-path: inset(4px round var(--radius-lg)); pointer-events: none; }
+.tray-pill.is-mascot .tray-count { position: absolute; top: -6px; right: -6px; box-shadow: 0 0 0 2px var(--surface); }
+/* 챗봇 입력창: FAB 바로 위. 안내 문장은 입력창 위 말풍선. */
+.chat-dock-slot { width: min(360px, calc(100vw - 2 * var(--space-4))); }
+.chat-dock { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); margin: 0; }
+.chat-say {
+  align-self: flex-end; max-width: 100%; margin: 0; padding: var(--space-2) var(--space-3);
+  background: var(--surface); color: var(--text); border: var(--border-w) solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  font-size: var(--text-sm); line-height: var(--leading-sm); overflow-wrap: anywhere;
+}
+.chat-say:empty { padding: 0; border: 0; box-shadow: none; }
+.chat-box {
+  display: flex; align-items: center; gap: var(--space-2); min-height: var(--hit-touch); padding: 0 var(--space-1) 0 var(--space-4);
+  background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-full); box-shadow: var(--shadow-md);
+}
+.chat-box:hover { border-color: var(--brand-orange); }
+.chat-box:focus-within { border-color: var(--brand-orange); outline: 2px solid color-mix(in srgb, var(--brand-orange) 45%, transparent); outline-offset: 1px; }
+.chat-input {
+  flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text);
+  font: inherit; font-size: var(--text-sm); line-height: var(--leading-sm);
+}
+.chat-input::placeholder { color: var(--muted); opacity: 1; }
+.chat-go {
+  flex: none; width: 36px; height: 36px; display: inline-grid; place-items: center; border: 0; border-radius: var(--radius-full);
+  background: var(--accent); color: var(--on-accent); font-size: var(--text-lg); line-height: 1; cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+.chat-go:hover:not(:disabled) { background: var(--accent-press); }
+.chat-go:disabled { background: var(--surface-2); color: var(--muted); cursor: default; }
+.chat-go:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.chat-spin { display: none; flex: none; width: 18px; height: 18px; margin-right: var(--space-2); border: 2px solid var(--border); border-top-color: var(--accent); border-radius: var(--radius-full); animation: chat-spin 700ms linear infinite; }
+.chat-box.is-busy .chat-spin { display: block; }
+.chat-box.is-busy .chat-go { display: none; }
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .chat-spin { animation: none; border-top-color: var(--border); border-right-color: var(--accent); } }
 .tray-pill:focus-visible, .tray-target:focus-visible, .plan-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .tray-count {
   display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: var(--radius-full);
