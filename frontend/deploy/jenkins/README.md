@@ -82,7 +82,17 @@ STack-Backend 에 새 환경 변수가 생기면 Hermes `~/projects/eclass-backe
 | `deploy/hermes/eclass-frontend/compose.yaml`, `cloudflared.yml` | `~/projects/astra-eclass-reference/` | viewer(server.mjs, `ASTRA_API_ORIGIN=http://api:8080`, 네트워크 `astra_egress`) + tunnel `b6ca641a…` |
 | `deploy/hermes/eclass-backend/compose.override.yaml` | `~/projects/eclass-backend/app/` | S3 호환 저장소(SeaweedFS)와 버킷 생성, 로그 상한, MySQL 한도 1280m |
 
-`.env`, `s3.json`, `s3-credentials.env`, `~/projects/eclass-backend/break-glass.txt`(운영자 비상 계정)는 Hermes 에만 있고(600) 저장소에 넣지 않습니다. e-class 백엔드 `.env` 에는 학교 e-Class 로그인(`ASTRA_ECLASS_LOGIN_BASE_URL`), ClamAV 검사(`COMPOSE_PROFILES=mysql,scan`, `ASTRA_SCAN_REQUIRED=true`), LLM(Hive API, DeepSeek v4.1 Flash, 텍스트 전용)이 켜져 있습니다.
+`.env`, `s3.json`, `s3-credentials.env`, `~/projects/eclass-backend/break-glass.txt`(운영자 비상 계정)는 Hermes 에만 있고(600) 저장소에 넣지 않습니다. e-class 백엔드 `.env` 에는 학교 e-Class 로그인(`ASTRA_ECLASS_LOGIN_BASE_URL`), ClamAV 검사(`COMPOSE_PROFILES=mysql,scan`, `ASTRA_SCAN_REQUIRED=true`), LLM(아래 게이트웨이, 텍스트 전용)이 켜져 있습니다.
+
+### e-class LLM 게이트웨이 (`agy-llm-gateway`)
+
+백엔드의 `ASTRA_LLM_BASE_URL` 은 `http://127.0.0.1:18090/v1` 입니다. 백엔드는 LLM 주소로 http 를 loopback 에만 허용하므로 api·worker 와 네트워크를 함께 쓰는 `llm-relay-api`·`llm-relay-worker`(socat)가 host 의 게이트웨이(`172.24.0.1:18090`, astra-egress 브리지, iptables 로 그 브리지에서만 허용)로 넘깁니다.
+
+- 1순위: 헤르메스 플러그인 `antigravity-agy` 의 transport 로 로그인된 `agy` CLI 를 요청마다 실행해 Antigravity 구독의 **Gemini 4 Hydrogen**(`gemini-4-hydrogen-medium`)을 부릅니다. 도구 호출 지원, 텍스트만.
+- 2순위: agy 가 실패하면(쿼터·로그아웃·150초 초과·오류) 같은 요청을 Hive API 의 DeepSeek v4.1 Flash 로 보냅니다.
+- 설정은 `~/.config/agy-llm-gateway/env`(600: 게이트웨이 토큰 = 백엔드 `ASTRA_LLM_API_KEY`, Hive key). 기록은 `journalctl -u agy-llm-gateway`(요청마다 경로·시간·토큰 수, 본문 없음).
+- `docker compose up --no-deps api` 처럼 api·worker 만 다시 만들면 중계가 옛 네트워크에 남아 LLM 이 끊깁니다. 항상 `docker compose up -d`(jenkins-deploy 와 같음)로 올립니다.
+- 교수자 고지(`ASTRA_LLM_POLICY_*`)는 Google Gemini 4 Hydrogen(Antigravity), 장애 시 Hive DeepSeek 로 적혀 있습니다(`gemini-agy-2026-11-14`).
 
 ## 공개 도메인
 
@@ -106,6 +116,7 @@ tar -C deploy/hermes -cf - ops | ssh hermes 'rm -rf /tmp/ops && tar -C /tmp -xf 
 | `hermes-db-backup.timer` 매일 04:30 | `hermes-db-backup` | gyeongmae(호스트 PostgreSQL)·campus-on(PostgreSQL)·e-class(MySQL)를 `~/backups/db/<이름>/` 에 7개씩 |
 | `hermes-file-backup.timer` 매일 05:00 | `hermes-file-backup` | e-class 업로드 저장소(SeaweedFS 버킷 `astra-content`·`astra-delivery`, `aws s3 sync` 증분 미러), 캠퍼스 온 `lesson_data` 볼륨(tar.gz 7개), Hermes `~/.hermes/state.db`(3개), stock-report `agent_console.sqlite3`(7개)를 `~/backups/files/` 에. SQLite 는 온라인 백업 API 로 복사하고 `quick_check` 를 통과한 것만 남김 |
 | `docker-cache-prune.timer` 일요일 05:30 | `docker-cache-prune` | 7일 지난 빌드 캐시와 이름 없는 이미지 정리(볼륨·태그 이미지는 건드리지 않음) |
+| `agy-llm-gateway.service` 상시 | `agy-llm-gateway` | 위 e-class LLM 게이트웨이. `install.sh` 는 env 파일이 있을 때만 켠다 |
 
 - 백업은 끝나면 `yoobin-desktop-linux:/home/hermes-ml/hermes-backups/` 로 rsync 합니다(삭제는 전파하지 않음. 사본은 state.db 7일, 나머지 30일 보관).
 - 위 유닛이 실패하면 `hermes-ops-alert@.service`(OnFailure)가 실패 유닛과 로그 끝 몇 줄을 같은 텔레그램 봇으로 보냅니다. `hermes-ops-watch` 자체가 실패해도 같은 경로로 알립니다. 알림 경로 시험: `~/bin/hermes-ops-watch --test`, 점검만: `--dry-run`.

@@ -67,5 +67,26 @@ services:
       s3-init:
         condition: service_completed_successfully
 
+  # LLM 게이트웨이 중계. 백엔드는 LLM 주소로 http 를 loopback 에만 허용하므로, api·worker 와 네트워크
+  # 네임스페이스를 함께 쓰는 socat 이 127.0.0.1:18090 을 host 의 agy-llm-gateway(astra-egress 브리지 172.24.0.1:18090)로 넘긴다.
+  # 게이트웨이: 1순위 Antigravity Gemini 4 Hydrogen, 실패 시 Hive DeepSeek (Frontend-final deploy/hermes/ops/agy-llm-gateway).
+  llm-relay-api: &llm-relay
+    image: alpine/socat:1.8.0.3
+    network_mode: "service:api"
+    command: ["-d", "TCP-LISTEN:18090,bind=127.0.0.1,fork,reuseaddr", "TCP:172.24.0.1:18090"]
+    depends_on: [api]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    cpus: 0.25
+    logging: *logging
+
+  llm-relay-worker:
+    <<: *llm-relay
+    network_mode: "service:worker"
+    depends_on: [worker]
+
 volumes:
   s3-data: {}

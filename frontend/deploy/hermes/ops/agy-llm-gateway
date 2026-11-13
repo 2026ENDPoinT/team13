@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""e-class 백엔드용 LLM 게이트웨이(OpenAI Chat Completions 호환). systemd agy-llm-gateway.service 가 띄운다.
+
+  1순위: Google Antigravity 구독의 Gemini 4 Hydrogen — 헤르메스 플러그인 antigravity-agy 의 transport 로
+         로그인된 agy CLI 를 요청마다 한 번 실행한다(텍스트만, 도구 호출 지원).
+  2순위: agy 가 실패하면(쿼터·로그아웃·시간 초과·오류) Hive API 의 DeepSeek 로 같은 요청을 다시 보낸다.
+
+백엔드(api·worker 컨테이너)는 같은 컨테이너 안 127.0.0.1:18090 의 socat 중계(llm-relay-*)를 거쳐
+이 게이트웨이(astra-egress 브리지 172.24.0.1:18090)로 온다. 백엔드 설정은 http 를 loopback 에만 허용한다.
+
+설정: /home/ubuntu/.config/agy-llm-gateway/env (600)
+  GATEWAY_TOKEN       백엔드가 보내는 Bearer 값(ASTRA_LLM_API_KEY)
+  AGY_MODEL           기본 gemini-4-hydrogen-medium
+  AGY_TIMEOUT         agy 한 번의 제한 시간(초), 기본 150
+  FALLBACK_BASE_URL   https://api-cdn.thehive.ai/api/v3
+  FALLBACK_MODEL      deepseek-ai/deepseek-v4.1-flash-1017
+  FALLBACK_API_KEY    Hive API key
+  LISTEN              172.24.0.1:18090
+기록: 요청마다 한 줄(사용 경로·시간·토큰 수). 프롬프트·응답 본문은 남기지 않는다.
+"""
+import hmac
+import json
+import os
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+PLUGIN = Path.home() / '.hermes/plugins/antigravity-agy'
+sys.path.insert(0, str(PLUGIN))
+import transport  # noqa: E402  헤르메스 antigravity-agy 플러그인
+
+ENV = os.environ
+TOKEN = ENV['GATEWAY_TOKEN']
+AGY_MODEL = ENV.get('AGY_MODEL', 'gemini-4-hydrogen-medium')
+AGY_TIMEOUT = float(ENV.get('AGY_TIMEOUT', '150'))
+FALLBACK_URL = ENV['FALLBACK_BASE_URL'].rstrip('/') + '/chat/completions'
+FALLBACK_MODEL = ENV['FALLBACK_MODEL']
+FALLBACK_KEY = ENV['FALLBACK_API_KEY']
+HOST, PORT = ENV.get('LISTEN', '172.24.0.1:18090').rsplit(':', 1)
+MAX_BODY = 16 * 2**20
+# agy 가 동시에 너무 많이 뜨지 않게 한다(백엔드 api·worker 각 2 = 최대 4).
+AGY_SLOTS = threading.BoundedSemaphore(int(ENV.get('AGY_CONCURRENCY', '4')))
+client = transport.Client(timeout=AGY_TIMEOUT)
+
+
+def log(**fields):
+    print(json.dumps({'at': time.strftime('%Y-%m-%dT%H:%M:%S'), **fields}, ensure_ascii=False), flush=True)
+
+
+def via_agy(body):
+    kwargs = {k: body[k] for k in ('messages', 'tools', 'tool_choice') if k in body}
+    if not AGY_SLOTS.acquire(timeout=30):
+        raise transport.AgyError('agy concurrency limit')
+    try:
+        response = client.chat.completions.create(model=AGY_MODEL, timeout=AGY_TIMEOUT, **kwargs)
+    finally:
+        AGY_SLOTS.release()
+    data = response.model_dump()
+    data['model'] = AGY_MODEL
+    return data
+
+
+def via_fallback(body):
+    payload = dict(body, model=FALLBACK_MODEL)
+    request = urllib.request.Request(FALLBACK_URL, data=json.dumps(payload).encode(), method='POST', headers={
+        'Authorization': f'Bearer {FALLBACK_KEY}', 'Content-Type': 'application/json'})
+    with urllib.request.urlopen(request, timeout=280) as response:
+        return response.status, response.read()
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+
+    def log_message(self, *_):
+        pass
+
+    def reply(self, status, data):
+        raw = data if isinstance(data, bytes) else json.dumps(data, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_GET(self):
+        if self.path == '/healthz':
+            return self.reply(200, {'ok': True, 'primary': AGY_MODEL, 'fallback': FALLBACK_MODEL})
+        self.reply(404, {'error': {'message': 'not found'}})
+
+    def do_POST(self):
+        if not self.path.endswith('/chat/completions'):
+            return self.reply(404, {'error': {'message': 'not found'}})
+        auth = self.headers.get('Authorization', '')
+        if not hmac.compare_digest(auth.encode(), f'Bearer {TOKEN}'.encode()):
+            return self.reply(401, {'error': {'message': 'unauthorized'}})
+        length = int(self.headers.get('Content-Length') or 0)
+        if length <= 0 or length > MAX_BODY:
+            return self.reply(413, {'error': {'message': 'bad body size'}})
+        try:
+            body = json.loads(self.rfile.read(length))
+        except ValueError:
+            return self.reply(400, {'error': {'message': 'invalid json'}})
+        if body.get('stream'):
+            return self.reply(400, {'error': {'message': 'stream is not supported'}})
+        started = time.monotonic()
+        try:
+            data = via_agy(body)
+            usage = data.get('usage') or {}
+            log(route='agy', model=AGY_MODEL, ms=int((time.monotonic() - started) * 1000),
+                tools=len(body.get('tools') or []), prompt=usage.get('prompt_tokens'), completion=usage.get('completion_tokens'),
+                finish=(data.get('choices') or [{}])[0].get('finish_reason'))
+            return self.reply(200, data)
+        except Exception as error:  # 쿼터·로그아웃·시간 초과·agy 오류 → 2순위
+            reason = type(error).__name__
+        fb_started = time.monotonic()
+        try:
+            status, raw = via_fallback(body)
+        except urllib.error.HTTPError as error:
+            status, raw = error.code, error.read()
+        except Exception as error:
+            log(route='fallback', error=type(error).__name__, agy_error=reason)
+            return self.reply(502, {'error': {'message': f'primary ({reason}) and fallback failed'}})
+        log(route='fallback', model=FALLBACK_MODEL, status=status, agy_error=reason,
+            agy_ms=int((fb_started - started) * 1000), ms=int((time.monotonic() - fb_started) * 1000))
+        self.reply(status, raw)
+
+
+if __name__ == '__main__':
+    server = ThreadingHTTPServer((HOST, int(PORT)), Handler)
+    server.daemon_threads = True
+    log(event='start', listen=f'{HOST}:{PORT}', primary=AGY_MODEL, fallback=FALLBACK_MODEL)
+    server.serve_forever()

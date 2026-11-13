@@ -1,0 +1,19 @@
+[Unit]
+Description=e-class LLM gateway: Gemini 4 Hydrogen via Antigravity agy, fallback Hive DeepSeek
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+EnvironmentFile=/home/ubuntu/.config/agy-llm-gateway/env
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/ubuntu/bin/agy-llm-gateway
+Restart=always
+RestartSec=5
+MemoryHigh=1536M
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target
