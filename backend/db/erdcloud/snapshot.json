@@ -5235,6 +5235,32 @@
      "relType": null
     },
     {
+     "_id": "W4r9wMzZRrXFqKAz4",
+     "name": "학교 화면의 담당자 표시",
+     "pName": "instructor_label",
+     "domain": "",
+     "type": "VARCHAR(200)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "학교 화면의 담당자 표시(course_instructors 행이 없을 때 쓴다)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "B24nBK2wRZmDmS2zY",
+     "name": "학교 화면의 학습기간 표시",
+     "pName": "learning_period_label",
+     "domain": "",
+     "type": "VARCHAR(40)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "학교 화면의 학습기간 표시(예: 2026.05.13~2026.12.21)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
      "_id": "YrinpPL9XH5Me8Zyw",
      "name": "수업형태",
      "pName": "lecture_type",
