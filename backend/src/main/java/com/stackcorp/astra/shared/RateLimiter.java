@@ -26,6 +26,9 @@ public class RateLimiter {
 
 	private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
 
+	// 다음에 끝난 window를 치울 크기. 치운 뒤에도 살아 있는 window가 많으면 그 두 배로 올려, 증가마다 map 전체를 훑지 않게 한다.
+	private volatile int sweepAt = SWEEP_AT;
+
 	private final LongSupplier nanoTime;
 
 	private final MeterRegistry meters;
@@ -51,7 +54,7 @@ public class RateLimiter {
 	/**
 	 * 로그인 전이라 사용자가 없는 명령의 주소 단위 제한. 같은 NAT를 쓰는 사용자끼리 서로 막을 수 있으므로 사용자 단위 제한을 쓸 수 있는
 	 * 명령에는 쓰지 않는다.
-	 * @param address 브라우저 주소(identity의 ClientAddresses)
+	 * @param address 브라우저 주소의 제한 key(identity의 ClientAddresses.limitKey. IPv6는 /64)
 	 * @throws RateLimitedException window 안에 limit번을 넘었을 때
 	 */
 	public void checkAddress(String operation, String address, int limit, Duration window) {
@@ -61,7 +64,7 @@ public class RateLimiter {
 	/**
 	 * 실패만 세는 명령의 앞 단계. window 안에 이미 limit번 실패했으면 거부한다. 세지 않는다. 실패는 {@link #recordFailure}로 센다.
 	 * 성공한 요청이 한도를 쓰지 않아, 같은 주소(NAT, 앞단 proxy)를 쓰는 정상 사용자끼리 서로 막지 않는다.
-	 * @param subject 세는 대상. 예: 브라우저 주소, 학번
+	 * @param subject 세는 대상. 예: 브라우저 주소의 제한 key, 학번
 	 * @throws RateLimitedException 이미 limit번 실패했을 때
 	 */
 	public void checkFailures(String operation, String subject, int limit) {
@@ -87,8 +90,9 @@ public class RateLimiter {
 	private Window increment(String subject, Duration window) {
 		long now = this.nanoTime.getAsLong();
 		long length = window.toNanos();
-		if (this.windows.size() > SWEEP_AT) {
+		if (this.windows.size() > this.sweepAt) {
 			this.windows.values().removeIf((w) -> now - w.startedAt >= w.length);
+			this.sweepAt = Math.max(SWEEP_AT, this.windows.size() * 2);
 		}
 		return this.windows.compute(subject, (key, w) -> {
 			if (w == null || now - w.startedAt >= w.length) {

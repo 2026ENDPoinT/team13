@@ -27,11 +27,13 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 배포하는 설정 그대로 실제 port를 열어 실행한다. 관리 port의 health, API port에서 /actuator가 보이지 않는지, 로그 형식을
- * 확인한다(ADR-0019, architecture.md 3.3절과 9절). 연결한 쪽(loopback)은 compose 단일 host 구성처럼 믿는 proxy로 둔다.
+ * 확인한다(ADR-0019, architecture.md 3.3절과 9절). 연결한 쪽(loopback)은 compose 단일 host 구성처럼 믿는 proxy로 둔다. 실행 환경은
+ * Kubernetes로 알아보게 둔다. 그래도 application.properties의 server.forward-headers-strategy=none 때문에 forwarded header를
+ * 요청에 반영하지 않아야 한다.
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
-		properties = "astra.client-address.trusted-proxies=127.0.0.0/8,::1")
+		properties = { "astra.client-address.trusted-proxies=127.0.0.0/8,::1", "spring.main.cloud-platform=kubernetes" })
 @ExtendWith(OutputCaptureExtension.class)
 class StackBackendApplicationTests {
 

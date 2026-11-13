@@ -87,7 +87,8 @@ class AuthController {
 	@PostMapping("/api/auth/break-glass")
 	ResponseEntity<Void> breakGlass(@RequestBody BreakGlassRequest body, HttpServletRequest request) {
 		String address = this.clientAddresses.of(request);
-		this.rateLimiter.checkAddress("break-glass-login", address, ADDRESS_LIMIT, ADDRESS_WINDOW);
+		this.rateLimiter.checkAddress("break-glass-login", ClientAddresses.limitKey(address), ADDRESS_LIMIT,
+				ADDRESS_WINDOW);
 		IssuedSession session = this.breakGlass.login(body.username(), body.password(), body.code(),
 				DeviceCookie.read(request), address, request.getHeader(HttpHeaders.USER_AGENT));
 		return ResponseEntity.noContent()
