@@ -106,17 +106,25 @@ class ProfileController {
 	}
 
 	/**
-	 * 연락처 변경(EP-0265, EP-0266). 최근 재인증이 없으면 403 {@code step_up_required}, 학사 원천 연락처면 409
+	 * 연락처 변경(EP-0265, EP-0266). 두 값은 언제나 문자열로 보낸다. 빈 문자열이나 공백뿐인 문자열은 그 연락처를 지운다는 뜻이라 NULL로
+	 * 저장하고, 둘 다 비워도 된다. 값이 있으면 형식을 본다. 필드가 없거나 JSON null이면 일부만 보낸 본문이 다른 연락처를 지우지 않도록 400
+	 * {@code invalid_request}다. 최근 재인증이 없으면 403 {@code step_up_required}, 학사 원천 연락처면 409
 	 * {@code contact_managed_by_registrar}.
 	 */
 	@PutMapping("/api/me/contact")
 	ResponseEntity<Profile> contact(@AuthenticationPrincipal Actor actor, @RequestBody UpdateContact body) {
-		String phone = body.phone() == null ? null : body.phone().strip();
-		String email = body.email() == null ? null : body.email().strip();
-		if (phone == null || !PHONE.matcher(phone).matches()) {
+		if (body.phone() == null) {
 			throw ApiException.invalid("전화번호 형식이 올바르지 않습니다.");
 		}
-		if (email == null || email.length() > MAX_EMAIL_LENGTH || !EMAIL.matcher(email).matches()) {
+		if (body.email() == null) {
+			throw ApiException.invalid("이메일 형식이 올바르지 않습니다.");
+		}
+		String phone = blankToNull(body.phone());
+		String email = blankToNull(body.email());
+		if (phone != null && !PHONE.matcher(phone).matches()) {
+			throw ApiException.invalid("전화번호 형식이 올바르지 않습니다.");
+		}
+		if (email != null && (email.length() > MAX_EMAIL_LENGTH || !EMAIL.matcher(email).matches())) {
 			throw ApiException.invalid("이메일 형식이 올바르지 않습니다.");
 		}
 		this.recentAuthentication.requireRecentAuth(actor, CONTACT_STEP_UP);
@@ -201,6 +209,12 @@ class ProfileController {
 				"학사시스템에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
 	}
 
+	// 연락처 입력의 앞뒤 공백을 떼고, 남은 것이 없으면 지운다는 뜻의 null이다. 필드가 없는 경우(null)는 부르기 전에 거절한다.
+	private static String blankToNull(String value) {
+		String stripped = value.strip();
+		return stripped.isEmpty() ? null : stripped;
+	}
+
 	/** 약칭 규칙(IDENTITY-10). 비우면 null로 저장하고 화면이 이름에서 만든다. */
 	static String shortName(String value) {
 		if (value == null || value.isEmpty()) {
@@ -239,6 +253,10 @@ class ProfileController {
 	record UpdateProfile(String avatarColor, String shortName, Integer version) {
 	}
 
+	/**
+	 * @param phone 휴대전화번호. 빈 문자열이면 지운다. 없거나 null이면 400
+	 * @param email 이메일 주소. 빈 문자열이면 지운다. 없거나 null이면 400
+	 */
 	record UpdateContact(String phone, String email) {
 
 		@Override

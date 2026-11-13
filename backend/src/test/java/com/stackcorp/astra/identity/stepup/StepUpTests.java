@@ -1,6 +1,7 @@
 package com.stackcorp.astra.identity.stepup;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -8,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -122,6 +124,101 @@ class StepUpTests extends OidcIntegrationTest {
 		contact(this.client, CONTACT).andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("contact_managed_by_registrar"));
 		this.client.get("/api/me/profile").andExpect(jsonPath("$.contact.phone").value("010-1111-1111"));
+	}
+
+	@Test
+	void blankContactValuesClearThatContact() throws Exception {
+		// 지우는 것도 연락처 변경이라 재인증이 먼저다.
+		contact(this.client, "{\"phone\":\"\",\"email\":\"\"}").andExpect(status().isForbidden())
+			.andExpect(jsonPath("$.code").value("step_up_required"));
+		reauthenticate(this.token, this.ref);
+		contact(this.client, CONTACT).andExpect(status().isOk());
+
+		// 화면은 앞뒤 공백을 뗀 입력을 그대로 보낸다. 빈 전화번호와 이메일만.
+		contact(this.client, "{\"phone\":\"\",\"email\":\"only@school.example\"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value("only@school.example"))
+			.andExpect(jsonPath("$.contact.source").value("local"))
+			.andExpect(jsonPath("$.contact.editable").value(true));
+		assertThat(storedContact()).containsExactly(null, "only@school.example");
+
+		// 전화번호만, 공백뿐인 이메일.
+		contact(this.client, "{\"phone\":\"010-2222-3333\",\"email\":\"   \"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value("010-2222-3333"))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()));
+		assertThat(storedContact()).containsExactly("010-2222-3333", null);
+
+		// 둘 다 비우면 연락처가 없다. 연락처를 하나 이상 요구하는 규칙은 없다.
+		contact(this.client, "{\"phone\":\"\",\"email\":\"\"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()))
+			.andExpect(jsonPath("$.contact.source").value("local"))
+			.andExpect(jsonPath("$.contact.editable").value(true));
+		assertThat(storedContact()).containsExactly(null, null);
+		this.client.get("/api/me/profile")
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()));
+
+		// 값이 있으면 형식은 그대로 본다. 다른 값이 비어도 같다.
+		contact(this.client, "{\"phone\":\"12\",\"email\":\"\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("전화번호 형식이 올바르지 않습니다."));
+		contact(this.client, "{\"phone\":\"\",\"email\":\"<a>@x\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("이메일 형식이 올바르지 않습니다."));
+		assertThat(storedContact()).containsExactly(null, null);
+	}
+
+	@Test
+	void blankValuesDoNotClearRegistrarOwnedContacts() throws Exception {
+		this.jdbc.sql("""
+				INSERT INTO user_contacts (user_id, phone_number, email_address, contact_source)
+				VALUES (:id, '010-1111-1111', 'school@school.example', 'ACADEMIC')
+				""").param("id", this.userId).update();
+		reauthenticate(this.token, this.ref);
+
+		contact(this.client, "{\"phone\":\"\",\"email\":\"\"}").andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("contact_managed_by_registrar"));
+		assertThat(storedContact()).containsExactly("010-1111-1111", "school@school.example");
+	}
+
+	@Test
+	void firstContactSaveWithBothBlankCreatesAnEmptyLocalRow() throws Exception {
+		reauthenticate(this.token, this.ref);
+		assertThat(contactRows()).isZero();
+
+		contact(this.client, "{\"phone\":\"\",\"email\":\" \"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()))
+			.andExpect(jsonPath("$.contact.source").value("local"))
+			.andExpect(jsonPath("$.contact.editable").value(true));
+		assertThat(contactRows()).isOne();
+		assertThat(storedContact()).containsExactly(null, null);
+		assertThat(this.jdbc.sql("SELECT contact_source FROM user_contacts WHERE user_id = :id")
+			.param("id", this.userId)
+			.query(String.class)
+			.single()).isEqualTo("LOCAL");
+	}
+
+	@Test
+	void missingOrNullContactFieldsAreRefusedAndClearNothing() throws Exception {
+		reauthenticate(this.token, this.ref);
+		contact(this.client, CONTACT).andExpect(status().isOk());
+
+		// 일부만 보낸 본문이 다른 연락처를 지우지 않는다. 지우려면 빈 문자열을 보낸다.
+		contact(this.client, "{\"email\":\"a@b.example\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("전화번호 형식이 올바르지 않습니다."));
+		contact(this.client, "{\"phone\":\"010-4444-5555\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("이메일 형식이 올바르지 않습니다."));
+		contact(this.client, "{\"phone\":null,\"email\":\"a@b.example\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		contact(this.client, "{\"phone\":\"010-4444-5555\",\"email\":null}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		contact(this.client, "{}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		assertThat(storedContact()).containsExactly("010-2222-3333", "new@school.example");
 	}
 
 	@Test
@@ -240,6 +337,21 @@ class StepUpTests extends OidcIntegrationTest {
 
 	private ResultActions contact(ApiClient client, String body) throws Exception {
 		return client.send(put("/api/me/contact").contentType(MediaType.APPLICATION_JSON).content(body));
+	}
+
+	/** 저장된 전화번호와 이메일. */
+	private List<String> storedContact() {
+		return this.jdbc.sql("SELECT phone_number, email_address FROM user_contacts WHERE user_id = :id")
+			.param("id", this.userId)
+			.query((rs, n) -> Arrays.asList(rs.getString(1), rs.getString(2)))
+			.single();
+	}
+
+	private int contactRows() {
+		return this.jdbc.sql("SELECT COUNT(*) FROM user_contacts WHERE user_id = :id")
+			.param("id", this.userId)
+			.query(Integer.class)
+			.single();
 	}
 
 	/** IdP에서 다시 로그인하고 callback까지 마친다. */
