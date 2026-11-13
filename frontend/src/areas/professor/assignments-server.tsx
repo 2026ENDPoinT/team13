@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn } from "../../shared/backend.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
-import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
+import { freshVisit, shownRows, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
 import {
@@ -308,14 +308,17 @@ function AssignmentList({ course, courseId, target }: { course: Course; courseId
   const load = () => { void assignmentLists.load(key, courseId); };
   const entry = useResource(assignmentLists, key, load);
   useVisit(assignmentLists, `pf-assignments-${target}`, key, load);
-  const data = entry && entry.data;
+  // After a write the list reloads; its previous rows (links only) stay on screen meanwhile.
+  const { rows: data, stale } = shownRows(entry);
   let body: ReactNode;
   if (!data) {
     body = !entry || !entry.error ? <p className="pf-sub">서버에 등록된 과제를 불러오는 중입니다.</p> : <Failure error={entry.error} reload={load} />;
   } else {
+    const note = entry?.error ? <Failure error={entry.error} reload={load} />
+      : stale ? <p className="pf-sub" role="status">저장한 내용을 반영한 목록을 불러오는 중입니다.</p> : null;
     const items = Array.isArray(data) ? data : [];
-    body = !items.length ? <p className="pf-sub">아직 서버에 등록된 과제가 없습니다.</p> : <>
-      {entry.error ? <p className="err" role="alert">{assignmentMessage(entry.error)}</p> : null}
+    body = !items.length ? <>{note}<p className="pf-sub">아직 서버에 등록된 과제가 없습니다.</p></> : <>
+      {note}
       {items.map((item) => {
         const edit = pf("pf_report_create", { kj: course.id, edit: String(item.assignmentId) });
         const submissions = pf("pf_report_status", { kj: course.id, n: serverRef(item.assignmentId) });

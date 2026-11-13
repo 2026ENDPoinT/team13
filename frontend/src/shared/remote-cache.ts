@@ -4,6 +4,7 @@
 // lands (`useResource`). Nothing here is persisted; every cache is dropped when the session changes.
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { subscribe as onBackendChange } from "./backend.ts";
+import { ApiError } from "./api.ts";
 
 const visits = new Map<string, { entry: unknown; key: string }>();
 // A history state object that `replaceVisit()` put in place of another stands for that one, so
@@ -43,6 +44,13 @@ export interface Entry<T> {
   data: T | null;
   error: unknown;
   loading: Promise<void> | null;
+  /**
+   * The data `drop()` cleared, until the reload after the write lands. It stays if that reload
+   * fails, unless the failure denies access (401, 403, 404): rows of a course the user may no
+   * longer see are not kept. For display only: a list may keep showing these rows meanwhile, with
+   * its row actions off; nothing may build form state, versions or revisions from it.
+   */
+  previous?: T | null;
 }
 
 export interface Resource<T, A extends unknown[] = any[]> {
@@ -65,9 +73,10 @@ export interface Resource<T, A extends unknown[] = any[]> {
   patch(match: (key: string) => boolean, change: (data: T) => void): void;
   /**
    * Forgets matching keys after a write. A key no mounted `useResource` reader shows is deleted, so
-   * its next visit loads it. A shown key keeps its entry with `data` and `error` cleared at once:
-   * nothing may build forms, versions or revisions from the pre-write copy, and its readers show
-   * their loading text, then the reload's result or its failure. A load that started before the
+   * its next visit loads it. A shown key keeps its entry with `data` and `error` cleared at once
+   * (the cleared data moves to `previous`, for display only): nothing may build forms, versions or
+   * revisions from the pre-write copy, and its readers show their loading text or the previous rows
+   * with their actions off, then the reload's result or its failure. A load that started before the
    * write no longer counts. Once the writing code has run on (a delete may close the screen), a key
    * still shown is loaded again with the arguments of the load (or `seed`) that first filled it;
    * one no longer shown is deleted. A load started after the drop counts as that reload.
@@ -122,15 +131,19 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       const gen = generation;
       const mark = writesOf(key);
       const counts = () => gen === generation && writesOf(key) === mark;
-      const entry: Entry<T> = { data: current ? current.data : null, error: null, loading: null };
+      const entry: Entry<T> = { data: current ? current.data : null, error: null, loading: null, previous: current ? current.previous : null };
       startedAt.set(entry, mark);
       if (!current) origins.set(key, args);
       entry.loading = Promise.resolve()
         .then(() => fetcher(...args))
         .then((data) => {
-          if (counts()) entry.data = data;
+          if (!counts()) return;
+          entry.data = data;
+          entry.previous = null;
         }, (error: unknown) => {
-          if (counts()) entry.error = error;
+          if (!counts()) return;
+          entry.error = error;
+          if (error instanceof ApiError && [401, 403, 404].includes(error.status)) entry.previous = null;
         })
         .finally(() => {
           if (gen !== generation) return;
@@ -147,7 +160,7 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       return resource.load(key, ...args);
     },
     seed(key, data, ...args) {
-      entries.set(key, { data, error: null, loading: null });
+      entries.set(key, { data, error: null, loading: null, previous: null });
       origins.set(key, args);
       notify(key);
     },
@@ -173,6 +186,7 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
         }
         const dropped = entries.get(key)!;
         writes.set(key, writesOf(key) + 1);
+        dropped.previous = dropped.data ?? dropped.previous;
         dropped.data = null;
         dropped.error = null;
         notify(key);
@@ -219,6 +233,16 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
     resource.clear();
   });
   return resource;
+}
+
+/**
+ * What a list shows: the loaded data, or after a write the previous rows until the reload lands
+ * (`stale`: display only; the list turns its row actions off and builds no forms from them).
+ */
+export function shownRows<T>(entry: Entry<T> | null | undefined): { rows: T | null; stale: boolean } {
+  if (!entry) return { rows: null, stale: false };
+  if (entry.data != null) return { rows: entry.data, stale: false };
+  return { rows: entry.previous ?? null, stale: entry.previous != null };
 }
 
 /**

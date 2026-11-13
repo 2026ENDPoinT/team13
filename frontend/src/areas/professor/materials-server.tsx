@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../shared/api.ts";
 import { courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
-import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
+import { freshVisit, shownRows, useResource, type Entry } from "../../shared/remote-cache.ts";
 import { rememberMaterials, saveRemoteMaterialFromUploads, type RemotePdfRecord } from "../../shared/course-pdfs-remote.ts";
 import {
   materialLists, materialKey, materialsOf, materialChange, updateMaterial, deleteMaterial, isStaleVersion, materialMessage,
@@ -72,6 +72,8 @@ interface EditMemo {
   note: string;
   alert: boolean;
   latest: Latest | null;
+  /** Re-renders the editor now showing this memo (uploads and scans outlive the editor that started them). */
+  repaint: (() => void) | null;
 }
 
 interface RegistrationMemo {
@@ -107,6 +109,7 @@ function fresh(material: Material): EditMemo {
     note: "",
     alert: false,
     latest: null,
+    repaint: null,
   };
 }
 
@@ -178,7 +181,9 @@ function ServerMaterialList({ course, summaryJobPanel, open }: { course: Course;
     if (freshVisit("pf-materials", key) === "entry" || !materialLists.peek(key)) void materialLists.load(key, courseId);
   }, [key, courseId]);
 
-  const materials = materialsOf(entry?.data);
+  // After a write the list reloads; its previous rows stay on screen for display only (no editor or summary panel).
+  const { rows, stale } = shownRows(entry);
+  const materials = materialsOf(rows);
   useEffect(() => {
     if (!first || !materials.length) return;
     setFirst(false);
@@ -188,7 +193,7 @@ function ServerMaterialList({ course, summaryJobPanel, open }: { course: Course;
 
   let body: ReactNode;
   if (!courseId) body = <p className="pf-sub">이 과목은 ASTRA 서버에 없습니다.</p>;
-  else if (!entry?.data) {
+  else if (!rows) {
     body = !entry || !entry.error
       ? <p className="pf-sub" role="status">서버에 등록된 자료를 불러오는 중입니다.</p>
       : <>
@@ -196,11 +201,17 @@ function ServerMaterialList({ course, summaryJobPanel, open }: { course: Course;
           <Button kind="ghost" disabled={retrying} onClick={() => { setRetrying(true); load(); }}>다시 불러오기</Button>
         </>;
   } else {
-    const records = rememberMaterials(materials, course.id, courseId);
+    const records = stale ? [] : rememberMaterials(materials, course.id, courseId);
+    const failed = entry && entry.error
+      ? <>
+          <p className="err" role="alert">{materialMessage(entry.error)}</p>
+          {stale ? <Button kind="ghost" disabled={retrying} onClick={() => { setRetrying(true); load(); }}>다시 불러오기</Button> : null}
+        </>
+      : stale ? <p className="pf-sub" role="status">저장한 내용을 반영한 목록을 불러오는 중입니다.</p> : null;
     body = !materials.length
-      ? <p className="pf-sub">아직 서버에 등록된 자료가 없습니다.</p>
+      ? <>{failed}<p className="pf-sub">아직 서버에 등록된 자료가 없습니다.</p></>
       : <>
-          {entry.error ? <p className="err" role="alert">{materialMessage(entry.error)}</p> : null}
+          {failed}
           {materials.map((material) => {
             const files = Array.isArray(material.files) ? material.files : [];
             const isOpen = opened.has(material.activityId);
@@ -217,7 +228,8 @@ function ServerMaterialList({ course, summaryJobPanel, open }: { course: Course;
                   <b>{material.title}</b>
                   <span className="pf-meta">{` · ${material.weekNo}주차 · 파일 ${files.length}개${material.published ? "" : " · 비공개"}`}</span>
                 </summary>
-                {isOpen ? <>
+                {isOpen && stale ? <p className="pf-sub">이 자료의 최신 내용을 불러온 뒤 수정할 수 있습니다.</p> : null}
+                {isOpen && !stale ? <>
                   {instructor ? <MaterialEditor courseId={courseId} material={material} reload={load} /> : null}
                   {records.filter((item) => item.activityId === material.activityId).map((record) => (
                     <div className="pf-summary" key={record.id}><h3>{record.fileName}</h3>{summaryJobPanel(record)}</div>
@@ -262,7 +274,12 @@ function MaterialEditor({ courseId, material, reload }: { courseId: number | str
     memo.latest = { title: material.title, weekNo: material.weekNo, published: material.published, version: material.version, files: files.map((file) => file.name) };
   }
   const [, setTick] = useState(0);
-  const repaint = () => setTick((n) => n + 1);
+  useEffect(() => {
+    const own = () => setTick((n) => n + 1);
+    memo.repaint = own;
+    return () => { if (memo.repaint === own) memo.repaint = null; };
+  }, [memo]);
+  const repaint = () => memo.repaint?.();
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
   const [saveLabel, setSaveLabel] = useState("수정 저장");

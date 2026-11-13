@@ -122,7 +122,7 @@ function lectureState(row: ActivityRow, item: ServerItem, instructor: boolean): 
   const met = progress.filter((entry) => entry.progress && entry.progress.status === "met").length;
   if (met === progress.length) return [phase, PROGRESS_STATE.met].filter(Boolean).join(" · ");
   const percent = Math.round(progress.reduce((sum, entry) => sum + (Number(entry.progress && entry.progress.progressPercent) || 0), 0) / progress.length);
-  return [phase, `진도 ${percent}% · 인정 ${met}/${progress.length}`].filter(Boolean).join(" · ");
+  return [phase, `진도 ${percent}% · 인정 기준 충족 ${met}/${progress.length}`].filter(Boolean).join(" · ");
 }
 
 /** 행 오른쪽의 상태 글. 학생은 본인 상태와 서버 phase, 담당자는 서버의 수. */

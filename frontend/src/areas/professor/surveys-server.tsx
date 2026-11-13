@@ -10,7 +10,7 @@ import type { ScreenCtx } from "../../types.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
-import { freshVisit, useResource } from "../../shared/remote-cache.ts";
+import { freshVisit, shownRows, useResource } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
 import {
@@ -419,7 +419,8 @@ function SurveyList({ course, courseId }: { course: Course; courseId: number }) 
   useEffect(() => {
     if (freshVisit("pf-surveys", key) === "entry" || !surveyLists.peek(key)) void surveyLists.load(key, courseId);
   }, [key, courseId]);
-  const data = entry && entry.data;
+  // After a write the list reloads; its previous rows (links only) stay on screen meanwhile.
+  const { rows: data, stale } = shownRows(entry);
   let list: ReactNode;
   if (!data) {
     list = !entry || !entry.error
@@ -427,7 +428,9 @@ function SurveyList({ course, courseId }: { course: Course; courseId: number }) 
       : <div><p className="err" role="alert">{surveyMessage(entry.error)}</p><Retry reload={load} /></div>;
   } else {
     const items = Array.isArray(data) ? data : [];
-    list = !items.length
+    const note = entry?.error ? <div><p className="err" role="alert">{surveyMessage(entry.error)}</p><Retry reload={load} /></div>
+      : stale ? <p className="pf-sub" role="status">저장한 내용을 반영한 목록을 불러오는 중입니다.</p> : null;
+    list = <>{note}{!items.length
       ? <p className="pf-sub">아직 서버에 등록된 설문이 없습니다.</p>
       : items.map((item) => {
         const edit = pf("pf_discuss", { kj: course.id, edit: String(item.surveyId) });
@@ -447,7 +450,7 @@ function SurveyList({ course, courseId }: { course: Course; courseId: number }) 
             </div>
           </div>
         );
-      });
+      })}</>;
   }
   return (
     <section className="sheet" aria-label="ASTRA 서버에 등록된 설문">

@@ -194,7 +194,7 @@ async function roomDelete(courseId: number, key: string, row: RoomRow) {
   }
 }
 
-function ActivityRow({ row, course, courseId }: { row: RoomRow; course: Course; courseId: number }) {
+function ActivityRow({ row, course, courseId, stale }: { row: RoomRow; course: Course; courseId: number; stale: boolean }) {
   const key = rowKey(courseId, row);
   const meta = ROOM_TYPES[row.type];
   const href = detailHref(row, course);
@@ -227,7 +227,7 @@ function ActivityRow({ row, course, courseId }: { row: RoomRow; course: Course; 
           {canPublish ? (
             <Button
               kind="ghost"
-              disabled={working}
+              disabled={working || stale}
               aria-label={`${row.title} ${row.published ? "비공개로 바꾸기" : "공개하기"}`}
               aria-busy={working ? "true" : "false"}
               onClick={() => { void roomPublish(courseId, key, row); }}
@@ -238,7 +238,7 @@ function ActivityRow({ row, course, courseId }: { row: RoomRow; course: Course; 
           {canDelete ? (
             <Button
               kind={isArmed ? "danger" : "ghost"}
-              disabled={working}
+              disabled={working || stale}
               aria-label={`${row.title} 삭제`}
               aria-busy={working && isArmed ? "true" : "false"}
               onClick={() => { void roomDelete(courseId, key, row); }}
@@ -288,8 +288,10 @@ function RoomView({ mode, ctx, course, courseId, parts }: { mode: string; ctx: S
   const params = ctx.params;
   const fresh = useRoom(courseId);
   // 명령 뒤 다시 받는 동안은 지난 목록을 그대로 둔다(캐시를 버린 직후 빈 화면으로 깜박이지 않게).
+  // 그 행은 보이기만 한다: 공개 전환과 삭제는 지난 version·revision을 보내게 되므로 새 목록이 올 때까지 끈다.
   const room = !fresh.weeks && !fresh.error && last.current ? last.current : fresh;
-  if (room.weeks) last.current = room;
+  const stale = room !== fresh;
+  if (room.weeks && !stale) last.current = room;
 
   let content: ReactNode;
   if (!room.weeks) {
@@ -330,7 +332,7 @@ function RoomView({ mode, ctx, course, courseId, parts }: { mode: string; ctx: S
           {partial}
           <div className="pf-toolbar">{chipRow(ctx, "pf_room_activity", options, "type")}{finder(ctx, "활동 검색")}</div>
           {shown.length
-            ? <div className="pf-activities">{shown.map((row) => <ActivityRow key={rowKey(courseId, row)} row={row} course={course} courseId={courseId} />)}</div>
+            ? <div className="pf-activities">{shown.map((row) => <ActivityRow key={rowKey(courseId, row)} row={row} course={course} courseId={courseId} stale={stale} />)}</div>
             : <EmptyState title={rows.length ? "해당하는 활동이 없습니다" : "서버에 등록된 활동이 없습니다"} body={rows.length ? "다른 유형을 선택하거나 검색어를 지워 보세요." : "활동 등록에서 영상, 자료, 과제, 시험, 설문을 만들 수 있습니다."} />}
           {guide}
         </>
@@ -368,7 +370,7 @@ function RoomView({ mode, ctx, course, courseId, parts }: { mode: string; ctx: S
               <Link className="btn btn-primary" href={pf("pf_week_add", { kj: course.id, week: String(week.weekNo) })}>활동 등록</Link>
             </div>
             {week.rows.length
-              ? <div className="pf-activities">{week.rows.map((row) => <ActivityRow key={rowKey(courseId, row)} row={row} course={course} courseId={courseId} />)}</div>
+              ? <div className="pf-activities">{week.rows.map((row) => <ActivityRow key={rowKey(courseId, row)} row={row} course={course} courseId={courseId} stale={stale} />)}</div>
               : <EmptyState title="이 주차에 등록된 활동이 없습니다" body="활동 등록에서 영상, 자료, 과제, 시험, 설문을 만들 수 있습니다." />}
           </div>
           {guide}
@@ -382,7 +384,7 @@ function RoomView({ mode, ctx, course, courseId, parts }: { mode: string; ctx: S
 // ---------- 활동 등록: 유형 고르기 ----------
 
 const CHOICES = [
-  { type: "lecture_weeks", screen: "pf_contents", text: "영상을 올려 HLS로 변환하고 출석 인정 시간을 정합니다." },
+  { type: "lecture_weeks", screen: "pf_contents", text: "영상을 올려 HLS로 변환하고 콘텐츠마다 인정 기준 시간을 정합니다." },
   { type: "lecture_material", screen: "pf_material_write", text: "PDF를 올려 강의자료로 등록하고 쪽별 요약을 만듭니다." },
   { type: "report", screen: "pf_report_create", text: "제출 기간, 지각 제출, 배점을 정해 과제를 냅니다." },
   { type: "test", screen: "pf_exam_create", text: "응시 기간과 제한 시간, 문항을 정해 시험을 냅니다." },
