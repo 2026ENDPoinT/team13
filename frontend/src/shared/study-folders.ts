@@ -1,8 +1,7 @@
 // Folders the student makes inside a course's 학습실. One level only.
 // Backend `ready`: new folders and placements are the signed-in user's rows on the server (study-room-remote.ts).
-// Folders still in this browser's localStorage are shown next to them (marked `local`) until the student moves
-// them to the account; nothing local is hidden or deleted because the backend is `ready`.
-// An item with no placement sits in the course root.
+// Folders still in this browser's localStorage stay visible until the student moves them to the account; nothing
+// local is hidden or deleted because the backend is `ready`. An item with no placement sits in the course root.
 import { useSyncExternalStore } from "react";
 import { ApiError } from "./api.ts";
 import { courseIdFor, currentUserId } from "./backend.ts";
@@ -21,8 +20,10 @@ export interface StudyFolder {
   createdAt: string;
   version?: number;
   local?: true;
-  /** The account signed in when a browser folder was made while `ready` (none for folders made signed out). */
+  /** The account signed in when a browser folder was made while `ready` (none for folders made signed out or before). */
   ownerUserId?: string;
+  /** The server folder this browser folder was moved to; it stays here only for items that could not move. */
+  movedTo?: string;
 }
 
 /** What localStorage holds under `astra-study-folders`. */
@@ -30,7 +31,11 @@ interface FolderData {
   folders: StudyFolder[];
   /** Item id -> folder id. */
   placement: Record<string, string>;
+  /** Item id -> why its placement cannot move to the account (the server answered 404); not sent again. */
+  unmovable: Record<string, string>;
 }
+
+const objectOr = (value: unknown): Record<string, string> => (value && typeof value === "object" ? value as Record<string, string> : {});
 
 function read(): FolderData {
   try {
@@ -38,15 +43,17 @@ function read(): FolderData {
     const value = JSON.parse(localStorage.getItem(KEY) || "null") as Partial<FolderData> | null;
     return {
       folders: Array.isArray(value?.folders) ? value.folders : [],
-      placement: value?.placement && typeof value.placement === "object" ? value.placement : {},
+      placement: objectOr(value?.placement),
+      unmovable: objectOr(value?.unmovable),
     };
   } catch {
-    return { folders: [], placement: {} };
+    return { folders: [], placement: {}, unmovable: {} };
   }
 }
 
 function write(data: FolderData): void {
   try {
+    for (const id of Object.keys(data.unmovable)) if (!(id in data.placement)) delete data.unmovable[id];
     if (!data.folders.length && !Object.keys(data.placement).length) localStorage.removeItem(KEY);
     else localStorage.setItem(KEY, JSON.stringify(data));
   } catch {
@@ -61,6 +68,19 @@ const fromServer = (folder: ServerFolder, kj: string): StudyFolder => ({
 /** Re-renders the caller whenever a server course view changes (folders, placements, recordings). */
 export function useStudyRoomStore(): void {
   useSyncExternalStore(courseViews.subscribe, courseViews.version);
+}
+
+/**
+ * Whose a browser item (folder or recording) is while the study room is on the server: "mine" (made by the
+ * signed-in user), "before-login" (made with nobody signed in, or before items carried an owner) or "other" (made
+ * by another account). Offline, everything is "mine", as before.
+ */
+export type OwnerGroup = "mine" | "before-login" | "other";
+
+export function ownerGroup(ownerUserId: string | undefined): OwnerGroup {
+  if (!studyRoomOnServer()) return "mine";
+  if (!ownerUserId) return "before-login";
+  return ownerUserId === currentUserId() ? "mine" : "other";
 }
 
 /**
@@ -83,29 +103,32 @@ export const localFolders = (courseId: string): StudyFolder[] => read().folders.
 /** Every folder of this browser, all courses, in their order. */
 export const browserFolders = (): StudyFolder[] => read().folders;
 
-/**
- * While the study room is on the server: true for a browser item (folder or recording) that is not the signed-in
- * user's — made by another account, or signed out — so screens show it apart, as possibly someone else's.
- */
-export function leftByOthers(ownerUserId: string | undefined): boolean {
-  return studyRoomOnServer() && ownerUserId !== (currentUserId() ?? undefined);
+/** Browser folders of a server course, marked `local` (offline: the plain browser folders). */
+function markedLocalFolders(courseId: string): StudyFolder[] {
+  return localFolders(courseId).map((folder): StudyFolder => ({ ...folder, local: true }));
 }
 
-/** Server folders first (server order), then the signed-in user's own browser folders of the course marked `local`. */
+/** The course's folders in the main grid: server folders (server order), then the signed-in user's own browser folders. */
 export function listFolders(courseId: string): StudyFolder[] {
   const server = serverStudyCourse(courseId);
   if (server == null) return localFolders(courseId);
   const { view } = peekCourseView(server);
   return [
     ...(view ? view.folders.map((folder) => fromServer(folder, courseId)) : []),
-    ...localFolders(courseId).filter((folder) => !leftByOthers(folder.ownerUserId)).map((folder): StudyFolder => ({ ...folder, local: true })),
+    ...markedLocalFolders(courseId).filter((folder) => ownerGroup(folder.ownerUserId) === "mine"),
   ];
 }
 
-/** Browser folders of the course that `leftByOthers` sets apart (empty unless the study room is on the server). */
-export const foldersLeftByOthers = (courseId: string): StudyFolder[] => localFolders(courseId).filter((folder) => leftByOthers(folder.ownerUserId));
+/** Browser folders of the course that belong to `group` ("before-login" or "other"), shown apart from the user's own. */
+export const groupFolders = (courseId: string, group: OwnerGroup): StudyFolder[] => (serverStudyCourse(courseId) == null
+  ? []
+  : markedLocalFolders(courseId).filter((folder) => ownerGroup(folder.ownerUserId) === group));
 
-export const getFolder = (id: string, courseId: string): StudyFolder | null => listFolders(courseId).find((folder) => folder.id === id) || null;
+/** Any folder of the course, the separate groups included, so a saved link to one keeps working. */
+export function getFolder(id: string, courseId: string): StudyFolder | null {
+  return listFolders(courseId).find((folder) => folder.id === id)
+    || (serverStudyCourse(courseId) == null ? null : markedLocalFolders(courseId).find((folder) => folder.id === id) || null);
+}
 
 /** Item id -> folder id for every placed item (server placements and this browser's). Read once per render. */
 export function placements(): Record<string, string> {
@@ -117,6 +140,9 @@ export function placements(): Record<string, string> {
   }
   return placed;
 }
+
+/** Item id -> why its placement could not move to the account. */
+export const unmovablePlacements = (): Record<string, string> => read().unmovable;
 
 export const folderOf = (itemId: string): string => placements()[itemId] || "";
 
@@ -228,15 +254,25 @@ export async function moveFolderToAccount(folder: StudyFolder): Promise<string> 
   }
 }
 
+/** Keeps a placement that can never move (the server answered 404) with its reason, so it is not sent again. */
+export function markUnmovable(itemId: string, reason: string): void {
+  const data = read();
+  if (!(itemId in data.placement)) return;
+  data.unmovable[itemId] = reason;
+  write(data);
+}
+
 /**
  * Removes from this browser what is now on the server: the placements of `itemIds`, and the browser folders of
- * `movedFolders` that no remaining placement points to. Everything else stays.
+ * `movedFolders` (local id -> server id) that no remaining placement points to; a moved folder that still holds
+ * something that could not move stays, marked `movedTo`. Everything else stays.
  */
-export function forgetMoved(itemIds: Iterable<string>, movedFolders: Iterable<string>): void {
+export function forgetMoved(itemIds: Iterable<string>, movedFolders: Map<string, string>): void {
   const data = read();
   for (const id of itemIds) delete data.placement[id];
   const used = new Set(Object.values(data.placement));
-  const moved = new Set(movedFolders);
-  data.folders = data.folders.filter((folder) => !moved.has(folder.id) || used.has(folder.id));
+  data.folders = data.folders
+    .filter((folder) => !movedFolders.has(folder.id) || used.has(folder.id))
+    .map((folder) => (movedFolders.has(folder.id) ? { ...folder, movedTo: movedFolders.get(folder.id) } : folder));
   write(data);
 }

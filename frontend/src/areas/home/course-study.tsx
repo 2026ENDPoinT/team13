@@ -10,7 +10,7 @@ import { backendStatus, backendSettled, connect as connectBackend } from "../../
 import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { summaryView } from "../../shared/page-summary.tsx";
 import { createCoursePdfViewer } from "../../shared/document-viewer.tsx";
-import { getFolder, folderOf, folderState, useStudyRoomStore, type StudyFolder } from "../../shared/study-folders.ts";
+import { getFolder, folderOf, folderState, ownerGroup, useStudyRoomStore, type StudyFolder } from "../../shared/study-folders.ts";
 import { serverStudyCourse, studyRoomMessage, refreshCourseView } from "../../shared/study-room-remote.ts";
 import { courseFiles, folderHref } from "./study-files.tsx";
 import { createNewMenu } from "./study-new.tsx";
@@ -243,7 +243,7 @@ function CourseStudy({ ctx }: { ctx: ScreenCtx }) {
       <header className="course-study__header">
         <div className="course-study__heading">
           <h1>{`${course.cardTitle || course.ko} 학습실`}</h1>
-          {folder ? <p className="course-study__crumb"><Link href={folderHref(courseId)}>전체</Link>{` / ${folder.name}${folder.local && server != null ? " (이 브라우저에만 저장)" : ""}`}</p> : null}
+          {folder ? <p className="course-study__crumb"><Link href={folderHref(courseId)}>전체</Link>{` / ${folder.name}${!folder.local || server == null ? "" : ownerGroup(folder.ownerUserId) === "before-login" ? " (로그인 전에 이 브라우저에 저장)" : ownerGroup(folder.ownerUserId) === "other" ? " (다른 계정으로 저장)" : " (이 브라우저에만 저장)"}`}</p> : null}
         </div>
         {docId ? back : null}
       </header>

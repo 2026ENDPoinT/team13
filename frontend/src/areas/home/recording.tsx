@@ -15,7 +15,7 @@ import {
   type ActiveRecording, type LocalRecording, type RecordingRecord, type RecordingSource,
 } from "../../shared/course-recordings.ts";
 import { backendState, backendSettled } from "../../shared/backend.ts";
-import { useStudyRoomStore, leftByOthers } from "../../shared/study-folders.ts";
+import { useStudyRoomStore, ownerGroup } from "../../shared/study-folders.ts";
 import { saveBlob } from "../../shared/uploads-remote.tsx";
 import { serverStudyCourse, studyRoomOnServer, peekCourseView, studyRoomMessage, formatBytes, usageText } from "../../shared/study-room-remote.ts";
 import { folderHref } from "./study-files.tsx";
@@ -276,14 +276,15 @@ function MoveToAccount({ record, course }: { record: LocalRecording; course: Cou
   const [error, setError] = useState(record.uploadError || "");
   const name = backendState().me?.name;
   const account = `지금 로그인한 계정${name ? `(${name})` : ""}`;
-  const others = leftByOthers(record.ownerUserId);
+  const group = ownerGroup(record.ownerUserId);
+  const moveText = `옮기면 ${account}의 학습실에 저장되고, 서버가 받은 뒤에만 이 브라우저에서 지워집니다.`;
   return (
     <div className="rec-transcript-status" role="note">
-      <strong>{others ? "이 브라우저에 남아 있던 녹음" : "이 브라우저에만 저장된 녹음"}</strong>
+      <strong>{group === "other" ? "다른 계정으로 저장된 녹음" : group === "before-login" ? "로그인 전에 이 브라우저에 저장된 녹음" : "이 브라우저에만 저장된 녹음"}</strong>
       <p>
-        {others
-          ? `로그아웃한 상태였거나 다른 계정으로 로그인했을 때 이 브라우저에 저장된 녹음입니다. 이 컴퓨터를 함께 쓰는 다른 사람이 남긴 것일 수 있습니다. 내 녹음이 맞을 때만 옮기세요. 옮기면 ${account}의 학습실에 저장되고, 서버가 받은 뒤에만 이 브라우저에서 지워집니다.`
-          : `옮기면 ${account}의 학습실에 저장되고, 서버가 받은 뒤에만 이 브라우저에서 지워집니다.`}
+        {group === "other"
+          ? `다른 계정으로 로그인했을 때 이 브라우저에 저장된 녹음입니다. 이 컴퓨터를 함께 쓰는 다른 사람의 것일 수 있습니다. 내 녹음이 맞을 때만 옮기세요. ${moveText}`
+          : group === "before-login" ? `로그인하지 않은 상태에서 이 브라우저에 저장된 녹음입니다. ${moveText}` : moveText}
       </p>
       {error ? <p className="err" role="alert">{`지난번에 옮기지 못한 이유: ${error}`}</p> : null}
       <Button
@@ -304,7 +305,7 @@ function MoveToAccount({ record, course }: { record: LocalRecording; course: Cou
           });
         }}
       >
-        {moving ? "옮기는 중…" : error ? (others ? "다시 옮기기" : "다시 올리기") : "내 계정으로 옮기기"}
+        {moving ? "옮기는 중…" : error ? (group === "mine" ? "다시 올리기" : "다시 옮기기") : "내 계정으로 옮기기"}
       </Button>
     </div>
   );

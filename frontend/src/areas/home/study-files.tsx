@@ -8,8 +8,10 @@ import { Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { readQuery, pageSearch } from "../../shared/query.tsx";
 import { listCoursePdfs, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
 import { backendStatus, backendState, courseIdFor, kjOfCourseId, subscribe as onBackendChange } from "../../shared/backend.ts";
-import { listRecordings, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, fromServer, type RecordingRecord } from "../../shared/course-recordings.ts";
-import { listFolders, createFolder, placements, useStudyRoomStore, leftByOthers, foldersLeftByOthers, type StudyFolder } from "../../shared/study-folders.ts";
+import { listRecordings, activeRecording, onRecordingEvent, formatDuration, moveAllToAccount, fromServer, type RecordingRecord, type MoveScope } from "../../shared/course-recordings.ts";
+import {
+  listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
+} from "../../shared/study-folders.ts";
 import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings } from "../../shared/study-room-remote.ts";
 import { serverCourseViews } from "../../shared/course-view.ts";
 import { thumbnailImage } from "../../shared/preview-remote.tsx";
@@ -232,7 +234,7 @@ function LectureSection({ course, courseId }: { course: Course; courseId: number
   );
 }
 
-function UserFolderCard({ course, folder, count }: { course: Course; folder: StudyFolder; count: number }) {
+function UserFolderCard({ course, folder, count, note }: { course: Course; folder: StudyFolder; count: number; note?: string }) {
   return (
     <Link className="study-folder user-folder" href={folderHref(course.id, folder.id)} aria-label={`${folder.name} 폴더`}>
       <span className="sf-thumb" aria-hidden="true">
@@ -242,11 +244,27 @@ function UserFolderCard({ course, folder, count }: { course: Course; folder: Stu
       <b className="sf-name" title={folder.name}>{folder.name}</b>
       <span className="sf-meta">
         <span className="sf-count">{count ? `${count}개` : "비어 있음"}</span>
-        {folder.local ? <span>이 브라우저에만 저장</span> : null}
+        {note || (folder.local ? <span>이 브라우저에만 저장</span> : null)}
       </span>
     </Link>
   );
 }
+
+/** Wording of the browser items that are not the signed-in user's own, by group. */
+const GROUP_TEXT: Record<"before-login" | "other", { title: string; body: (what: string, account: string) => string; folder: string; button: string }> = {
+  "before-login": {
+    title: "로그인 전에 이 브라우저에 저장된 항목",
+    body: (what, account) => `로그인하지 않은 상태에서 이 브라우저에 저장된 ${what}입니다. 옮기면 ${account}에 저장되고, 서버가 받은 항목만 이 브라우저에서 지워집니다. 폴더는 옮긴 뒤에 자료를 추가할 수 있습니다.`,
+    folder: "로그인 전에 이 브라우저에 저장된 폴더입니다. 내 계정으로 옮긴 뒤에 자료를 추가할 수 있습니다.",
+    button: "모두 내 계정으로 옮기기",
+  },
+  other: {
+    title: "다른 계정으로 저장된 항목",
+    body: (what, account) => `다른 계정으로 로그인했을 때 이 브라우저에 저장된 ${what}입니다. 이 컴퓨터를 함께 쓰는 다른 사람의 것일 수 있습니다. 내 것이 맞을 때만 ${account}으로 옮기세요.`,
+    folder: "다른 계정으로 로그인했을 때 이 브라우저에 저장된 폴더입니다. 이 컴퓨터를 함께 쓰는 다른 사람의 것일 수 있습니다. 내 것이 맞을 때만 옮기세요.",
+    button: "내 것이 맞으면 모두 내 계정으로 옮기기",
+  },
+};
 
 /** Card with a name field for a folder being created; Enter or leaving the field saves, Escape cancels. */
 function FolderNameCard({ onDone }: { onDone: (name: string | null) => void }) {
@@ -326,25 +344,29 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   const creator = makeCreator({ say, nameFolder: () => setNaming(true) });
   const shown = data || { pdfs: [], recordings: [] };
   const placed = placements();
+  const unmovable = unmovablePlacements();
   const courseFolders = listFolders(course.id);
-  const known = new Set(courseFolders.map((item) => item.id));
-  // An item whose folder cannot be found here (deleted, another account's, or a server folder while signed out) sits in the root.
+  const separate = { "before-login": groupFolders(course.id, "before-login"), other: groupFolders(course.id, "other") };
+  const known = new Set([...courseFolders, ...separate["before-login"], ...separate.other].map((item) => item.id));
+  // An item whose folder cannot be found here (deleted, or a server folder while signed out) sits in the root.
   const folderOfItem = (record: { id: string; pendingFolderId?: string }) => {
     const target = placed[record.id] || record.pendingFolderId || "";
     return known.has(target) ? target : "";
   };
-  // Browser recordings that are not the signed-in user's: shown apart at the course root, never mixed with theirs.
-  const othersRecordings = shown.recordings.filter((record) => !record.remote && leftByOthers(record.ownerUserId));
-  const ownRecordings = shown.recordings.filter((record) => record.remote || !leftByOthers(record.ownerUserId));
+  const groupOf = (record: RecordingRecord): OwnerGroup => (record.remote ? "mine" : ownerGroup(record.ownerUserId));
+  // A browser folder of another group opens read-only, with everything placed in it, until it is moved.
+  const folderGroup: OwnerGroup = folder && folder.local ? ownerGroup(folder.ownerUserId) : "mine";
+  const readOnly = folderGroup !== "mine";
+  // At the course root only the user's own items; inside a folder whatever is placed there.
   const pdfs = shown.pdfs.filter((record) => folderOfItem(record) === folderId);
-  const recordings = ownRecordings.filter((record) => folderOfItem(record) === folderId);
+  const recordings = shown.recordings.filter((record) => folderOfItem(record) === folderId && (folder ? true : groupOf(record) === "mine"));
   const folders = folder ? [] : courseFolders;
-  const countIn = (id: string) => [...shown.pdfs, ...ownRecordings].filter((record) => folderOfItem(record) === id).length;
+  const countIn = (id: string) => [...shown.pdfs, ...shown.recordings].filter((record) => folderOfItem(record) === id).length;
+  const stuckIn = (id: string) => Object.keys(unmovable).filter((itemId) => placed[itemId] === id).length;
   const onServer = serverStudyCourse(course.id) != null;
   // The signed-in user's items still only in this browser: offered for an explicit move (course root).
-  const localRecordings = folder ? 0 : ownRecordings.filter((record) => !record.remote).length;
-  const localFolderCount = folder ? 0 : folders.filter((item) => item.local).length;
-  const othersFolders = folder || !onServer ? [] : foldersLeftByOthers(course.id);
+  const localRecordings = folder ? 0 : shown.recordings.filter((record) => !record.remote && groupOf(record) === "mine").length;
+  const localFolderCount = folder ? 0 : folders.filter((item) => item.local && !item.movedTo).length;
   const accountName = backendState().me?.name || "";
   const status = failed != null
     ? backendStatus() === "ready"
@@ -354,32 +376,49 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
       ? [folders.length && `폴더 ${folders.length}개`, `PDF ${pdfs.length}개`, `녹음 ${recordings.length}개`, onServer && usageText(studyUsage())].filter(Boolean).join(" · ")
       : "PDF와 녹음을 불러오는 중입니다";
   const courseId = !folder && serverOwned(course.id) ? courseIdFor(course.id) : null;
-  const moveAll = (others: boolean) => {
+  const moveAll = (scope: MoveScope) => {
     setMoving(true);
     say("이 브라우저의 학습실 자료를 내 계정으로 옮기고 있습니다.");
-    moveAllToAccount(course.id, others).then((text) => say(text), (error: unknown) => say(error instanceof Error ? error.message : String(error), true))
+    moveAllToAccount(scope).then((text) => say(text), (error: unknown) => say(error instanceof Error ? error.message : String(error), true))
       .finally(() => {
         setMoving(false);
         notifyStudyChanged();
       });
   };
   const account = `지금 로그인한 계정${accountName ? `(${accountName})` : ""}`;
+  const folderCard = (item: StudyFolder) => {
+    const stuck = item.movedTo ? stuckIn(item.id) : 0;
+    return (
+      <UserFolderCard
+        key={`folder-${item.id}`} course={course} folder={item} count={countIn(item.id)}
+        note={stuck ? `강의자료 ${stuck}개는 서버에서 열 수 없어 옮기지 못함` : undefined}
+      />
+    );
+  };
 
   return (
     // The area stops being busy after the first answer, so screen readers announce the failure text.
     <div className="course-study__files" aria-busy={data || failed != null ? undefined : "true"}>
       <p className="course-study__count" role="status" aria-live="polite">{status}</p>
       <p className={`course-study__notice${notice.isError ? " is-error" : ""}`} role="status" aria-live="polite" hidden={!notice.text}>{notice.text}</p>
+      {folder && folderGroup !== "mine" ? (
+        <div className="course-study__notice" role="note">
+          <p>{GROUP_TEXT[folderGroup].folder}</p>
+          <Button kind="secondary" disabled={moving} onClick={() => moveAll({ kj: course.id, group: folderGroup, folderId: folder.id })}>
+            {moving ? "옮기는 중…" : "이 폴더를 내 계정으로 옮기기"}
+          </Button>
+        </div>
+      ) : null}
       {onServer && data && (localRecordings || localFolderCount) ? (
         <div className="course-study__notice" role="note">
           <p>{`이 브라우저에만 저장된 내 ${[localFolderCount && `폴더 ${localFolderCount}개`, localRecordings && `녹음 ${localRecordings}개`].filter(Boolean).join("와 ")}가 있습니다. 옮기면 ${account}에 저장되고, 서버가 받은 항목만 이 브라우저에서 지워집니다.`}</p>
-          <Button kind="secondary" disabled={moving} onClick={() => moveAll(false)}>{moving ? "옮기는 중…" : "모두 내 계정으로 옮기기"}</Button>
+          <Button kind="secondary" disabled={moving} onClick={() => moveAll({ kj: course.id, group: "mine" })}>{moving ? "옮기는 중…" : "모두 내 계정으로 옮기기"}</Button>
         </div>
       ) : null}
       <div className="study-grid">
         {data ? (
           <>
-            {creator}
+            {readOnly ? null : creator}
             <LiveRecordingCard course={course} />
             {naming ? (
               <FolderNameCard
@@ -395,23 +434,32 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
               />
             ) : null}
             {/* Server folder and recording ids are both small numbers: keys carry the kind. */}
-            {folders.map((item) => <UserFolderCard key={`folder-${item.id}`} course={course} folder={item} count={countIn(item.id)} />)}
+            {folders.map(folderCard)}
             {pdfs.map((record) => <PdfCard key={record.id} record={record} showCourse={false} />)}
             {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
             {samples.map((item) => <SampleCard key={item.id} item={item} showCourse={false} />)}
           </>
         ) : null}
       </div>
-      {onServer && data && !folder && (othersRecordings.length || othersFolders.length) ? (
-        <section className="study-section" aria-label="이 브라우저에 남아 있던 항목">
-          <h2>이 브라우저에 남아 있던 항목</h2>
-          <p className="tiny">{`로그아웃한 상태였거나 다른 계정으로 로그인했을 때 이 브라우저에 저장된 ${[othersFolders.length && `폴더 ${othersFolders.length}개`, othersRecordings.length && `녹음 ${othersRecordings.length}개`].filter(Boolean).join("와 ")}입니다. 이 컴퓨터를 함께 쓰는 다른 사람이 남긴 것일 수 있습니다. 내 것이 맞을 때만 ${account}으로 옮기세요. 녹음을 눌러 듣고, 내려받고, 옮기거나 지울 수 있습니다.`}</p>
-          <Button kind="ghost" disabled={moving} onClick={() => moveAll(true)}>{moving ? "옮기는 중…" : "내 것이 맞으면 모두 내 계정으로 옮기기"}</Button>
-          <div className="study-grid">
-            {othersRecordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
-          </div>
-        </section>
-      ) : null}
+      {onServer && data && !folder ? (["before-login", "other"] as const).map((group) => {
+        const groupFolderIds = new Set(separate[group].map((item) => item.id));
+        // The group's recordings outside its own folders (those open with their folder).
+        const loose = shown.recordings.filter((record) => groupOf(record) === group && !groupFolderIds.has(folderOfItem(record)));
+        if (!separate[group].length && !loose.length) return null;
+        const text = GROUP_TEXT[group];
+        const what = [separate[group].length && `폴더 ${separate[group].length}개`, loose.length && `녹음 ${loose.length}개`].filter(Boolean).join("와 ");
+        return (
+          <section key={group} className="study-section" aria-label={text.title}>
+            <h2>{text.title}</h2>
+            <p className="tiny">{`${text.body(what, account)} 폴더와 녹음을 눌러 열고, 듣고, 내려받고, 옮기거나 지울 수 있습니다.`}</p>
+            <Button kind="ghost" disabled={moving} onClick={() => moveAll({ kj: course.id, group })}>{moving ? "옮기는 중…" : text.button}</Button>
+            <div className="study-grid">
+              {separate[group].map(folderCard)}
+              {loose.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} />)}
+            </div>
+          </section>
+        );
+      }) : null}
       {courseId != null ? <LectureSection course={course} courseId={courseId} /> : null}
     </div>
   );
@@ -422,7 +470,9 @@ function FolderCard({ course }: { course: Course }) {
   const [count, setCount] = useState(samples ? `샘플 ${samples}` : "비어 있음");
   useEffect(() => {
     let live = true;
-    Promise.all([listCoursePdfs(course.id), listRecordings(course.id)]).then(([pdfs, recordings]) => {
+    Promise.all([listCoursePdfs(course.id), listRecordings(course.id)]).then(([pdfs, mixed]) => {
+      // Browser recordings of other groups are counted in their own section, not on the course card.
+      const recordings = mixed.filter((record) => record.remote || ownerGroup(record.ownerUserId) === "mine");
       const parts = [pdfs.length && `PDF ${pdfs.length}`, recordings.length && `녹음 ${recordings.length}`, samples && `샘플 ${samples}`].filter(Boolean);
       if (live) setCount(parts.length ? parts.join(" · ") : "비어 있음");
     }).catch(() => {});
@@ -457,7 +507,11 @@ function SearchResults({ q }: { q: string }) {
     const list = studyCourses();
     Promise.all(list.map((course) => Promise.all([listCoursePdfs(course.id), listRecordings(course.id)]).then(([pdfs, recordings]) => {
       const hit = (title: string) => matches(q, title, course.ko, course.en, course.cardTitle || "");
-      return { pdfs: pdfs.filter((r) => hit(r.title)), recordings: recordings.filter((r) => hit(r.title)) };
+      return {
+        pdfs: pdfs.filter((r) => hit(r.title)),
+        // Browser recordings that are not the user's own stay out of search, as they stay out of the main grid.
+        recordings: recordings.filter((r) => hit(r.title) && (r.remote || ownerGroup(r.ownerUserId) === "mine")),
+      };
     }))).catch((): StudyData[] => []).then((parts) => {
       if (!live) return;
       setFound({ pdfs: parts.flatMap((part) => part.pdfs), recordings: parts.flatMap((part) => part.recordings) });

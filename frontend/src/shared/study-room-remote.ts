@@ -234,11 +234,13 @@ export function uploadName(fileName: string | null | undefined, extension: strin
   return name && ALLOWED[ext] ? name : `recording.${extension}`;
 }
 
-/** Title the server accepts: no control characters, 1–200 characters. */
+/** Title the server accepts: no control characters, 1–200 UTF-16 units, never ending in half of a surrogate pair. */
 export function uploadTitle(title: string): string {
   // eslint-disable-next-line no-control-regex
-  const clean = String(title || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
-  return (clean || "녹음").slice(0, 200);
+  const clean = String(title || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim() || "녹음";
+  if (clean.length <= 200) return clean;
+  const last = clean.charCodeAt(199);
+  return clean.slice(0, last >= 0xd800 && last <= 0xdbff ? 199 : 200);
 }
 
 /** `POST …/recordings` (multipart). 201 `Recording`; the folder placement happens in the same transaction. */
