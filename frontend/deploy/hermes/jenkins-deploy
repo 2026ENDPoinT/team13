@@ -108,9 +108,16 @@ backend_restart() {
   docker compose up -d --wait --wait-timeout 600
 }
 backend_probe() {
-  local port
+  local port service
   port=$(docker compose port api 8080 | cut -d: -f2)
-  curl -fsS -m 5 -o /dev/null "http://127.0.0.1:$port/api/auth/methods"
+  curl -fsS -m 5 -o /dev/null "http://127.0.0.1:$port/api/auth/methods" || return 1
+  # LLM 중계(llm-relay-*)는 api·worker 의 네트워크를 함께 쓴다. 새 컨테이너 안에서 게이트웨이까지 닿는지 본다.
+  # 게이트웨이 장애는 백엔드를 되돌려도 고쳐지지 않으므로 경고만 남긴다(hermes-ops-watch 가 계속 알린다).
+  for service in api worker; do
+    docker run --rm --network "container:$(docker compose ps -q "$service")" curlimages/curl:8.11.1 \
+      -fsS -m 5 -o /dev/null http://127.0.0.1:18090/healthz ||
+      echo "WARNING: $service 컨테이너에서 LLM 게이트웨이(127.0.0.1:18090)에 닿지 않음" >&2
+  done
 }
 
 # ---------- 캠퍼스 온 LessonViewer ----------

@@ -37,13 +37,16 @@ ENV = os.environ
 TOKEN = ENV['GATEWAY_TOKEN']
 AGY_MODEL = ENV.get('AGY_MODEL', 'gemini-4-hydrogen-medium')
 AGY_TIMEOUT = float(ENV.get('AGY_TIMEOUT', '150'))
+# 백엔드 ASTRA_LLM_TIMEOUT(300s) 안에 agy 와 폴백을 함께 끝낸다. 폴백에는 남은 시간만 준다.
+REQUEST_BUDGET = float(ENV.get('REQUEST_BUDGET', '290'))
 FALLBACK_URL = ENV['FALLBACK_BASE_URL'].rstrip('/') + '/chat/completions'
 FALLBACK_MODEL = ENV['FALLBACK_MODEL']
 FALLBACK_KEY = ENV['FALLBACK_API_KEY']
 HOST, PORT = ENV.get('LISTEN', '172.24.0.1:18090').rsplit(':', 1)
 MAX_BODY = 16 * 2**20
-# agy 가 동시에 너무 많이 뜨지 않게 한다(백엔드 api·worker 각 2 = 최대 4).
-AGY_SLOTS = threading.BoundedSemaphore(int(ENV.get('AGY_CONCURRENCY', '4')))
+# agy 는 헤르메스 에이전트와 같은 Antigravity 구독 쿼터(5시간·주간)를 쓴다. 동시에 2개까지만 띄우고,
+# 자리가 없으면 30초 기다린 뒤 폴백으로 보낸다.
+AGY_SLOTS = threading.BoundedSemaphore(int(ENV.get('AGY_CONCURRENCY', '2')))
 client = transport.Client(timeout=AGY_TIMEOUT)
 
 
@@ -64,11 +67,11 @@ def via_agy(body):
     return data
 
 
-def via_fallback(body):
+def via_fallback(body, remaining):
     payload = dict(body, model=FALLBACK_MODEL)
     request = urllib.request.Request(FALLBACK_URL, data=json.dumps(payload).encode(), method='POST', headers={
         'Authorization': f'Bearer {FALLBACK_KEY}', 'Content-Type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=280) as response:
+    with urllib.request.urlopen(request, timeout=max(10.0, remaining)) as response:
         return response.status, response.read()
 
 
@@ -118,7 +121,7 @@ class Handler(BaseHTTPRequestHandler):
             reason = type(error).__name__
         fb_started = time.monotonic()
         try:
-            status, raw = via_fallback(body)
+            status, raw = via_fallback(body, REQUEST_BUDGET - (fb_started - started))
         except urllib.error.HTTPError as error:
             status, raw = error.code, error.read()
         except Exception as error:
