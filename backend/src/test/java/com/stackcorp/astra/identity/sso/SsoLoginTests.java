@@ -81,7 +81,9 @@ class SsoLoginTests extends OidcIntegrationTest {
 		assertThat(response.getHeader("Location")).isEqualTo("/courses/7?tab=notice");
 		assertThat(response.getHeaders("Set-Cookie")).anySatisfy((c) -> assertThat(c).startsWith("ASTRA_SESSION=")
 			.contains("HttpOnly", "Secure", "SameSite=Lax", "Path=/"))
-			.anySatisfy((c) -> assertThat(c).startsWith("ASTRA_LOGIN=;").contains("Max-Age=0", "Path=/api/auth/callback"));
+			.anySatisfy((c) -> assertThat(c).startsWith("ASTRA_LOGIN=;").contains("Max-Age=0", "Path=/api/auth/callback"))
+			// 로그인 전에 받은 CSRF token을 로그인 뒤에 쓰지 않는다(ADR-0004 4번).
+			.anySatisfy((c) -> assertThat(c).startsWith("XSRF-TOKEN=").contains("Path=/").doesNotContain("Max-Age"));
 		assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
 		this.mvc.perform(get("/api/me").cookie(response.getCookie("ASTRA_SESSION")))
 			.andExpect(status().isOk())

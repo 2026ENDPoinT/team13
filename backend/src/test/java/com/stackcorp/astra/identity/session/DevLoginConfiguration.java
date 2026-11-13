@@ -109,7 +109,8 @@ public class DevLoginConfiguration {
 				.build();
 			return ResponseEntity.noContent()
 				.header(HttpHeaders.SET_COOKIE, cookie.toString(),
-						DeviceCookie.issue(session.deviceUuid(), this.properties).toString())
+						DeviceCookie.issue(session.deviceUuid(), this.properties).toString(),
+						CsrfCookie.renew(request).toString())
 				.header(HttpHeaders.CACHE_CONTROL, "no-store")
 				.build();
 		}

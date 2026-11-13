@@ -10,6 +10,7 @@ import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
+import org.springframework.security.web.authentication.session.NullAuthenticatedSessionStrategy;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.firewall.RequestRejectedHandler;
 
@@ -29,7 +30,10 @@ class SecurityConfiguration {
 			.formLogin((f) -> f.disable())
 			.httpBasic((b) -> b.disable())
 			.logout((l) -> l.disable())
-			.csrf((csrf) -> csrf.spa())
+			// STATELESS 설정이 SessionManagementFilter를 켠다. 그 filter는 session 쿠키로 인증한 요청마다 '방금 인증했다'고 보고
+			// CsrfAuthenticationStrategy로 XSRF-TOKEN을 지우고 새로 만든다. 그러면 token이 응답마다 바뀌어 동시에 보낸 요청이 낡은
+			// token을 싣게 된다. token은 로그인·로그아웃 응답만 바꾼다(CsrfCookie, ADR-0004 4번).
+			.csrf((csrf) -> csrf.spa().sessionAuthenticationStrategy(new NullAuthenticatedSessionStrategy()))
 			.addFilterBefore(new OriginCheckFilter(properties), CsrfFilter.class)
 			.addFilterBefore(new MultipartCsrfHeaderFilter(), CsrfFilter.class)
 			.addFilterBefore(new SessionAuthenticationFilter(sessions, properties, breakGlass),

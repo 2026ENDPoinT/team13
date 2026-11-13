@@ -234,7 +234,7 @@ flowchart LR
 - 과목 범위는 `/api/courses/{courseId}/...`처럼 요청에 명시한다. 서버 session에 현재 과목을 두지 않는다(SC-03, CHG-02).
 - 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06). `serverTime`은 DB 시계, 곧 기관 시간대로 고정한 DB session의 `CURRENT_TIMESTAMP`다. client 시계는 쓰지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
 - 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. 잠긴 동안 거절한 시도는 기록하되 실패 수에 넣지 않아 잠금을 늘리지 못한다. 잠금과 재사용 판정은 계정의 `users` 행을 잠근 뒤 하므로 동시에 보낸 시도도 한도를 넘지 못한다. 로그인 전이라 사용자 단위 제한을 쓸 수 없어 브라우저 주소마다 15분에 30번으로 제한한다. break-glass 계정은 과목 권한이 없다.
-- session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
+- session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다. token은 브라우저 session 동안 바뀌지 않고, 로그인·로그아웃·지금 기기 폐기 응답만 새 token을 준다(ADR-0004 4번).
 - 과목 구성원 판정은 `catalog`의 규칙 하나(`MembershipRule`)다. 역할(`CourseMemberships.roleOf`), 수강생 명단, 함께 듣는 사람, 내 과목, 시간표, 알림, 수강 신청 처리 권한이 모두 이 규칙을 쓴다. 폐강(`CANCELLED`)한 과목에는 구성원이 없으므로 조회와 명령 모두 404다. 담당·수강 행과 학습 기록은 지우지 않는다.
 - 파일 권한은 `files`의 `FileAccess`가 첨부한 부모 객체에 묻는다. 학습활동 첨부는 `learning`이 판정한다. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 지운 활동과 지운 파일은 담당자에게도 없다. 권한이 없거나 경로의 과목과 객체가 맞지 않으면 존재를 드러내지 않도록 404로 응답한다.
 - 강의실 공지는 `communication`이 판정한다. 담당자는 임시·예약 공지까지 보고 쓰며, 학생은 게시 일시가 DB 시계로 지난 공지만 본다. 공지 조회는 읽음을 남기지 않고, 읽음과 확인은 각각 POST 명령이다(SC-04).
@@ -278,7 +278,7 @@ flowchart LR
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
 | `POST /api/auth/eclass-login` | 누구나(CSRF token 필요). 학교 e-Class 주소 설정이 없으면 404 | `{studentId, password}`. 학교 e-Class에 로그인해 확인한 뒤 session 쿠키(204). 처음 온 학번은 학교 화면의 이름·학과·학년으로 STUDENT를 만들고, 있는 사용자는 그 값으로 갱신한다. ACTIVE가 아니거나 break-glass 계정이면 401 `rejected`, 틀리면 401 `invalid_credentials`, 학교 장애는 502 `school_unavailable`. 비밀번호와 학교 session은 저장하지 않는다. 학교가 거절한 시도만 세어 브라우저 주소당 15분에 30번, 학번당 15분에 10번 실패하면 학교에 묻지 않고 429. 성공한 로그인은 세지 않는다 |
-| `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. IdP 로그아웃은 연계하지 않는다 |
+| `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. session 쿠키를 지우고 새 CSRF token을 준다. IdP 로그아웃은 연계하지 않는다 |
 | `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 같은 경로에 `reauth=failed`를 붙여 302(경로가 안전하지 않으면 `/?reauth=failed`). 브라우저 이동이라 시작하지 못할 때(session 없음·만료, IdP 설정 없음, break-glass session, 사용자당 10분에 10번 초과)도 JSON 대신 같은 302이고 session과 쿠키는 그대로다. ID token 검증 실패는 `/?login=failed` |
 | `POST /api/me/step-up/totp` | break-glass session | `{code}`. TOTP 재인증. 로그인과 같은 잠금 |
 | `GET /api/me` | 로그인한 사용자 | `userId`, `name`, `role`, `breakGlass`, `stepUpMethod`(이 session의 재인증 수단: `idp` → `GET /api/auth/reauth`, `totp` → `POST /api/me/step-up/totp`, 로컬 실행의 `dev`, 없으면 null) |
@@ -294,7 +294,7 @@ flowchart LR
 | `POST /api/me/sessions/{sessionId}/revoke` | 그 session의 주인 | 다른 session 하나를 끝낸다. 지금 session은 409 `current_session`. 204 |
 | `POST /api/me/sessions/revoke-others` | 로그인한 사용자, 최근 재인증 | 지금 session 말고 모두 끝낸다 |
 | `GET /api/me/devices?cursor=&size=` | 로그인한 사용자 | 폐기하지 않은 내 기기. 등록 역순, `nextCursor`(EP-0268) |
-| `DELETE /api/me/devices/{deviceId}` | 그 기기의 주인 | 기기와 그 기기의 session을 폐기한다. 지금 기기면 session 쿠키도 지운다(EP-0267) |
+| `DELETE /api/me/devices/{deviceId}` | 그 기기의 주인 | 기기와 그 기기의 session을 폐기한다. 지금 기기면 session 쿠키도 지우고 새 CSRF token을 준다(EP-0267) |
 | `GET /api/me/login-events?cursor=&size=` | 로그인한 사용자 | 최근 7일 로그인 기록. 최신순, `nextCursor` |
 | `GET /api/me/learning-auth` | 로그인한 사용자 | 이 session의 학습 인증 grant 여부와 만료, 쓸 수 있는 수단(EP-0294, EP-0295) |
 | `POST /api/me/learning-auth/challenges` | 로그인한 사용자 | `{channel}`. challenge 시작. 같은 session의 앞 challenge는 취소한다. `Idempotency-Key` 받지 않음. 201(EP-0293) |

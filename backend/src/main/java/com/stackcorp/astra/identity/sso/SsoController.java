@@ -21,6 +21,7 @@ import com.stackcorp.astra.identity.api.ExternalIdentityProvider.ExternalLogin;
 import com.stackcorp.astra.identity.api.ExternalIdentityProvider.LoginRedirect;
 import com.stackcorp.astra.identity.api.ExternalLoginException;
 import com.stackcorp.astra.identity.session.ClientAddresses;
+import com.stackcorp.astra.identity.session.CsrfCookie;
 import com.stackcorp.astra.identity.session.DeviceCookie;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
@@ -180,7 +181,7 @@ class SsoController {
 					this.clientAddresses.of(request), request.getHeader(HttpHeaders.USER_AGENT));
 			return redirect(ReturnPath.orRoot(external.returnTo()), sessionCookie(session.token()).toString(),
 					DeviceCookie.issue(session.deviceUuid(), this.properties).toString(),
-					loginCookie("", Duration.ZERO).toString());
+					loginCookie("", Duration.ZERO).toString(), CsrfCookie.renew(request).toString());
 		}
 		catch (ExternalLoginException ex) {
 			log.warn("SSO login rejected: reason={}", ex.reason());
