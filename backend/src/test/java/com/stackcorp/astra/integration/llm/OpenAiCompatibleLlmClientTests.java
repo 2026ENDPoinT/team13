@@ -221,16 +221,17 @@ class OpenAiCompatibleLlmClientTests {
 	}
 
 	@Test
-	void asksForAJsonObjectWithTheRequestsTemperature() {
+	void asksForAJsonObjectWithTheRequestsTemperatureAndReasoningEffort() {
 		LlmRequest request = new LlmRequest(Purpose.ASSISTANT, "system", REQUEST.messages(), 600, List.of(), true,
-				Duration.ofSeconds(20), 0.0);
+				Duration.ofSeconds(20), 0.0, "none");
 
 		Map<String, Object> body = client(properties("", Map.of())).body(request);
 
 		assertThat(body).containsEntry("response_format", Map.of("type", "json_object"))
 			.containsEntry("temperature", 0.0)
+			.containsEntry("reasoning_effort", "none")
 			.containsEntry("max_tokens", 600);
-		assertThat(client(properties("", Map.of())).body(REQUEST)).doesNotContainKey("response_format")
+		assertThat(client(properties("", Map.of())).body(REQUEST)).doesNotContainKeys("response_format", "reasoning_effort")
 			.containsEntry("temperature", 0.3);
 	}
 
@@ -246,7 +247,7 @@ class OpenAiCompatibleLlmClientTests {
 			respond(exchange, 200, COMPLETION);
 		});
 		LlmRequest request = new LlmRequest(Purpose.ASSISTANT, "system", REQUEST.messages(), 600, List.of(), true,
-				Duration.ofMillis(200), null);
+				Duration.ofMillis(200), null, null);
 
 		LlmException ex = catchThrowableOfType(LlmException.class,
 				() -> client(properties("", Map.of())).complete(request));

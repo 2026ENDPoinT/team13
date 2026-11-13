@@ -14,18 +14,21 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param rateLimit 한 사용자가 rateWindow 안에 모델을 부를 수 있는 수
  * @param totalRateLimit 모든 사용자를 합해 rateWindow 안에 모델을 부를 수 있는 수. 모델 제공자의 요청 한도를 지킨다
  * @param maxOutputTokens 모델 호출 하나의 출력 token 상한
+ * @param reasoningEffort 요청의 {@code reasoning_effort}. 기본 none이다. 추론하는 모델(DeepSeek v4.x)은 추론 token이 출력 상한을
+ * 먹어 JSON 답이 잘린다. 이 값을 받지 않는 제공자면 비운다(보내지 않는다)
  */
 @ConfigurationProperties("astra.assistant")
 record AssistantProperties(@DefaultValue("true") boolean enabled, @DefaultValue("20s") Duration timeout,
 		@DefaultValue("30") int requestRateLimit, @DefaultValue("10") int rateLimit,
 		@DefaultValue("60") int totalRateLimit, @DefaultValue("1m") Duration rateWindow,
-		@DefaultValue("600") int maxOutputTokens) {
+		@DefaultValue("600") int maxOutputTokens, @DefaultValue("none") String reasoningEffort) {
 
 	AssistantProperties {
 		if (timeout.isNegative() || timeout.isZero() || requestRateLimit < 1 || rateLimit < 1 || totalRateLimit < 1
 				|| rateWindow.isNegative() || rateWindow.isZero() || maxOutputTokens < 1) {
 			throw new IllegalArgumentException("astra.assistant.* 값이 범위를 벗어났습니다.");
 		}
+		reasoningEffort = reasoningEffort == null || reasoningEffort.isBlank() ? null : reasoningEffort.strip();
 	}
 
 }

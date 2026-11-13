@@ -17,7 +17,7 @@ import com.stackcorp.astra.summary.api.LlmClient;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
- * 도우미 스위치(ADR-0044 14번). {@code astra.assistant.enabled=false}면 규칙 답까지 503 {@code llm_disabled}이고, 모델 bean이 있어도
+ * 도우미 스위치(ADR-0044 15번). {@code astra.assistant.enabled=false}면 규칙 답까지 503 {@code llm_disabled}이고, 모델 bean이 있어도
  * {@code astra.llm.enabled=false}면 모델을 쓰지 않는다. 배포 설정마다 Spring context를 새로 띄우지 않도록 객체를 직접 만든다. 외부 AI
  * 스위치와 제공자 없음의 API 응답은 LlmDisabledTests, LlmNotConfiguredTests가 본다.
  */
@@ -50,7 +50,7 @@ class AssistantSwitchTests {
 	}
 
 	private static AssistantProperties properties(boolean enabled) {
-		return new AssistantProperties(enabled, Duration.ofSeconds(20), 30, 10, 60, Duration.ofMinutes(1), 600);
+		return new AssistantProperties(enabled, Duration.ofSeconds(20), 30, 10, 60, Duration.ofMinutes(1), 600, "none");
 	}
 
 }

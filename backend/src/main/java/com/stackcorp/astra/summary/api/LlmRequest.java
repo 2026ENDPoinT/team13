@@ -9,9 +9,11 @@ import java.util.List;
  * 제공자가 무시할 수 있으므로 부르는 쪽은 답을 그대로 검사한다
  * @param timeout 이 요청 하나의 제한 시간(동시 요청 자리를 기다리는 시간 포함). null이면 adapter 설정({@code astra.llm.timeout})이다
  * @param temperature 표본 온도. null이면 adapter 기본값이다
+ * @param reasoningEffort 추론 정도(Chat Completions {@code reasoning_effort}, 예: none). null이면 보내지 않는다. 추론 token이 출력
+ * 상한을 먹어 답이 잘리지 않게 할 때 쓴다
  */
 public record LlmRequest(Purpose purpose, String system, List<LlmMessage> messages, int maxOutputTokens,
-		List<LlmTool> tools, boolean jsonObject, Duration timeout, Double temperature) {
+		List<LlmTool> tools, boolean jsonObject, Duration timeout, Double temperature, String reasoningEffort) {
 
 	/**
 	 * 요청의 쓰임. 제공자에 보내지 않는다. RECORDING은 학습실 녹음 요약(files의 TextModel port, ADR-0041), ASSISTANT는 화면의 AI
@@ -31,7 +33,7 @@ public record LlmRequest(Purpose purpose, String system, List<LlmMessage> messag
 
 	public LlmRequest(Purpose purpose, String system, List<LlmMessage> messages, int maxOutputTokens,
 			List<LlmTool> tools) {
-		this(purpose, system, messages, maxOutputTokens, tools, false, null, null);
+		this(purpose, system, messages, maxOutputTokens, tools, false, null, null, null);
 	}
 
 	public LlmRequest(Purpose purpose, String system, List<LlmMessage> messages, int maxOutputTokens) {

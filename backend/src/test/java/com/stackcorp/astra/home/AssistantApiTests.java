@@ -193,6 +193,7 @@ class AssistantApiTests extends IntegrationTest {
 		LlmRequest sent = this.llm.log.getFirst();
 		assertThat(sent.purpose()).isEqualTo(LlmRequest.Purpose.ASSISTANT);
 		assertThat(sent.jsonObject()).isTrue();
+		assertThat(sent.reasoningEffort()).isEqualTo("none");
 		assertThat(sent.timeout()).hasSeconds(20);
 		String transcript = FakeLlm.transcript(sent);
 		assertThat(transcript).contains("정규화 과제", "데이터베이스", "\"course\":\"C1\"")
@@ -204,7 +205,9 @@ class AssistantApiTests extends IntegrationTest {
 		activity(this.course, "report", "과제", "CURRENT_TIMESTAMP(3) + INTERVAL 1 DAY");
 		for (String answer : List.of("{\"intent\":\"submit\",\"targets\":[\"A1\"],\"say\":\"제출할게요\"}",
 				"{\"intent\":\"open\",\"targets\":[\"A1\"],\"say\":\"" + "가".repeat(301) + "\"}",
-				"{\"intent\":\"open\",\"targets\":\"A1\",\"say\":\"열게요\"}", "그냥 글")) {
+				"{\"intent\":\"open\",\"targets\":\"A1\",\"say\":\"열게요\"}", "그냥 글",
+				// 출력 상한에 잘린 답(추론 token이 상한을 먹은 경우).
+				"{\"intent\":\"choose\",\"targets\":[\"A1\"],\"say\":\"마감이 가까운")) {
 			this.llm.reset((r) -> reply(answer));
 			ask("디비 숙제 어디 있지").andExpect(status().isBadGateway())
 				.andExpect(jsonPath("$.code").value("assistant_invalid_response"));
@@ -214,6 +217,9 @@ class AssistantApiTests extends IntegrationTest {
 		ask("디비 숙제 어디 있지").andExpect(status().isOk())
 			.andExpect(jsonPath("$.actions.length()").value(0))
 			.andExpect(jsonPath("$.say").value("맞는 항목이 없습니다"));
+		// 빠진 intent와 say는 채운다(DeepSeek JSON 모드).
+		this.llm.reset((r) -> reply("{\"targets\":[\"A1\"]}"));
+		ask("디비 숙제 어디 있지").andExpect(status().isOk()).andExpect(jsonPath("$.actions.length()").value(1));
 	}
 
 	@Test

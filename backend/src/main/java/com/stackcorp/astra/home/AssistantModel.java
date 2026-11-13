@@ -119,7 +119,8 @@ class AssistantModel {
 				+ JSON.writeValueAsString(input(snapshot, request, focus));
 		LlmRequest call = new LlmRequest(LlmRequest.Purpose.ASSISTANT, SYSTEM,
 				List.of(new LlmMessage(LlmMessage.Role.USER, List.of(new LlmContent.Text(user)))),
-				this.properties.maxOutputTokens(), List.of(), true, this.properties.timeout(), 0.0);
+				this.properties.maxOutputTokens(), List.of(), true, this.properties.timeout(), 0.0,
+				this.properties.reasoningEffort());
 		LlmResponse response = complete(client, call);
 		answer.inputTokens = response.usage().inputTokens();
 		answer.outputTokens = response.usage().outputTokens();
@@ -243,15 +244,18 @@ class AssistantModel {
 		JsonNode result = parse(text);
 		JsonNode intentNode = result.get("intent");
 		JsonNode sayNode = result.get("say");
-		if (intentNode == null || !intentNode.isString() || !INTENTS.contains(intentNode.stringValue())
-				|| sayNode == null || !sayNode.isString()) {
+		// 빠진 intent와 say는 채운다(DeepSeek JSON 모드는 필드를 빼기도 한다). 있는데 정해 둔 값이 아니면 거절한다.
+		boolean intentMissing = intentNode == null || intentNode.isNull();
+		boolean sayMissing = sayNode == null || sayNode.isNull();
+		if ((!intentMissing && (!intentNode.isString() || !INTENTS.contains(intentNode.stringValue())))
+				|| (!sayMissing && !sayNode.isString())) {
 			throw invalid();
 		}
-		String say = sayNode.stringValue().strip();
+		String say = sayMissing ? "" : sayNode.stringValue().strip();
 		if (say.codePointCount(0, say.length()) > AssistantRequest.MAX_SAY) {
 			throw invalid();
 		}
-		String intent = intentNode.stringValue();
+		String intent = intentMissing ? "choose" : intentNode.stringValue();
 		JsonNode targetNodes = result.get("targets");
 		if (targetNodes != null && !targetNodes.isNull() && !targetNodes.isArray()) {
 			throw invalid();

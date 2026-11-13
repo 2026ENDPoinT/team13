@@ -36,19 +36,20 @@
    - 항목(60개까지, `A1` …): 할 일(서비스 활동과 학교에서 가져온 활동, 30개까지), 7일 안의 마감(끝낸 것 포함), 지금 과목이나 문장에 이름·코드가 나온 과목의 이번 주와 다음 주 마감 활동과 그 과목에서 가져온 학교 활동(학교 주차 기간이나 시작·마감 일시가 그 두 주 안), 최근 공지(서비스 공지와 가져온 학교 공지). 학교 행은 학교 과목 키가 있는 과목의 학생에게만 넣는다(`learning.api.SchoolCourseItems`, 가져온 행만 읽고 학교에 요청하지 않는다). 항목마다 과목 이름, 유형, 제목, 마감 일시, 상태(todo, done, closed, open, notice)다.
    - 사용자 문장, 앞 차례, 지금 과목과 항목의 이름, 지금 시각.
    - 보내지 않는 것: 사용자 이름, 학번, 사용자 ID와 과목·활동의 DB ID, 성적, 제출물, 본문, 다른 사람의 자료.
-   - 강의 자료의 쪽 내용이 아니라 사용자 본인의 과목·할 일 목록(제목과 마감)이므로 교수자 동의 범위(ADR-0032 3번)가 아니다. 이전 `server.mjs`도 같은 종류의 값을 보냈다. 외부 AI 스위치와 제공자 처리 조건은 그대로 따른다(14번).
+   - 강의 자료의 쪽 내용이 아니라 사용자 본인의 과목·할 일 목록(제목과 마감)이므로 교수자 동의 범위(ADR-0032 3번)가 아니다. 이전 `server.mjs`도 같은 종류의 값을 보냈다. 외부 AI 스위치와 제공자 처리 조건은 그대로 따른다(15번).
 9. 답은 `response_format: {"type":"json_object"}`로 받고, system 문구와 사용자 message의 response_schema로도 형식을 알린다. 답은 `{intent: open|choose|none|clarify, targets: [이름], say}`다. intent가 정해 둔 값이 아니거나 say가 문자열이 아니거나 300자를 넘으면 502 `assistant_invalid_response`다. targets 중 이번에 준 이름이 아닌 것은 버린다. 남은 것이 없으면 "맞는 항목이 없습니다"다.
 10. 이름은 서버가 주소로 바꾼다(`AssistantLinks`, Frontend-final origin/main f096656의 주소 규칙과 같다). 강의실은 정규·비정규 강의실 주소, 서비스 영상·자료는 `n=srv-<활동 ID>`, 과제·시험·설문은 과제·퀴즈·설문 ID가 있으면 `n=srv-<그 ID>` 없으면 연결 화면 `act=<활동 ID>`, 강의실 공지는 공지 창 주소(`id=<공지 ID>`)다. 학교에서 가져온 영상(`m=lecture_weeks&n=school-<n>`), 자료(`m=lecture_material&n=school-<n>`), 과제(`m=report&n=school-<n>`), 공지(`id=school-<n>`)는 STack 상세를 같은 창(`external: false`)으로 연다. STack 화면이 없는 가져온 시험, 설문, 그 밖의 유형만 학교 e-Class 주소(https)를 `external: true`로 준다. 볼 화면이 없는 서비스 유형은 그 강의실로 간다.
 
 ### 같은 host의 LLM gateway
 11. 배포의 `ASTRA_LLM_*`은 loopback 중계를 거쳐 gateway의 `/chat/completions`를 부른다. gateway는 `Authorization: Bearer <GATEWAY_TOKEN>`을 비교하므로 `ASTRA_LLM_API_KEY`가 `GATEWAY_TOKEN`과 같아야 한다(도우미용 `ASSISTANT_TOKEN`은 `generateContent` 경로의 값이고 이 경로에서는 쓰지 않는다).
 12. 1순위(agy, Gemini 4 Hydrogen)는 요청에서 `messages`, `tools`, `tool_choice`만 넘기고 `AGY_MODEL`(기본 `gemini-4-hydrogen-medium`)을 쓴다. `response_format`, `temperature`, `max_tokens`, `model`은 버린다(거절하지 않는다). 그래서 형식을 문구로도 알리고 답의 앞뒤 글을 버리고 읽는다. 2순위(DeepSeek, `FALLBACK_MODEL` 기본 `deepseek-ai/deepseek-v4.1-flash-1017`)는 본문을 그대로 받아 `model`만 바꾸고 `thinking`을 빼고 `reasoning_effort: none`을 넣는다. `response_format: json_object`는 gateway 자신의 도우미 경로도 2순위에 보내는 값이다. 강제 도구 호출(`tool_choice`)은 1순위가 지킨다는 근거가 없어 쓰지 않았다.
+13. 요청에 `reasoning_effort`(`astra.assistant.reasoning-effort`, 기본 `none`)를 넣는다. DeepSeek v4.x는 추론을 끄지 않으면 추론 token이 출력 상한(600)을 먹어 JSON 답이 중간에 잘린다(Hive API에서 확인: 추론 550 token, 답이 잘려 `finish_reason: length`. `none`이면 추론 0 token, 약 1.5초에 온전한 답). gateway의 2순위는 같은 값을 스스로 넣고 1순위는 버린다. 이 값을 받지 않는 제공자면 설정을 비운다. 모델 답에 intent나 say가 빠지면 채우고(targets로 판정), 있는데 정해 둔 값이 아니면 거절한다.
 
 ### 한도, 스위치, 기록
-13. 한도는 process 메모리의 `RateLimiter`다. 모든 요청이 사용자별 요청 한도(`astra.assistant.request-rate-limit`, 기본 분당 30)를 쓰고, 모델을 부르는 요청은 사용자별 모델 한도(`rate-limit`, 기본 분당 10)와 모든 사용자의 합계(`total-rate-limit`, 기본 분당 60)를 더 쓴다. 넘으면 429 `rate_limited`와 `Retry-After`다.
-14. `astra.assistant.enabled=false`면 규칙 답까지 모두 503 `llm_disabled`다. 외부 AI 스위치(`astra.llm.enabled=false`)가 꺼졌거나 제공자 key가 없으면 모델이 필요한 요청만 503 `llm_disabled`다. 화면의 "설정되지 않음" 안내가 그대로 맞는다.
-15. 모델 답을 기다리는 시간은 `astra.assistant.timeout`(기본 20초, 동시 요청 자리를 기다리는 시간 포함)이다. 넘으면 504 `assistant_timeout`, 그 밖의 모델 호출 실패는 502 `assistant_upstream_error`다. 이 시간은 요청에만 적용되고 다른 모델 기능의 `astra.llm.timeout`(300초)은 바뀌지 않는다.
-16. 요청마다 감사 기록 하나(`assistant.ask`)를 남긴다. 사용자, session, requestId, 결과 코드(`ok` 또는 오류 코드)만 있고 문장과 답은 없다. 개수(과목 수, 항목 수, 모델이 고른 수와 버린 수, token 수, 시간)는 같은 requestId의 서버 로그 한 줄에 남긴다. 지표는 다른 모델 기능과 같은 `astra.llm.calls`, `astra.llm.tokens`에 `kind=assistant`다. 감사 기록 밖에는 아무것도 저장하지 않는다. migration은 없다.
+14. 한도는 process 메모리의 `RateLimiter`다. 모든 요청이 사용자별 요청 한도(`astra.assistant.request-rate-limit`, 기본 분당 30)를 쓰고, 모델을 부르는 요청은 사용자별 모델 한도(`rate-limit`, 기본 분당 10)와 모든 사용자의 합계(`total-rate-limit`, 기본 분당 60)를 더 쓴다. 넘으면 429 `rate_limited`와 `Retry-After`다.
+15. `astra.assistant.enabled=false`면 규칙 답까지 모두 503 `llm_disabled`다. 외부 AI 스위치(`astra.llm.enabled=false`)가 꺼졌거나 제공자 key가 없으면 모델이 필요한 요청만 503 `llm_disabled`다. 화면의 "설정되지 않음" 안내가 그대로 맞는다.
+16. 모델 답을 기다리는 시간은 `astra.assistant.timeout`(기본 20초, 동시 요청 자리를 기다리는 시간 포함)이다. 넘으면 504 `assistant_timeout`, 그 밖의 모델 호출 실패는 502 `assistant_upstream_error`다. 이 시간은 요청에만 적용되고 다른 모델 기능의 `astra.llm.timeout`(300초)은 바뀌지 않는다.
+17. 요청마다 감사 기록 하나(`assistant.ask`)를 남긴다. 사용자, session, requestId, 결과 코드(`ok` 또는 오류 코드)만 있고 문장과 답은 없다. 개수(과목 수, 항목 수, 모델이 고른 수와 버린 수, token 수, 시간)는 같은 requestId의 서버 로그 한 줄에 남긴다. 지표는 다른 모델 기능과 같은 `astra.llm.calls`, `astra.llm.tokens`에 `kind=assistant`다. 감사 기록 밖에는 아무것도 저장하지 않는다. migration은 없다.
 
 ## 결과와 트레이드오프
 - 화면은 문장과 지금 위치만 보내고 받은 주소로 이동한다. 화면이 들고 있지 않은 자료(다른 쪽의 할 일, 학교에서 가져온 활동)도 답이 된다.

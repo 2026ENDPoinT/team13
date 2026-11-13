@@ -304,6 +304,7 @@ Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://gen
 | `ASTRA_ASSISTANT_RATE_LIMIT` · `ASTRA_ASSISTANT_TOTAL_RATE_LIMIT` | `10` · `60` | 구간 안에 모델을 부를 수 있는 수. 사용자별, 모든 사용자 합계 |
 | `ASTRA_ASSISTANT_RATE_WINDOW` | `1m` | 위 한도의 구간 |
 | `ASTRA_ASSISTANT_MAX_OUTPUT_TOKENS` | `600` | 모델 호출 하나의 출력 token 상한 |
+| `ASTRA_ASSISTANT_REASONING_EFFORT` | `none` | 요청의 `reasoning_effort`. 추론하는 모델(DeepSeek v4.x)이 추론 token으로 출력 상한을 다 써 답이 잘리지 않게 한다. 이 값을 받지 않는 제공자면 비운다 |
 
 ### 저장소와 문서 변환 설정
 

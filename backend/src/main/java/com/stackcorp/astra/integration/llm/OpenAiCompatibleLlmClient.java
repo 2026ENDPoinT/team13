@@ -125,6 +125,9 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 		if (request.jsonObject()) {
 			body.put("response_format", Map.of("type", "json_object"));
 		}
+		if (request.reasoningEffort() != null) {
+			body.put("reasoning_effort", request.reasoningEffort());
+		}
 		body.put("stream", false);
 		if (this.official) {
 			body.put("max_completion_tokens", request.maxOutputTokens());
