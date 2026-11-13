@@ -2,10 +2,13 @@
 // `version`, server-clock `phase` and per-file `summaryPublished`), edit (`PUT`) and delete (`DELETE`), and the course file
 // collection (`GET …/files?q=&cursor=&size=`). Both writes send `If-Match: "<version>"` from the last read; a newer version
 // on the server answers 409 `version_conflict`, a missing header 428. A changed or deleted material drops its study-room
-// records, so the next study-room render no longer lists a removed PDF.
+// records, so the next study-room render no longer lists a removed PDF. A student's list also carries materials imported
+// from the school's e-Class after the native ones (`origin: "school"`, see school-content.tsx); `materialsOf` gives the
+// native ones only.
 import { apiGet, apiSend, ApiError } from "./api.ts";
 import { createResource, retryLater } from "./remote-cache.ts";
 import { forgetRemoteMaterial } from "./course-pdfs-remote.ts";
+import type { SchoolMaterial } from "./school-content.tsx";
 
 type Id = number | string;
 
@@ -19,8 +22,9 @@ export interface MaterialFile {
   summaryPublished?: boolean;
 }
 
-/** One material of `GET …/materials`. */
+/** One native material of `GET …/materials`. */
 export interface Material {
+  origin?: undefined;
   activityId: number;
   weekNo: number;
   title: string;
@@ -36,7 +40,7 @@ export interface Material {
 /** `GET …/materials`. */
 export interface MaterialList {
   serverTime?: string;
-  items?: Material[];
+  items?: (Material | SchoolMaterial)[];
 }
 
 /** One row of the course file collection. */
@@ -93,9 +97,10 @@ export const materialKey = (courseId: Id): string => String(courseId);
 
 export const materialLists = createResource<MaterialList, [Id]>((courseId) => apiGet<MaterialList>(base(courseId)));
 
-/** The material array of a `materialLists` response (`{ serverTime, items }`). */
+/** The native materials of a `materialLists` response (`{ serverTime, items }`); imported school materials are left out. */
 export function materialsOf(data: MaterialList | null | undefined): Material[] {
-  return data && Array.isArray(data.items) ? data.items : [];
+  const items = data && Array.isArray(data.items) ? data.items : [];
+  return items.filter((item): item is Material => item.origin !== "school");
 }
 
 // ---------- 파일모음 ----------

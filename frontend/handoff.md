@@ -40,6 +40,27 @@
 - 실제 마이크·실제 Chrome 음성 인식 정확도와 일시정지·다시 시작은 브라우저에서 확인하지 못했다(일시정지·재시작은 단위 테스트만).
 - 서버 저장용 전사가 필요하면 백엔드가 스트리밍/업로드 후 전사 API를 제공해야 한다.
 
+## 2026-11-14 학교 e-Class 자료를 STack 자료 상세로: 목록·상세·미리보기·내려받기와 학교 오류 상태
+
+### 작업 내용
+- 백엔드(`STAC-000-school-content`, 1c81144)는 학생의 `GET …/materials`에 학교 자료를 `origin: "school"`, 문자열 `activityId`(`school-<n>`), 복사 전 문자열 `fileId`(`school-file-<n>`)로 붙이고, `GET …/activities/school-<n>`이 열 때만 학교 상세를 읽는다. 파일 내용·미리보기 주소는 문자열 ID를 받아 303/307로 네이티브 파일 주소로 보낸다.
+- 한 자료 한 행: 주차 목록의 학교 행(본인 `done`·`phase`, 자리)이 이기고, 자료 목록은 그 행에 파일을 붙인다. 주차 목록에 없는 학교 자료만 자료 목록에서 행이 된다. 링크는 어느 쪽이든 STack 자료 상세 `m=lecture_material&n=school-<n>`(같은 창). 다른 학교 행(과제·시험 등)은 #19처럼 e-Class 새 탭.
+- 자료 상세(`n=school-<n>`): 본문은 텍스트(`Prose`), 작성자·게시일, 파일마다 미리보기(`preview_form.acl?n=school-file-<n>`, 복사 뒤 숫자면 `srv-<id>`)·내려받기, "e-Class에서 열기". 학습실·요약·학습실에 저장은 학교 파일에 두지 않는다. 상세는 주소에 들어올 때만 한 번 읽고(포커스 새로고침 없음), 목록·파일모음은 상세·썸네일·미리보기를 부르지 않는다.
+- 오류: 409 `school_signin_required` → "학번·e-Class 비밀번호로 다시 로그인"이 로그인 모달을 이 화면 위에 열고(닫기 가능), 로그인되면 같은 자료를 다시 읽는다(`requestSchoolSignin`). 409 `file_scanning` → `Retry-After`(1~30초)만큼 기다렸다 다시, 최대 12번(`whileScanning`, 내려받기·미리보기). 422 → 사유와 e-Class 링크. 502 → 다시 시도.
+- 파일모음(46): 서버 파일 아래에 "학교 e-Class 자료" 묶음(같은 검색어로 거름, 이미 서버 목록에 나온 복사본은 빼고, 크기는 "약").
+- 문자열 ID 경로: 화면 필드는 `serverSchoolMaterial`(문자열)로 따로 두고 `serverMaterial`(숫자)은 그대로. `materialsOf`는 네이티브만 준다(교수 강의실·학습실 기록·`listRemotePdfs`는 학교 자료를 보지 않는다). `schoolHref`·`SCHOOL_ORIGIN`은 `shared/school-content.tsx`로 옮겼다.
+
+### 변경 파일
+- 새 파일: `src/shared/school-content.tsx`, `tests/integration/school-materials.test.ts`
+- `src/shared/course-activities-remote.ts`, `materials-remote.ts`, `activity-links.ts`, `course-pdfs-remote.ts`, `uploads-remote.tsx`, `preview-remote.tsx`, `entry-login.tsx`, `backend-prompt.tsx`, `src/areas/course/activities-server.tsx`, `src/areas/learning/activity-server.tsx`, `preview-server.tsx`, `learning.tsx`, `learning.css`, `src/router.tsx`, `src/types.ts`, `tests/integration/school-activities.test.ts`(import 경로)
+
+### 검증
+- `origin/main`(ace7e4a) 위로 rebase한 뒤 `npm run typecheck` 오류 없음, `npm test` 31파일 1443개 통과(새 13개, 기존 테스트는 #19 테스트의 import 경로만 바꿈), `npm run build` 성공.
+- 실제 실행(로컬 백엔드 1c81144 `bootTestRun` 18480/18481, 프론트 `http://localhost:4193`, 본인 계정 학교 로그인 2번): 과목 하나에서 강의실 12행 중 학교 자료 8행이 한 자료 한 행·같은 창 링크, 다른 학교 행 4개는 새 탭. 학습활동 목록 자료 필터 8행. 파일모음 학교 파일 10개(썸네일 없음). 이미 읽은 자료 하나: 작성자·게시일·첨부 1개(본문은 비어 있었다), e-Class 링크. PDF(약 200KB) 미리보기 11쪽, 복사 뒤 숫자 ID로 내려받기 202,564바이트(`%PDF-`). 로그아웃 뒤 같은 자료 주소 → 로그인 모달, 다시 로그인 → 같은 자료. 백엔드 요청 기록: 학교 상세 읽기는 직접 연 3번뿐, 학교 파일 목록 읽기 1번.
+
+### 남은 작업
+- 409 `school_signin_required`는 실제로 만들지 못했다(로컬 백엔드를 다시 띄우면 DB가 초기화되어 401이 된다). Vitest로만 확인.
+
 ## 2026-11-14 런타임 점검 5 결함 수정(F1·F2·F3·F5·F6·F7)
 
 ### 작업 내용

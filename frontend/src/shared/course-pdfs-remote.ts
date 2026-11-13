@@ -298,7 +298,10 @@ export async function listRemotePdfs(courseId: Id | null | undefined): Promise<R
   const before = generation;
   const list = await apiGet<MaterialList | null>(`/api/courses/${encodeURIComponent(backendCourseId)}/materials`);
   if (before !== generation) return [];
-  return rememberMaterials(list && Array.isArray(list.items) ? list.items : [], kj, backendCourseId);
+  // Materials imported from the school's e-Class have no study-room records: their files have no summaries, and an
+  // uncopied file has a string id the study room cannot address.
+  const native = (list && Array.isArray(list.items) ? list.items : []).filter((item): item is Material => item.origin !== "school");
+  return rememberMaterials(native, kj, backendCourseId);
 }
 
 /** Forgets the records and cached originals of a material that was changed or deleted. */
