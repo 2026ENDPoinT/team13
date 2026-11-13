@@ -44,6 +44,24 @@ fi
 previous=$(git -C "$src" rev-parse HEAD)
 echo "deploy $target: ${previous:0:7} -> ${sha:0:7}"
 
+# 서버에만 있는 설정(git 이 무시하는 파일)은 그 이름의 파일이 커밋에 들어오면 checkout 이 말없이 덮어쓴다.
+# 그런 커밋은 배포하지 않는다. e-class 백엔드의 Hermes 설정은 compose.hermes.yaml(.env 의 COMPOSE_FILE)로 읽는다.
+case $target in
+  eclass-backend)  server_only=(.env compose.hermes.yaml s3.json s3-credentials.env) ;;
+  eclass-frontend) server_only=(.env) ;;
+  *)               server_only=() ;;
+esac
+if (( ${#server_only[@]} )); then
+  tracked=$(git -C "$src" ls-tree -r --name-only "$sha" -- "${server_only[@]}")
+  if [[ -n $tracked ]]; then
+    echo "${sha:0:7} tracks server-only file(s): $tracked; refusing to deploy (would overwrite Hermes config)" >&2
+    exit 1
+  fi
+fi
+if [[ $target == eclass-backend ]] && git -C "$src" cat-file -e "$sha:compose.override.yaml" 2>/dev/null; then
+  echo "WARNING: ${sha:0:7} 에 compose.override.yaml 이 있지만 Hermes 는 COMPOSE_FILE=compose.yaml:compose.hermes.yaml 만 읽는다" >&2
+fi
+
 checkout() {
   git -C "$src" checkout --quiet --detach "$1"
   if [[ -f $src/.gitmodules ]]; then
@@ -52,7 +70,7 @@ checkout() {
 }
 
 cd "$root"
-# 사람이 고친 compose.yaml·compose.override.yaml·.env 는 그대로 쓴다.
+# 사람이 고친 compose.yaml·compose.hermes.yaml·.env 는 그대로 쓴다.
 
 # ---------- e-class 프론트엔드: 빌드 결과를 dist-next 에 만든 뒤 dist 와 바꾼다 ----------
 frontend_build() {

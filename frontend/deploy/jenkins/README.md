@@ -80,9 +80,15 @@ STack-Backend 에 새 환경 변수가 생기면 Hermes `~/projects/eclass-backe
 | 사본 | Hermes 위치 | 내용 |
 |---|---|---|
 | `deploy/hermes/eclass-frontend/compose.yaml`, `cloudflared.yml` | `~/projects/astra-eclass-reference/` | viewer(server.mjs, `ASTRA_API_ORIGIN=http://api:8080`, 네트워크 `astra_egress`) + tunnel `b6ca641a…` |
-| `deploy/hermes/eclass-backend/compose.override.yaml` | `~/projects/eclass-backend/app/` | S3 호환 저장소(SeaweedFS)와 버킷 생성, 로그 상한, MySQL 한도 1280m |
+| `deploy/hermes/eclass-backend/compose.hermes.yaml` | `~/projects/eclass-backend/app/` | S3 호환 저장소(SeaweedFS)와 버킷 생성, 로그 상한, MySQL 한도 1280m, LLM 중계 |
 
 `.env`, `s3.json`, `s3-credentials.env`, `~/projects/eclass-backend/break-glass.txt`(운영자 비상 계정)는 Hermes 에만 있고(600) 저장소에 넣지 않습니다. e-class 백엔드 `.env` 에는 학교 e-Class 로그인(`ASTRA_ECLASS_LOGIN_BASE_URL`), ClamAV 검사(`COMPOSE_PROFILES=mysql,scan`, `ASTRA_SCAN_REQUIRED=true`), LLM(아래 게이트웨이, 텍스트 전용)이 켜져 있습니다.
+
+서버 설정 파일은 git 이 무시하는 파일이라, 같은 이름의 파일이 커밋에 들어오면 `git checkout` 이 말없이 덮어씁니다. 그래서
+
+- e-class 백엔드의 Hermes 덧붙임은 `compose.override.yaml` 이 아닌 `compose.hermes.yaml` 이고, `.env` 의 `COMPOSE_FILE=compose.yaml:compose.hermes.yaml` 로 읽습니다. 레포에 `compose.override.yaml` 이 생겨도 Hermes 는 읽지 않습니다(배포 로그에 경고).
+- jenkins-deploy 는 배포할 커밋이 `.env`·`compose.hermes.yaml`·`s3.json`·`s3-credentials.env`(프론트는 `.env`)를 추적하면 아무것도 바꾸지 않고 실패합니다.
+- 설정 백업은 체크아웃 밖 `~/projects/eclass-backend/config-backups/`(700)에 둡니다.
 
 ### e-class LLM 게이트웨이 (`agy-llm-gateway`)
 
