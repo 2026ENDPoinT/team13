@@ -93,6 +93,8 @@ STack-Backend 에 새 환경 변수가 생기면 Hermes `~/projects/eclass-backe
 
 ## 서버 운영 (Hermes)
 
-- 백업: `hermes-db-backup.timer` 가 매일 KST 04:30 에 gyeongmae(호스트 PostgreSQL)·campus-on(PostgreSQL)·e-class(MySQL)를 `~/backups/db/<이름>/` 에 7개씩 남기고 `yoobin-desktop-linux:/home/hermes-ml/hermes-backups/db` 로 rsync 합니다. 실패하면 `gyeongmae-alert@` 가 텔레그램으로 알립니다. 스크립트는 `~/bin/hermes-db-backup`.
+- DB 백업: `hermes-db-backup.timer` 가 매일 KST 04:30 에 gyeongmae(호스트 PostgreSQL)·campus-on(PostgreSQL)·e-class(MySQL)를 `~/backups/db/<이름>/` 에 7개씩 남기고 `yoobin-desktop-linux:/home/hermes-ml/hermes-backups/db` 로 rsync 합니다(삭제는 전파하지 않고, 사본은 30일 보관). 스크립트는 `~/bin/hermes-db-backup`.
+- 파일 백업: `hermes-file-backup.timer` 가 매일 KST 05:00 에 e-class 업로드 저장소(SeaweedFS 버킷 `astra-content`·`astra-delivery`, `aws s3 sync` 증분 미러), 캠퍼스 온 `lesson_data` 볼륨(tar.gz 7개), Hermes `~/.hermes/state.db`(3개)와 stock-report `agent_console.sqlite3`(7개)를 `~/backups/files/` 에 남기고 `~/backups/stock-report` 와 함께 같은 데스크톱 `hermes-backups/` 로 rsync 합니다. SQLite 는 온라인 백업 API 로 복사하고 `quick_check` 를 통과한 것만 남깁니다. 스크립트는 `~/bin/hermes-file-backup`.
+- 백업 하나라도 실패하면 `gyeongmae-alert@` 가 텔레그램으로 알립니다.
 - 자원 한도: 모든 compose 서비스에 메모리·CPU 한도와 로그 상한(20m×3)이 있습니다(campus-on-demo 는 `compose.override.yaml`). `gyeongmae-api` 는 systemd `MemoryHigh=1280M`, `MemoryMax=1536M`.
 - 디스크·로그: `/etc/docker/daemon.json`(기본 로그 상한, live-restore. 다음 Docker 재시작부터), journald 1G 상한, sysstat 수집.
