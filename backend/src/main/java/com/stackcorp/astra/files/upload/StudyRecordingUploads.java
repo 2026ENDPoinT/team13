@@ -39,6 +39,14 @@ public class StudyRecordingUploads {
 	}
 
 	/**
+	 * 녹음 파일 하나의 크기 상한을 넘으면 413 {@code too_large}다. 학습실은 용량·개수 한도보다 먼저 본다(올리기 흐름의 같은 검사와
+	 * 같은 응답이다).
+	 */
+	public void requireSize(long sizeBytes) {
+		UploadService.requireSize(policy(), sizeBytes);
+	}
+
+	/**
 	 * 녹음 파일을 검사해 저장하고 기록한다. 같은 사용자의 같은 멱등 key로 같은 요청(같은 파일, 이름, {@code request})의 업로드가 이미
 	 * 있으면 아무것도 하지 않고 그 업로드 ID를 돌려주고, 다른 요청이면 409 {@code idempotency_conflict}다. 그 업로드가 녹음을
 	 * 만들었는지는 부르는 쪽이 확인한다.
