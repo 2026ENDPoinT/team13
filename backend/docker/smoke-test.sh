@@ -16,6 +16,13 @@ pass() {
 	echo "ok: $*"
 }
 
+# 0. 허용 Origin이 없으면 compose가 구성을 거부하고 무엇이 빠졌는지 알린다. shell 환경 변수가 .env보다 앞선다.
+if missing="$(ASTRA_SESSION_ALLOWED_ORIGINS='' docker compose config --quiet 2>&1)"; then
+	fail "compose accepted an empty ASTRA_SESSION_ALLOWED_ORIGINS"
+fi
+grep -q 'ASTRA_SESSION_ALLOWED_ORIGINS' <<<"${missing}" || fail "compose refused the config without naming ASTRA_SESSION_ALLOWED_ORIGINS: ${missing}"
+pass "compose refuses to start api without ASTRA_SESSION_ALLOWED_ORIGINS"
+
 # 1. 모든 서비스가 healthcheck를 통과할 때까지 기다린다.
 docker compose up --detach --wait --wait-timeout 420 || {
 	docker compose ps
@@ -42,6 +49,41 @@ headers="$(curl --silent --show-error --fail --max-time 10 --dump-header - --out
 	|| fail "GET /api/auth/csrf failed"
 grep -qi '^set-cookie: XSRF-TOKEN=' <<<"${headers}" || fail "GET /api/auth/csrf did not set XSRF-TOKEN"
 pass "GET /api/auth/csrf answers through the api container"
+
+# 3-1. 프론트엔드 서버(Frontend-final server.mjs)를 거친 상태 변경 요청. 그 proxy는 Host를 api 주소로 바꾸고, 브라우저의 Origin과
+#      Sec-Fetch-Site를 그대로 넘기며 X-Forwarded-Host·Proto를 붙인다. 여기서 curl이 보내는 Host(127.0.0.1:port)가 그 바뀐 Host다.
+#      이 단계가 보이는 것: 배포한 .env의 허용 Origin에서 온 요청은 Host가 바뀌어도 Origin·CSRF 검사를 지나 인증 단계의 401이 되고,
+#      목록에 없는 Origin은 403이다. 허용 목록이 있으면 검사는 Origin만 보므로, X-Forwarded-Host를 믿지 않는다는 성질은 여기서
+#      확인하지 않는다. 그것은 허용 목록이 빈 자기 origin 비교에서 실제 Tomcat으로
+#      StackBackendApplicationTests.selfOriginCheckIgnoresForwardedHostEvenWhenItMatchesTheOrigin이 확인한다.
+frontend_origin="$(docker compose exec -T api env | sed -n 's/^ASTRA_SESSION_ALLOWED_ORIGINS=//p' | cut -d, -f1 | tr -d '\r ')"
+[[ -n "${frontend_origin}" ]] || fail "api has no ASTRA_SESSION_ALLOWED_ORIGINS"
+xsrf="$(sed -n 's/^[Ss]et-[Cc]ookie: XSRF-TOKEN=\([^;]*\).*/\1/p' <<<"${headers}" | head -n 1 | tr -d '\r')"
+through_frontend_proxy() {
+	curl --silent --max-time 10 --output "$2" --write-out '%{http_code}' --request POST \
+		--header "Origin: $1" --header 'Sec-Fetch-Site: same-origin' --header "X-Forwarded-Host: ${1#*://}" \
+		--header 'X-Forwarded-Proto: https' --header "X-XSRF-TOKEN: ${xsrf}" --cookie "XSRF-TOKEN=${xsrf}" \
+		"http://${api_port}/api/auth/logout"
+}
+body="$(mktemp)"
+status="$(through_frontend_proxy "${frontend_origin}" "${body}")"
+[[ "${status}" == 401 ]] || fail "POST from ${frontend_origin} through a Host-rewriting proxy answered ${status}, expected 401: $(cat "${body}")"
+status="$(through_frontend_proxy "https://evil.example" "${body}")"
+[[ "${status}" == 403 ]] && jq -e '.detail | contains("출처")' "${body}" >/dev/null \
+	|| fail "POST from another origin answered ${status}, expected 403 from the origin check: $(cat "${body}")"
+rm -f "${body}"
+pass "a mutating request from the allowed origin ${frontend_origin} passes the origin and CSRF checks with Host rewritten; an unlisted origin is refused"
+
+# 3-2. /doc, /vod 전달 cookie 서명. 이 구성에는 로그인한 사용자와 변환한 문서가 없어 cookie를 받아 /doc를 열어 볼 수 없다.
+#      대신 두 가지를 본다. 떠 있는 api는 ASTRA_DELIVERY_REQUIRED=true로 시작했다. 같은 이미지와 .env에서 서명만 끄면 api가
+#      시작하지 않고 무엇을 넣을지 알린다. 그러므로 1번에서 healthy가 된 api에는 서명기가 있다(ADR-0009 8번).
+docker compose exec -T api env | grep -qx 'ASTRA_DELIVERY_REQUIRED=true' || fail "api does not run with ASTRA_DELIVERY_REQUIRED=true"
+if unsigned="$(timeout 240 docker compose run --rm --no-deps -e ASTRA_DELIVERY_ORIGIN_ENABLED=false api 2>&1)"; then
+	fail "api started without a /doc, /vod cookie signer"
+fi
+grep -q 'astra.delivery.required=true' <<<"${unsigned}" \
+	|| fail "api without a signer did not fail with the delivery message: $(tail -n 20 <<<"${unsigned}")"
+pass "api refuses to start without a /doc, /vod cookie signer, so the healthy api has one"
 
 # 4. /actuator는 공개 port의 경로에 없다.
 status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' "http://${api_port}/actuator/health")"
@@ -142,7 +184,9 @@ for service in api worker converter transcoder; do
 	fi
 	docker compose exec -T "${service}" bash -c 'echo x > /tmp/probe' || fail "${service} cannot write to /tmp"
 done
-pass "containers run as non-root on a read-only root filesystem with a writable /tmp"
+docker compose exec -T api bash -c 'echo x > /spool/probe && rm /spool/probe' \
+	|| fail "api cannot write to its multipart spool volume"
+pass "containers run as non-root on a read-only root filesystem with a writable /tmp; api has a writable /spool"
 
 # 10. 로그는 JSON 한 줄이고 query string을 남기지 않는다.
 curl --silent --output /dev/null --max-time 10 "http://${api_port}/api/auth/csrf?probe=smoke-query-value"

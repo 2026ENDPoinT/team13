@@ -1,6 +1,7 @@
 package com.stackcorp.astra.communication;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -109,7 +110,15 @@ class CommunityNoticeApiTests extends BoardTestSupport {
 			.andExpect(jsonPath("$.authorName").value("테스트 STAFF"))
 			.andExpect(jsonPath("$.read").value(false))
 			.andExpect(jsonPath("$.canManage").value(false))
-			.andExpect(jsonPath("$.attachments[0].fileId").value(file));
+			.andExpect(jsonPath("$.attachments[0].fileId").value(file))
+			// 어느 계정이 운영자인지는 운영자끼리만 안다. 다른 사람에게는 이름만 준다.
+			.andExpect(jsonPath("$.authorId").value(nullValue()))
+			.andExpect(jsonPath("$.authorHasPhoto").value(false));
+		this.data.photo(this.op);
+		this.operator.get(NOTICES + "/" + studentNotice)
+			.andExpect(jsonPath("$.authorId").value(this.op))
+			.andExpect(jsonPath("$.authorHasPhoto").value(true));
+		this.student.get(NOTICES + "/" + studentNotice).andExpect(jsonPath("$.authorHasPhoto").value(false));
 		this.student.get(CommunityApiTests.content(file)).andExpect(status().isOk());
 		this.professor.get(CommunityApiTests.content(file)).andExpect(status().isNotFound());
 		this.professor.get(NOTICES + "/" + studentNotice).andExpect(status().isNotFound());

@@ -12,7 +12,9 @@ public class SummaryJobException extends RuntimeException {
 		/** 파일이 검사를 마치지 않았다. */
 		FILE_NOT_READY,
 		/** PDF가 아니다. */
-		UNSUPPORTED_FILE
+		UNSUPPORTED_FILE,
+		/** 요청한 사람이 과목의 결정권자가 아니다. 조교는 외부 AI 처리를 요청하지 않는다(ADR-0032). */
+		LLM_DECIDER_REQUIRED
 	}
 
 	private final Code code;

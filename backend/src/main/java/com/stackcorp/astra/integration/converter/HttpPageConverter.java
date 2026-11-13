@@ -182,7 +182,8 @@ final class HttpPageConverter implements PageConverter, AutoCloseable {
 						}
 						JsonNode text = meta.path("text");
 						pages.accept(new ConvertedPage(expected, text.isString() ? text.stringValue() : "",
-								meta.path("textTruncated").asBoolean(false), display, content));
+								meta.path("textTruncated").asBoolean(false), display, content,
+								meta.path("imageUnavailable").asBoolean(false)));
 						expected++;
 						meta = null;
 						display = null;

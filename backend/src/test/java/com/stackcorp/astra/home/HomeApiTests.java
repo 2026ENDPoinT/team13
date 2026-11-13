@@ -3,10 +3,12 @@ package com.stackcorp.astra.home;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -306,14 +308,98 @@ class HomeApiTests extends IntegrationTest {
 
 		long fewStatements = statements(few);
 		long manyStatements = statements(many);
-		// 과목마다 쿼리를 더 보내지 않는다. 과목마다 과제와 퀴즈가 있고 그 점수를 공개해도 같다.
-		// 시계, 과목, 할 일 1과 완료 판정 4와 평가 ID 1, 공지 2, 알림마당 공지 2, 쪽지 1, 알림 수 1, 새 성적 5(애플리케이션 19)와
-		// session 확인, transaction 문장뿐이다.
+		// 과목마다 쿼리를 더 보내지 않는다. 과목마다 과제, 퀴즈, 영상 진도, 출석이 있고 점수를 공개해도 같다.
+		// 시계, 과목, 할 일 1과 완료 판정 4와 평가 ID 1, 공지 2, 영상 진도 1, 출석 1, 알림마당 공지 2, 쪽지 1, 알림 수 1, 새 성적 5
+		// (애플리케이션 21)와 session 확인, transaction 문장뿐이다.
 		assertThat(manyStatements).isEqualTo(fewStatements);
-		assertThat(manyStatements).isLessThanOrEqualTo(28);
+		assertThat(manyStatements).isLessThanOrEqualTo(30);
 	}
 
-	/** 과목마다 공지, 활동, 과제, 퀴즈를 두고 과제와 퀴즈의 그 학생 점수를 공개한다. */
+	@Test
+	void courseCardsCarryTheWeekOfTheTermAndTheCallersProgressAndAttendance() throws Exception {
+		long c = course();
+		long untimed = course();
+		long stu = this.data.user("STUDENT");
+		this.data.enroll(c, stu);
+		this.data.enroll(untimed, stu);
+		long term = this.data.insert("""
+				INSERT INTO terms (term_year, term_code, term_name, start_date, end_date)
+				VALUES (:year, '1', '테스트 학기', CURRENT_DATE - INTERVAL 15 DAY, CURRENT_DATE + INTERVAL 60 DAY)
+				""", Map.of("year", TestData.termYear()));
+		this.jdbc.sql("UPDATE courses SET term_id = :t WHERE course_id = :c").param("t", term).param("c", c).update();
+		// 열린 영상 콘텐츠 둘 가운데 하나를 채웠다. 공개 전 활동의 콘텐츠는 세지 않는다.
+		long video = this.data.activity(c, "lecture_weeks", true, null, null);
+		long met = lectureItem(video, 1);
+		lectureItem(video, 2);
+		lectureItem(this.data.activity(c, "lecture_weeks", false, null, null), 1);
+		this.jdbc.sql("""
+				INSERT INTO online_lecture_item_progress (user_id, online_lecture_item_id, credited_in_sec, met_at)
+				VALUES (:u, :i, 600, CURRENT_TIMESTAMP(3))
+				""").param("u", stu).param("i", met).update();
+		// 출석, 지각, 결석, 아직 판정하지 않은 차시, 휴강한 차시.
+		attendance(c, stu, "출석", false);
+		attendance(c, stu, "지각", false);
+		attendance(c, stu, "결석", false);
+		attendance(c, stu, null, false);
+		attendance(c, stu, "출석", true);
+
+		ApiClient student = new ApiClient(this.mvc, this.data.session(stu));
+		String card = "$.courses[?(@.courseId == " + c + ")]";
+		String bare = "$.courses[?(@.courseId == " + untimed + ")]";
+		student.get("/api/me/home")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath(card + ".currentWeek").value(contains(3)))
+			.andExpect(jsonPath(card + ".weekCount").value(contains(11)))
+			.andExpect(jsonPath(card + ".progressPercent").value(contains(50)))
+			.andExpect(jsonPath(card + ".attendance.attended").value(contains(2)))
+			.andExpect(jsonPath(card + ".attendance.total").value(contains(3)))
+			.andExpect(jsonPath(bare + ".currentWeek").value(contains(nullValue())))
+			.andExpect(jsonPath(bare + ".weekCount").value(contains(nullValue())))
+			.andExpect(jsonPath(bare + ".progressPercent").value(contains(nullValue())))
+			.andExpect(jsonPath(bare + ".attendance.attended").value(contains(0)))
+			.andExpect(jsonPath(bare + ".attendance.total").value(contains(0)));
+		// 담당자에게는 주만 있고 본인 진도와 출석은 없다.
+		this.professor.get("/api/me/home")
+			.andExpect(jsonPath(card + ".currentWeek").value(contains(3)))
+			.andExpect(jsonPath(card + ".progressPercent").value(contains(nullValue())))
+			.andExpect(jsonPath(card + ".attendance").value(contains(nullValue())));
+
+		LocalDate start = LocalDate.of(2026, 9, 1);
+		LocalDate end = LocalDate.of(2026, 12, 21);
+		assertThat(HomeService.CourseWeek.of(start, end, start.minusDays(1)))
+			.isEqualTo(new HomeService.CourseWeek(0, 16));
+		assertThat(HomeService.CourseWeek.of(start, end, start)).isEqualTo(new HomeService.CourseWeek(1, 16));
+		assertThat(HomeService.CourseWeek.of(start, end, start.plusDays(7))).isEqualTo(new HomeService.CourseWeek(2, 16));
+		assertThat(HomeService.CourseWeek.of(start, end, end)).isEqualTo(new HomeService.CourseWeek(16, 16));
+		assertThat(HomeService.CourseWeek.of(start, end, end.plusDays(30))).isEqualTo(new HomeService.CourseWeek(16, 16));
+		assertThat(HomeService.CourseWeek.of(end, start, start)).isEqualTo(HomeService.CourseWeek.UNKNOWN);
+	}
+
+	private long lectureItem(long activityId, int seq) {
+		return this.data.insert("""
+				INSERT INTO online_lecture_items (activity_id, link_seq, title, content_kind, content_path, duration_sec, required_sec)
+				VALUES (:a, :seq, '영상', 'video', 'vod/test/index.m3u8', 600, 600)
+				""", Map.of("a", activityId, "seq", seq));
+	}
+
+	/** 차시 하나와, status가 있으면 그 학생의 기록. */
+	private void attendance(long courseId, long userId, String status, boolean cancelled) {
+		long week = this.data.insert("INSERT INTO course_weeks (course_id, week_no) VALUES (:c, :n)",
+				Map.of("c", courseId, "n", TestData.weekNo()));
+		long session = this.data.insert("""
+				INSERT INTO attendance_sessions (course_id, course_week_id, session_no, session_state)
+				VALUES (:c, :w, 1, :state)
+				""", Map.of("c", courseId, "w", week, "state", cancelled ? "cancelled" : "closed"));
+		if (status != null) {
+			this.jdbc.sql("INSERT INTO attendance_records (attendance_session_id, user_id, status) VALUES (:s, :u, :status)")
+				.param("s", session)
+				.param("u", userId)
+				.param("status", status)
+				.update();
+		}
+	}
+
+	/** 과목마다 공지, 활동, 과제, 퀴즈, 영상 콘텐츠, 출석 차시를 두고 과제와 퀴즈의 그 학생 점수를 공개한다. */
 	private ApiClient studentWithCourses(int count) throws Exception {
 		long stu = this.data.user("STUDENT");
 		for (int i = 0; i < count; i++) {
@@ -322,6 +408,8 @@ class HomeApiTests extends IntegrationTest {
 			notice(c, "{\"title\":\"공지 " + i + "\"}");
 			activity(c, true, "NULL", "CURRENT_TIMESTAMP + INTERVAL 1 DAY");
 			gradedActivities(c, stu);
+			lectureItem(this.data.activity(c, "lecture_weeks", true, null, null), 1);
+			attendance(c, stu, "출석", false);
 		}
 		return new ApiClient(this.mvc, this.data.session(stu));
 	}
@@ -393,7 +481,7 @@ class HomeApiTests extends IntegrationTest {
 	 */
 	private long activity(long courseId, boolean published, String openAt, String closeAt) {
 		long week = this.data.insert("INSERT INTO course_weeks (course_id, week_no) VALUES (:c, :n)",
-				Map.of("c", courseId, "n", (int) (Math.random() * 1_000_000) + 1));
+				Map.of("c", courseId, "n", TestData.weekNo()));
 		return this.data.insert("""
 				INSERT INTO learning_activities (course_id, course_week_id, activity_type, title, published_yn, open_at, close_at)
 				VALUES (:c, :w, 'report', '과제', :pub, %s, %s)

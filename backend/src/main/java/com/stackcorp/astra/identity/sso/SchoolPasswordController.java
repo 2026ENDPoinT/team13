@@ -19,6 +19,7 @@ import com.stackcorp.astra.identity.api.SchoolLoginException;
 import com.stackcorp.astra.identity.api.SchoolPasswordVerifier;
 import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.SchoolAccount;
 import com.stackcorp.astra.identity.session.ClientAddresses;
+import com.stackcorp.astra.identity.session.CsrfCookie;
 import com.stackcorp.astra.identity.session.DeviceCookie;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
@@ -125,7 +126,8 @@ class SchoolPasswordController {
 			.build();
 		return ResponseEntity.noContent()
 			.header(HttpHeaders.SET_COOKIE, cookie.toString(),
-					DeviceCookie.issue(session.deviceUuid(), this.properties).toString())
+					DeviceCookie.issue(session.deviceUuid(), this.properties).toString(),
+					CsrfCookie.renew(request).toString())
 			.header(HttpHeaders.CACHE_CONTROL, "no-store")
 			.build();
 	}

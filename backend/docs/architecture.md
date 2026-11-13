@@ -149,18 +149,20 @@ flowchart LR
 | `summary` | 강의 자료의 쪽별 요약 생성 작업, 후보 확인, 게시, 조회 | `files`, `identity` |
 | `integration` | 학교 IdP, 학사 동기화, AI, 외부 allowlist client | port를 정의한 모듈의 공개 API(`identity`, `catalog`, `learning`, `files`, `summary`) |
 | `shared` | 오류 형식, requestId, 요청 제한, 멱등 원장, 감사 기록. 목록 query 규칙은 첫 페이지 목록과 함께 만든다 | 없음. 모든 모듈이 쓸 수 있다 |
-| `home` | 메인 화면 집계 조회(`/api/me/home`)와 할 일 목록. 쓰기 없음 | `catalog`, `learning`, `assessment`, `communication`의 공개 API. 어떤 모듈도 `home`에 의존하지 않는다 |
+| `home` | 메인 화면 집계 조회(`/api/me/home`), 담당자 메인(`/api/me/teaching`), 할 일 목록, 캘린더. 쓰기 없음 | `catalog`, `learning`, `assessment`, `communication`의 공개 API. 어떤 모듈도 `home`에 의존하지 않는다 |
 
 의존 방향은 [db/README.md](../db/README.md) 2.1절의 FK 방향을 따른다. 순환은 의존 역전으로 끊는다. 이벤트를 써도 listener가 발행 측 타입을 참조하면 의존이 생기므로 순환을 끊지 못한다.
 
 - 알림: `notifications`는 `catalog` 소유이고 `activity_id`로 `learning`을 가리킨다. `catalog`는 `learning`에 의존하지 않는다. 알림 생성 API(`catalog.api.Notifications`)는 `catalog`가 공개 API로 정의하고, 이미 `catalog`에 의존하는 `learning`, `assessment`, `communication`이 원래 변경과 같은 transaction 안에서 호출한다. transaction 밖에서 부르면 실패한다. 대상 ID와 `activity_id`는 값으로 받고 `catalog`는 그 행을 읽지 않는다. 대상을 숨기는 변경(삭제, 비공개, 예약으로 되돌림)도 같은 transaction에서 `withdraw`를 부른다([ADR-0027](adr/0027-notifications-in-producer-transaction.md)).
 - 캘린더: 학사일정은 `catalog`, 활동 마감은 `learning`에 있어 둘을 함께 읽는 `GET /api/me/calendar`는 `home`에 둔다. 시간표는 `catalog`의 테이블만 쓰므로 `catalog`에 둔다.
 - 할 일: 별도 테이블 없이 활성 수강 × 공개 활동 × serverTime으로 계산한다([reference/db/design/20_catalog.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/db/design/20_catalog.md)). 계산에 `learning`, `assessment`가 필요하므로 `home`에 둔다.
+- 담당자 메인: 채점 대기(`assessment.api.GradingQueue`), 변환 중·실패 영상(`learning.api.PendingVideos`), 답을 기다리는 질문(`communication.api.OpenQuestions`), 처리할 신청(`catalog.api.EnrollmentRequests`)을 각 모듈이 과목 ID 목록 하나로 세어 주고 `home`이 모은다. 과제 채점 대기는 수강생 명단이 필요하므로 `assessment`가 `catalog.api.CourseRosters`의 여러 과목 조회로 명단을 읽는다.
 - 외부 연동: `identity`가 `ExternalIdentityProvider` 같은 포트를 공개 API로 정의하고 `integration`이 구현한다. 다른 모듈도 외부 결과가 필요하면 같은 방식을 쓴다.
 - 요약과 전달: `summary`가 `LlmClient` port를, `files`가 문서 변환 port와 전달 서명 port를 공개 API로 정의하고 `integration`이 구현한다. S3를 읽고 쓰는 모듈은 `files` 하나다([ADR-0007](adr/0007-confidential-content-placement.md)).
 - 활동 쪽 목록과 평가 ID: 주차 목록, 할 일, 캘린더의 행이 과제·퀴즈·설문 화면으로 바로 이어지도록 `learning`이 `learning.api.ActivityTargets` port를 정의하고 `assessment`가 구현한다. `learning`은 `assessment`에 의존하지 않는다. 활동 ID를 모아 쿼리 한 번으로 묻는다.
 - 요약 게시 여부: `learning`과 `summary`는 서로 의존하지 않으므로 자료 목록과 파일모음이 묻는 `learning.api.FileSummaries` port를 `integration`이 `summary.api.PublishedSummaries`로 구현한다(`summary.api.CourseStaff`와 같은 방향). 파일 ID를 모아 쿼리 한 번으로 묻는다.
 - 수강생 화면의 학습 열: 최근 학습과 진도율은 `learning`의 기록이고 `catalog`는 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.RosterLearning` port를 정의하고 `learning`이 구현한다. 한 쪽의 사용자 ID를 모아 사용자 수와 관계없이 같은 수의 쿼리로 묻는다.
+- 아바타 사진 유무: 이름 옆에 아바타를 그리는 `communication`·`learning` 응답은 사용자 ID 옆에 사진 유무를 준다. 판정은 `files`가 `files.api.AvatarPhotos`로 내보내고 `files/avatar/AvatarImages`가 아바타 경로와 같은 규칙으로 구현한다. 현재 사진은 `identity.api.ProfileImages.withCurrent`로, 공통 과목은 `catalog.api.CourseMates`로 사람 수와 관계없이 쿼리 두 번 이하에 묻는다.
 
 ### 4.2 모듈 규칙
 
@@ -233,7 +235,7 @@ flowchart LR
 - 과목 범위는 `/api/courses/{courseId}/...`처럼 요청에 명시한다. 서버 session에 현재 과목을 두지 않는다(SC-03, CHG-02).
 - 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06). `serverTime`은 DB 시계, 곧 기관 시간대로 고정한 DB session의 `CURRENT_TIMESTAMP`다. client 시계는 쓰지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
 - 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. 잠긴 동안 거절한 시도는 기록하되 실패 수에 넣지 않아 잠금을 늘리지 못한다. 잠금과 재사용 판정은 계정의 `users` 행을 잠근 뒤 하므로 동시에 보낸 시도도 한도를 넘지 못한다. 로그인 전이라 사용자 단위 제한을 쓸 수 없어 브라우저 주소마다 15분에 30번으로 제한한다. break-glass 계정은 과목 권한이 없다.
-- session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
+- session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다. token은 브라우저 session 동안 바뀌지 않고, 로그인·로그아웃·지금 기기 폐기 응답만 새 token을 준다(ADR-0004 4번).
 - 과목 구성원 판정은 `catalog`의 규칙 하나(`MembershipRule`)다. 역할(`CourseMemberships.roleOf`), 수강생 명단, 함께 듣는 사람, 내 과목, 시간표, 알림, 수강 신청 처리 권한이 모두 이 규칙을 쓴다. 폐강(`CANCELLED`)한 과목에는 구성원이 없으므로 조회와 명령 모두 404다. 담당·수강 행과 학습 기록은 지우지 않는다.
 - 파일 권한은 `files`의 `FileAccess`가 첨부한 부모 객체에 묻는다. 학습활동 첨부는 `learning`이 판정한다. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 지운 활동과 지운 파일은 담당자에게도 없다. 권한이 없거나 경로의 과목과 객체가 맞지 않으면 존재를 드러내지 않도록 404로 응답한다.
 - 강의실 공지는 `communication`이 판정한다. 담당자는 임시·예약 공지까지 보고 쓰며, 학생은 게시 일시가 DB 시계로 지난 공지만 본다. 공지 조회는 읽음을 남기지 않고, 읽음과 확인은 각각 POST 명령이다(SC-04).
@@ -243,7 +245,7 @@ flowchart LR
 - 과목이 없는 첨부(알림마당 공지·자료·문의, 쪽지)는 과목 없는 용도로 올리고 `GET /api/files/{fileId}/content`로만 연다. 이 경로는 `files.course_id`가 없는 파일만 보고 부모의 `allowedOutsideCourse`에 묻는다. 과목 부모는 이 판정이 언제나 거부이고, 과목 밖 부모는 과목 판정이 언제나 거부다. 쪽지 첨부는 쪽지를 아직 가진 사람(보낸함에서 지우지 않은 발신자, 회수되지 않았고 받은함에서 지우지 않은 수신자)만 읽는다.
 - 요청 본문은 문서에 있는 필드만 받는다. 그 밖의 필드가 있으면 400이다. 사용자와 역할은 session에서만 정한다.
 - 일시 형식: offset 없는 일시(`openAt`, `closeAt`, `serverTime` 등 `2026-11-12T10:00:00`)는 기관 시간대의 벽시계이고 그대로 주고받는다. 요청의 이런 값에 `Z`나 offset이 붙으면 400이다. 날짜(`2026-11-12`)와 수업 시각(`10:00`)도 기관 시간대 기준이다. `Z`가 붙은 값(`createdAt` 등)은 절대 시각(UTC)이다. 기관 시간대는 `GET /api/auth/methods`의 `timeZone`(IANA ID)이 알린다. 시작할 때 설정, JVM, DB session의 시간대가 다르면 서버가 뜨지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
-- 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 다른 사용자의 ID를 넣지 않는다(SC-04).
+- 오류는 problem JSON(`status`, `detail`, `code`, `requestId`)으로 응답하고 캐시하지 않는다. 컨트롤러에 닿기 전 filter에서 난 예외와 요청 방화벽이 거부한 요청처럼 servlet container의 `/error`로 가는 오류도 같은 형식이고, code는 상태에 따라 컨트롤러 단계와 같다(500 `internal_error`, 400 `invalid_request`, 404 `not_found` 등). 이미 내보내기 시작한 응답에는 덧붙이지 않는다. 권한이 없을 때와 대상이 없을 때는 같은 404다. detail에는 입력값, 저장 key, SQL, 예외 메시지, 다른 사용자의 ID를 넣지 않는다(SC-04).
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
 - `Idempotency-Key`를 받는 명령은 권한 판정과 입력 검사 뒤 멱등 원장을 거친다. 같은 key와 같은 요청이면 처음 응답을, 다른 요청이면 409 `idempotency_conflict`를, 같은 key가 처리 중이면 3초까지 기다린 뒤 409 `idempotency_in_progress`를 돌려준다(SC-05). key는 사용자와 연산마다 따로다. 같은 key에 다른 요청이면 어떤 명령도 처음 만든 객체를 돌려주지 않는다. 자체 key를 두는 업로드(multipart, 스트림, 파일함)도 같은 규칙의 요청 지문(용도, 과목, 이름, 크기, 내용 hash, 폴더)을 저장해 비교한다([ADR-0010](adr/0010-upload-acceptance.md) 10번). key가 반드시 있어야 하는 명령(수강신청, 과제·퀴즈 제출, 설문 완료, 쪽지 보내기·답장·전달, 파일함 ZIP, 학습 대화 질문)은 `shared.idempotency.Idempotency.requireKey` 하나로 검사하고, header가 없으면 400 `idempotency_key_required`, 형식(1~100자의 영문, 숫자, `.` `_` `-`)이 틀리면 400 `invalid_request`다.
 - 상태를 바꾸거나 민감한 연산은 감사 기록(`audit_events`)을 남긴다. 명령의 transaction 안이면 함께 commit하고, 밖이면 기록 실패가 요청을 실패시키지 않는다. 본문, 파일 이름, 자유 텍스트는 남기지 않는다(SC-09). 남기지 않는 것은 읽음·확인 표시, 본인만 보는 임시저장, 학습 session의 시작·하트비트·종료(학습 원장이 기록이다), 미리보기의 변환 대기 응답뿐이다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md) 2번).
@@ -267,6 +269,8 @@ flowchart LR
 - 학습 인증 grant(SC-06-A)는 2차 인증 challenge를 통과해야 생긴다. 수단은 port(`identity.api.SecondFactorChannel`)이고 지금은 학교 IdP 재인증(`idp`) 하나다. challenge는 로그인 session에 묶이고, 5번 실패하면 잠기며, 사용자의 최근 실패 합이 한도면 새 challenge를 만들지 못한다. 확인 요청의 본문으로는 통과하지 않는다(SEC-04, IDENTITY-03~05).
 - 출석, 그룹, 강의계획서는 `learning`이 판정한다([ADR-0030](adr/0030-attendance-and-smart-rounds.md)). 학생은 자기 출석 기록과 자기 그룹(구성원 이름만)만 보고, 다른 학생의 기록, 학번, 다른 그룹은 보지 못한다. 출석 상태는 담당자 지정이 가장 강하고, 온라인 학습과 스마트출석은 빈 칸만 채운다. 스마트출석 회차를 열고 닫고 취소하는 것은 담당자만 한다. 제출은 PIN·QR이 회차·과목·차시·방식에 묶인 서버 증명이고, 회차·학생마다 틀린 횟수 한도와 사용자 단위 요청 제한이 있다. 강의계획서는 구성원이 아닌 로그인 사용자에게 정규과목의 공개 항목만 보이고 담당자 연락처는 보이지 않는다.
 - 아바타 사진은 본인과, 폐강하지 않은 과목을 함께 듣거나 가르치는 사람만 본다(`catalog.api.CourseMates`). 아바타는 과목 화면(교수 표시, 게시판 작성자, 강의실 최근글)과 쪽지에 나오고, 그 화면에서 이름을 볼 수 있는 사람은 과목 구성원이기 때문이다. 사용자 ID만으로는 받을 수 없고, 볼 수 없는 사람과 사진이 없는 사람은 같은 404다. 올린 원본은 내보내지 않는다. 서버는 PNG·JPEG signature와 5MB를 먼저 보고, worker가 다른 업로드와 같은 악성코드 검사를 거친 뒤 격리한 converter가 256px JPEG로 다시 만든 것만 `inline`, `nosniff`, `CSP: sandbox`, `Cache-Control: private, no-cache`와 ETag로 보낸다([ADR-0038](adr/0038-avatar-photo.md)).
+- 글, 댓글, 답글, 공지, 문의의 작성자는 이름(`authorName`)과 함께 사용자 ID(`authorId`)와 사진 유무(`authorHasPhoto`)로 내보낸다. 쪽지의 사람(`Person`)과 그룹 구성원(`MemberView`)은 `hasPhoto`를 더한다. ID는 이름을 보는 사람에게만 주고(익명 질문·답글은 작성자 본인과 담당자), 사진 유무는 요청한 사람이 `GET /api/users/{userId}/avatar`로 200을 받을 때만 true다. 즉 처리를 마친 현재 사진이 있고, 본인이거나 폐강하지 않은 과목을 함께한다. 화면의 공개 범위가 이보다 넓으면(알림마당, 과목을 떠난 작성자) 두 조건을 모두 만족해야 true다. 화면은 false인 사람의 아바타를 요청하지 않고 이름 글자로 그린다. 판정은 DB 상태로 하므로 사진 객체가 저장소에서 사라진 드문 경우에는 true여도 404다.
+- 알림마당 운영자 계정의 ID는 운영자에게만 준다. 알림마당 공지는 전교가 보고 운영자 계정은 전체 공지와 알림을 보낼 수 있어, 어느 계정이 운영자인지 드러내지 않는다([ADR-0035](adr/0035-community-operators-and-outside-course-files.md)). 운영자가 아닌 사람에게 공지 작성자와 1:1 문의 답변자는 이름만 있고 `authorId`는 null, `authorHasPhoto`는 false다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -275,13 +279,13 @@ flowchart LR
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
 | `POST /api/auth/eclass-login` | 누구나(CSRF token 필요). 학교 e-Class 주소 설정이 없으면 404 | `{studentId, password}`. 학교 e-Class에 로그인해 확인한 뒤 session 쿠키(204). 처음 온 학번은 학교 화면의 이름·학과·학년으로 STUDENT를 만들고, 있는 사용자는 그 값으로 갱신한다. ACTIVE가 아니거나 break-glass 계정이면 401 `rejected`, 틀리면 401 `invalid_credentials`, 학교 장애는 502 `school_unavailable`. 비밀번호와 학교 session은 저장하지 않는다. 학교가 거절한 시도만 세어 브라우저 주소당 15분에 30번, 학번당 15분에 10번 실패하면 학교에 묻지 않고 429. 성공한 로그인은 세지 않는다 |
-| `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. IdP 로그아웃은 연계하지 않는다 |
-| `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자. IdP 설정이 없으면 404 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 같은 경로에 `reauth=failed`를 붙여 302(경로가 안전하지 않으면 `/?reauth=failed`). ID token 검증 실패는 `/?login=failed` |
+| `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. session 쿠키를 지우고 새 CSRF token을 준다. IdP 로그아웃은 연계하지 않는다 |
+| `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 같은 경로에 `reauth=failed`를 붙여 302(경로가 안전하지 않으면 `/?reauth=failed`). 브라우저 이동이라 시작하지 못할 때(session 없음·만료, IdP 설정 없음, break-glass session, 사용자당 10분에 10번 초과)도 JSON 대신 같은 302이고 session과 쿠키는 그대로다. ID token 검증 실패는 `/?login=failed` |
 | `POST /api/me/step-up/totp` | break-glass session | `{code}`. TOTP 재인증. 로그인과 같은 잠금 |
 | `GET /api/me` | 로그인한 사용자 | `userId`, `name`, `role`, `breakGlass`, `stepUpMethod`(이 session의 재인증 수단: `idp` → `GET /api/auth/reauth`, `totp` → `POST /api/me/step-up/totp`, 로컬 실행의 `dev`, 없으면 null) |
 | `GET /api/me/profile` | 로그인한 사용자 | 이름, 소속, 학년, 연락처와 원천, 아바타(EP-0270). `avatar.photo`는 마지막으로 올린 사진의 `state`(processing\|ready\|failed), 지금 보이는 사진의 `url`, 실패 `errorCode`(not_image\|too_large\|rejected\|unavailable\|failed)이고, 올린 적이 없으면 null. `registrarSyncAvailable`은 학사 동기화 명령을 시도할 수 있는지(학사시스템 port가 있고 break-glass가 아님)다. 내정보를 돌려주는 명령도 같다 |
 | `PUT /api/me/profile` | 로그인한 사용자 | `{avatarColor, shortName, version}`. 24색 allowlist, 약칭 2글자. 읽은 `version`이 다르면 409(EP-0271, EP-0278) |
-| `PUT /api/me/contact` | 로그인한 사용자, 최근 재인증 | `{phone, email}`. 학사 원천 연락처면 409 `contact_managed_by_registrar`(EP-0266) |
+| `PUT /api/me/contact` | 로그인한 사용자, 최근 재인증 | `{phone, email}`. 두 필드 모두 문자열로 보낸다. 빈 문자열이나 공백뿐인 문자열은 그 연락처를 지운다(둘 다 비워도 된다). 필드가 없거나 null이면, 또는 값의 형식이 틀리면 400 `invalid_request`. 학사 원천 연락처면 409 `contact_managed_by_registrar`(EP-0266) |
 | `POST /api/me/profile/sync` | 로그인한 사용자(break-glass는 404) | 학사시스템 port로 이름, 소속, 학년, 연락처를 다시 읽어 저장하고 내정보를 돌려준다(EP-0279). 연동이 없으면 503 `not_configured`, 학사시스템에 없으면 409 `registrar_record_not_found`, 장애·형식 오류는 503 `registrar_unavailable`. 사용자당 10분에 5번 |
 | `POST /api/me/profile/image` | 로그인한 사용자 | multipart `file` 하나(PNG·JPEG, 5MB 이하, 화면이 정사각형으로 자른 사진). 202 `{state: processing}`. 이미지가 아니면 400 `not_image`, 크면 413 `too_large`. 대기 중인 앞 사진은 버린다. 바꾸는 명령이라 `Idempotency-Key`를 받지 않는다. 10분에 10번(EP-0273~EP-0276) |
 | `DELETE /api/me/profile/image` | 로그인한 사용자 | 사진을 지우고 색상형으로 돌아간다. 색상과 약칭은 그대로다. 내정보를 돌려준다(EP-0278) |
@@ -291,7 +295,7 @@ flowchart LR
 | `POST /api/me/sessions/{sessionId}/revoke` | 그 session의 주인 | 다른 session 하나를 끝낸다. 지금 session은 409 `current_session`. 204 |
 | `POST /api/me/sessions/revoke-others` | 로그인한 사용자, 최근 재인증 | 지금 session 말고 모두 끝낸다 |
 | `GET /api/me/devices?cursor=&size=` | 로그인한 사용자 | 폐기하지 않은 내 기기. 등록 역순, `nextCursor`(EP-0268) |
-| `DELETE /api/me/devices/{deviceId}` | 그 기기의 주인 | 기기와 그 기기의 session을 폐기한다. 지금 기기면 session 쿠키도 지운다(EP-0267) |
+| `DELETE /api/me/devices/{deviceId}` | 그 기기의 주인 | 기기와 그 기기의 session을 폐기한다. 지금 기기면 session 쿠키도 지우고 새 CSRF token을 준다(EP-0267) |
 | `GET /api/me/login-events?cursor=&size=` | 로그인한 사용자 | 최근 7일 로그인 기록. 최신순, `nextCursor` |
 | `GET /api/me/learning-auth` | 로그인한 사용자 | 이 session의 학습 인증 grant 여부와 만료, 쓸 수 있는 수단(EP-0294, EP-0295) |
 | `POST /api/me/learning-auth/challenges` | 로그인한 사용자 | `{channel}`. challenge 시작. 같은 session의 앞 challenge는 취소한다. `Idempotency-Key` 받지 않음. 201(EP-0293) |
@@ -312,7 +316,8 @@ flowchart LR
 - session이 유효하면 IdP redirect를 거치지 않는다.
 - `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
 - 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 최근 7일 안에 공개된 본인 성적 항목 5개(`newGrades`: 항목, 과목, 공개 일시. 점수와 의견은 없다), 안 읽은 쪽지 수(`unreadMessages`), 안 읽은 알림 수(`unreadNotifications`)다.
-- 쿼리는 과목 수와 관계없이 17개 이하다(DB 시계, 과목, 마감 전 활동 1과 완료 판정 4와 평가 ID 1, 안 읽은 공지 수, 최근 공지, 안 읽은 쪽지 수, 안 읽은 알림 수, 새 성적 5). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 과제와 퀴즈가 있고 점수를 공개한 상태에서도 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
+- 과목 카드에는 과목마다 진행 주(`currentWeek`, `weekCount`), 본인 영상 진도율(`progressPercent`), 본인 출석(`attendance: {attended, total}`)이 있다. 주는 수업 기간(정규 과목은 학기 `start_date`~`end_date`, 비정규 과정은 학습기간)을 시작일부터 7일씩 나눈 것이고, 오늘은 DB 시계의 날짜(기관 시간대, ADR-0039)다. 시작 전이면 0, 끝난 뒤면 `weekCount`, 기간이 없으면 둘 다 null이다. 진도율은 학생 진도 화면(`GET /api/courses/{courseId}/lecture-progress`)과 같이 학생에게 열린 영상 콘텐츠 가운데 출석인정을 채운 비율(버림)이고, 열린 콘텐츠가 없으면 null이다. 출석은 출석부 요약과 같은 기록에서 출석·지각·공결 차시 수(`attended`)와 판정한 차시 수(`total`, 휴강과 미판정 제외)다. 담당 과목은 진도율과 출석이 null이다.
+- 쿼리는 과목 수와 관계없이 21개 이하다(DB 시계, 과목, 마감 전 활동 1과 완료 판정 4와 평가 ID 1, 안 읽은 공지 수, 최근 공지, 알림마당 공지 2, 영상 진도 1, 출석 1, 안 읽은 쪽지 수, 안 읽은 알림 수, 새 성적 5). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 과제, 퀴즈, 영상, 출석 차시가 있고 점수를 공개한 상태에서도 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
 - 할 일은 학생으로 수강하는 과목의, 공개됐고 `open_at <= now < close_at`인 학습활동 가운데 본인이 아직 끝내지 않은 것이다. 마감 일시가 없는 활동은 넣지 않는다. 완료는 `assessment.api.ActivityCompletions`가 판정한다: 과제는 최종 제출, 퀴즈는 온라인 시험이고 이어갈 응시가 없고 허용 횟수를 다 쓴 때, 강의실 설문은 참여 원장의 완료다. 끝낸 활동은 표시를 달아 남기지 않고 목록과 전체 수에서 뺀다. 원본 할일 팝업(`03_팝업_할일.md`)이 미완료 활동만 보이고 그 수를 헤더 배지로 쓰며, frontend도 `total`을 "남은 활동" 수로 쓰기 때문이다. 마감 전 활동은 500개까지 읽고 넘으면 `truncated`다. 영상과 자료의 완료는 보지 않는다(12절).
 
 ## 7. 영상과 문서 전달
@@ -366,20 +371,20 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `POST /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 요약 생성 요청. 202. `Idempotency-Key` 지원 |
+| `POST /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자. 요청한 사람이 결정권자(담당자 명단의 교수, 비정규 담당자)여야 하고 조교는 403 `llm_decider_required` | 요약 생성 요청. 202. 요청한 사람의 `page_summary` 동의가 없으면 409 `llm_consent_required`. `Idempotency-Key` 지원 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary-jobs` | 담당자 | 최근 작업 20개 |
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}` | 담당자 | 작업 상태와 진행 쪽 수 |
-| `POST /api/courses/{courseId}/summary-jobs/{jobId}/cancel` · `/retry` | 담당자 | 취소, 실패·취소한 작업 재시도 |
+| `POST /api/courses/{courseId}/summary-jobs/{jobId}/cancel` · `/retry` | 담당자. 재시도는 생성 요청과 같이 결정권자만 하고 조교는 작업 상태와 상관없이 403 `llm_decider_required` | 취소, 실패·취소한 작업 재시도 |
 | `GET /api/courses/{courseId}/summary-jobs/{jobId}/result` | 담당자 | 게시 전 후보와 원본 대조가 필요한 쪽 |
-| `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시 |
+| `POST /api/courses/{courseId}/summary-jobs/{jobId}/publish` | 담당자 | 게시. 게시한 사람이 학습 대화의 책임 교수자다. 조교가 게시하면 그 파일의 학습 대화는 열리지 않고, 결정권자가 다시 게시해야 열린다 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary` | 열람 가능한 사람 | 게시본, `pageImageBase`, 쪽 이미지 signed cookie |
 | `DELETE /api/courses/{courseId}/files/{fileId}/summary` | 담당자 | 게시 내리기. 파일 요약과 학습 대화도 닫힌다 |
 | `GET /api/courses/{courseId}/files/{fileId}/summary/overview` | 열람 가능한 사람 | 자료 상세의 파일 요약(게시본의 질문과 흐름, 모델 호출 없음) |
-| `GET /api/llm/policy` | 로그인 사용자 | 제공자 처리 조건, 고지 판, profile 지문, 외부 LLM 사용 여부 |
-| `GET /api/courses/{courseId}/llm-consents` | 담당 교수자 | 내 범위별 동의와 현재 profile과의 일치 여부 |
-| `PUT /api/courses/{courseId}/llm-consents/{scope}` | 담당 교수자 | 동의(`page_summary`, `study_chat`). 본 고지 판·지문, 국외 이전·학습 이용 확인 |
-| `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 담당 교수자 | 철회. 대기 작업·질문 취소, 게시본은 유지 |
-| `GET /api/courses/{courseId}/llm-usage` | 담당 교수자 | 과목의 호출 수·token 합계와 오늘의 학습 대화 예산 |
+| `GET /api/llm/policy` | 로그인 사용자 | 제공자 처리 조건, 고지 판, profile 지문, 외부 LLM 사용 여부. `enabled`는 배포 스위치가 켜져 있고 제공자 key가 설정됐을 때만 `true`이고, `false`면 요약 생성·학습 대화는 503 `llm_disabled` |
+| `GET /api/courses/{courseId}/llm-consents` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 내 범위별 동의. `current`는 동의한 profile이 지금 profile과 같은지다. `canGrant`는 내가 이 과목에서 동의할 수 있는지(결정권자인지)이고, `false`면 남은 동의 행도 효력이 없다 |
+| `PUT /api/courses/{courseId}/llm-consents/{scope}` | 담당자 명단의 그 과목 교수, 비정규 담당자. 다른 담당자(조교)는 403 `llm_decider_required` | 동의(`page_summary`, `study_chat`). 본 고지 판·지문, 국외 이전·학습 이용 확인 |
+| `DELETE /api/courses/{courseId}/llm-consents/{scope}` | 그 과목의 담당자(교수, 조교, 비정규 담당자). 본인의 동의만 | 철회. 대기 작업·질문 취소, 게시본은 유지. 조교도 효력 없는 자기 동의를 거둘 수 있다 |
+| `GET /api/courses/{courseId}/llm-usage` | 그 과목의 담당자(교수, 조교, 비정규 담당자) | 과목의 호출 수·token 합계와 오늘의 학습 대화 예산 |
 | `POST /api/courses/{courseId}/files/{fileId}/study-chats` | 열람 가능한 사람 | 대화 열기. 게시본과 게시자의 `study_chat` 동의 필요. `Idempotency-Key` 지원 |
 | `GET /api/courses/{courseId}/files/{fileId}/study-chats?before=` | 열람 가능한 사람 | 그 파일에서 내가 연 대화(20개씩, ID 내림차순). `{items, nextBefore}`이고 다음 쪽이 없으면 `nextBefore`는 null |
 | `GET` · `DELETE /api/courses/{courseId}/study-chats/{chatId}` | 대화 소유자 | 대화 보기, 지우기(본문 객체까지) |
@@ -414,14 +419,16 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간 |
-| `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나 |
+| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 역할은 과목 행과 같은 문장에서 정하고 수강생 수는 담당 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
+| `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나. 항목은 `/api/me/courses`와 같다(`learners`는 담당자에게만) |
 | `GET /api/courses/{courseId}/weeks` | 과목 구성원 | `{serverTime, weeks}`. 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 활동마다 DB 시계로 정한 `phase`(`not_open`·`open`·`late`·`closed`, 과제·퀴즈·설문 화면과 같은 경계)와, 평가 활동이면 `assignmentId`·`quizId`·`surveyId` 중 하나. 자료·영상 활동은 `activityId`가 그 화면의 ID다. 쿼리는 권한 판정 뒤 3번 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부(파일마다 `summaryPublished`), 강의 영상 항목, `phase`, `serverTime`, 평가 활동이면 그 유형의 ID |
 
 ### 7.5 CDN이 없는 환경
 
 로컬 실행과 CloudFront를 붙이지 않은 시연에서는 앱이 `/doc`, `/vod`를 직접 응답한다([ADR-0009](adr/0009-origin-delivery-without-cdn.md)). 권한 판정과 cookie 발급 API는 같고, cookie의 서명과 검증만 앱이 한다. 학교 도입 구성에서는 쓰지 않는다.
+
+CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `server.mjs`)가 브라우저를 받고 `/api/**`, `/doc/**`, `/vod/**`를 api로 넘긴다. 이 proxy는 Host를 api 주소로 바꾸므로 상태를 바꾸는 요청의 Origin 검사는 `ASTRA_SESSION_ALLOWED_ORIGINS`에 적은 브라우저 origin으로만 통과한다. compose 구성은 이 값과 `/doc`, `/vod` 서명(이 구성에서는 앱 직접 응답) 중 하나라도 없으면 api를 띄우지 않는다([ADR-0004](adr/0004-sso-bff-session.md) 4번, ADR-0009 8번).
 
 ### 7.6 강의실 공지
 
@@ -430,7 +437,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `GET /api/courses/{courseId}/notices?q=&page=&size=` | 과목 구성원 | 공지 목록. 고정 공지, 게시 일시 역순. `q`는 제목 검색. 항목마다 요청한 사람의 `read`, 담당자에게만 열람·확인 수 |
-| `GET /api/courses/{courseId}/notices/{noticeId}` | 그 공지를 볼 수 있는 사람 | 공지 상세. 읽음을 남기지 않는다 |
+| `GET /api/courses/{courseId}/notices/{noticeId}` | 그 공지를 볼 수 있는 사람 | 공지 상세와 작성자(`authorId`, `authorName`, `authorHasPhoto`). 읽음을 남기지 않는다 |
 | `POST /api/courses/{courseId}/notices` | 담당자 | 공지 작성. 201. 게시 일시를 비우면 지금, 미래면 예약, `published:false`면 임시. `Idempotency-Key` 지원(공용 원장). 같은 key의 같은 요청은 처음 응답(201), 다른 본문·과목은 409 `idempotency_conflict` |
 | `PUT /api/courses/{courseId}/notices/{noticeId}` | 담당자 | 공지 전체 수정. 본문의 `version`이 다르면 409 `version_conflict` |
 | `DELETE /api/courses/{courseId}/notices/{noticeId}` | 담당자 | 소프트 삭제. 204 |
@@ -444,7 +451,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/courses/{courseId}/qna?status=&mine=&answered=&q=&page=&size=&snapshot=` | 과목 구성원 | 질문 목록. 최근 질문 먼저, 쪽 번호. `status`는 all, faq, solved, unsolved. 상태별 건수, 다음 쪽에 다시 보낼 `snapshot`. 항목마다 `read`, `liked`, `mine` |
+| `GET /api/courses/{courseId}/qna?status=&mine=&answered=&q=&page=&size=&snapshot=` | 과목 구성원 | 질문 목록. 최근 질문 먼저, 쪽 번호. `status`는 all, faq, solved, unsolved. 상태별 건수, 다음 쪽에 다시 보낼 `snapshot`. 항목마다 `read`, `liked`, `mine`, 고쳤는지(`edited`, 상세와 같은 뜻), 작성자(`authorId`, `authorName`, `authorHasPhoto`) |
 | `GET /api/courses/{courseId}/qna/{questionId}` | 그 질문을 볼 수 있는 사람 | 질문 상세와 첨부, `canEdit` 등, 작성 뒤 고쳤는지(`edited`, `version` > 1). 읽음을 남기지 않는다 |
 | `POST /api/courses/{courseId}/qna` | 수강생 | 질문 작성. `anonymous`, `secret`, `uploadIds`. 201 |
 | `PUT /api/courses/{courseId}/qna/{questionId}` | 작성자, 답글 전 | 전체 수정. `attachments: {keep, add}`가 있으면 첨부를 그 최종 집합으로 바꾼다. `version`이 다르면 409 `version_conflict`, 답글이 있으면 409 `already_answered`, 쓸 수 없는 첨부면 409 `attachment_not_ready` |
@@ -455,7 +462,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `GET /api/courses/{courseId}/qna/{questionId}/answers?cursor=&size=` | 그 질문을 볼 수 있는 사람 | 답글. 먼저 쓴 것부터 `nextCursor`로 이어 받는다. 담당자 답글은 `instructor`, 고친 답글은 `edited` |
 | `POST /api/courses/{courseId}/qna/{questionId}/answers` | 그 질문을 볼 수 있는 구성원 | 답글 작성. 학생만 `anonymous`. 201 |
 | `PUT`·`DELETE /api/courses/{courseId}/qna/{questionId}/answers/{answerId}` | 작성자(수정), 작성자·담당자(삭제) | 답글 수정(`version`, `attachments`), 소프트 삭제 |
-| `GET /api/courses/{courseId}/open-board/posts?q=&cursor=&size=` | 과목 구성원 | 열린게시판 목록. 최근 글 먼저, `nextCursor`. 전체 수, 항목마다 `read`, `liked`, `mine`, 댓글 수 |
+| `GET /api/courses/{courseId}/open-board/posts?q=&cursor=&size=` | 과목 구성원 | 열린게시판 목록. 최근 글 먼저, `nextCursor`. 전체 수, 항목마다 `read`, `liked`, `mine`, 댓글 수, 고쳤는지(`edited`), 작성자(`authorId`, `authorName`, `authorHasPhoto`) |
 | `GET /api/courses/{courseId}/open-board/posts/{postId}` | 과목 구성원 | 글 상세와 첨부, 작성 뒤 고쳤는지(`edited`). `updatedAt`은 집계가 바뀌어도 움직이므로 고침 표시에 쓰지 않는다 |
 | `POST /api/courses/{courseId}/open-board/posts` | 과목 구성원 | 글 작성. 201 |
 | `PUT`·`DELETE /api/courses/{courseId}/open-board/posts/{postId}` | 작성자(수정), 작성자·담당자(삭제) | 전체 수정(`version`, `attachments`), 소프트 삭제 |
@@ -466,6 +473,8 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 수정 요청의 첨부는 최종 집합이다. `keep`은 지금 이 글에 첨부된 파일 ID, `add`는 본인의 `post_attachment` 업로드이고 합쳐 5개까지다. `attachments`를 보내지 않으면 첨부는 그대로다. 버전 확인이 먼저라 버전이 다르면 첨부도 바뀌지 않고, 빠진 파일은 같은 commit부터 읽히지 않는다.
 
+글, 답글, 댓글의 작성자는 `authorId`, `authorName`, `authorHasPhoto`다. 볼 수 없는 익명 작성자는 `authorId`와 `authorName`이 없고 `authorHasPhoto`는 false다. 지운 댓글에는 셋 다 없다. 사진 유무 판정은 쪽마다 쿼리 두 번을 더하고 작성자 수에 따라 늘지 않는다(5절).
+
 ### 7.8 알림마당 공지, 자료실, 1:1 문의
 
 운영자 지정과 과목 밖 첨부는 [ADR-0035](adr/0035-community-operators-and-outside-course-files.md)에 있다. 첨부는 `courseId` 없이 공지 `community_notice`, 자료 `community_material`(각 10개, 운영자), 문의 `inquiry_attachment`(5개)로 올리고 `GET /api/files/{fileId}/content`로 받는다. 만들기 명령은 `Idempotency-Key`를 선택으로 받는다. 제목과 본문은 일반 텍스트다.
@@ -473,13 +482,13 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `GET /api/community/notices?audience=&q=&page=&size=` | 로그인한 사용자 | 게시된 공지 목록(EP-0154). 기관 역할에 맞는 대상만, 고정 먼저 게시 일시 역순, 쪽 번호(size 50 이하). 대상별 건수, `total`, 요청한 사람이 알림마당 운영자인지(`canManage`). 운영자에게는 예약 공지도(`published:false`) |
-| `GET /api/community/notices/{noticeId}`, `POST …/read` | 그 대상의 사용자 | 공지 상세와 첨부(EP-0156, EP-0196), 읽음 표시(`{noticeId, read, viewCount}`). 조회수는 처음 읽을 때만 오른다. 예약 공지는 404 |
+| `GET /api/community/notices/{noticeId}`, `POST …/read` | 그 대상의 사용자 | 공지 상세와 첨부(EP-0156, EP-0196), 읽음 표시(`{noticeId, read, viewCount}`). 조회수는 처음 읽을 때만 오른다. 예약 공지는 404. 작성자는 `authorName`, 운영자에게만 `authorId`와 `authorHasPhoto`(5절) |
 | `POST /api/community/notices` · `PUT`·`DELETE …/{noticeId}` | 알림마당 운영자 | 공지 등록(201), 전체 수정(`version`, `attachments`), 소프트 삭제. `audience`는 common, professor, student, `pinned`, `publishAt`(미래면 예약). 수정에서 `publishAt`을 생략하거나 null로 보내면 이미 게시된 공지는 원래 게시 일시, 예약 공지는 지금 게시하고 알림 예약도 지금으로 당긴다 |
 | `GET /api/community/materials?audience=&q=&cursor=&size=` | 로그인한 사용자 | 게시된 자료 목록. 기관 역할에 맞는 대상만(운영자는 모두). 대상별 건수, `canManage`(운영자면 true) |
 | `GET /api/community/materials/{postId}`, `POST …/read` | 그 대상의 사용자 | 자료 상세와 첨부, 읽음 표시 |
 | `POST /api/community/materials` · `PUT`·`DELETE …/{postId}` | 알림마당 운영자 | 자료 등록(201), 전체 수정(`version`, `attachments`), 삭제(첨부를 끊는다) |
-| `GET /api/community/qna?status=&q=&cursor=&size=&all=` | 로그인한 사용자. `all=true`는 운영자 | 본인 1:1 문의 목록. 운영자의 `all=true`는 모든 문의와 작성자 이름. `status`는 all, answered, unanswered. `canManage`는 운영자면 `all`과 관계없이 true |
-| `GET /api/community/qna/{postId}` | 문의 작성자, 운영자 | 문의와 답변, 각 첨부 |
+| `GET /api/community/qna?status=&q=&cursor=&size=&all=` | 로그인한 사용자. `all=true`는 운영자 | 본인 1:1 문의 목록. 운영자의 `all=true`는 모든 문의와 작성자(`authorId`, `authorName`, `authorHasPhoto`). `status`는 all, answered, unanswered. `canManage`는 운영자면 `all`과 관계없이 true |
+| `GET /api/community/qna/{postId}` | 문의 작성자, 운영자 | 문의와 답변, 각 첨부. 문의한 사람은 `authorId`, `authorName`, `authorHasPhoto`. 답변의 `authorId`와 `authorHasPhoto`는 운영자에게만 있고 문의한 사람에게는 이름만 있다(5절) |
 | `POST /api/community/qna` | 로그인한 사용자(break-glass 제외) | 1:1 문의 작성(EP-0158). 제목 필수, 본문 선택, `uploadIds`. 201 |
 | `POST /api/community/qna/{postId}/replies` | 알림마당 운영자 | 답변. 답변 수와 답변 일시를 바꾸고 작성자에게 `QUESTION_ANSWERED` 알림(과목 없음). 201 |
 
@@ -489,9 +498,12 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/home` | 로그인한 사용자 | 6절의 집계. 알림마당 최근 공지 5개(`communityNotices`, 고정 먼저)와 읽지 않은 알림마당 고정 공지 5개까지(`noticesForMe`, 진입 공지 EP-0190)를 기관 역할의 대상으로 더한다 |
+| `GET /api/me/home` | 로그인한 사용자 | 6절의 집계. 알림마당 최근 공지 5개(`communityNotices`, 고정 먼저)와 읽지 않은 알림마당 고정 공지 5개까지(`noticesForMe`, 진입 공지 EP-0190)를 기관 역할의 대상으로 더한다. `courses[]`마다 `currentWeek`, `weekCount`, `progressPercent`, `attendance`(6절) |
 | `GET /api/me/todo?courseId=&cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수. 평가 활동에는 `assignmentId`·`quizId`·`surveyId` 중 하나. `courseId`를 주면 그 과목만(내 과목이 아니면 404, 담당 과목이면 비어 있다). cursor는 같은 `courseId`로만 이어 보낸다 |
 | `GET /api/me/todo/count?courseId=` | 로그인한 사용자 | `{serverTime, total, truncated}`. 목록과 같은 값을 항목 없이. `courseId`는 목록과 같다 |
+| `GET /api/me/teaching` | 로그인한 사용자. 담당 과목만 센다 | 담당자 메인(교수 홈의 통계 줄, 확인할 일, 다가오는 일정). 원본에 같은 화면이 없는 새 계약이다. `courses[]`는 담당 과목마다 채점 대기 과제 수와 제출 수, 채점 대기 퀴즈 수와 응시 수, 변환 실패·변환 중 영상 콘텐츠 수, 답을 기다리는 질문 수, 처리할 신청 수(처리 권한이 없으면 null). `tasks[]`는 그 행(유형, 과목, 제목, 수, `activityId`·`assignmentId`·`quizId`·`questionId`), `upcoming[]`은 지금부터 14일 안에 시작(`open`)하거나 마감(`close`)하는 담당 과목 활동이고 행은 `GET /api/me/calendar`의 활동과 같은 속성에 `event`, `at`을 더했다. 담당 과목이 없으면(학생) 목록이 모두 비어 있다. 404를 쓰지 않는 것은 `/api/me/home`이 담당 과목에 빈 할 일을 주는 것과 맞춘 것이다 |
+
+담당자 메인의 수는 각 모듈이 정한다. 과제 채점 대기는 수강생 명단(`CourseRosters`)에 있는 학생의 최종 제출 가운데 과제 성적 항목 점수가 빈 것이다. 과제 목록의 `submittedCount`에서 성적부의 `gradedCount`를 뺀 규칙과 같고, 수강을 취소한 학생의 제출은 성적부에서 채점할 수 없으므로 세지 않는다. 퀴즈는 퀴즈 목록의 `awaitingGradingCount`(수동 채점을 기다리는 응시)다. 영상은 지우지 않은 콘텐츠의 `video_state`가 `failed` 또는 `processing`인 것이다. 질문은 답글이 없고 해결로 표시하지 않았고 FAQ가 아닌 질의응답 질문이다. 신청은 신청 목록(`GET /api/courses/{courseId}/enrollment-requests`)과 같이 교수와 비정규 담당자만 처리하는 비정규 `PENDING`, 청강 `REQUESTED`다. 지운 활동, 폐강 과목은 넣지 않는다. 과목 수와 관계없이 쿼리는 14개 이하이고(DB 시계, 과목, 채점 대기 5, 영상 1, 질문 2, 신청 1, 마감 1, 시작 1, 평가 ID 1), `TeachingApiTests`가 DB 문장 수로 확인한다. 확인할 일의 질문은 오래 기다린 순서로 20개, 전체는 100개, 다가오는 일정은 50개까지이고 넘으면 `tasksTruncated`, `upcomingTruncated`다. 과목별 수는 자르지 않는다.
 
 ### 7.10 과제 등록과 제출
 
@@ -553,9 +565,11 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 제목과 본문은 일반 텍스트로만 받고 내보낸다. 첨부 파일은 쪽지를 아직 가진 사람만 `GET /api/files/{fileId}/content`로 받는다. 회수되거나 받은함·보낸함에서 지우면 그 사람은 받지 못한다([ADR-0035](adr/0035-community-operators-and-outside-course-files.md)). 받는사람 검색은 범위 안에서만 찾으므로 "없음"과 "보낼 수 없음"을 구별하지 않는다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md) 2·3번).
 
+보내기·답장·전달의 receipt(`recipients`), 받은함의 `sender`, 받은 쪽지 상세의 `sender`, 보낸함의 `firstRecipient`는 `{userId, name, hasPhoto}`다. `hasPhoto`는 요청한 사람이 그 사람의 아바타를 받을 수 있을 때만 true다(5절).
+
 ### 7.13 카탈로그와 수강신청
 
-좌석 회계와 상태 기계는 [ADR-0026](adr/0026-enrollment-seat-accounting.md)에 있다. 조회는 신청을 만들지 않고 공개 항목(과목명, 코드, 학기, 담당자 이름, 수업 시간, 접수 기간, 정원과 확정 인원)만 돌려준다. 수강생 명단, 학습활동, 강의소개 HTML은 없다(CHG-03).
+좌석 회계와 상태 기계는 [ADR-0026](adr/0026-enrollment-seat-accounting.md)에 있다. 조회는 신청을 만들지 않고 공개 항목(과목명, 코드, 학기, 담당자 이름, 수업 시간, 접수 기간, 정원과 확정 인원, 기본 표지 템플릿 키)만 돌려준다. 수강생 명단, 학습활동, 강의소개 HTML은 없다(CHG-03). 목록·상세 항목의 `coverTemplate`은 `GET /api/me/courses`와 같은 값이고 없으면 null이다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -635,8 +649,8 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 | `PUT /api/courses/{courseId}/quizzes/{quizId}/questions/{questionId}/answer-key` | 담당자 | 정답 정정과 재채점. `{revision, points, correctOptionIds}`(단답형은 `points`만). 지문과 보기는 그대로 두고, 닫힌 응시의 답안·총점, 학생 성적, 성적 항목 배점을 한 transaction에서 다시 계산한다. 응답 `{quiz, rescoredAttempts}`. 다르면 409 `edit_conflict`, 단답형 배점을 준 점수보다 낮추면 409 `awarded_exceeds_points` |
 | `DELETE /api/courses/{courseId}/quizzes/{quizId}` | 담당자 | 퀴즈 삭제. `If-Match`에 읽은 `revision`(없으면 428, 다르면 409 `edit_conflict`). 응시, 답안, 성적은 보존하고 그 commit부터 퀴즈, 응시, 성적 항목은 누구에게도 없다. 진행 중 응시는 저장·제출을 받지 않고 worker가 마감 일시에 닫는다. 204 |
 | `PUT /api/courses/{courseId}/quizzes/{quizId}/scores` | 담당자 | 오프라인 시험 점수 일괄 저장. 본문과 오류는 `grade-items/{itemId}/scores`와 같다(`rows`의 `studentId`, `score`, `feedback`, `version`, 전부 아니면 전무). 학생에게는 결과 공개 일시부터 보인다. 온라인 시험은 409 `online_quiz` |
-| `GET /api/courses/{courseId}/quizzes` | 과목 구성원 | 퀴즈 목록. 담당자는 응시 수, 학생은 공개됐고 시작한 퀴즈와 본인 상태만. 항목마다 `activityId` |
-| `GET /api/courses/{courseId}/quizzes/{quizId}` | 담당자, 볼 수 있는 학생 | 퀴즈 정보, 서버 시각, 응시 구간. 담당자는 문항과 정답, 학생은 본인 응시, 시작 가능 여부, 공개한 점수만 |
+| `GET /api/courses/{courseId}/quizzes` | 과목 구성원 | 퀴즈 목록. 담당자는 응시 수와 성적 항목 ID(`gradeItemId`), 학생은 공개됐고 시작한 퀴즈와 본인 상태만. 항목마다 `activityId` |
+| `GET /api/courses/{courseId}/quizzes/{quizId}` | 담당자, 볼 수 있는 학생 | 퀴즈 정보, 서버 시각, 응시 구간. 담당자는 문항과 정답, `quiz.gradeItemId`(항목 점수표 `GET …/gradebook/items/{itemId}`로 바로 간다), 학생은 본인 응시, 시작 가능 여부, 공개한 점수만 |
 | `POST /api/courses/{courseId}/quizzes/{quizId}/attempts` | 수강생 본인 | 응시 시작. 진행 중 응시가 있으면 그 응시(200, `created:false`), 없으면 새 회차(201, `created:true`). 다른 session이면 응시를 옮긴다. 상태로 멱등이라 key를 받지 않는다 |
 | `GET /api/courses/{courseId}/quizzes/{quizId}/attempts` | 담당자 | 응시 목록. 응시 ID 순서, `cursor`와 `size`(100 이하) |
 | `GET /api/courses/{courseId}/quizzes/{quizId}/attempts/{attemptId}` | 응시한 학생, 담당자 | 학생은 응시 순서의 문항과 본인 답안, 담당자는 출제 순서의 문항(지문, 배점), 보기(`options`: 번호, 문구, 정답 여부, 학생 선택)와 채점 내용. 담당자 응답의 쿼리는 문항 수와 관계없이 다섯 |
@@ -687,7 +701,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | `GET /api/courses/{courseId}/smart-rounds/active` | 과목 구성원 | 진행 중 회차. 담당자는 회차 화면, 학생은 회차마다 자기 상태. `pollAfterSec` |
 | `GET /api/courses/{courseId}/smart-rounds/{roundId}/me` | 그 과목 학생 | `confirmed`(서버 기록 포함), `pending`, `locked`, `expired`, `closed`, `cancelled`, `not_target`. 자기 `failedAttempts`와 `lockedOut`이 함께 있어, 끝난 회차에서 잠긴 뒤 끝났는지(`lockedOut`)와 제출하지 않았는지(`failedAttempts` 0)를 가린다 |
 | `POST /api/courses/{courseId}/smart-rounds/{roundId}/check` | 그 과목 학생 | `{pin}` 또는 `{qrToken}` 제출. 확정 200, 틀림 422, 잠김 429, 만료·마감·취소·대상 아님 409. 다시 보내도 기록은 하나라 `Idempotency-Key`를 받지 않는다 |
-| `GET /api/courses/{courseId}/groups` | 과목 구성원 | 담당자는 모든 그룹과 구성원(학번 포함), 학생은 자기 그룹과 구성원 이름(EP-0039) |
+| `GET /api/courses/{courseId}/groups` | 과목 구성원 | 담당자는 모든 그룹과 구성원(사용자 ID, 학번, `hasPhoto`), 학생은 자기 그룹과 구성원 이름(EP-0039). 학생 응답에는 사용자 ID가 없어 `hasPhoto`는 언제나 false다 |
 | `POST /api/courses/{courseId}/groups` · `PUT …/{groupId}` · `DELETE …/{groupId}` | 담당자 | 그룹 생성(`Idempotency-Key` 지원), 이름 바꾸기와 삭제(`If-Match`). 출석에 쓴 그룹은 삭제 409 |
 | `PUT /api/courses/{courseId}/groups/{groupId}/members/{studentId}` · `DELETE` · `POST …/move` | 담당자 | 수강생 넣기·빼기(멱등), 다른 그룹으로 옮기기(한 transaction) |
 | `GET /api/courses/{courseId}/syllabus` | 구성원 전체, 구성원이 아닌 로그인 사용자는 정규과목 공개 항목만 | 강의계획서(EP-0218, EP-0219). 과목 기본 정보는 catalog 값 |
@@ -743,7 +757,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 | 대상 | 방식 |
 |---|---|
-| 로그 | 앱은 stdout에 한 줄씩 JSON(ECS) 로그를 쓴다. 요청마다 method, 처리한 경로 pattern, 상태 코드, 처리 시간을 한 줄 남긴다. requestId를 모든 줄에 넣는다. 본문, query string, cookie, 토큰, 개인정보는 남기지 않는다(SC-07). CloudWatch Logs로는 host의 log driver나 agent가 보낸다(아직 구성 없음) |
+| 로그 | 앱은 stdout에 한 줄씩 JSON(ECS) 로그를 쓴다. 요청마다 method, 처리한 경로 pattern, 상태 코드, 처리 시간을 한 줄 남긴다. requestId를 모든 줄에 넣는다. 처리하지 못한 예외는 컨트롤러에서 났든 filter에서 났든 `unhandled exception requestId=… method=… route=…` 한 줄과 stack trace로 ERROR에 한 번 남고, client 연결 끊김은 남기지 않는다. 본문, query string, cookie, 토큰, 개인정보는 남기지 않는다(SC-07). CloudWatch Logs로는 host의 log driver나 agent가 보낸다(아직 구성 없음) |
 | 감사 | `audit_events`에 행위자, 연산, 대상, 과목, 결과 코드, requestId, DB 시각을 남긴다(SC-09, [ADR-0012](adr/0012-idempotency-ledger-and-audit.md)) |
 | 지표 | Micrometer로 요청 시간(경로 pattern, 상태, problem code), 학습 하트비트 간격과 session 종료, GC·검사·요약 대기열, 학습 대화 대기열과 끝난 질문, 문서 변환·영상 변환·파일함 ZIP 대기열과 결과, 남은 multipart upload 취소, 변환 결과, 쓰임(요약, 학습 대화)별 모델 호출과 token, 멱등 충돌, 빠진 감사 기록, 요청 제한, DB pool을 잰다. tag에 사용자, 과목, 파일 ID, 실제 경로는 없다. 대기열 gauge는 worker가 1분마다 계산해 둔다. OTLP 내보내기는 기본으로 꺼져 있고 `ASTRA_OTLP_ENABLED`와 수신 주소를 줄 때만 보낸다. 지표 endpoint는 어느 port에도 열지 않는다([ADR-0034](adr/0034-observability-and-scheduler-lock.md)) |
 | trace | 같은 opt-in으로 OpenTelemetry trace를 OTLP로 보낸다. 표본 비율은 설정으로 정한다(기본 10%). client의 trace header와 baggage는 읽지 않고, span에는 경로 pattern, 상태, code와 서버가 만든 requestId만 남긴다. 수신 쪽(collector, X-Ray)은 아직 없다 |
@@ -797,6 +811,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 감사 기록 보존과 누락 | `audit_events`의 보존 기간이 정해지지 않아 지우지 않는다(SC-07). transaction 밖의 기록은 저장 실패 때 경고 로그만 남기고 빠진다 | 기관 정책을 받아 보존 기간을 정한다. 빠진 수를 9절 지표에 넣는다 |
 | 멱등 key와 목록 query 규칙 | `Idempotency-Key`는 필수인 명령(5절, 없으면 400 `idempotency_key_required`) 밖에서는 선택이라 header를 보내지 않는 client는 재전송으로 자료를 두 번 만들 수 있다. SC-09의 page size 상한, cursor, 정렬 key allowlist는 목록마다 따로 있고 `shared`의 공통 규칙은 아직 없다 | frontend가 만드는 명령에도 header를 보낸다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 query 규칙을 만든다 |
 | 할 일의 완료 판정 | 과제, 퀴즈, 설문은 본인이 끝내면 빠진다(6절). 영상(다 본 영상)과 자료는 완료를 보지 않아 마감까지 남는다. 횟수 제한이 없는 퀴즈와 오프라인 시험도 마감까지 남는다(EP-0144의 "미완료"는 원본에서도 기준 미확인). 마감 전 활동이 500개를 넘으면 마감이 늦은 쪽은 보지 않는다(`truncated`) | `learning`의 진도 완료(출석 인정)를 공개 API로 내어 `home`이 같은 방식으로 뺀다. 횟수 제한이 없는 퀴즈를 언제 끝난 것으로 볼지 학교 기준을 받는다 |
+| 담당자 메인과 과목 카드의 기준 | 담당자 메인에 이의신청 수가 없다(이의신청 기능 없음). 팀 과제(`owner_type = group`) 제출은 채점 대기로 세지 않는다. 다가오는 일정에 학사일정은 넣지 않는다. 과목 카드의 진행 주는 학기·학습기간만 보고 과목이 정한 주차 날짜(`course_weeks.starts_on`)는 보지 않으며, 학기 날짜가 없는 과목은 null이다. 출석의 `total`은 판정한 차시만 세어 앞으로 열릴 차시는 넣지 않는다(7.9절, 6절) | 이의신청을 만들 때 `assessment`가 수를 내는 API를 더한다. 학교가 주차 날짜를 쓰면 `learning`이 과목별 현재 주차를 내는 API로 바꾼다 |
 | 과제 제출의 멱등 receipt | 공용 원장 없이 제출 버전 행과 `(submitted_by_user_id, idempotency_key)` 유일 제약으로 처리한다(ADR-0015) | `shared`에 원장을 만들면 receipt 조회를 옮기고 두 컬럼을 정리한다 |
 | 익명 설문의 운영자 재식별 | 저장된 행(행 ID, 시각, requestId)으로는 참여와 응답을 맞출 수 없다(V34). 참여와 응답을 한 transaction으로 쓰므로 binlog·redo log·general log나 data file을 보는 운영자(물리 접근, 물리 백업)는 응답자를 맞출 수 있고, 같은 날 완료한 사람이 한 명뿐이면 일 단위 시각으로도 맞춰진다. '익명'은 교수자에게 비식별인 범위다(SC-05-A, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 재응답과 분기 문항은 없다 | 강한 익명성이나 재응답이 필요하면 응답을 다른 저장소와 권한으로 옮기고 가명 token과 key 권한을 함께 설계해 결정을 받는다 |
 | 기동 시간과 AOT cache | 3.1절의 JDK AOT cache를 이미지에 넣지 않았다. training run에 DB가 필요해 이미지 빌드 안에서 만들 수 없다 | 배포 중 중단 시간이 문제가 되면 배포 단계에서 training run을 돌려 cache를 만드는 방식을 정한다 |
@@ -808,7 +823,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 활동 삭제 표시 | `learning_activities`를 읽는 새 조회가 `deleted_at IS NULL`을 빠뜨리면 지운 자료가 보인다 | 활동 조회를 추가할 때 리뷰에서 확인한다. 조회가 늘면 지우지 않은 활동만 담은 view를 둔다 |
 | GC의 S3 삭제 실패 | 참조 없는 blob을 지운 것으로 표시한 뒤 객체 삭제가 실패하면 닿을 수 없는 객체가 남는다(오류 로그) | 로그 경보로 운영자가 지운다. 잦으면 삭제 완료 시각 column을 두고 재시도한다 |
 | 성적 평가요소 | 평가요소(`grade_criteria`)와 평가요소 점수는 화면 근거가 없어 만들지 않았다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 오프라인 시험 점수는 퀴즈 쪽 일괄 저장으로 넣는다([ADR-0037](adr/0037-quiz-regrade-and-assessment-deletion.md)) | 평가요소는 채점 화면 요구가 생길 때 정한다 |
-| 수강신청 정책 미정 항목 | 대기자 명단과 자동 승격, 청강 정원·기간, 졸업생·대학원생 신청대상 판정(identity에 구분 없음), 조교의 승인 위임, 카운터와 원장의 대사 job(C-22)이 없다. 비정규 강의소개는 HTML이라 내보내지 않는다([ADR-0026](adr/0026-enrollment-seat-accounting.md)) | 학사 담당과 정책을 정한 뒤 WAITLISTED 순번, `users`의 신분 구분, 위임 권한을 더한다. 강의소개는 서버 HTML 정규화(SC-08)와 함께 연다 |
+| 수강신청 정책 미정 항목 | 대기자 명단과 자동 승격, 청강 정원·기간, 졸업생·대학원생 신청대상 판정(identity에 구분 없음), 조교의 승인 위임(외부 LLM 처리 동의 위임도 같다, [ADR-0032](adr/0032-llm-consent-and-study-chat.md) 4번), 카운터와 원장의 대사 job(C-22)이 없다. 비정규 강의소개는 HTML이라 내보내지 않는다([ADR-0026](adr/0026-enrollment-seat-accounting.md)) | 학사 담당과 정책을 정한 뒤 WAITLISTED 순번, `users`의 신분 구분, 위임 권한을 더한다. 강의소개는 서버 HTML 정규화(SC-08)와 함께 연다 |
 | 알림 거두기 의무 | 대상을 숨기는 변경마다 만든 쪽이 `Notifications.withdraw`를 불러야 한다. 부르지 않으면 지운 활동의 알림이 남는다. 공지, 자료, 과제(비공개, 삭제), 질의응답 답글, 쪽지 회수는 부른다. 알림 유형이 없는 활동(온라인 강의, 퀴즈, 설문)은 알림을 만들지 않는다(ADR-0027) | 알림을 만드는 활동 유형을 더할 때 숨기는 명령(비공개, 삭제, 예약으로 되돌림)에서 같은 transaction으로 부른다 |
 | 알림 push | 알림은 목록을 다시 불러야 보인다. 헤더 배지는 `unread-count`를 주기적으로 부른다 | WebSocket fan-out(8절)을 붙일 때 알림 행을 만든 뒤 보낸다 |
 | 게시판 남은 범위 | 과목에 열린게시판을 하나만 둔다. 질의응답의 학습활동 연결(EP-0059, EP-0060), 메인 화면의 게시판 안 읽은 수가 없다. 과목 밖 첨부(알림마당, 쪽지)에는 쪽 이미지 미리보기와 요약이 없다. 쪽지 첨부는 모든 사본이 지워져도 파일이 남는다(누구도 읽지 못한다, [ADR-0035](adr/0035-community-operators-and-outside-course-files.md)) | 담당자 게시판 관리를 만들 때 넣는다. 과목 밖 미리보기가 필요하면 과목 없는 미리보기 경로를 같은 방식으로 둔다. 쪽지 첨부 해제는 읽은 쪽지 보존 기간(`purge_after_at`)과 함께 정한다 |

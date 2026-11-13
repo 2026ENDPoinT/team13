@@ -23,8 +23,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
- * 공개 카탈로그 조회. 과목과 비정규 과정의 공개 항목(이름, 코드, 학기, 담당자 이름, 수업 시간, 접수 기간, 정원과 신청 인원)만
- * 읽는다. 수강생 명단과 학습활동은 읽지 않는다. 폐강 과목은 어디에도 나오지 않는다.
+ * 공개 카탈로그 조회. 과목과 비정규 과정의 공개 항목(이름, 코드, 학기, 담당자 이름, 수업 시간, 접수 기간, 정원과 신청 인원, 기본
+ * 표지 템플릿 키)만 읽는다. 수강생 명단과 학습활동은 읽지 않는다. 폐강 과목은 어디에도 나오지 않는다.
  */
 @Repository
 class CatalogQueries {
@@ -37,7 +37,8 @@ class CatalogQueries {
 	private static final String COURSE_COLUMNS = """
 			SELECT c.course_id, c.legacy_kjkey, c.course_name, c.course_code, c.section_no, c.org_sect, c.department_code,
 			       c.department_name, c.credit, c.completion_type, c.grade_year, c.lecture_type, c.audit_allowed,
-			       c.is_merged_class, c.course_status, t.term_id, t.term_year, t.term_code, t.term_name, t.is_current
+			       c.is_merged_class, c.course_status, c.cover_template, t.term_id, t.term_year, t.term_code, t.term_name,
+			       t.is_current
 			  FROM courses c JOIN terms t ON t.term_id = c.term_id
 			""";
 
@@ -50,7 +51,7 @@ class CatalogQueries {
 			       o.nonregular_category, o.category_code, COALESCE(o.lecture_type, c.lecture_type) AS lecture_type,
 			       o.approval_mode, o.round_year, o.round_no, o.round_label, o.application_open_at, o.application_close_at,
 			       o.cancel_close_at, o.learning_start_date, o.learning_end_date, o.cancel_allowed, o.offering_status,
-			       c.course_status, s.seat_capacity, COALESCE(s.held_count, 0) AS held_count
+			       c.course_status, c.cover_template, s.seat_capacity, COALESCE(s.held_count, 0) AS held_count
 			  FROM non_regular_offerings o JOIN courses c ON c.course_id = o.course_id
 			  LEFT JOIN course_seat_counters s ON s.course_id = o.course_id
 			""";
@@ -304,7 +305,8 @@ class CatalogQueries {
 				rs.getString("course_code"), rs.getString("section_no"), rs.getString("org_sect"), term(rs, n),
 				rs.getString("department_code"), rs.getString("department_name"), rs.getBigDecimal("credit"),
 				rs.getString("completion_type"), rs.getObject("grade_year", Integer.class), rs.getString("lecture_type"),
-				rs.getBoolean("audit_allowed"), rs.getBoolean("is_merged_class"), rs.getString("course_status"));
+				rs.getBoolean("audit_allowed"), rs.getBoolean("is_merged_class"), rs.getString("course_status"),
+				rs.getString("cover_template"));
 	}
 
 	static OfferingRow offering(ResultSet rs, int n) throws SQLException {
@@ -317,7 +319,7 @@ class CatalogQueries {
 				rs.getObject("cancel_close_at", LocalDateTime.class),
 				rs.getObject("learning_start_date", LocalDate.class), rs.getObject("learning_end_date", LocalDate.class),
 				rs.getBoolean("cancel_allowed"), rs.getString("offering_status"), rs.getString("course_status"),
-				rs.getObject("seat_capacity", Integer.class), rs.getInt("held_count"));
+				rs.getObject("seat_capacity", Integer.class), rs.getInt("held_count"), rs.getString("cover_template"));
 	}
 
 	interface HasCourse {
@@ -365,21 +367,26 @@ class CatalogQueries {
 			List<String> lectureTypes, String query) {
 	}
 
+	/**
+	 * @param coverTemplate 기본 표지 템플릿 키(예: dynamic_13). 없으면 null
+	 */
 	record CourseRow(long courseId, String key, String name, String code, String section, String orgSect,
 			TermView term, String departmentCode, String departmentName, BigDecimal credit, String completionType,
-			Integer gradeYear, String lectureType, boolean auditAllowed, boolean merged, String status)
-			implements HasCourse {
+			Integer gradeYear, String lectureType, boolean auditAllowed, boolean merged, String status,
+			String coverTemplate) implements HasCourse {
 	}
 
 	/**
 	 * @param capacity 정원. null이면 제한 없음
 	 * @param held 좌석을 점유한(수강이 확정된) 인원
+	 * @param coverTemplate 기본 표지 템플릿 키(예: dynamic_13). 없으면 null
 	 */
 	record OfferingRow(long offeringId, long courseId, String key, String name, String code, String section,
 			String division, String categoryCode, String lectureType, String approvalMode, int roundYear, int roundNo,
 			String roundLabel, LocalDateTime applicationOpenAt, LocalDateTime applicationCloseAt,
 			LocalDateTime cancelCloseAt, LocalDate learningStartDate, LocalDate learningEndDate, boolean cancelAllowed,
-			String offeringStatus, String courseStatus, Integer capacity, int held) implements HasCourse {
+			String offeringStatus, String courseStatus, Integer capacity, int held, String coverTemplate)
+			implements HasCourse {
 	}
 
 }

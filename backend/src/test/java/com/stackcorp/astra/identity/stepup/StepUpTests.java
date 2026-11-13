@@ -1,6 +1,7 @@
 package com.stackcorp.astra.identity.stepup;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -8,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -125,6 +127,101 @@ class StepUpTests extends OidcIntegrationTest {
 	}
 
 	@Test
+	void blankContactValuesClearThatContact() throws Exception {
+		// 지우는 것도 연락처 변경이라 재인증이 먼저다.
+		contact(this.client, "{\"phone\":\"\",\"email\":\"\"}").andExpect(status().isForbidden())
+			.andExpect(jsonPath("$.code").value("step_up_required"));
+		reauthenticate(this.token, this.ref);
+		contact(this.client, CONTACT).andExpect(status().isOk());
+
+		// 화면은 앞뒤 공백을 뗀 입력을 그대로 보낸다. 빈 전화번호와 이메일만.
+		contact(this.client, "{\"phone\":\"\",\"email\":\"only@school.example\"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value("only@school.example"))
+			.andExpect(jsonPath("$.contact.source").value("local"))
+			.andExpect(jsonPath("$.contact.editable").value(true));
+		assertThat(storedContact()).containsExactly(null, "only@school.example");
+
+		// 전화번호만, 공백뿐인 이메일.
+		contact(this.client, "{\"phone\":\"010-2222-3333\",\"email\":\"   \"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value("010-2222-3333"))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()));
+		assertThat(storedContact()).containsExactly("010-2222-3333", null);
+
+		// 둘 다 비우면 연락처가 없다. 연락처를 하나 이상 요구하는 규칙은 없다.
+		contact(this.client, "{\"phone\":\"\",\"email\":\"\"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()))
+			.andExpect(jsonPath("$.contact.source").value("local"))
+			.andExpect(jsonPath("$.contact.editable").value(true));
+		assertThat(storedContact()).containsExactly(null, null);
+		this.client.get("/api/me/profile")
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()));
+
+		// 값이 있으면 형식은 그대로 본다. 다른 값이 비어도 같다.
+		contact(this.client, "{\"phone\":\"12\",\"email\":\"\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("전화번호 형식이 올바르지 않습니다."));
+		contact(this.client, "{\"phone\":\"\",\"email\":\"<a>@x\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("이메일 형식이 올바르지 않습니다."));
+		assertThat(storedContact()).containsExactly(null, null);
+	}
+
+	@Test
+	void blankValuesDoNotClearRegistrarOwnedContacts() throws Exception {
+		this.jdbc.sql("""
+				INSERT INTO user_contacts (user_id, phone_number, email_address, contact_source)
+				VALUES (:id, '010-1111-1111', 'school@school.example', 'ACADEMIC')
+				""").param("id", this.userId).update();
+		reauthenticate(this.token, this.ref);
+
+		contact(this.client, "{\"phone\":\"\",\"email\":\"\"}").andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("contact_managed_by_registrar"));
+		assertThat(storedContact()).containsExactly("010-1111-1111", "school@school.example");
+	}
+
+	@Test
+	void firstContactSaveWithBothBlankCreatesAnEmptyLocalRow() throws Exception {
+		reauthenticate(this.token, this.ref);
+		assertThat(contactRows()).isZero();
+
+		contact(this.client, "{\"phone\":\"\",\"email\":\" \"}").andExpect(status().isOk())
+			.andExpect(jsonPath("$.contact.phone").value(nullValue()))
+			.andExpect(jsonPath("$.contact.email").value(nullValue()))
+			.andExpect(jsonPath("$.contact.source").value("local"))
+			.andExpect(jsonPath("$.contact.editable").value(true));
+		assertThat(contactRows()).isOne();
+		assertThat(storedContact()).containsExactly(null, null);
+		assertThat(this.jdbc.sql("SELECT contact_source FROM user_contacts WHERE user_id = :id")
+			.param("id", this.userId)
+			.query(String.class)
+			.single()).isEqualTo("LOCAL");
+	}
+
+	@Test
+	void missingOrNullContactFieldsAreRefusedAndClearNothing() throws Exception {
+		reauthenticate(this.token, this.ref);
+		contact(this.client, CONTACT).andExpect(status().isOk());
+
+		// 일부만 보낸 본문이 다른 연락처를 지우지 않는다. 지우려면 빈 문자열을 보낸다.
+		contact(this.client, "{\"email\":\"a@b.example\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("전화번호 형식이 올바르지 않습니다."));
+		contact(this.client, "{\"phone\":\"010-4444-5555\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"))
+			.andExpect(jsonPath("$.detail").value("이메일 형식이 올바르지 않습니다."));
+		contact(this.client, "{\"phone\":null,\"email\":\"a@b.example\"}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		contact(this.client, "{\"phone\":\"010-4444-5555\",\"email\":null}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		contact(this.client, "{}").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("invalid_request"));
+		assertThat(storedContact()).containsExactly("010-2222-3333", "new@school.example");
+	}
+
+	@Test
 	void rejectsReauthenticationThatDoesNotProveThisUserAgain() throws Exception {
 		String other = "2026" + ThreadLocalRandom.current().nextInt(10_000_000, 99_999_999);
 		this.data.userWithRef(other, "STUDENT");
@@ -142,7 +239,6 @@ class StepUpTests extends OidcIntegrationTest {
 
 		assertThat(stepUps("RECENT_AUTH", "SSO")).isZero();
 		contact(this.client, CONTACT).andExpect(status().isForbidden());
-		new ApiClient(this.mvc, null).get("/api/auth/reauth").andExpect(status().isUnauthorized());
 	}
 
 	@Test
@@ -158,6 +254,68 @@ class StepUpTests extends OidcIntegrationTest {
 			assertThat(attempt(this.token, other, unsafe).getHeader("Location")).isEqualTo("/?reauth=failed");
 		}
 		assertThat(stepUps("RECENT_AUTH", "SSO")).isZero();
+	}
+
+	// 재인증 시작은 top-level 이동이다. 시작할 수 없으면 JSON 대신 시작한 화면으로 reauth=failed를 붙여 돌려보낸다.
+	@Test
+	void returnsToTheMarkedStartingPageWithoutAUsableSession() throws Exception {
+		assertNotStarted(this.mvc.perform(get("/api/auth/reauth").param("returnTo", "/me/info?step=contact"))
+			.andReturn()
+			.getResponse(), "/me/info?step=contact&reauth=failed");
+
+		this.jdbc.sql("""
+				UPDATE user_sessions SET last_seen_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 3 HOUR)
+				 WHERE session_id = :id
+				""").param("id", sessionId(this.token)).update();
+		assertNotStarted(start(this.token, "/me/info?step=contact"), "/me/info?step=contact&reauth=failed");
+		// 만료된 session은 전처럼 폐기되고 이 경로가 되살리거나 늘리지 않는다.
+		assertThat(this.jdbc.sql("SELECT revoke_reason FROM user_sessions WHERE session_id = :id")
+			.param("id", sessionId(this.token))
+			.query(String.class)
+			.single()).isEqualTo("EXPIRED");
+		assertNotStarted(start(this.token, "/me/info?step=contact"), "/me/info?step=contact&reauth=failed");
+		this.client.get("/api/me").andExpect(status().isUnauthorized());
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM user_sessions WHERE user_id = :id")
+			.param("id", this.userId)
+			.query(Integer.class)
+			.single()).isOne();
+	}
+
+	@Test
+	void returnsBreakGlassSessionsToTheMarkedStartingPage() throws Exception {
+		String admin = this.data.session(breakGlassUser());
+		// 학습 화면의 새 탭은 auth=done을 붙인 경로로 시작한다. 실패 표시는 그 뒤에 붙는다.
+		assertNotStarted(start(admin, "/courses/7/lectures/3?item=5&auth=done"),
+				"/courses/7/lectures/3?item=5&auth=done&reauth=failed");
+		new ApiClient(this.mvc, admin).get("/api/me").andExpect(status().isOk());
+	}
+
+	@Test
+	void countsEveryStartAndReturnsToTheMarkedStartingPageWhenRateLimited() throws Exception {
+		for (int i = 0; i < 10; i++) {
+			MockHttpServletResponse started = start(this.token, "/me/info");
+			assertThat(started.getStatus()).isEqualTo(302);
+			assertThat(started.getHeader("Location")).startsWith(IDP.issuer());
+		}
+		assertNotStarted(start(this.token, "/me/info"), "/me/info?reauth=failed");
+		assertNotStarted(start(this.token, "/me/info#top"), "/me/info?reauth=failed#top");
+		this.client.get("/api/me").andExpect(status().isOk());
+	}
+
+	@Test
+	void neverFollowsAForeignOrMalformedReturnPathWhenItCannotStart() throws Exception {
+		String admin = this.data.session(breakGlassUser());
+		List<String> unsafe = List.of("//evil.example/x", "https://evil.example/", "/\\evil.example",
+				"javascript:alert(1)", "evil.example", "/a b", "/" + "a".repeat(600), "");
+		for (String returnTo : unsafe) {
+			assertNotStarted(this.mvc.perform(get("/api/auth/reauth").param("returnTo", returnTo))
+				.andReturn()
+				.getResponse(), "/?reauth=failed");
+			assertNotStarted(start(admin, returnTo), "/?reauth=failed");
+		}
+		assertNotStarted(this.mvc.perform(get("/api/auth/reauth").param("returnTo", "/a", "/b")).andReturn().getResponse(),
+				"/?reauth=failed");
+		assertNotStarted(this.mvc.perform(get("/api/auth/reauth")).andReturn().getResponse(), "/?reauth=failed");
 	}
 
 	@Test
@@ -179,6 +337,21 @@ class StepUpTests extends OidcIntegrationTest {
 
 	private ResultActions contact(ApiClient client, String body) throws Exception {
 		return client.send(put("/api/me/contact").contentType(MediaType.APPLICATION_JSON).content(body));
+	}
+
+	/** 저장된 전화번호와 이메일. */
+	private List<String> storedContact() {
+		return this.jdbc.sql("SELECT phone_number, email_address FROM user_contacts WHERE user_id = :id")
+			.param("id", this.userId)
+			.query((rs, n) -> Arrays.asList(rs.getString(1), rs.getString(2)))
+			.single();
+	}
+
+	private int contactRows() {
+		return this.jdbc.sql("SELECT COUNT(*) FROM user_contacts WHERE user_id = :id")
+			.param("id", this.userId)
+			.query(Integer.class)
+			.single();
 	}
 
 	/** IdP에서 다시 로그인하고 callback까지 마친다. */
@@ -243,6 +416,30 @@ class StepUpTests extends OidcIntegrationTest {
 
 	private static Cookie session(String token) {
 		return new Cookie("ASTRA_SESSION", token);
+	}
+
+	private MockHttpServletResponse start(String sessionToken, String returnTo) throws Exception {
+		return this.mvc.perform(get("/api/auth/reauth").param("returnTo", returnTo).cookie(session(sessionToken)))
+			.andReturn()
+			.getResponse();
+	}
+
+	/** 시작하지 않고 돌려보냈다. session도 로그인 전용 쿠키도 만들거나 지우지 않는다. */
+	private static void assertNotStarted(MockHttpServletResponse response, String location) {
+		assertThat(response.getStatus()).isEqualTo(302);
+		assertThat(response.getHeader("Location")).isEqualTo(location);
+		assertThat(response.getCookie("ASTRA_SESSION")).isNull();
+		assertThat(response.getCookie("ASTRA_LOGIN")).isNull();
+		assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+		assertThat(response.getHeader("Referrer-Policy")).isEqualTo("no-referrer");
+	}
+
+	private long breakGlassUser() {
+		return this.jdbc.sql("SELECT user_id FROM users WHERE external_ref = :ref")
+			.param("ref", BREAK_GLASS_REF)
+			.query(Long.class)
+			.optional()
+			.orElseGet(() -> this.data.userWithRef(BREAK_GLASS_REF, "STAFF"));
 	}
 
 }

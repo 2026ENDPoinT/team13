@@ -91,8 +91,10 @@ class CourseGroupApiTests extends IntegrationTest {
 		this.professor.postJson(groups(this.course), "{\"name\":\"1조\"}")
 			.andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("group_exists"));
+		this.data.photo(this.stu);
 		addMember(this.professor, alpha, this.stu).andExpect(status().isOk())
-			.andExpect(jsonPath("$.members[0].userId").value(this.stu));
+			.andExpect(jsonPath("$.members[0].userId").value(this.stu))
+			.andExpect(jsonPath("$.members[0].hasPhoto").value(true));
 		addMember(this.professor, alpha, this.stu).andExpect(status().isOk())
 			.andExpect(jsonPath("$.members.length()").value(1));
 		addMember(this.professor, alpha, this.mate);
@@ -106,14 +108,19 @@ class CourseGroupApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$[0].members.length()").value(2))
 			.andExpect(jsonPath("$[0].members[0].name").value("테스트 STUDENT"))
 			.andExpect(jsonPath("$[0].members[0].userId").doesNotExist())
-			.andExpect(jsonPath("$[0].members[0].studentNo").doesNotExist());
+			.andExpect(jsonPath("$[0].members[0].studentNo").doesNotExist())
+			// 사용자 ID가 없으면 아바타를 부를 수 없으므로 사진 유무도 false다.
+			.andExpect(jsonPath("$[0].members[0].hasPhoto").value(false));
 		this.thirdStudent.get(groups(this.course))
 			.andExpect(jsonPath("$.length()").value(1))
 			.andExpect(jsonPath("$[0].name").value("2조"))
 			.andExpect(jsonPath("$[0].members.length()").value(1));
 		this.professor.get(groups(this.course))
 			.andExpect(jsonPath("$.length()").value(2))
-			.andExpect(jsonPath("$[0].members[0].studentNo").exists());
+			.andExpect(jsonPath("$[0].members[0].studentNo").exists())
+			.andExpect(jsonPath("$[0].members[0].userId").value(this.stu))
+			.andExpect(jsonPath("$[0].members[0].hasPhoto").value(true))
+			.andExpect(jsonPath("$[0].members[1].hasPhoto").value(false));
 		// 다른 과목에서는 이 과목의 그룹이 보이지 않는다.
 		this.student.get(groups(this.otherCourse)).andExpect(jsonPath("$.length()").value(0));
 

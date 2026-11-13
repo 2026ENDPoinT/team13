@@ -12,6 +12,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -72,6 +73,7 @@ class HttpPageConverterTests {
 		assertThat(pages).extracting(ConvertedPage::page).containsExactly(1, 2, 3);
 		assertThat(pages.get(1).text()).contains("Page 2 sigma");
 		assertThat(pages.get(1).textTruncated()).isFalse();
+		assertThat(pages).extracting(ConvertedPage::imageUnavailable).containsOnly(false);
 		var display = ImageIO.read(new ByteArrayInputStream(pages.getFirst().displayJpeg()));
 		var model = ImageIO.read(new ByteArrayInputStream(pages.getFirst().modelJpeg()));
 		var thumbnail = ImageIO.read(new ByteArrayInputStream(doc.thumbnailJpeg()));
@@ -149,6 +151,21 @@ class HttpPageConverterTests {
 			.isEqualTo(Code.FAILED);
 	}
 
+	@Test
+	void readsWhichPagesCarryAPlaceholderInsteadOfTheirImage() throws IOException {
+		byte[] jpeg = "jpg".getBytes();
+		List<ConvertedPage> pages = new ArrayList<>();
+
+		// 2쪽은 이 값을 넣기 전의 converter 응답처럼 imageUnavailable이 없다.
+		serve(zip("pages/001.json", "{\"page\":1,\"text\":\"a\",\"textTruncated\":false,\"imageUnavailable\":true}".getBytes(),
+				"pages/001.display.jpg", jpeg, "pages/001.model.jpg", jpeg, "pages/002.json",
+				"{\"page\":2,\"text\":\"b\"}".getBytes(), "pages/002.display.jpg", jpeg, "pages/002.model.jpg", jpeg,
+				"thumbnail.jpg", jpeg, "document.json", "{\"pageCount\":2,\"title\":null}".getBytes()),
+				(target) -> target.convert(new byte[] { 1 }, SourceFormat.PDF, 200, pages::add));
+
+		assertThat(pages).extracting(ConvertedPage::imageUnavailable).containsExactly(true, false);
+	}
+
 	private static HttpPageConverter client(int port) {
 		return new HttpPageConverter(new ConverterProperties(URI.create("http://127.0.0.1:" + port),
 				Duration.ofSeconds(60), DataSize.ofMegabytes(64), DataSize.ofMegabytes(8)));
@@ -156,6 +173,10 @@ class HttpPageConverterTests {
 
 	// 정해진 zip을 돌려주는 converter 자리의 HTTP 서버로 응답 검사를 확인한다.
 	private static Code failureFrom(byte[] zip) throws IOException {
+		return serve(zip, (target) -> failure(target, new byte[] { 1 }, SourceFormat.PDF, 200));
+	}
+
+	private static <T> T serve(byte[] zip, Function<HttpPageConverter, T> call) throws IOException {
 		HttpServer fake = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
 		fake.createContext("/render", (exchange) -> {
 			exchange.getRequestBody().readAllBytes();
@@ -167,7 +188,7 @@ class HttpPageConverterTests {
 		});
 		fake.start();
 		try (HttpPageConverter target = client(fake.getAddress().getPort())) {
-			return failure(target, new byte[] { 1 }, SourceFormat.PDF, 200);
+			return call.apply(target);
 		}
 		finally {
 			fake.stop(0);

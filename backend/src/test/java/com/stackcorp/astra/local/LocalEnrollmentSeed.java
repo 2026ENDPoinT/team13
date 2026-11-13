@@ -15,8 +15,9 @@ final class LocalEnrollmentSeed {
 	}
 
 	static void seed(JdbcClient jdbc, long term, long professor) {
-		offering(jdbc, "nr-auto", "[2026년 1차수] 연구윤리 교육", "641", "AUTO", null, professor);
-		offering(jdbc, "nr-manual", "[2026년 1차수] 창업 캠프", "702", "MANUAL", 30, professor);
+		// 과정명에는 차수를 넣지 않는다. 화면이 round_label을 앞에 붙인다.
+		offering(jdbc, "nr-auto", "연구윤리 교육", "641", "AUTO", null, professor);
+		offering(jdbc, "nr-manual", "창업 캠프", "702", "MANUAL", 30, professor);
 		if (!exists(jdbc, "audit-os")) {
 			long course = insert(jdbc, """
 					INSERT INTO courses (term_id, course_type, course_name, course_code, section_no, org_sect, legacy_kjkey,

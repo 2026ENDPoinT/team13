@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.IntStream;
 
 import com.stackcorp.astra.catalog.CatalogQueries.ScheduleView;
 import com.stackcorp.astra.catalog.CatalogQueries.TermView;
@@ -32,19 +33,33 @@ import org.springframework.web.bind.annotation.RestController;
  * 내 과목 조회(EP-0214, EP-0215, EP-0216, EP-0202, EP-0203의 대체 계약). 담당하거나 수강이 확정된 과목만 돌려준다. 정규과목
  * 수강과목 화면은 type=REGULAR와 termId로, 비정규과목 수강과목 화면은 type=NONREGULAR와 division으로 고른다. 신청 중이거나 취소한
  * 과목은 나오지 않는다. 과목의 구성원이 아니면 그 과목이 있는지 드러내지 않도록 404로 응답한다(SC-02).
+ * <p>
+ * 담당 과목에는 수강생 수(`learners`)가 있다. 그 담당자가 보는 수강생 명단(GET /api/courses/{courseId}/students)의 검색어 없는
+ * `total`과 같은 사람 수다. 학생에게는 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 목록의 역할은 과목 행과
+ * 같은 문장에서, 담당 과목의 수강생 수는 한 번에 읽어 쿼리 수가 과목 수와 관계없다.
  */
 @RestController
 class CourseController {
 
-	private static final String SELECT = """
+	private static final String COLUMNS = """
 			SELECT c.course_id, c.legacy_kjkey, c.course_name, c.course_code, c.section_no, c.course_type, c.credit,
 			       t.term_id, t.term_year, t.term_code, t.term_name, t.is_current,
 			       o.round_year, o.round_no, o.round_label, o.nonregular_category,
 			       COALESCE(o.lecture_type, c.lecture_type) AS lecture_type, o.learning_start_date, o.learning_end_date,
 			       o.cancel_allowed, o.cancel_close_at, c.cover_template, c.instructor_label, c.learning_period_label
+			""";
+
+	private static final String FROM = """
 			  FROM courses c LEFT JOIN terms t ON t.term_id = c.term_id
 			  LEFT JOIN non_regular_offerings o ON o.course_id = c.course_id
 			""";
+
+	/**
+	 * 내 과목 목록. WHERE가 {@link MembershipRule#memberOf}로 거르므로 담당자가 아닌 행은 STUDENT다. 이것은
+	 * {@link CourseMembershipQueries#roleOf}와 같은 판정이다({@link MemberCourseQueries}와 같다).
+	 */
+	private static final String MINE = COLUMNS + ", " + MembershipRule.instructorOf("c.course_id", ":user")
+			+ " AS instructor" + FROM;
 
 	private static final int MAX_QUERY = 100;
 
@@ -56,12 +71,15 @@ class CourseController {
 
 	private final EnrollmentRecords enrollments;
 
+	private final CourseRosterQueries rosters;
+
 	CourseController(JdbcClient jdbc, CourseMemberships memberships, CatalogQueries queries,
-			EnrollmentRecords enrollments) {
+			EnrollmentRecords enrollments, CourseRosterQueries rosters) {
 		this.jdbc = jdbc;
 		this.memberships = memberships;
 		this.queries = queries;
 		this.enrollments = enrollments;
+		this.rosters = rosters;
 	}
 
 	/**
@@ -105,25 +123,21 @@ class CourseController {
 				.append(" OR CONCAT_WS('-', c.course_code, c.section_no) LIKE CONCAT('%', :q, '%'))");
 			params.put("q", CatalogQueries.likeLiteral(text));
 		}
-		List<CourseRow> rows = this.jdbc.sql(SELECT + where + """
-				 ORDER BY t.is_current DESC, t.sort_order, o.round_year DESC, o.round_no DESC, c.course_name, c.course_id
-				""").params(params).query(CourseController::row).list();
-		List<CourseRow> member = new ArrayList<>();
+		List<CourseRow> rows = new ArrayList<>();
 		List<CourseRole> roles = new ArrayList<>();
-		for (CourseRow row : rows) {
-			// 역할은 다른 권한 판정과 같은 규칙으로 정한다.
-			this.memberships.roleOf(actor.userId(), row.courseId()).ifPresent((role) -> {
-				member.add(row);
-				roles.add(role);
-			});
-		}
-		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(views(actor, member, roles));
+		this.jdbc.sql(MINE + where + """
+				 ORDER BY t.is_current DESC, t.sort_order, o.round_year DESC, o.round_no DESC, c.course_name, c.course_id
+				""").params(params).query((rs) -> {
+			rows.add(row(rs, rows.size()));
+			roles.add(rs.getBoolean("instructor") ? CourseRole.INSTRUCTOR : CourseRole.STUDENT);
+		});
+		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(views(actor, rows, roles));
 	}
 
 	@GetMapping("/api/courses/{courseId}")
 	ResponseEntity<CourseView> one(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
 		Optional<CourseRole> role = this.memberships.roleOf(actor.userId(), courseId);
-		CourseRow row = this.jdbc.sql(SELECT + " WHERE c.course_id = :course AND c.course_status <> 'CANCELLED'")
+		CourseRow row = this.jdbc.sql(COLUMNS + FROM + " WHERE c.course_id = :course AND c.course_status <> 'CANCELLED'")
 			.param("course", courseId)
 			.query(CourseController::row)
 			.optional()
@@ -140,6 +154,10 @@ class CourseController {
 		Map<Long, List<ScheduleView>> schedules = this.queries.schedules(ids);
 		Map<Long, Enrollment> enrolled = this.enrollments.enrolledOf(actor.userId(), ids);
 		LocalDateTime now = enrolled.isEmpty() ? null : this.queries.now();
+		Map<Long, Integer> learners = this.rosters.counts(IntStream.range(0, rows.size())
+			.filter((i) -> roles.get(i) == CourseRole.INSTRUCTOR)
+			.mapToObj((i) -> rows.get(i).courseId())
+			.toList());
 		List<CourseView> views = new ArrayList<>();
 		for (int i = 0; i < rows.size(); i++) {
 			CourseRow row = rows.get(i);
@@ -155,7 +173,8 @@ class CourseController {
 			}
 			views.add(new CourseView(row.courseId(), row.key(), row.name(), row.code(), row.section(), row.term(),
 					role.name(), names, row.type(), row.credit(), schedules.getOrDefault(row.courseId(), List.of()),
-					row.offering(), mine, row.coverTemplate(), row.learningPeriod(), row.lectureType()));
+					row.offering(), mine, row.coverTemplate(), row.learningPeriod(), row.lectureType(),
+					role == CourseRole.INSTRUCTOR ? learners.getOrDefault(row.courseId(), 0) : null));
 		}
 		return views;
 	}
@@ -207,11 +226,13 @@ class CourseController {
 	 * @param coverTemplate 기본 표지 템플릿 키(예: dynamic_13). 없으면 null
 	 * @param learningPeriod 학교 화면에서 맞춘 비정규 과목의 학습기간 표시(예: 2026.05.13~2026.12.21). 없으면 null
 	 * @param lectureType 수업형태(예: 이러닝수업). 없으면 null
+	 * @param learners 담당자면 수강생 수: 그 과목의 수강생 명단(GET /api/courses/{courseId}/students)에 나오는 사람 수로, 검색어 없는
+	 * 명단의 `total`과 같다. 학생이면 null
 	 */
 	record CourseView(long courseId, String key, String name, String code, String section, TermView term, String role,
 			List<String> instructors, String type, BigDecimal credit, List<ScheduleView> schedules,
 			OfferingSummary offering, MyEnrollment enrollment, String coverTemplate, String learningPeriod,
-			String lectureType) {
+			String lectureType, Integer learners) {
 	}
 
 }

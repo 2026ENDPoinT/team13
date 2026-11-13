@@ -3,6 +3,9 @@ package com.stackcorp.astra.files.api;
 import java.util.List;
 import java.util.Optional;
 
+import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.annotation.Nulls;
+
 /**
  * 문서의 쪽 이미지와 쪽 텍스트(rendition). 화면용 쪽 이미지는 delivery bucket의 doc/{renditionKey}/에, 모델 입력용 이미지와
  * 텍스트는 content bucket에 둔다(ADR-0007).
@@ -39,7 +42,12 @@ public interface DocumentRenditions {
 
 	}
 
-	record RenditionPage(int page, String text, boolean textTruncated, long modelImageBytes) {
+	/**
+	 * @param imageUnavailable 쪽 이미지가 대체 그림인지. 모델에는 그림 없이 텍스트로만 보낸다. 이 값이 생기기 전에 만든 rendition에는
+	 * 없으므로 이 값만 없거나 null이면 false로 읽는다
+	 */
+	record RenditionPage(int page, String text, boolean textTruncated, long modelImageBytes,
+			@JsonSetter(nulls = Nulls.AS_EMPTY) boolean imageUnavailable) {
 	}
 
 }

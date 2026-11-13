@@ -30,6 +30,6 @@
 ## 결과와 트레이드오프
 - 확장자를 바꾼 HTML, script, 실행 파일은 저장되지 않는다. 저장된 파일도 같은 origin에서 문서로 열리지 않는다.
 - signature 검사는 형식을 속인 파일을 거르는 검사다. 형식이 맞는 문서 안의 악성 macro나 exploit은 거르지 못한다. 학교 자료를 받기 전에 검사기를 정한다([architecture.md](../architecture.md) 12절).
-- 업로드 본문은 권한을 판정하기 전에 임시 디스크로 받는다. 로그인한 사용자의 반복 시도는 요청 제한으로 막는다.
+- 업로드 본문은 권한을 판정하기 전에 임시 디스크로 받는다. compose에서는 api의 `upload-spool` volume(host 디스크)이고, 메모리에서 잡히는 `/tmp` tmpfs가 아니다. 로그인한 사용자의 반복 시도는 요청 제한으로 막는다. 요청 제한은 multipart 본문을 나눠 임시 디스크로 받기 전에 세고, multipart를 받는 업로드 경로가 아닌 곳으로 온 multipart는 multipart를 나누지 않고 415로 끝낸다(`files.upload.MultipartRateLimitFilter`). 415는 CSRF 검사와 로그인 검사를 통과한 요청에만 해당하고, 로그인하지 않은 요청이 보호 경로로 오면 그 전에 401이다. 상태를 바꾸는 multipart 요청은 CSRF token을 header로만 받는다. header가 없으면 CSRF 검사가 본문의 `_csrf`를 찾느라 로그인 전에도 본문을 받으므로, multipart를 나누지 않고 403으로 끝낸다(`identity.session.MultipartCsrfHeaderFilter`). Spring Security firewall이 거부한 요청(예: 경로의 `;`)은 `/error`로 넘기지 않고 400 problem JSON을 바로 쓴다. `/error`로 넘기면 그곳의 DispatcherServlet이 본문을 받는다. 이 거절들은 본문을 기다리지 않고 응답하지만, 응답 뒤 Tomcat은 keep-alive로 연결을 다시 쓰려고 남은 본문을 `server.tomcat.max-swallow-size`(2 MB)까지 읽어 버리고, 선언한 본문이 그보다 크면 그만큼 읽은 뒤 연결을 끊는다. 거절된 요청 하나가 api에 보내는 본문은 2 MB 남짓이고 디스크에는 쓰지 않는다.
 - 저장이 끝난 뒤 기록에 실패하면 객체가 남는다. 같은 내용을 다시 올리면 그 객체를 쓴다. 참조가 없는 객체와 만료된 업로드를 지우는 GC는 worker에 만든다.
 - 다른 사람이 올린 같은 내용의 파일과 객체를 함께 쓴다. 업로드 응답은 내용이 이미 있었는지 알려주지 않는다.

@@ -1,6 +1,8 @@
 package com.stackcorp.astra.communication;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -310,6 +312,81 @@ class OpenBoardApiTests extends BoardTestSupport {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.attachments.length()").value(0));
 		this.classmate.get(QnaApiTests.file(this.course, kept)).andExpect(status().isNotFound());
+	}
+
+	@Test
+	void authorsCarryTheirIdAndAPhotoFlagThatMatchesTheAvatarEndpoint() throws Exception {
+		this.data.photo(this.stu);
+		long withPhoto = created(this.student.postJson(posts(this.course), "{\"title\":\"사진 있음\"}"), "postId");
+		long withoutPhoto = created(this.professor.postJson(posts(this.course), "{\"title\":\"사진 없음\"}"), "postId");
+		this.classmate.get(posts(this.course))
+			.andExpect(jsonPath("$.items[0].postId").value(withoutPhoto))
+			.andExpect(jsonPath("$.items[0].authorId").value(this.prof))
+			.andExpect(jsonPath("$.items[0].authorHasPhoto").value(false))
+			.andExpect(jsonPath("$.items[0].edited").value(false))
+			.andExpect(jsonPath("$.items[1].postId").value(withPhoto))
+			.andExpect(jsonPath("$.items[1].authorId").value(this.stu))
+			.andExpect(jsonPath("$.items[1].authorName").value("테스트 STUDENT"))
+			.andExpect(jsonPath("$.items[1].authorHasPhoto").value(true));
+		this.student.get(post(this.course, withPhoto))
+			.andExpect(jsonPath("$.authorId").value(this.stu))
+			.andExpect(jsonPath("$.authorHasPhoto").value(true));
+		String comments = post(this.course, withoutPhoto) + "/comments";
+		created(this.student.postJson(comments, "{\"body\":\"사진 있는 댓글\"}"), "commentId");
+		this.professor.get(comments)
+			.andExpect(jsonPath("$.items[0].authorId").value(this.stu))
+			.andExpect(jsonPath("$.items[0].authorHasPhoto").value(true));
+
+		// 목록의 edited는 상세와 같은 뜻이다.
+		put(this.student, post(this.course, withPhoto), "{\"title\":\"고친 글\",\"version\":1}").andExpect(status().isOk());
+		this.classmate.get(posts(this.course)).andExpect(jsonPath("$.items[1].edited").value(true));
+
+		// 과목을 떠난 작성자는 그대로 보이지만 사진은 함께하는 과목이 있어야 보인다. 아바타 경로가 404인 사람은 false다.
+		this.jdbc.sql("UPDATE course_enrollments SET enrollment_status = 'CANCELLED' WHERE course_id = :c AND user_id = :u")
+			.param("c", this.course)
+			.param("u", this.stu)
+			.update();
+		this.classmate.get(avatar(this.stu)).andExpect(status().isNotFound());
+		this.classmate.get(posts(this.course))
+			.andExpect(jsonPath("$.items[1].authorId").value(this.stu))
+			.andExpect(jsonPath("$.items[1].authorHasPhoto").value(false));
+	}
+
+	@Test
+	void photoFlagsTakeTheSameNumberOfStatementsHoweverManyAuthorsAPageHas() throws Exception {
+		created(this.student.postJson(posts(this.course), "{\"title\":\"하나\"}"), "postId");
+		this.data.photo(this.stu);
+		long few = statements();
+		for (int i = 0; i < 6; i++) {
+			long author = this.data.user("STUDENT");
+			this.data.enroll(this.course, author);
+			this.data.photo(author);
+			created(new ApiClient(this.mvc, this.data.session(author)).postJson(posts(this.course),
+					"{\"title\":\"글 " + i + "\"}"), "postId");
+		}
+		this.classmate.get(posts(this.course))
+			.andExpect(jsonPath("$.items.length()").value(7))
+			.andExpect(jsonPath("$.items[*].authorHasPhoto").value(everyItem(is(true))));
+		assertThat(statements()).isEqualTo(few);
+	}
+
+	/** 열린게시판 목록 한 번 동안 DB가 받은 문장 수. 서버 전체 counter라 다른 작업이 끼면 늘어나기만 하므로 세 번 재어 가장 작은 값을 쓴다. */
+	private long statements() throws Exception {
+		long min = Long.MAX_VALUE;
+		for (int i = 0; i < 3; i++) {
+			long before = questions();
+			this.classmate.get(posts(this.course)).andExpect(status().isOk());
+			min = Math.min(min, questions() - before);
+		}
+		return min;
+	}
+
+	private long questions() {
+		return this.jdbc.sql("SHOW GLOBAL STATUS LIKE 'Questions'").query((rs, n) -> rs.getLong(2)).single();
+	}
+
+	static String avatar(long userId) {
+		return "/api/users/" + userId + "/avatar";
 	}
 
 	static String posts(long courseId) {

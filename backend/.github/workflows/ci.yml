@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # dev는 batch로 합친 통합 브랜치다. main으로 올리기 전에 같은 세 작업을 거친다.
+    branches: [main, dev]
   pull_request:
 
 permissions:
@@ -96,7 +97,8 @@ jobs:
           docker build --tag astra-backend:ci .
           docker build --target converter --tag astra-backend-converter:ci .
 
-      # 실제 비밀값 없이 띄운다. S3 주소는 기동에 쓰이지 않으므로 해석되지 않는 이름을 넣는다.
+      # 실제 비밀값 없이 띄운다. S3 주소는 기동에 쓰이지 않으므로 해석되지 않는 이름을 넣는다. 허용 Origin과 /doc·/vod 서명은
+      # compose.yaml이 요구하는 값이다. 프론트엔드 서버(server.mjs) 뒤의 구성처럼 앱 직접 응답(ADR-0009)으로 띄운다.
       - name: Write env file
         run: |
           {
@@ -110,6 +112,9 @@ jobs:
             echo "ASTRA_STORAGE_ACCESS_KEY=ci"
             echo "ASTRA_STORAGE_SECRET_KEY=ci"
             echo "ASTRA_STORAGE_PATH_STYLE=true"
+            echo "ASTRA_SESSION_ALLOWED_ORIGINS=https://eclass.example.ac.kr"
+            echo "ASTRA_DELIVERY_ORIGIN_ENABLED=true"
+            echo "ASTRA_DELIVERY_ORIGIN_SIGNING_KEY='$(openssl rand -base64 32)'"
           } > .env
 
       # compose.yaml이 참조하는 변수가 모두 .env.example에 적혀 있는지, 구성이 schema에 맞는지 본다.

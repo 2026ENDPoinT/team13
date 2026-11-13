@@ -245,7 +245,8 @@ class CatalogController {
 		return new RegularCourseItem(row.courseId(), row.key(), row.name(), row.code(), row.section(), row.orgSect(),
 				row.term(), row.departmentCode(), row.departmentName(), row.credit(), row.completionType(),
 				row.gradeYear(), row.lectureType(), row.auditAllowed(), row.merged(),
-				instructors.getOrDefault(row.courseId(), List.of()), schedules.getOrDefault(row.courseId(), List.of()));
+				instructors.getOrDefault(row.courseId(), List.of()), schedules.getOrDefault(row.courseId(), List.of()),
+				row.coverTemplate());
 	}
 
 	private static OfferingItem offeringItem(OfferingRow row, LocalDateTime now, Map<Long, List<String>> instructors,
@@ -255,7 +256,7 @@ class CatalogController {
 				OfferingRules.autoApproval(row) ? "AUTO" : "MANUAL", instructors.getOrDefault(row.courseId(), List.of()),
 				audiences.getOrDefault(row.courseId(), List.of()), row.learningStartDate(), row.learningEndDate(),
 				row.applicationOpenAt(), row.applicationCloseAt(), row.cancelCloseAt(), row.cancelAllowed(),
-				OfferingRules.state(row, now), row.capacity(), row.held());
+				OfferingRules.state(row, now), row.capacity(), row.held(), row.coverTemplate());
 	}
 
 	private static <T> ResponseEntity<T> ok(T body) {
@@ -278,11 +279,12 @@ class CatalogController {
 	 * @param key 과목 키(KJKEY). 없으면 null
 	 * @param orgSect 대학구분 A 대학|G 대학원|F 미래융합대학
 	 * @param merged 합반 과목인지
+	 * @param coverTemplate 기본 표지 템플릿 키(예: dynamic_13). 없으면 null. {@code /api/me/courses}와 같은 값이다
 	 */
 	record RegularCourseItem(long courseId, String key, String name, String code, String section, String orgSect,
 			TermView term, String departmentCode, String departmentName, BigDecimal credit, String completionType,
 			Integer gradeYear, String lectureType, boolean auditAllowed, boolean merged, List<String> instructors,
-			List<ScheduleView> schedules) {
+			List<ScheduleView> schedules, String coverTemplate) {
 	}
 
 	record RegularCourseDetail(RegularCourseItem course, RegularViewer viewer) {
@@ -306,12 +308,14 @@ class CatalogController {
 	 * @param state 접수 상태 UPCOMING|OPEN|CLOSED
 	 * @param capacity 정원. null이면 제한 없음
 	 * @param enrolled 수강이 확정된 인원
+	 * @param coverTemplate 기본 표지 템플릿 키(예: dynamic_13). 없으면 null. {@code /api/me/courses}와 같은 값이다
 	 */
 	record OfferingItem(long courseId, String key, String name, String code, String section, int roundYear,
 			int roundNo, String roundLabel, String division, String categoryCode, String lectureType,
 			String approvalMode, List<String> instructors, List<String> audiences, LocalDate learningStartDate,
 			LocalDate learningEndDate, LocalDateTime applicationOpenAt, LocalDateTime applicationCloseAt,
-			LocalDateTime cancelCloseAt, boolean cancelAllowed, String state, Integer capacity, int enrolled) {
+			LocalDateTime cancelCloseAt, boolean cancelAllowed, String state, Integer capacity, int enrolled,
+			String coverTemplate) {
 	}
 
 	record OfferingDetail(OfferingItem offering, OfferingViewer viewer, LocalDateTime serverTime) {

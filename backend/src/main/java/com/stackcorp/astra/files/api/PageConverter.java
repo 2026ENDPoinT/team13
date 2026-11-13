@@ -36,8 +36,10 @@ public interface PageConverter {
 	/**
 	 * @param displayJpeg 화면용 쪽 이미지
 	 * @param modelJpeg 모델 입력용 쪽 이미지. 긴 변 1024px 이하
+	 * @param imageUnavailable converter가 쪽을 그리지 못해 두 이미지가 "이 쪽은 표시할 수 없습니다" 대체 그림인지
 	 */
-	record ConvertedPage(int page, String text, boolean textTruncated, byte[] displayJpeg, byte[] modelJpeg) {
+	record ConvertedPage(int page, String text, boolean textTruncated, byte[] displayJpeg, byte[] modelJpeg,
+			boolean imageUnavailable) {
 	}
 
 	/**

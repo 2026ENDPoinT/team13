@@ -21,7 +21,6 @@ import com.stackcorp.astra.files.upload.UploadRecords.Policy;
 import com.stackcorp.astra.files.upload.UploadRecords.Upload;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
-import com.stackcorp.astra.shared.RateLimiter;
 import com.stackcorp.astra.shared.idempotency.Idempotency;
 
 import org.slf4j.Logger;
@@ -35,6 +34,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 업로드 수신(SC-08). 순서: 요청 제한 → 용도와 과목 권한 → 이름·확장자·크기 → 내용 형식 → 저장 → 기록.
+ * 요청 제한은 multipart 본문을 나누기 전에 {@link MultipartRateLimitFilter}가 센다.
  * 원본은 content bucket의 blobs/{sha256 앞 2자}/{sha256}에 둔다. 같은 내용은 객체 하나를 함께 쓴다. GC가 지운 내용을 다시 받으면
  * 뒤에 임의 값을 붙인 새 key에 저장하고 처음부터 다시 검사한다(ADR-0011).
  * 검사기가 없으면 형식 검사를 통과한 파일은 바로 clean이 된다. 검사기가 있으면 새 내용은 검사 worker가 판정할 때까지 quarantined다(ADR-0018).
@@ -55,8 +55,6 @@ class UploadService {
 
 	private final CourseMemberships memberships;
 
-	private final RateLimiter rateLimiter;
-
 	private final TransactionTemplate transaction;
 
 	private final UploadProperties properties;
@@ -65,13 +63,12 @@ class UploadService {
 
 	private final List<UploadPermission> permissions;
 
-	UploadService(UploadRecords records, ObjectStore store, CourseMemberships memberships, RateLimiter rateLimiter,
+	UploadService(UploadRecords records, ObjectStore store, CourseMemberships memberships,
 			TransactionTemplate transaction, UploadProperties properties, ScanMode scan,
 			List<UploadPermission> permissions) {
 		this.records = records;
 		this.store = store;
 		this.memberships = memberships;
-		this.rateLimiter = rateLimiter;
 		this.transaction = transaction;
 		this.properties = properties;
 		this.scan = scan;
@@ -83,8 +80,6 @@ class UploadService {
 	 */
 	Upload receive(Actor actor, Long courseId, String purposeCode, MultipartFile file, String clientKey) {
 		long userId = actor.userId();
-		// 권한이 없는 시도와 거부한 업로드도 센다. 본문은 이미 받은 뒤라 횟수로 막는다.
-		this.rateLimiter.check("upload", userId, this.properties.rateLimit(), this.properties.rateWindow());
 		UploadPurpose purpose = UploadPurpose.of(purposeCode)
 			.orElseThrow(() -> ApiException.invalid("purpose 값이 올바르지 않습니다."));
 		if (purpose.streamed()) {

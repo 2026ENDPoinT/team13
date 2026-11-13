@@ -5,7 +5,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 
 import com.stackcorp.astra.TestData;
 
@@ -37,7 +36,7 @@ final class CatalogFixtures {
 	long term(String name) {
 		return this.data.insert("""
 				INSERT INTO terms (term_year, term_code, term_name, sort_order) VALUES (:year, '3', :name, 0)
-				""", Map.of("year", ThreadLocalRandom.current().nextInt(3000, 65000), "name", name));
+				""", Map.of("year", TestData.termYear(), "name", name));
 	}
 
 	long regular(long term, String name, String code, String section, String department, String credit,

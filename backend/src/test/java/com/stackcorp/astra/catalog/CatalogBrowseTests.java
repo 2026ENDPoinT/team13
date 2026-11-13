@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -128,7 +129,7 @@ class CatalogBrowseTests extends IntegrationTest {
 		assertThat(keys(json)).containsExactlyInAnyOrder("course", "viewer");
 		assertThat(keys(json.get("course"))).containsExactlyInAnyOrder("courseId", "key", "name", "code", "section",
 				"orgSect", "term", "departmentCode", "departmentName", "credit", "completionType", "gradeYear",
-				"lectureType", "auditAllowed", "merged", "instructors", "schedules");
+				"lectureType", "auditAllowed", "merged", "instructors", "schedules", "coverTemplate");
 		assertThat(body).doesNotContain(secretName).doesNotContain("9주차");
 
 		// 구성원 전용 조회는 여전히 존재를 드러내지 않는다.
@@ -191,6 +192,50 @@ class CatalogBrowseTests extends IntegrationTest {
 		// 조회는 아무것도 만들지 않고, 명령은 POST에만 있다.
 		this.mvc.perform(post("/api/catalog/offerings/" + open)).andExpect(status().isForbidden());
 		assertThat(this.fixtures.rows(open)).isZero();
+	}
+
+	@Test
+	void catalogItemsCarryTheSameCoverTemplateAsMyCourses() throws Exception {
+		long term = this.fixtures.term("표지 학기");
+		long covered = this.fixtures.regular(term, "표지 있는 과목", "300001", "21001", "D1", "3", false);
+		long plain = this.fixtures.regular(term, "표지 없는 과목", "300002", "21001", "D1", "3", false);
+		this.fixtures.update("UPDATE courses SET cover_template = 'dynamic_13' WHERE course_id = :c", covered);
+		String token = "표지" + UUID.randomUUID().toString().substring(0, 8);
+		long coveredOffering = this.fixtures.openOffering(token + " 표지 있는 과정", "AUTO", null);
+		long plainOffering = this.fixtures.openOffering(token + " 표지 없는 과정", "AUTO", null);
+		this.fixtures.update("UPDATE courses SET cover_template = 'dynamic_7' WHERE course_id = :c", coveredOffering);
+		long studentId = this.data.user("STUDENT");
+		this.data.enroll(covered, studentId);
+		this.data.enroll(plain, studentId);
+		ApiClient student = client(studentId);
+
+		Map<Long, JsonNode> regular = byCourse(
+				ApiClient.json(student.get("/api/catalog/courses?term=" + term)).get("items"));
+		assertThat(regular.get(covered).get("coverTemplate").asString()).isEqualTo("dynamic_13");
+		assertThat(regular.get(plain).has("coverTemplate")).isTrue();
+		assertThat(regular.get(plain).get("coverTemplate").isNull()).isTrue();
+
+		// 내 과목 목록과 이름, 값, 없을 때의 null이 같다.
+		Map<Long, JsonNode> mine = byCourse(ApiClient.json(student.get("/api/me/courses?type=REGULAR&termId=" + term)));
+		for (long course : List.of(covered, plain)) {
+			assertThat(regular.get(course).get("coverTemplate")).isEqualTo(mine.get(course).get("coverTemplate"));
+		}
+
+		Map<Long, JsonNode> offerings = byCourse(
+				ApiClient.json(student.get("/api/catalog/offerings?q=" + token)).get("items"));
+		assertThat(offerings.get(coveredOffering).get("coverTemplate").asString()).isEqualTo("dynamic_7");
+		assertThat(offerings.get(plainOffering).has("coverTemplate")).isTrue();
+		assertThat(offerings.get(plainOffering).get("coverTemplate").isNull()).isTrue();
+		student.send(post("/api/catalog/offerings/" + coveredOffering + "/enrollments")
+			.header("Idempotency-Key", "cover-1")).andExpect(status().isCreated());
+		Map<Long, JsonNode> mineOfferings = byCourse(ApiClient.json(student.get("/api/me/courses?type=NONREGULAR")));
+		assertThat(offerings.get(coveredOffering).get("coverTemplate"))
+			.isEqualTo(mineOfferings.get(coveredOffering).get("coverTemplate"));
+
+		// 상세는 목록 항목을 그대로 담는다.
+		student.get("/api/catalog/courses/" + covered).andExpect(jsonPath("$.course.coverTemplate").value("dynamic_13"));
+		student.get("/api/catalog/offerings/" + coveredOffering)
+			.andExpect(jsonPath("$.offering.coverTemplate").value("dynamic_7"));
 	}
 
 	@Test
@@ -278,6 +323,14 @@ class CatalogBrowseTests extends IntegrationTest {
 			ids.add(item.get("courseId").asLong());
 		}
 		return ids;
+	}
+
+	private static Map<Long, JsonNode> byCourse(JsonNode items) {
+		Map<Long, JsonNode> result = new HashMap<>();
+		for (JsonNode item : items) {
+			result.put(item.get("courseId").asLong(), item);
+		}
+		return result;
 	}
 
 	private static Set<String> keys(JsonNode node) {

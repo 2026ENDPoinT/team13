@@ -27,11 +27,12 @@ RUN groupadd --system --gid 10001 astra \
  && useradd --system --uid 10001 --gid astra --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin astra
 
 # transcoder 역할이 부르는 ffmpeg, ffprobe(ADR-0016). 역할마다 이미지를 나누지 않는다(ADR-0019 1번). 다른 역할은 ffmpeg를
-# 실행하지 않는다. /work는 transcoder의 작업 volume 자리다. compose의 named volume이 이 소유자를 물려받는다.
+# 실행하지 않는다. /work는 transcoder의 작업 volume 자리다. /spool은 api가 multipart 업로드 본문을 임시로 받는 volume 자리다
+# (compose의 SPRING_SERVLET_MULTIPART_LOCATION). compose의 named volume이 이 소유자를 물려받는다.
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
- && install --directory --owner=10001 --group=10001 --mode=0700 /work
+ && install --directory --owner=10001 --group=10001 --mode=0700 /work /spool
 
 WORKDIR /app
 # 자주 바뀌지 않는 것부터 layer로 쌓는다. 파일은 root 소유이고 실행 user는 읽기만 한다.
@@ -48,7 +49,8 @@ COPY --chmod=0555 docker/imds-probe.sh /usr/local/bin/astra-imds-probe
 ENV TMPDIR=/tmp
 USER 10001:10001
 
-# 8080: api의 HTTP API. 8090: converter. 8091: transcoder. 관리 port 8081은 container 안의 127.0.0.1에만 열리므로 적지 않는다.
+# 8080: api의 HTTP API. 8090: converter. 8091: transcoder. 관리 port 8081과 converter의 상태 확인 port 8092는 container 안의
+# 127.0.0.1에만 열리므로 적지 않는다.
 EXPOSE 8080 8090 8091
 ENTRYPOINT ["/usr/local/bin/astra"]
 CMD ["api"]

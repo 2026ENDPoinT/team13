@@ -334,6 +334,7 @@ class AccountApiTests extends IntegrationTest {
 			.getResponse();
 
 		assertThat(response.getHeader("Set-Cookie")).startsWith("ASTRA_SESSION=;").contains("Max-Age=0");
+		assertThat(response.getHeaders("Set-Cookie")).anySatisfy((c) -> assertThat(c).startsWith("XSRF-TOKEN="));
 		this.client.get("/api/me").andExpect(status().isUnauthorized());
 		this.otherClient.get("/api/me").andExpect(status().isOk());
 	}

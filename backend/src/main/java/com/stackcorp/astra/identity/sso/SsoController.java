@@ -21,10 +21,12 @@ import com.stackcorp.astra.identity.api.ExternalIdentityProvider.ExternalLogin;
 import com.stackcorp.astra.identity.api.ExternalIdentityProvider.LoginRedirect;
 import com.stackcorp.astra.identity.api.ExternalLoginException;
 import com.stackcorp.astra.identity.session.ClientAddresses;
+import com.stackcorp.astra.identity.session.CsrfCookie;
 import com.stackcorp.astra.identity.session.DeviceCookie;
 import com.stackcorp.astra.identity.session.SessionProperties;
 import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
 import com.stackcorp.astra.shared.ApiException;
+import com.stackcorp.astra.shared.RateLimitedException;
 import com.stackcorp.astra.shared.RateLimiter;
 
 import jakarta.servlet.http.Cookie;
@@ -40,8 +42,9 @@ import jakarta.servlet.http.HttpServletRequest;
  * 남긴다.</li>
  * <li>IdP token, code, state는 응답과 로그에 넣지 않는다(SC-07).</li>
  * <li>재인증(ADR-0029)은 로그인한 사용자가 시작하고 같은 callback으로 돌아온다. 새 session을 만들지 않고 지금 session에 재인증을
- * 기록한 뒤 시작할 때의 경로로 보낸다. 실패하면 같은 경로에 {@code reauth=failed}를 붙여 보낸다. 경로는 로그인과 같은
- * {@link ReturnPath} 검사를 거친다. ID token 검증 단계의 실패는 재인증인지 알기 전이라 {@code /?login=failed}다.</li>
+ * 기록한 뒤 시작할 때의 경로로 보낸다. 실패하면 같은 경로에 {@code reauth=failed}를 붙여 보낸다. session이 없거나, IdP나
+ * 재인증 수단이 없거나, 요청 제한에 걸려 시작하지 못할 때도 같다. 경로는 로그인과 같은 {@link ReturnPath} 검사를 거친다. ID
+ * token 검증 단계의 실패는 재인증인지 알기 전이라 {@code /?login=failed}다.</li>
  * </ul>
  */
 @RestController
@@ -107,18 +110,33 @@ class SsoController {
 	}
 
 	/**
-	 * 로그인한 사용자의 재인증을 시작한다(ADR-0029). IdP에서 다시 로그인한 뒤 {@code returnTo}로 돌아온다. break-glass session과
-	 * IdP 설정이 없는 실행은 404다.
+	 * 로그인한 사용자의 재인증을 시작한다(ADR-0029). IdP에서 다시 로그인한 뒤 {@code returnTo}로 돌아온다.
+	 * <p>
+	 * 브라우저의 top-level 이동이므로 시작할 수 없을 때도 problem JSON 대신 검사한 {@code returnTo}에 {@code reauth=failed}를
+	 * 붙여 302로 보낸다. session이 없거나 만료됐을 때, IdP 설정이 없거나 break-glass session일 때, 요청 제한에 걸렸을 때다.
+	 * 이때는 session과 로그인 전용 쿠키를 새로 만들거나 지우지 않는다. 요청 제한은 로그인한 사용자의 시도를 그대로 센다.
 	 */
 	@GetMapping("/api/auth/reauth")
 	ResponseEntity<Void> reauth(@AuthenticationPrincipal Actor actor, HttpServletRequest request) {
-		ExternalIdentityProvider provider = provider();
-		if (actor.breakGlass()) {
-			throw ApiException.notFound();
-		}
-		this.rateLimiter.check("step-up-reauth", actor.userId(), 10, Duration.ofMinutes(10));
 		String[] returnTo = request.getParameterValues("returnTo");
 		String target = ReturnPath.orRoot(returnTo != null && returnTo.length == 1 ? returnTo[0] : null);
+		String failed = ReturnPath.marked(target, REAUTH_MARKER, REAUTH_FAILED);
+		if (actor == null) {
+			log.info("SSO reauthentication not started: reason=no_session");
+			return redirect(failed);
+		}
+		ExternalIdentityProvider provider = this.providers.getIfAvailable();
+		if (provider == null || actor.breakGlass()) {
+			log.info("SSO reauthentication not started: reason={}", provider == null ? "no_idp" : "break_glass");
+			return redirect(failed);
+		}
+		try {
+			this.rateLimiter.check("step-up-reauth", actor.userId(), 10, Duration.ofMinutes(10));
+		}
+		catch (RateLimitedException ex) {
+			log.info("SSO reauthentication not started: reason=rate_limited");
+			return redirect(failed);
+		}
 		try {
 			LoginRedirect redirect = provider.beginReauthentication(target);
 			return ResponseEntity.status(HttpStatus.FOUND)
@@ -129,7 +147,7 @@ class SsoController {
 		}
 		catch (ExternalLoginException ex) {
 			log.warn("SSO reauthentication start failed: reason={}", ex.reason());
-			return failure(ReturnPath.marked(target, REAUTH_MARKER, REAUTH_FAILED));
+			return failure(failed);
 		}
 	}
 
@@ -163,7 +181,7 @@ class SsoController {
 					this.clientAddresses.of(request), request.getHeader(HttpHeaders.USER_AGENT));
 			return redirect(ReturnPath.orRoot(external.returnTo()), sessionCookie(session.token()).toString(),
 					DeviceCookie.issue(session.deviceUuid(), this.properties).toString(),
-					loginCookie("", Duration.ZERO).toString());
+					loginCookie("", Duration.ZERO).toString(), CsrfCookie.renew(request).toString());
 		}
 		catch (ExternalLoginException ex) {
 			log.warn("SSO login rejected: reason={}", ex.reason());

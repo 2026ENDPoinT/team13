@@ -211,7 +211,8 @@ class EnrollmentRecords {
 
 	/**
 	 * 사용자가 그 과목의 교수 또는 비정규 담당자로 등록돼 있으면 그 역할. 조교는 신청을 처리하지 않는다. 폐강한 과목에는 처리할 사람이
-	 * 없다({@link MembershipRule}).
+	 * 없다({@link MembershipRule}). 과목의 결정권자 판정이다. 외부 LLM 처리 동의도 이 판정을 쓴다
+	 * ({@link CourseMembershipQueries#isDecider}).
 	 */
 	Optional<String> deciderRole(long userId, long courseId) {
 		return this.jdbc.sql("""
@@ -246,6 +247,30 @@ class EnrollmentRecords {
 				SELECT COUNT(*) FROM course_enrollments
 				 WHERE course_id = :course AND enrollment_status IN ('PENDING', 'REQUESTED')
 				""").param("course", courseId).query(Long.class).single();
+	}
+
+	/**
+	 * 그 사용자가 처리할 수 있는 과목({@link #deciderRole}이 있는 과목)마다 처리를 기다리는 신청 수({@link #pendingCount}). 처리할 수
+	 * 없는 과목은 결과에 없다. 과목 수와 관계없이 쿼리 한 번이다.
+	 */
+	Map<Long, Integer> pendingCounts(long userId, Collection<Long> courseIds) {
+		Map<Long, Integer> counts = new HashMap<>();
+		if (courseIds.isEmpty()) {
+			return counts;
+		}
+		this.jdbc.sql("""
+				SELECT DISTINCT ci.course_id,
+				       (SELECT COUNT(*) FROM course_enrollments e
+				         WHERE e.course_id = ci.course_id AND e.enrollment_status IN ('PENDING', 'REQUESTED')) AS pending
+				  FROM course_instructors ci
+				 WHERE ci.user_id = :user AND ci.course_id IN (:courses) AND ci.instructor_role IN ('PROFESSOR', 'MANAGER')
+				""" + " AND " + MembershipRule.liveCourse("ci.course_id"))
+			.param("user", userId)
+			.param("courses", courseIds)
+			.query((rs) -> {
+				counts.put(rs.getLong(1), rs.getInt(2));
+			});
+		return counts;
 	}
 
 	/**

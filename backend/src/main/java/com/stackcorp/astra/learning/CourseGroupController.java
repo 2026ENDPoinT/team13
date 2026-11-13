@@ -7,6 +7,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
+import com.stackcorp.astra.files.api.AvatarPhotos;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.identity.api.UserDirectory;
 import com.stackcorp.astra.identity.api.UserDirectory.UserCard;
@@ -50,16 +51,19 @@ class CourseGroupController {
 
 	private final UserNames names;
 
+	private final AvatarPhotos photos;
+
 	private final RateLimiter rateLimiter;
 
 	private final Idempotency idempotency;
 
 	CourseGroupController(LearningAccess access, CourseGroupService service, UserDirectory directory, UserNames names,
-			RateLimiter rateLimiter, Idempotency idempotency) {
+			AvatarPhotos photos, RateLimiter rateLimiter, Idempotency idempotency) {
 		this.access = access;
 		this.service = service;
 		this.directory = directory;
 		this.names = names;
+		this.photos = photos;
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 	}
@@ -75,11 +79,12 @@ class CourseGroupController {
 		List<GroupView> body;
 		if (instructor) {
 			Map<Long, UserCard> cards = this.directory.find(userIds);
+			Set<Long> withPhoto = this.photos.visibleTo(actor.userId(), userIds);
 			body = groups.stream()
-				.map((g) -> view(g, members.getOrDefault(g.groupId(), List.of()).stream().map((id) -> {
-					UserCard card = cards.get(id);
-					return new MemberView(id, card == null ? null : card.name(), card == null ? null : card.externalRef());
-				}).toList()))
+				.map((g) -> view(g, members.getOrDefault(g.groupId(), List.of())
+					.stream()
+					.map((id) -> MemberView.managed(id, cards.get(id), withPhoto))
+					.toList()))
 				.toList();
 		}
 		else {
@@ -87,7 +92,7 @@ class CourseGroupController {
 			body = groups.stream()
 				.map((g) -> view(g, members.getOrDefault(g.groupId(), List.of())
 					.stream()
-					.map((id) -> new MemberView(null, byId.get(id), null))
+					.map((id) -> new MemberView(null, byId.get(id), null, false))
 					.toList()))
 				.toList();
 		}
@@ -108,7 +113,7 @@ class CourseGroupController {
 		GroupView created = this.idempotency.execute(actor.userId(), "course_group.create", idempotencyKey,
 				List.of(courseId, name, type, description == null ? "" : description), GroupView.class, () -> {
 					long id = this.service.create(actor, courseId, name, type, description);
-					return one(courseId, id);
+					return one(actor.userId(), courseId, id);
 				});
 		return ResponseEntity.status(HttpStatus.CREATED)
 			.cacheControl(CacheControl.noStore())
@@ -127,7 +132,7 @@ class CourseGroupController {
 		String description = LearningText.optional(body.description(), "그룹 설명", MAX_DESCRIPTION, true);
 		this.rateLimiter.check("course-group-write", actor.userId(), 300, Duration.ofMinutes(10));
 		this.service.rename(actor, courseId, groupId, version, name, description);
-		GroupView updated = one(courseId, groupId);
+		GroupView updated = one(actor.userId(), courseId, groupId);
 		return ResponseEntity.ok()
 			.cacheControl(CacheControl.noStore())
 			.eTag(Versions.etag(updated.version()))
@@ -152,7 +157,7 @@ class CourseGroupController {
 		requireInstructor(actor, courseId);
 		this.rateLimiter.check("course-group-write", actor.userId(), 300, Duration.ofMinutes(10));
 		this.service.add(actor, courseId, groupId, studentId);
-		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(one(courseId, groupId));
+		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(one(actor.userId(), courseId, groupId));
 	}
 
 	/** 구성원에서 뺀다. 구성원이 아니어도 204다. */
@@ -175,21 +180,21 @@ class CourseGroupController {
 		}
 		this.rateLimiter.check("course-group-write", actor.userId(), 300, Duration.ofMinutes(10));
 		this.service.move(actor, courseId, groupId, body.toGroupId(), studentId);
-		return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(one(courseId, body.toGroupId()));
+		return ResponseEntity.ok()
+			.cacheControl(CacheControl.noStore())
+			.body(one(actor.userId(), courseId, body.toGroupId()));
 	}
 
 	// 담당자에게 보이는 그룹 하나.
-	private GroupView one(long courseId, long groupId) {
+	private GroupView one(long viewerId, long courseId, long groupId) {
 		GroupRow group = this.service.groups(courseId, List.of(groupId))
 			.stream()
 			.findFirst()
 			.orElseThrow(ApiException::notFound);
 		List<Long> members = this.service.members(List.of(groupId)).getOrDefault(groupId, List.of());
 		Map<Long, UserCard> cards = this.directory.find(members);
-		return view(group, members.stream().map((id) -> {
-			UserCard card = cards.get(id);
-			return new MemberView(id, card == null ? null : card.name(), card == null ? null : card.externalRef());
-		}).toList());
+		Set<Long> withPhoto = this.photos.visibleTo(viewerId, members);
+		return view(group, members.stream().map((id) -> MemberView.managed(id, cards.get(id), withPhoto)).toList());
 	}
 
 	private void requireInstructor(Actor actor, long courseId) {
@@ -224,8 +229,16 @@ class CourseGroupController {
 	/**
 	 * @param userId 담당자에게만 보인다
 	 * @param studentNo 학번. 담당자에게만 보인다
+	 * @param hasPhoto 요청한 사람이 {@code GET /api/users/{userId}/avatar}로 사진을 받을 수 있으면 true(ADR-0038). userId가 없는
+	 * 학생 응답에서는 언제나 false다
 	 */
-	record MemberView(Long userId, String name, String studentNo) {
+	record MemberView(Long userId, String name, String studentNo, boolean hasPhoto) {
+
+		static MemberView managed(long userId, UserCard card, Set<Long> withPhoto) {
+			return new MemberView(userId, card == null ? null : card.name(), card == null ? null : card.externalRef(),
+					withPhoto.contains(userId));
+		}
+
 	}
 
 }

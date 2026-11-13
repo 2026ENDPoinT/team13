@@ -1,7 +1,7 @@
 package com.stackcorp.astra.shared.audit;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.Map;
@@ -9,7 +9,10 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.web.servlet.MockMvc;
@@ -20,6 +23,7 @@ import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.files.api.VideoKeys;
+import com.stackcorp.astra.shared.RequestIds;
 import com.stackcorp.astra.shared.audit.AuditRows.Row;
 import com.stackcorp.astra.summary.FakeLlm;
 import com.stackcorp.astra.summary.LlmConsents;
@@ -31,6 +35,7 @@ import tools.jackson.databind.JsonNode;
  * 상태를 바꾸거나 민감한 연산은 감사 기록을 하나씩 남긴다(SC-09). 기록은 응답의 requestId로 찾을 수 있고, 요청 본문과 파일 이름은
  * 들어가지 않는다.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class AuditApiTests extends IntegrationTest {
 
 	@Autowired
@@ -176,16 +181,26 @@ class AuditApiTests extends IntegrationTest {
 	}
 
 	@Test
-	void aFailedRecordInsideTheCommandTransactionRollsTheCommandBack() throws Exception {
+	void aFailedRecordInsideTheCommandTransactionRollsTheCommandBack(CapturedOutput output) throws Exception {
 		this.jdbc.sql("RENAME TABLE audit_events TO audit_events_off").update();
+		String requestId;
 		try {
-			assertThatThrownBy(() -> this.professor.postJson("/api/courses/" + this.course + "/materials",
-					"{\"weekNo\":1,\"title\":\"자료\"}"))
-				.hasRootCauseInstanceOf(java.sql.SQLSyntaxErrorException.class);
+			requestId = this.professor
+				.postJson("/api/courses/" + this.course + "/materials", "{\"weekNo\":1,\"title\":\"자료\"}")
+				.andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("internal_error"))
+				.andReturn()
+				.getResponse()
+				.getHeader(RequestIds.HEADER);
 		}
 		finally {
 			this.jdbc.sql("RENAME TABLE audit_events_off TO audit_events").update();
 		}
+		// 실패는 감사 기록 insert에서 났다. 그 앞에서 실패한 요청이면 원인이 다르다.
+		assertThat(output.getAll().lines().filter((line) -> line.contains("unhandled exception requestId=" + requestId)))
+			.singleElement()
+			.asString()
+			.contains("SQLSyntaxErrorException", "audit_events");
 		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM learning_activities WHERE course_id = :c")
 			.param("c", this.course)
 			.query(Long.class)

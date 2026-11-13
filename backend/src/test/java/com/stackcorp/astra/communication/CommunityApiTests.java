@@ -1,6 +1,7 @@
 package com.stackcorp.astra.communication;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -294,6 +295,37 @@ class CommunityApiTests extends BoardTestSupport {
 				 WHERE notification_type = 'QUESTION_ANSWERED' AND target_ref_id = :id AND course_id IS NULL
 				""", id)).isEqualTo(1);
 		assertThat(audits("community_inquiry.answer", reply.get("replyId").asLong())).isEqualTo(1);
+	}
+
+	@Test
+	void inquiryPeopleCarryTheirIdOnlyWhereTheAudienceAllowsIt() throws Exception {
+		this.data.photo(this.stu);
+		this.data.photo(this.op);
+		long id = created(postWithKey(this.student, inquiries(), "{\"title\":\"" + this.tag + " 사진\"}",
+				"photo-" + this.tag), "postId");
+		created(postWithKey(this.operator, inquiries() + "/" + id + "/replies", "{\"body\":\"답\"}",
+				"photo-reply-" + this.tag), "replyId");
+		// 문의한 사람은 자기 ID와 사진을 본다. 답한 운영자는 이름만 보인다(알림마당 공지와 같은 규칙).
+		this.student.get(inquiries() + "/" + id)
+			.andExpect(jsonPath("$.authorId").value(this.stu))
+			.andExpect(jsonPath("$.authorHasPhoto").value(true))
+			.andExpect(jsonPath("$.replies[0].authorName").value("테스트 STAFF"))
+			.andExpect(jsonPath("$.replies[0].authorId").value(nullValue()))
+			.andExpect(jsonPath("$.replies[0].authorHasPhoto").value(false));
+		get(this.student, inquiries(), "q", this.tag)
+			.andExpect(jsonPath("$.items[0].authorId").doesNotExist())
+			.andExpect(jsonPath("$.items[0].authorHasPhoto").value(false));
+		// 운영자는 두 사람의 ID를 본다. 사진은 아바타 경로처럼 과목을 함께할 때만 true다.
+		this.operator.get(inquiries() + "/" + id)
+			.andExpect(jsonPath("$.authorId").value(this.stu))
+			.andExpect(jsonPath("$.authorHasPhoto").value(false))
+			.andExpect(jsonPath("$.replies[0].authorId").value(this.op))
+			.andExpect(jsonPath("$.replies[0].authorHasPhoto").value(true));
+		get(this.operator, inquiries(), "q", this.tag, "all", "true")
+			.andExpect(jsonPath("$.items[0].authorId").value(this.stu))
+			.andExpect(jsonPath("$.items[0].authorHasPhoto").value(false));
+		this.data.enroll(this.course, this.op);
+		this.operator.get(inquiries() + "/" + id).andExpect(jsonPath("$.authorHasPhoto").value(true));
 	}
 
 	@Test
