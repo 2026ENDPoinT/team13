@@ -5,7 +5,7 @@ import { matchScreen, screens } from "./manifest.ts";
 import { equivalentHref } from "./shared/routes.ts";
 import { getState, save, render, toast } from "./store.ts";
 import { activities, courseById } from "./data.ts";
-import { followRole } from "./shared/backend.ts";
+import { backendStatus, followRole, logout as logoutBackend } from "./shared/backend.ts";
 import { assignmentIdOf } from "./shared/assignments-remote.ts";
 import { quizIdOf } from "./shared/quizzes-remote.ts";
 import { surveyIdOf } from "./shared/surveys-remote.ts";
@@ -220,7 +220,10 @@ export interface FollowOptions {
 /** What an in-app link does when clicked: navigate, switching role or logging out when asked. */
 export function followLink(href: string, opts: FollowOptions = {}) {
   if (opts.logout) {
-    navigate("/ilos/lo/logout.acl", { logout: true });
+    // Signed in to the server: end that session first (as the backend strip's 로그아웃 does). The state change
+    // empties every per-user cache and saved input (`onSignOut`); then the logged-out page shows.
+    if (backendStatus() === "ready") void logoutBackend().finally(() => navigate("/ilos/lo/logout.acl", { logout: true }));
+    else navigate("/ilos/lo/logout.acl", { logout: true });
     return;
   }
   if (opts.roleSwitch) {

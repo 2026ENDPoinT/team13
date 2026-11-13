@@ -191,6 +191,21 @@ export function currentUserId(): string | null {
   return state.status === "ready" && state.me && state.me.userId != null ? String(state.me.userId) : null;
 }
 
+/**
+ * Calls `fn` each time the signed-in user goes away: logout, an expired session (`anon`), or another
+ * user signing in. A reload of the same user, a failed probe (`off`) and sample mode never call it.
+ * For data kept beyond memory (localStorage) that must not reach the next user of the tab.
+ */
+export function onSignOut(fn: () => void): () => boolean {
+  let user = currentUserId();
+  return subscribe((next) => {
+    if (next.status === "off") return;
+    const id = next.status === "ready" && next.me && next.me.userId != null ? String(next.me.userId) : null;
+    if (user != null && id !== user) fn();
+    user = id;
+  });
+}
+
 /** The institution time zone id ("Asia/Seoul", "UTC", "+09:00"); the backend default until read. */
 export function institutionZone(): string {
   return zone;

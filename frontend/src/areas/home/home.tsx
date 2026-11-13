@@ -394,7 +394,7 @@ function logoutView(): ReactNode {
   return (
     <section data-area="home">
       <h1>로그아웃</h1>
-      <p className="subhead">샘플 세션을 닫았습니다. 역할 화면으로 다시 들어가지 않습니다.</p>
+      <p className="subhead">{backendStatus() === "off" ? "샘플 세션을 닫았습니다. 역할 화면으로 다시 들어가지 않습니다." : "ASTRA 서버에서 로그아웃했습니다. 다시 쓰려면 홈에서 로그인하세요."}</p>
     </section>
   );
 }
