@@ -311,6 +311,53 @@ class SchoolContentTests extends IntegrationTest {
 			return new SchoolDownload(PDF.length);
 		}
 
+		// 영상 상세, 강의계획서, 출석, 성적(SchoolScreensTests). 학생마다 다른 값을 줄 수 있게 객체마다 둔다.
+
+		final AtomicInteger screens = new AtomicInteger();
+
+		volatile com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolVideo video;
+
+		volatile com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolSyllabus syllabus;
+
+		volatile List<com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolAttendanceWeek> attendance = List.of();
+
+		volatile List<com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolGradeItem> grades = List.of();
+
+		@Override
+		public com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolVideo video(String courseKey, String itemId,
+				Duration requestTimeout, Duration remaining) {
+			check(courseKey);
+			this.screens.incrementAndGet();
+			return this.video;
+		}
+
+		@Override
+		public com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolSyllabus syllabus(String courseKey,
+				Duration requestTimeout, Duration remaining) {
+			check(courseKey);
+			this.screens.incrementAndGet();
+			if (this.syllabus == null) {
+				throw new SchoolLoginException(SchoolLoginException.Kind.NOT_FOUND, "syllabus_absent");
+			}
+			return this.syllabus;
+		}
+
+		@Override
+		public List<com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolAttendanceWeek> attendance(
+				String courseKey, Duration requestTimeout, Duration remaining) {
+			check(courseKey);
+			this.screens.incrementAndGet();
+			return this.attendance;
+		}
+
+		@Override
+		public List<com.stackcorp.astra.identity.api.SchoolCourseScreens.SchoolGradeItem> grades(String courseKey,
+				Duration requestTimeout, Duration remaining) {
+			check(courseKey);
+			this.screens.incrementAndGet();
+			return this.grades;
+		}
+
 		@Override
 		public void close() {
 			this.closed = true;

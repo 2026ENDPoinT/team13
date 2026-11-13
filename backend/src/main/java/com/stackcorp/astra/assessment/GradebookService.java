@@ -449,7 +449,7 @@ class GradebookService {
 		return new ApiException(HttpStatus.CONFLICT, "edit_conflict", "다른 수정이 먼저 저장되었습니다. 다시 불러온 뒤 수정해 주세요.");
 	}
 
-	private static String validatedType(String type) {
+	static String validatedType(String type) {
 		if (type == null || type.isEmpty() || "all".equals(type)) {
 			return null;
 		}
@@ -459,7 +459,7 @@ class GradebookService {
 		return type;
 	}
 
-	private static String validatedQuery(String query) {
+	static String validatedQuery(String query) {
 		if (query == null || query.isBlank()) {
 			return null;
 		}
