@@ -160,7 +160,8 @@ describe("activitySnapshot: 가져온 학교 활동", () => {
     ]);
     expect(imported[0]!.href).toBe(VIDEO_801);
     expect(imported[0]!.external).toBe(false);
-    expect(imported.find((row) => row.key === "school-802")!.external).toBe(true);
+    expect(imported.find((row) => row.key === "school-802")!.external).toBe(false);
+    expect(imported.find((row) => row.key === "school-806")!.external).toBe(true);
     // Native rows keep their own mapping, and no imported row turns into an unopenable "other" row.
     expect(rows.filter((row) => !row.school).map((row) => row.key)).toEqual(["lecture-11", "report-812", "other-15", "material-13", "test-814"]);
     expect(rows.some((row) => row.type === "other" && String(row.activityId).startsWith("school-"))).toBe(false);
@@ -198,17 +199,13 @@ describe("학생 강의실의 학교 활동 행", () => {
     expect(video.getAttribute("title")).toContain("1주");
     expect(video.children).toHaveLength(3);
 
-    const linkOut = host.querySelector<HTMLAnchorElement>('[data-row="school-802"]')!;
-    expect(linkOut.getAttribute("href")).toBe(url(802, "report"));
-    expect(linkOut.getAttribute("target")).toBe("_blank");
-    expect(linkOut.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(linkOut.getAttribute("aria-label")).toBe("학교 report 802, 과제, 완료 — 학교 e-Class에서 열기(새 탭)");
-    expect(linkOut.querySelector(".activity-ext")?.textContent).toContain("e-Class");
-    expect(linkOut.getAttribute("title")).toContain("e-Class에서 열기");
-
+    // A school assignment opens STack's read-only detail in this tab.
     const report = host.querySelector('[data-row="school-802"]')!;
     expect(report.querySelector(".check")?.getAttribute("aria-label")).toBe("완료");
-    expect(report.getAttribute("aria-label")).toContain("완료");
+    expect(report.hasAttribute("target")).toBe(false);
+    expect(new URL(report.getAttribute("href")!, location.origin).searchParams.get("n")).toBe("school-802");
+    expect(new URL(report.getAttribute("href")!, location.origin).searchParams.get("m")).toBe("report");
+    expect(report.getAttribute("title")).toContain("학교 과제");
 
     for (const id of [804, 807]) {
       const row = host.querySelector(`[data-row="school-${id}"]`)!;
@@ -219,6 +216,12 @@ describe("학생 강의실의 학교 활동 행", () => {
     }
     expect(host.querySelector('[data-row="school-804"]')?.getAttribute("title")).toContain("오프라인");
     expect(host.querySelector('[data-row="school-806"] .activity-status')?.textContent).toBe("e-Class");
+    // Any other imported row with a school address stays a new-tab link to e-Class.
+    const linkOut = host.querySelector<HTMLAnchorElement>('[data-row="school-806"]')!;
+    expect(linkOut.getAttribute("href")).toBe(url(806, "zoom"));
+    expect(linkOut.getAttribute("target")).toBe("_blank");
+    expect(linkOut.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(linkOut.getAttribute("aria-label")).toContain("학교 e-Class에서 열기(새 탭)");
     // A display type the room has no label for falls back to the school type label; no NaN anywhere.
     expect(host.querySelector('[data-row="school-807"] .tiny')?.textContent).toBe("클리커");
     expect(host.textContent).not.toContain("NaN");

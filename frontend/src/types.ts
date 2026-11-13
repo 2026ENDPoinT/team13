@@ -40,6 +40,8 @@ export interface Screen {
   extra?: boolean;
   // Backend screens resolved from the address (router.ts resolveScreen).
   serverAssignment?: number;
+  /** An assignment imported from the school's e-Class (`m=report&n=school-<n>`); read only. */
+  serverSchoolAssignment?: string | null;
   serverQuiz?: number | null;
   serverAttempt?: number | null;
   serverSurvey?: number | null;

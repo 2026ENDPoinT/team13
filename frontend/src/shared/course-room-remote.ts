@@ -44,7 +44,7 @@ export interface RoomItem {
   closeAt?: string | null;
   published?: boolean;
   phase?: string;
-  assignmentId?: number;
+  assignmentId?: number | string;
   quizId?: number;
   surveyId?: number | string;
 }
@@ -139,7 +139,8 @@ export function roomEntry(courseId: Id): RoomEntry {
   if (!weeksData) return { loading, error, weeks: null, rows: [] };
   const byActivity = <T extends { activityId?: number | string }>(items: T[] | null | undefined) => new Map(list(items).map((item) => [item.activityId, item]));
   const pools: Record<string, Map<number | string | undefined, RoomItem>> = {
-    report: byActivity<RoomItem>(dataOf(assignmentLists, listKey(courseId))),
+    // A student's list ends with school assignments; they are never the responsible person's commands (as the week rows below).
+    report: byActivity<RoomItem>(list(dataOf(assignmentLists, listKey(courseId))).filter((item) => item.origin !== "school")),
     test: byActivity<RoomItem>(dataOf(quizLists, quizListKey(courseId))),
     survey: byActivity<RoomItem>(dataOf(surveyLists, String(courseId))),
     lecture_material: byActivity<RoomItem>(materialsOf(dataOf(materialLists, materialKey(courseId)))),

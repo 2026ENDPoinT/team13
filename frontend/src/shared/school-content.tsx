@@ -158,8 +158,8 @@ export function schoolPercent(value: unknown): string {
   return `${Math.round(value * 10) / 10}%`;
 }
 
-/** What a failed school request means for the student. */
-export type SchoolProblem = "signin" | "scanning" | "unsupported" | "too_large" | "unavailable";
+/** What a failed school request means for the student. `at_school`: a submit, draft, attempt or completion of a school item (409 `school_submit_at_school`). */
+export type SchoolProblem = "signin" | "scanning" | "unsupported" | "too_large" | "unavailable" | "at_school";
 
 export function schoolProblemOf(error: unknown): SchoolProblem | null {
   if (!(error instanceof ApiError)) return null;
@@ -168,6 +168,7 @@ export function schoolProblemOf(error: unknown): SchoolProblem | null {
   if (error.status === 422 && error.code === "school_file_unsupported") return "unsupported";
   if (error.status === 422 && error.code === "school_file_too_large") return "too_large";
   if (error.status === 502 && error.code === "school_unavailable") return "unavailable";
+  if (error.status === 409 && error.code === "school_submit_at_school") return "at_school";
   return null;
 }
 
@@ -177,6 +178,7 @@ export const SCHOOL_PROBLEM_TEXT: Record<SchoolProblem, string> = {
   unsupported: "이 파일은 STack에서 열 수 없는 형식입니다. 학교 e-Class에서 열어 주세요.",
   too_large: "이 파일은 너무 커서 STack으로 가져올 수 없습니다. 학교 e-Class에서 열어 주세요.",
   unavailable: "학교 e-Class 서버에서 답이 없습니다. 잠시 후 다시 시도하세요.",
+  at_school: "학교 e-Class에서 가져온 활동은 STack에서 제출하지 않습니다. 학교 e-Class에서 제출해 주세요.",
 };
 
 /** Default and bounds of the wait between two tries while the copy is scanned (seconds). */
@@ -244,6 +246,7 @@ export function SchoolProblemNote({ error, schoolUrl, retry, compact = false }: 
   let actions: ReactNode;
   if (problem === "signin") actions = <SchoolSigninButton done={retry} />;
   else if (problem === "unsupported" || problem === "too_large") actions = <SchoolLink url={schoolUrl} kind="primary" />;
+  else if (problem === "at_school") actions = <SchoolLink url={schoolUrl} kind="primary" label="e-Class에서 제출" />;
   else actions = <><Button kind="secondary" onClick={retry}>다시 시도</Button><SchoolLink url={schoolUrl} kind="ghost" /></>;
   return (
     <div className={`school-problem${compact ? " is-compact" : ""}`} role="alert" data-school-problem={problem}>

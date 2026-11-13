@@ -212,16 +212,22 @@ function ActionRow({ action }: { action: NextAction }) {
   );
 }
 function ServerActionRow({ action }: { action: ServerAction }) {
+  const className = `hero-action ${action.kind === "video" ? "is-lecture" : "is-deadline"}`;
+  const body = (
+    <>
+      <span className={`hero-chip t-${action.kind}`} aria-hidden="true" title={action.label}><Icon name={typeIcon(action.kind)} /></span>
+      <span className="hero-action-main" aria-hidden="true">
+        <span className="hero-action-title">{action.title}</span>
+        <span className={`hero-action-meta${action.urgent ? " is-urgent" : ""}`}>{action.meta}</span>
+      </span>
+      <span className="hero-cta" aria-hidden="true"><span>{action.external ? "e-Class" : "열기"}</span><span className="hero-arrow">→</span></span>
+    </>
+  );
   return (
     <li>
-      <Link className={`hero-action ${action.kind === "video" ? "is-lecture" : "is-deadline"}`} href={action.href} aria-label={`${action.label} ${action.title}, ${action.meta}. 열기`}>
-        <span className={`hero-chip t-${action.kind}`} aria-hidden="true" title={action.label}><Icon name={typeIcon(action.kind)} /></span>
-        <span className="hero-action-main" aria-hidden="true">
-          <span className="hero-action-title">{action.title}</span>
-          <span className={`hero-action-meta${action.urgent ? " is-urgent" : ""}`}>{action.meta}</span>
-        </span>
-        <span className="hero-cta" aria-hidden="true"><span>열기</span><span className="hero-arrow">→</span></span>
-      </Link>
+      {action.external
+        ? <a className={className} href={action.href} target="_blank" rel="noopener noreferrer" data-external="eclass" aria-label={`${action.label} ${action.title}, ${action.meta}. 학교 e-Class에서 열기(새 탭)`}>{body}</a>
+        : <Link className={className} href={action.href} aria-label={`${action.label} ${action.title}, ${action.meta}. 열기`}>{body}</Link>}
     </li>
   );
 }

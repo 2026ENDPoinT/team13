@@ -6,16 +6,22 @@ import { useEffect } from "react";
 import { backendState, backendStatus, institutionZone, kjOf, refreshCourses } from "./backend.ts";
 import { createResource, freshVisit, retryLater, useResource } from "./remote-cache.ts";
 import { noteUnread } from "./unread-badges.tsx";
-import { serverActivityHref } from "./activity-links.ts";
+import { serverActivityHref, schoolAssignmentHref } from "./activity-links.ts";
+import { schoolHref } from "./school-content.tsx";
 import { courseById, COURSE_ORDER } from "../data.ts";
 import type { Course } from "../data.ts";
 import type { Entry } from "./remote-cache.ts";
 
 type Id = number | string;
 
-/** A to-do or calendar item (`/api/me/todo`, the home aggregate's `todo`). */
+/**
+ * A to-do or calendar item (`/api/me/todo`, the home aggregate's `todo`). A school item (`origin: "school"`, report/test/survey)
+ * has a string `activityId` (`school-<n>`), no `assignmentId`·`quizId`·`surveyId`, and `schoolUrl`.
+ */
 export interface TodoItem {
-  activityId: number;
+  activityId: number | string;
+  origin?: "school";
+  schoolUrl?: string | null;
   courseId: number;
   type: string;
   title: string;
@@ -250,12 +256,20 @@ export function todoLabel(type: string): string {
 }
 
 /**
- * Where a to-do or calendar item opens, or null. Lectures and materials open their server detail by activity id;
- * assignments, quizzes and surveys open their own screen by the item's `assignmentId`·`quizId`·`surveyId`.
+ * Where a to-do or calendar item opens in STack, or null. Lectures and materials open their server detail by activity id;
+ * assignments, quizzes and surveys open their own screen by the item's `assignmentId`·`quizId`·`surveyId`. A school assignment
+ * opens STack's read-only detail (`n=school-<n>`); a school test or survey has no STack screen (see `todoSchoolHref`).
  */
 export function todoHref(item: TodoItem, data: HomeData | null | undefined): string | null {
   const kj = keyOfCourse(data, item.courseId);
-  return kj ? serverActivityHref(kj, item.type, item.activityId, item) : null;
+  if (!kj) return null;
+  if (item.origin === "school") return item.type === "report" ? schoolAssignmentHref(kj, item.activityId) : null;
+  return serverActivityHref(kj, item.type, item.activityId, item);
+}
+
+/** The school's own address of a school to-do that STack does not open (a test, a survey): a new-tab link, or null. */
+export function todoSchoolHref(item: TodoItem): string | null {
+  return item.origin === "school" && item.type !== "report" ? schoolHref(item.schoolUrl) : null;
 }
 
 // ---------- 한 과목의 할 일(강의실) ----------
