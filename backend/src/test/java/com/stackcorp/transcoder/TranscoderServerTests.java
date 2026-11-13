@@ -26,6 +26,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -85,7 +87,55 @@ class TranscoderServerTests {
 		assertThat(names).first().isEqualTo("index.m3u8");
 		assertThat(names).contains("seg_00000.ts");
 		assertThat(playlist).contains("#EXTINF:").doesNotContain("EXT-X-KEY");
+		// 결과는 작업 directory에서 읽어 보내므로 그 directory는 응답을 다 보낸 뒤에 지운다. 지우기는 slot을 놓기 전에 끝나므로 다음
+		// 변환 요청(여기서는 거부)의 답을 받으면 두 요청의 작업 파일이 모두 없다.
+		assertThat(post("mp4", "not a video".getBytes(StandardCharsets.US_ASCII)).statusCode()).isEqualTo(422);
 		assertThat(workFiles()).isEmpty();
+	}
+
+	/**
+	 * 거부(422)는 작업 directory를 지운 뒤에 답한다. 지우기를 막아 두는 동안 답이 오지 않고, 지우기를 풀면 답과 함께 작업 파일이 없다.
+	 * 전에는 답을 보낸 뒤에 지워서 답을 받자마자 본 client가 남은 작업 directory를 보았다.
+	 */
+	@Test
+	void answersARefusalOnlyAfterItsWorkDirectoryIsDeleted() throws Exception {
+		CountDownLatch deleting = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		try (TranscoderServer gated = TranscoderServer.start(new InetSocketAddress("127.0.0.1", 0),
+				new TranscoderServer.Limits(8L << 20, 64L << 20, Duration.ofMinutes(2), 60, 1, this.workRoot, "ffmpeg",
+						"ffprobe"),
+				(dir) -> {
+					deleting.countDown();
+					try {
+						release.await();
+					}
+					catch (InterruptedException ex) {
+						Thread.currentThread().interrupt();
+					}
+					TranscoderServer.deleteRecursively(dir);
+				})) {
+			byte[] mkv = TestVideos.clip(1, "mkv");
+			CompletableFuture<HttpResponse<byte[]>> answer = this.http.sendAsync(
+					HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + gated.port() + "/transcode?container=mp4"))
+						.POST(HttpRequest.BodyPublishers.ofByteArray(mkv))
+						.build(),
+					HttpResponse.BodyHandlers.ofByteArray());
+
+			CompletableFuture.anyOf(answer, CompletableFuture.runAsync(() -> {
+				try {
+					deleting.await();
+				}
+				catch (InterruptedException ex) {
+					Thread.currentThread().interrupt();
+				}
+			})).join();
+			assertThat(answer).as("작업 directory를 지우기 전에 온 답").isNotDone();
+			assertThat(workFiles()).hasSize(1);
+
+			release.countDown();
+			assertThat(answer.get().statusCode()).isEqualTo(422);
+			assertThat(workFiles()).isEmpty();
+		}
 	}
 
 	@Test

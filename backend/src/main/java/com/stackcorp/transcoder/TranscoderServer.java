@@ -17,6 +17,7 @@ import java.util.OptionalDouble;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -35,7 +36,10 @@ import com.sun.net.httpserver.HttpServer;
  * <li>{@code GET /health}: 200.</li>
  * </ul>
  *
- * 한 번에 영상 하나만 변환하고 다음 요청은 차례를 기다린다. 원본과 결과는 요청마다 만드는 작업 directory(소유자만 접근)에만 두고 응답을 보낸 뒤 지운다. 실행:
+ * 한 번에 영상 하나만 변환하고 다음 요청은 차례를 기다린다. 원본과 결과는 요청마다 만드는 작업 directory(소유자만 접근)에만 둔다. 거부와
+ * 실패(4xx, 5xx)는 작업 directory를 지운 뒤에 답하므로 답을 받은 client는 남은 작업 파일이 없다고 믿어도 된다. 성공(200)은 zip을
+ * 그 directory에서 읽어 보내므로 응답을 다 보낸 뒤에 지운다. 그 삭제는 slot을 놓기 전에 끝나므로 다음 변환 요청은 앞 요청의 작업
+ * directory가 없는 상태에서 시작한다. 실행:
  * {@code java -Dloader.main=com.stackcorp.transcoder.TranscoderServer -cp app.jar
  * org.springframework.boot.loader.launch.PropertiesLauncher}. 환경 변수는 {@link Limits#fromEnvironment}에 있다.
  */
@@ -59,14 +63,23 @@ public final class TranscoderServer implements AutoCloseable {
 
 	private final Semaphore slot = new Semaphore(1, true);
 
-	private TranscoderServer(HttpServer server, ExecutorService executor, Limits limits) {
+	// 요청 하나의 작업 directory를 지운다. 테스트가 지우는 시점을 관찰하려고 바꿔 끼운다.
+	private final Consumer<Path> cleanup;
+
+	private TranscoderServer(HttpServer server, ExecutorService executor, Limits limits, Consumer<Path> cleanup) {
 		this.server = server;
 		this.executor = executor;
 		this.limits = limits;
 		this.tools = new MediaTools(limits.ffmpeg(), limits.ffprobe(), limits.threads());
+		this.cleanup = cleanup;
 	}
 
 	public static TranscoderServer start(InetSocketAddress address, Limits limits) throws IOException {
+		return start(address, limits, TranscoderServer::deleteRecursively);
+	}
+
+	/** @param cleanup 요청이 끝날 때 그 작업 directory를 지우는 일 */
+	static TranscoderServer start(InetSocketAddress address, Limits limits, Consumer<Path> cleanup) throws IOException {
 		Files.createDirectories(limits.workRoot());
 		// work root는 container를 다시 만들어도 남는 volume일 수 있다. work root는 이 transcoder process만 쓰고 아직 요청을 받기
 		// 전이므로, 이전 process가 중단되며 남긴 작업 directory는 모두 지운다. 지우지 못한 것은 경고만 남기고 넘어간다.
@@ -76,7 +89,7 @@ public final class TranscoderServer implements AutoCloseable {
 		}
 		HttpServer server = HttpServer.create(address, 0);
 		ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-		TranscoderServer transcoder = new TranscoderServer(server, executor, limits);
+		TranscoderServer transcoder = new TranscoderServer(server, executor, limits, cleanup);
 		server.createContext("/transcode", transcoder::transcode);
 		server.createContext("/health", (exchange) -> respond(exchange, 200, "application/json", "{}"));
 		server.setExecutor(executor);
@@ -147,20 +160,25 @@ public final class TranscoderServer implements AutoCloseable {
 				this.slot.release();
 				throw ex;
 			}
+			List<Path> outputs;
 			try {
-				List<Path> outputs;
-				try {
-					outputs = run(exchange.getRequestBody(), size, container.group(1), workDir);
-				}
-				catch (TranscodeFailure ex) {
-					respond(exchange, 422, "application/json", failure(ex.code(), ex.getMessage()));
-					return;
-				}
-				catch (IOException ex) {
-					// 작업 directory나 ffmpeg 실행에 실패했다. 입력 탓이 아니므로 다시 시도할 수 있다.
-					respond(exchange, 500, "application/json", failure("internal", "변환을 실행하지 못했습니다."));
-					return;
-				}
+				outputs = run(exchange.getRequestBody(), size, container.group(1), workDir);
+			}
+			catch (TranscodeFailure ex) {
+				refuse(exchange, workDir, 422, failure(ex.code(), ex.getMessage()));
+				return;
+			}
+			catch (IOException ex) {
+				// 작업 directory나 ffmpeg 실행에 실패했다. 입력 탓이 아니므로 다시 시도할 수 있다.
+				refuse(exchange, workDir, 500, failure("internal", "변환을 실행하지 못했습니다."));
+				return;
+			}
+			catch (RuntimeException | Error ex) {
+				finish(workDir);
+				throw ex;
+			}
+			// 결과를 작업 directory에서 읽어 보내므로 다 보낸 뒤에(client가 도중에 끊어도) 지운다.
+			try {
 				exchange.getResponseHeaders().set("content-type", "application/zip");
 				exchange.sendResponseHeaders(200, 0);
 				try (ZipOutputStream zip = new ZipOutputStream(exchange.getResponseBody())) {
@@ -173,9 +191,24 @@ public final class TranscoderServer implements AutoCloseable {
 				}
 			}
 			finally {
-				deleteRecursively(workDir);
-				this.slot.release();
+				finish(workDir);
 			}
+		}
+	}
+
+	// 거부와 실패는 작업 directory를 지우고 slot을 놓은 뒤에 답한다. 답을 받은 client에게 남은 작업 파일이 없다.
+	private void refuse(HttpExchange exchange, Path workDir, int status, String body) throws IOException {
+		finish(workDir);
+		respond(exchange, status, "application/json", body);
+	}
+
+	// 작업 directory를 지운 뒤 다음 요청에 slot을 넘긴다.
+	private void finish(Path workDir) {
+		try {
+			this.cleanup.accept(workDir);
+		}
+		finally {
+			this.slot.release();
 		}
 	}
 
@@ -213,7 +246,7 @@ public final class TranscoderServer implements AutoCloseable {
 		return Stream.concat(Stream.of(playlist), segments.stream()).toList();
 	}
 
-	private static void deleteRecursively(Path dir) {
+	static void deleteRecursively(Path dir) {
 		// Files.walk는 시작 directory 아래의 오류를 UncheckedIOException으로 던진다. 어느 쪽이든 시작이나 slot 반환을 막지 않는다.
 		try (Stream<Path> paths = Files.walk(dir)) {
 			paths.sorted(Comparator.reverseOrder()).forEach((p) -> {
