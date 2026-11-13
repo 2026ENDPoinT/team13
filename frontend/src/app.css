@@ -1,0 +1,43 @@
+@import "./tokens.css";
+@import "./ui/components.css";
+@import "./shell/shell.css";
+@import "./areas/home/home.css";
+@import "./areas/home/course-study.css";
+@import "./shared/document-viewer.css";
+@import "./shared/backend-ui.css";
+@import "./shared/lesson-viewer.css";
+@import "./shared/save-to-study.css";
+@import "./areas/home/recording-study.css";
+@import "./areas/learning/video-study.css";
+@import "./areas/course/course.css";
+@import "./areas/learning/learning.css";
+@import "./areas/mobile/mobile.css";
+@import "./areas/professor/professor.css";
+@import "./shared/account-ui.css";
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; max-width: 100%; }
+html { scrollbar-gutter: stable; }
+body { overflow-x: hidden; }
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  font-weight: var(--weight-regular);
+  overflow-wrap: break-word;
+}
+button, input, select, textarea { font-family: inherit; color: inherit; font-size: inherit; }
+button { cursor: pointer; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img, svg, video, canvas { max-width: 100%; }
+h1, h2, h3, p { overflow-wrap: break-word; }
+h1 { font-size: var(--text-2xl); line-height: var(--leading-2xl); font-weight: var(--weight-bold); }
+h2 { font-size: var(--text-xl); line-height: var(--leading-xl); }
+h3 { font-size: var(--text-lg); line-height: var(--leading-lg); }
+.ico { display: inline-flex; }
+.ico svg { display: block; }

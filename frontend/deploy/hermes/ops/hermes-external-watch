@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Hermes 바깥 감시. yoobin-desktop-linux 의 hermes-ml 계정 cron 이 5분마다 돌린다.
+
+Hermes 안의 hermes-ops-watch 는 Hermes 자체가 멈추면(VM 정지, 네트워크, 커널 패닉) 알릴 수 없다. 이 스크립트가 밖에서 본다.
+  - Hermes 감시 heartbeat(~/hermes-ops-watch.heartbeat, Hermes 가 5분마다 ssh 로 갱신)가 15분 넘게 오래됨
+  (hermes-ml 계정은 데스크톱 방화벽이 Tailscale 쪽 연결을 막아 직접 접속 확인은 하지 않는다. heartbeat 가 그 역할을 한다)
+  - 공개 주소 eclass.stack-edu.com, stack-edu.com, gm.ybkim.pe.kr 응답 이상
+2회 연속(10분) 실패하면 헤르메스 에이전트 텔레그램 봇으로 알리고, 6시간마다 다시, 풀리면 복구 알림.
+토큰·대화방: ~/.config/hermes-external-watch/telegram.json (600, {"token": ..., "chat_id": ...}).
+  hermes-external-watch            점검·알림
+  hermes-external-watch --dry-run  점검 결과만 출력
+  hermes-external-watch --test     시험 메시지
+"""
+import argparse
+import json
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+HOME = Path.home()
+CONFIG = HOME / '.config/hermes-external-watch/telegram.json'
+STATE = HOME / '.local/state/hermes-external-watch/state.json'
+HEARTBEAT = HOME / 'hermes-ops-watch.heartbeat'
+HEARTBEAT_MAX_AGE_S = 15 * 60
+REMIND_S = 6 * 3600
+URLS = [('eclass.stack-edu.com', 'https://eclass.stack-edu.com/'),
+        ('stack-edu.com', 'https://stack-edu.com/'),
+        ('gm.ybkim.pe.kr', 'https://gm.ybkim.pe.kr/')]
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def checks(now):
+    problems = {}
+    try:
+        age = now - float(HEARTBEAT.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        age = None
+    if age is None or age > HEARTBEAT_MAX_AGE_S:
+        problems['heartbeat'] = ('Hermes 내부 감시 heartbeat 없음' if age is None
+                                 else f'Hermes 내부 감시가 {age / 60:.0f}분째 소식 없음 (서버 정지·감시 중단 가능)')
+    opener = urllib.request.build_opener(NoRedirect)
+    for name, url in URLS:
+        try:
+            with opener.open(urllib.request.Request(url, headers={'User-Agent': 'hermes-external-watch'}), timeout=15) as r:
+                code = r.status
+        except urllib.error.HTTPError as error:
+            code = error.code
+        except Exception as error:
+            problems[f'http:{name}'] = f'{name} 응답 없음 ({type(error).__name__})'
+            continue
+        if not 200 <= code < 400:
+            problems[f'http:{name}'] = f'{name} HTTP {code}'
+    return problems
+
+
+def telegram(text):
+    config = json.loads(CONFIG.read_text())
+    body = urllib.parse.urlencode({'chat_id': config['chat_id'], 'text': text}).encode()
+    with urllib.request.urlopen(urllib.request.Request(
+            'https://api.telegram.org/bot' + config['token'] + '/sendMessage', data=body), timeout=15) as response:
+        if not json.load(response).get('ok'):
+            raise RuntimeError('Telegram delivery rejected')
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--test', action='store_true')
+    args = parser.parse_args()
+    if args.test:
+        telegram('[Hermes 바깥 감시] 시작: yoobin-desktop 에서 5분마다 Hermes 생존·공개 주소를 점검합니다.')
+        return 0
+    now = time.time()
+    problems = checks(now)
+    if args.dry_run:
+        print(json.dumps(problems, ensure_ascii=False, indent=1))
+        return 0
+    try:
+        state = json.loads(STATE.read_text())
+    except (FileNotFoundError, ValueError):
+        state = {}
+    lines, recovered = [], []
+    for key, message in problems.items():
+        entry = state.setdefault(key, {'count': 0, 'sent': 0})
+        entry['count'] += 1
+        entry['message'] = message
+        if entry['count'] >= 2 and now - entry['sent'] >= REMIND_S:
+            lines.append(('계속: ' if entry['sent'] else '') + message)
+            entry['sent'] = now
+    for key in [k for k in state if k not in problems]:
+        if state[key]['sent']:
+            recovered.append(state[key]['message'])
+        del state[key]
+    text = []
+    if lines:
+        text += ['[Hermes 바깥 감시] 문제'] + ['• ' + line for line in lines]
+    if recovered:
+        text += ['[Hermes 바깥 감시] 복구'] + ['• ' + line for line in recovered]
+    status = 0
+    if text:
+        try:
+            telegram('\n'.join(text))
+        except Exception:
+            for entry in state.values():
+                if entry['sent'] == now:
+                    entry['sent'] = 0
+            status = 1
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(state, ensure_ascii=False))
+    print(json.dumps({'problems': list(problems), 'sent': bool(text) and status == 0}, ensure_ascii=False))
+    return status
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

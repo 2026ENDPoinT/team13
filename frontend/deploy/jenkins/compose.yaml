@@ -1,0 +1,23 @@
+# yoobin-desktop-linux 에서 돈다. 설치·운영 절차는 README.md 참고.
+# 웹 UI는 Tailscale 주소에만 바인딩한다(공용 인터넷·LAN에 열지 않음). GitHub 웹훅 대신 2분 폴링을 쓴다.
+services:
+  jenkins:
+    build: .
+    image: stack-jenkins:local
+    restart: unless-stopped
+    ports:
+      - "${JENKINS_BIND:-100.94.176.38}:8090:8080"
+    group_add:
+      - "${DOCKER_GID:-984}"
+    environment:
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=false
+      CASC_JENKINS_CONFIG: /usr/share/jenkins/casc
+      DOCKER_GID: "${DOCKER_GID:-984}"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./casc:/usr/share/jenkins/casc:ro
+      # admin_password, github_token, hermes_deploy_key (모두 저장소 밖, chmod 600)
+      - ./secrets:/run/secrets:ro
+volumes:
+  jenkins_home:

@@ -1,0 +1,330 @@
+/* STack brand tokens. Names follow ASTRA; values are the redesign (tokens.json).
+   Dark is the default. Light is html[data-theme="light"] (system prefers-color-scheme, or an explicit settings choice).
+   Replace values only in this file. Area CSS must use var(--*). */
+
+@font-face {
+  font-family: "Pretendard JP";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url("/app/fonts/Pretendard-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Pretendard JP";
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url("/app/fonts/Pretendard-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Pretendard JP";
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url("/app/fonts/Pretendard-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Pretendard JP";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url("/app/fonts/Pretendard-Bold.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: dark;
+  --font: "Pretendard JP", Pretendard, "Apple SD Gothic Neo", sans-serif;
+  --text-2xs: 11px;
+  --leading-2xs: 14px;
+  --text-xs: 12px;
+  --leading-xs: 18px;
+  --text-sm: 14px;
+  --leading-sm: 20px;
+  --text-md: 14px;
+  --leading-md: 22px;
+  --text-lg: 16px;
+  --leading-lg: 24px;
+  --text-xl: 18px;
+  --leading-xl: 26px;
+  --text-2xl: 24px;
+  --leading-2xl: 34px;
+  --text-display: clamp(28px, 2.6vw, 40px);
+  --leading-display: 1.3;
+  --text-figure: 72px;
+  --text-figure-sm: 52px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 600;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 60px;
+
+  --header-h: 72px;
+  --nav-w: 260px;
+  --aside-w: 300px;
+  --content-max: 1110px;
+  --content-pad: 60px;
+  --cover-h: 140px;
+  --card-gap: 20px;
+  --card-row-gap: 24px;
+  --summary-w: 480px;
+  --hit: 40px;
+  --hit-touch: 44px;
+  --hero-min-h: 260px;
+  --summary-min-h: 288px;
+  --bottom-nav-h: 0px;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+  --radius: var(--radius-md);
+  --border-w: 1px;
+
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-reveal: 520ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-reveal: cubic-bezier(0.3, 0.7, 0.2, 1);
+
+  /* Dark (default) — STack */
+  --gray-0: #16171B;
+  --gray-5: #1D1E22;
+  --gray-10: #27292D;
+  --gray-20: #2F3034;
+  --gray-30: #595B5F;
+  --gray-40: #6F7175;
+  --gray-50: #86888C;
+  --gray-60: #9B9DA1;
+  --gray-70: #AFB1B5;
+  --gray-80: #C7C9CE;
+  --gray-90: #DEE0E5;
+  --gray-95: #EDEFF4;
+  --gray-100: #FFFFFF;
+  --surface-base: #101114;
+  --primary-10: #1A202C;
+  --primary-20: #262E44;
+  --primary-30: #384668;
+  --primary-40: #46598B;
+  --primary-50: #556DAC;
+  --primary-55: #637FC7;
+  --primary-60: #7390DA;
+  --primary-70: #84A4F5;
+  --primary-80: #A9C2FE;
+  --primary-90: #CFDDFE;
+
+  --bg: var(--surface-base);
+  --surface: var(--gray-0);
+  --surface-2: var(--gray-5);
+  --raised: var(--gray-10);
+  --header: var(--gray-0);
+  --footer: var(--surface-base);
+  --footer-text: var(--gray-60);
+  --border: var(--gray-20);
+  --text: var(--gray-95);
+  --text-2: var(--gray-60);
+  --muted: var(--gray-40);
+  --accent: var(--primary-40);
+  --accent-press: var(--primary-50);
+  --accent-soft: var(--primary-10);
+  --on-accent: #FFFFFF;
+  --link: var(--primary-50);
+  --wordmark: var(--primary-50);
+  --brand-orange: #FF6E05;
+  --on-brand-orange: #1A1206;
+  --danger: #ff444e;
+  --danger-soft: #3a2224;
+  --success: #3dcc8e;
+  --success-soft: #173127;
+  --stat-ink: #2fa3bd;
+  --highlight: #2a3148;
+  --cal: var(--primary-10);
+  --cal-sat: var(--primary-60);
+  --cal-event: var(--primary-20);
+  --video: #3a2a22;
+  --video-ink: #f0b48a;
+  --zoom: #556DAC;
+  --zoom-soft: #1c2c48;
+  --zoom-ink: #b9d4ff;
+  --material: #4a4124;
+  --material-ink: #f0d78a;
+  --assign: #1d3a28;
+  --assign-ink: #8ed9a4;
+  --exam: #1c3348;
+  --exam-ink: #9dcef5;
+  --survey: #2c2640;
+  --survey-ink: #d4c4ef;
+  --scrim: rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow: var(--shadow-sm);
+  --focus-ring: var(--primary-60);
+  --inverse: var(--gray-95);
+  --on-inverse: var(--surface-base);
+  --ondark-border: rgba(255, 255, 255, 0.35);
+  --ondark-hover: rgba(255, 255, 255, 0.08);
+  --player-bg: #000000;
+  --preview-paper: #FFFFFF;
+  --preview-ink: #0F1628;
+  --logo-ink: #FFFFFF;
+  --disabled: 0.45;
+  --nav-icon: var(--gray-60);
+  --course-cover-filter: saturate(0.65) brightness(0.72);
+  /* Campus-on photo surfaces: hero campus photo and 나의 하루 cards. Text on photos is always --on-photo. */
+  --hero-photo-filter: saturate(0.6) brightness(0.5);
+  --summary-veil-start: rgba(20, 27, 48, 0.92);
+  --summary-veil-end: rgba(16, 17, 20, 0.64);
+  --on-photo: #FFFFFF;
+
+  --g1-a: #5b4b8a;
+  --g1-b: #2a6fdb;
+  --g1-c: #49c2d4;
+  --g2-a: #0f6e6e;
+  --g2-b: #14919b;
+  --g2-c: #7c4dff;
+  --g3-a: #123a73;
+  --g3-b: #3659CE;
+  --g3-c: #8CA4EE;
+  --g4-a: #1d4e89;
+  --g4-b: #3a7bd5;
+  --g4-c: #8CA4EE;
+  --g5-a: #0b3a2e;
+  --g5-b: #1b8a5a;
+  --g5-c: #b7e4c7;
+  --g6-a: #3a2a6a;
+  --g6-b: #6d4aff;
+  --g6-c: #8fd3f4;
+  --g7-a: #5c3317;
+  --g7-b: #c47b3a;
+  --g7-c: #f3d5b5;
+  --g8-a: #111827;
+  --g8-b: #334155;
+  --g8-c: #64748b;
+  --banner-a: #8CA4EE;
+  --banner-b: #49dcb1;
+  --banner-c: #101114;
+  --banner-d: #1A202C;
+  --banner-e: #3659CE;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --gray-0: #FFFFFF;
+  --gray-5: #F8F9FB;
+  --gray-10: #EFF1F7;
+  --gray-20: #DFE4EF;
+  --gray-30: #C7CFE3;
+  --gray-40: #97A0B5;
+  --gray-50: #636D82;
+  --gray-60: #4F5973;
+  --gray-70: #3B455F;
+  --gray-80: #27314A;
+  --gray-90: #1E273E;
+  --gray-95: #0F1628;
+  --gray-100: #000000;
+  --surface-base: #F2F4F8;
+  --primary-10: #EDF1FC;
+  --primary-20: #D3DCF8;
+  --primary-30: #8CA4EE;
+  --primary-40: #3659CE;
+  --primary-50: #2F51C2;
+  --primary-55: #2B4CBB;
+  --primary-60: #2848B4;
+  --primary-70: #213C99;
+  --primary-80: #1B3178;
+  --primary-90: #14245A;
+  --danger: #ff444e;
+  --danger-soft: #ffecee;
+  --success: #13bd75;
+  --success-soft: #e7f8f0;
+  --stat-ink: #13809a;
+  --highlight: #EDF1FC;
+  --cal-event: var(--primary-10);
+  --video: #ffe6d3;
+  --video-ink: #d4651b;
+  --zoom: #3659CE;
+  --zoom-soft: #EDF1FC;
+  --zoom-ink: #213C99;
+  --material: #fedf89;
+  --material-ink: #8a6a10;
+  --assign: #85d892;
+  --assign-ink: #1d7a3a;
+  --exam: #8CA4EE;
+  --exam-ink: #213C99;
+  --survey: #d3dcf8;
+  --survey-ink: #2B4CBB;
+  --shadow-sm: 0 1px 2px rgba(15, 22, 40, 0.06);
+  --shadow-md: 0 8px 16px rgba(15, 22, 40, 0.12);
+  --preview-paper: #FFFFFF;
+  --preview-ink: #0F1628;
+  --logo-ink: #3659CE;
+  --player-bg: #0F1628;
+  --course-cover-filter: saturate(0.9) brightness(0.84);
+  --hero-photo-filter: none;
+  --summary-veil-start: rgba(19, 43, 100, 0.92);
+  --summary-veil-end: rgba(15, 30, 57, 0.68);
+}
+
+/* Avatar palette: the backend allowlist (ProfileController.AVATAR_COLORS) with the original light values
+   (reference/10_팝업_아바타설정.md, 색상 enum). Same in both themes. Ink is the initials colour on a swatch. */
+:root {
+  --avatar-tomato: #D60000;
+  --avatar-tangerine: #F5511E;
+  --avatar-pumpkin: #EF6C00;
+  --avatar-mango: #EF9300;
+  --avatar-banana: #F5C026;
+  --avatar-chick: #E5C441;
+  --avatar-avocado: #C0CA33;
+  --avatar-pistachio: #7DB343;
+  --avatar-basil: #0A8043;
+  --avatar-eucalyptus: #009788;
+  --avatar-sage: #32B67A;
+  --avatar-peacock: #039BE6;
+  --avatar-cobalt: #4286F5;
+  --avatar-blueberry: #3F51B5;
+  --avatar-lavender: #7986CC;
+  --avatar-light-purple: #B39DDB;
+  --avatar-amethyst: #9E69AF;
+  --avatar-grape: #8E24AA;
+  --avatar-purple: #AD1457;
+  --avatar-cherry-blossoms: #D61B60;
+  --avatar-light-pink: #E77C74;
+  --avatar-cocoa: #795547;
+  --avatar-graphite: #616161;
+  --avatar-birch-tree: #A7988D;
+  --avatar-ink-light: #FFFFFF;
+  --avatar-ink-dark: #16171B;
+}
+
+@media (pointer: coarse) {
+  :root { --hit: var(--hit-touch); }
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--duration-reveal);
+  animation-timing-function: var(--ease-reveal);
+  animation-fill-mode: both;
+}
+::view-transition-old(root) { animation: none; z-index: 1; }
+::view-transition-new(root) {
+  z-index: 2;
+  animation-name: theme-reveal;
+}
+@keyframes theme-reveal {
+  from { clip-path: circle(0 at var(--reveal-x, 50%) var(--reveal-y, 50%)); }
+  to { clip-path: circle(150vmax at var(--reveal-x, 50%) var(--reveal-y, 50%)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation: none !important; }
+}

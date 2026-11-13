@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# Hermes 배포 진입점. Jenkins 전용 SSH 키는 authorized_keys의 command= 로 이 스크립트에만 묶인다.
+#   command="/home/ubuntu/bin/jenkins-deploy",restrict ssh-ed25519 ... jenkins@yoobin-desktop-linux:hermes-deploy
+# Jenkins는 `ssh hermes <target> <40자리 커밋>` 만 보낸다. 그 외 명령은 거부한다.
+#   eclass-frontend      → ~/projects/astra-eclass-reference (Frontend-final 체크아웃, viewer + tunnel)
+#   eclass-backend       → ~/projects/eclass-backend/app (STack-Backend 체크아웃, compose 프로젝트 astra)
+#   campus-lessonviewer  → ~/projects/campus-on-demo (lessonviewer)
+# 커밋은 origin/main 에 포함된 것만 배포한다(임의 브랜치·포크 커밋 배포 방지).
+# 실패하면 이전 커밋(백엔드는 이전 이미지)으로 되돌려 다시 띄우고 1로 끝난다.
+set -euo pipefail
+
+read -r -a args <<<"${SSH_ORIGINAL_COMMAND:-}"
+if [[ ${#args[@]} -ne 2 ]]; then
+  echo "usage: <eclass-frontend|eclass-backend|campus-lessonviewer> <commit-sha>" >&2
+  exit 64
+fi
+target=${args[0]}
+sha=${args[1]}
+if [[ ! $sha =~ ^[0-9a-f]{40}$ ]]; then
+  echo "commit must be a full 40-character sha" >&2
+  exit 64
+fi
+
+case $target in
+  eclass-frontend)     root=~/projects/astra-eclass-reference; src=$root/Frontend-final ;;
+  eclass-backend)      root=~/projects/eclass-backend/app;     src=$root ;;
+  campus-lessonviewer) root=~/projects/campus-on-demo;          src=$root/lessonviewer ;;
+  *) echo "unknown target: $target" >&2; exit 64 ;;
+esac
+
+# 같은 compose 프로젝트에 대한 배포가 겹치지 않게 한다.
+exec 9>"$root/.jenkins-deploy.lock"
+flock -w 1800 9
+
+if [[ -n $(git -C "$src" status --porcelain --untracked-files=no --ignore-submodules=dirty) ]]; then
+  echo "$src has local changes; refusing to deploy" >&2
+  exit 1
+fi
+git -C "$src" fetch --quiet origin main
+if ! git -C "$src" merge-base --is-ancestor "$sha" origin/main; then
+  echo "$sha is not on origin/main" >&2
+  exit 1
+fi
+previous=$(git -C "$src" rev-parse HEAD)
+echo "deploy $target: ${previous:0:7} -> ${sha:0:7}"
+
+# 서버에만 있는 설정(git 이 무시하는 파일)은 그 이름의 파일이 커밋에 들어오면 checkout 이 말없이 덮어쓴다.
+# 그런 커밋은 배포하지 않는다. e-class 백엔드의 Hermes 설정은 compose.hermes.yaml(.env 의 COMPOSE_FILE)로 읽는다.
+case $target in
+  eclass-backend)  server_only=(.env compose.hermes.yaml s3.json s3-credentials.env) ;;
+  eclass-frontend) server_only=(.env) ;;
+  *)               server_only=() ;;
+esac
+if (( ${#server_only[@]} )); then
+  tracked=$(git -C "$src" ls-tree -r --name-only "$sha" -- "${server_only[@]}")
+  if [[ -n $tracked ]]; then
+    echo "${sha:0:7} tracks server-only file(s): $tracked; refusing to deploy (would overwrite Hermes config)" >&2
+    exit 1
+  fi
+fi
+if [[ $target == eclass-backend ]] && git -C "$src" cat-file -e "$sha:compose.override.yaml" 2>/dev/null; then
+  echo "WARNING: ${sha:0:7} 에 compose.override.yaml 이 있지만 Hermes 는 COMPOSE_FILE=compose.yaml:compose.hermes.yaml 만 읽는다" >&2
+fi
+
+checkout() {
+  git -C "$src" checkout --quiet --detach "$1"
+  if [[ -f $src/.gitmodules ]]; then
+    git -C "$src" submodule --quiet update --init --recursive
+  fi
+}
+
+cd "$root"
+# 사람이 고친 compose.yaml·compose.hermes.yaml·.env 는 그대로 쓴다.
+
+# ---------- e-class 프론트엔드: 빌드 결과를 dist-next 에 만든 뒤 dist 와 바꾼다 ----------
+frontend_build() {
+  rm -rf "$src/dist-next"
+  docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e npm_config_cache=/tmp/npm-cache \
+    -v "$src":/w -w /w node:22-alpine \
+    sh -c 'npm ci --no-audit --no-fund --loglevel=error && npx tsc && npx vite build --outDir dist-next --emptyOutDir --logLevel warn'
+}
+swapped=false
+frontend_swap_in() {   # dist-next → dist, 이전 dist 는 dist-prev 로 남긴다
+  rm -rf "$src/dist-prev"
+  if [[ -d $src/dist ]]; then mv "$src/dist" "$src/dist-prev"; fi
+  mv "$src/dist-next" "$src/dist"
+  swapped=true
+}
+frontend_swap_back() {  # 이번 배포에서 바꾼 경우에만 되돌린다
+  if [[ $swapped == true && -d $src/dist-prev ]]; then
+    rm -rf "$src/dist"
+    mv "$src/dist-prev" "$src/dist"
+  fi
+  rm -rf "$src/dist-next"
+}
+frontend_restart() {
+  # tunnel 은 viewer 의 네트워크 네임스페이스를 쓰므로 viewer 를 새로 만들면 함께 다시 만든다.
+  docker compose up -d --force-recreate viewer tunnel
+}
+frontend_probe() {
+  docker compose exec -T viewer wget -q -O /dev/null http://127.0.0.1:4190/ &&
+    docker compose exec -T viewer wget -q -O /dev/null http://127.0.0.1:4190/api/auth/methods
+}
+
+# ---------- e-class 백엔드: 이미지를 새로 만들고, 실패하면 :previous 이미지로 되돌린다 ----------
+backend_images=(astra-backend astra-backend-converter)
+# 이 함수들은 `|| fail` 안에서 불려 set -e 가 듣지 않으므로 실패를 직접 돌려준다.
+backend_backup_db() {
+  local dir=~/backups/eclass-mysql file
+  mkdir -p "$dir" || return 1
+  file="$dir/astra-$(date +%Y%m%d-%H%M%S)-${previous:0:7}.sql.gz"
+  if ! docker compose exec -T mysql sh -c \
+    'exec mysqldump --single-transaction --quick --no-tablespaces -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" 2>/dev/null' \
+    | gzip > "$file"; then
+    rm -f "$file"
+    return 1
+  fi
+  echo "db backup: $file ($(du -h "$file" | cut -f1))"
+  ls -1t "$dir"/astra-*.sql.gz | tail -n +15 | xargs -r rm -f
+}
+backend_build() {
+  docker build --quiet -t astra-backend:local . >/dev/null &&
+    docker build --quiet --target converter -t astra-backend-converter:local . >/dev/null
+}
+backend_restart() {
+  docker compose up -d --wait --wait-timeout 600
+}
+backend_probe() {
+  local port service
+  port=$(docker compose port api 8080 | cut -d: -f2)
+  curl -fsS -m 5 -o /dev/null "http://127.0.0.1:$port/api/auth/methods" || return 1
+  # LLM 중계(llm-relay-*)는 api·worker 의 네트워크를 함께 쓴다. 새 컨테이너 안에서 게이트웨이까지 닿는지 본다.
+  # 게이트웨이 장애는 백엔드를 되돌려도 고쳐지지 않으므로 경고만 남긴다(hermes-ops-watch 가 계속 알린다).
+  for service in api worker; do
+    docker run --rm --network "container:$(docker compose ps -q "$service")" curlimages/curl:8.11.1 \
+      -fsS -m 5 -o /dev/null http://127.0.0.1:18090/healthz ||
+      echo "WARNING: $service 컨테이너에서 LLM 게이트웨이(127.0.0.1:18090)에 닿지 않음" >&2
+  done
+}
+
+# ---------- 캠퍼스 온 LessonViewer ----------
+lessonviewer_restart() { docker compose up -d --no-deps --build lessonviewer; }
+lessonviewer_probe() {
+  # 호스트 토큰 없이 부르면 403이 정상 응답이다. 연결 자체가 되는지만 본다.
+  [[ $(docker compose exec -T gateway wget -S -q -O /dev/null http://lessonviewer:5178/api/module/status 2>&1 || true) == *'HTTP/1.1 403'* ]]
+}
+
+wait_healthy() {
+  for _ in $(seq 1 60); do
+    if "$1"; then return 0; fi
+    sleep 3
+  done
+  return 1
+}
+
+tagged=false
+fail() {
+  echo "$1; rolling back to ${previous:0:7}" >&2
+  checkout "$previous"
+  case $target in
+    eclass-frontend)
+      frontend_swap_back
+      frontend_restart ;;
+    eclass-backend)
+      # 이번 배포가 :previous 를 새로 태그한 뒤에만 이미지를 되돌린다. 그 전(compose 검사 실패)에는
+      # 컨테이너를 건드리지 않았으므로 지난 배포의 :previous 로 내려가지 않게 아무것도 하지 않는다.
+      if [[ $tagged == true ]]; then
+        for image in "${backend_images[@]}"; do docker tag "$image:previous" "$image:local"; done
+        backend_restart || true
+        echo "DB 마이그레이션은 되돌리지 않는다. 필요하면 위 db backup 으로 복원한다." >&2
+      fi ;;
+    campus-lessonviewer)
+      lessonviewer_restart ;;
+  esac
+  exit 1
+}
+
+checkout "$sha"
+case $target in
+  eclass-frontend)
+    frontend_build || fail "build failed"
+    frontend_swap_in
+    frontend_restart || fail "restart failed"
+    wait_healthy frontend_probe || { docker compose logs --no-color --tail=40 viewer >&2 || true; fail "health check failed"; } ;;
+  eclass-backend)
+    # 새 커밋의 compose.yaml 이 지금 .env 로 해석되지 않으면(새 필수 변수 등) 아무것도 바꾸기 전에 멈춘다.
+    docker compose config --quiet || fail "compose config invalid for $sha (.env 에 새 변수가 필요한지 확인)"
+    for image in "${backend_images[@]}"; do docker tag "$image:local" "$image:previous"; done
+    tagged=true
+    backend_build || fail "image build failed"
+    backend_backup_db || fail "db backup failed"
+    backend_restart || { docker compose logs --no-color --tail=60 api worker >&2 || true; fail "containers did not become healthy"; }
+    wait_healthy backend_probe || fail "health check failed" ;;
+  campus-lessonviewer)
+    lessonviewer_restart || fail "build failed"
+    wait_healthy lessonviewer_probe || { docker compose logs --no-color --tail=40 lessonviewer >&2 || true; fail "health check failed"; } ;;
+esac
+docker image prune -f --filter "until=24h" >/dev/null || true
+echo "healthy: $target @ ${sha:0:7}"

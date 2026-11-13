@@ -1,0 +1,515 @@
+/* Professor area layout. Colors come from tokens; this file only places them. */
+
+[data-area="professor"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+  max-width: 100%;
+}
+[data-area="professor"] h1,
+[data-area="professor"] h2,
+[data-area="professor"] h3 { margin: 0; }
+[data-area="professor"] h1 {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-2xl);
+  font-weight: var(--weight-bold);
+}
+[data-area="professor"] .section-label {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+  font-weight: var(--weight-bold);
+}
+[data-area="professor"] .pf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+[data-area="professor"] .pf-title { min-width: 0; flex: 1 1 220px; }
+[data-area="professor"] .pf-kicker {
+  margin: 0 0 var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-semibold);
+}
+[data-area="professor"] .pf-sub {
+  margin: var(--space-2) 0 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+[data-area="professor"] .pf-actions,
+[data-area="professor"] .pf-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+[data-area="professor"] .pf-actions .btn,
+[data-area="professor"] .pf-inline .btn,
+[data-area="professor"] .pf-toolbar .btn,
+[data-area="professor"] .pf-search .btn {
+  height: var(--hit);
+  min-height: var(--hit);
+  white-space: nowrap;
+}
+[data-area="professor"] .banner-course h1 {
+  margin: var(--space-1) 0;
+  font-size: var(--text-2xl);
+  line-height: var(--leading-2xl);
+}
+[data-area="professor"] .stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--card-gap);
+  min-width: 0;
+}
+[data-area="professor"] .stat-row.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+[data-area="professor"] .pf-stat {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 96px;
+  min-width: 0;
+}
+[data-area="professor"] .pf-stat b {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-2xl);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+}
+[data-area="professor"] .pf-stat .bar { margin-top: 0; }
+[data-area="professor"] .pf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+  max-width: 100%;
+}
+[data-area="professor"] .filters,
+[data-area="professor"] .chips,
+[data-area="professor"] .btn-row,
+[data-area="professor"] .sheet,
+[data-area="professor"] .week-block { margin: 0; min-width: 0; max-width: 100%; }
+[data-area="professor"] .pf-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 100%;
+}
+[data-area="professor"] .pf-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  height: var(--hit);
+  min-height: var(--hit);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-regular);
+}
+[data-area="professor"] .pf-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--space-4);
+  min-width: 0;
+}
+[data-area="professor"] .pf-form .span-2 { grid-column: 1 / -1; }
+[data-area="professor"] .pf-form .field { min-width: 0; }
+[data-area="professor"] .pf-check { margin: 0 0 var(--space-4); }
+[data-area="professor"] input[type="file"] {
+  min-height: var(--hit);
+  max-width: 100%;
+}
+[data-area="professor"] .pf-weights {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+[data-area="professor"] .pf-weights .field { margin-bottom: 0; min-width: 0; }
+[data-area="professor"] .pf-week-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+  min-width: 0;
+}
+[data-area="professor"] .pf-activities { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+[data-area="professor"] a.pf-activity {
+  color: inherit;
+  text-decoration: none;
+}
+[data-area="professor"] a.pf-activity:hover { text-decoration: none; }
+[data-area="professor"] .pf-activity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--space-2);
+  min-height: 56px;
+  padding: 0;
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+[data-area="professor"] .pf-activity-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 56px;
+  padding: var(--space-3) var(--space-4);
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+[data-area="professor"] .pf-activity-main:hover { text-decoration: none; }
+[data-area="professor"] .pf-activity-main:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+[data-area="professor"] .pf-activity-copy { min-width: 0; }
+[data-area="professor"] .pf-activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+}
+[data-area="professor"] .pf-types,
+[data-area="professor"] .pf-type-panel,
+[data-area="professor"] .pf-type-panel .field { min-width: 0; max-width: 100%; }
+[data-area="professor"] .pf-types { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-4); }
+[data-area="professor"] .pf-types .chip[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+[data-area="professor"] .pf-activity-form input,
+[data-area="professor"] .pf-activity-form select,
+[data-area="professor"] .pf-activity-form textarea { min-width: 0; max-width: 100%; }
+[data-area="professor"] .pf-lecture {
+  width: 100%;
+  max-height: 420px;
+  background: var(--bg);
+  border-radius: var(--radius-md);
+}
+[data-area="professor"] .pf-prose p,
+[data-area="professor"] .pf-prose ul { margin: 0 0 var(--space-3); }
+[data-area="professor"] .pf-prose ul { padding-left: 1.2em; }
+[data-area="professor"] .pf-pdf-page {
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+  background: var(--surface);
+  min-width: 0;
+}
+[data-area="professor"] .pf-pdf-page h3 { margin: 0 0 var(--space-2); font-size: var(--text-md); }
+[data-area="professor"] .pf-pdf-page p { margin: 0; white-space: pre-wrap; }
+.pill.post { background: var(--accent-soft); color: var(--accent); }
+[data-area="professor"] .pf-activity b {
+  display: block;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  font-weight: var(--weight-bold);
+}
+[data-area="professor"] .pf-meta {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  min-width: 0;
+}
+[data-area="professor"] .pf-stage {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-height: 220px;
+  padding: var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  border: var(--border-w) solid var(--border);
+  min-width: 0;
+}
+[data-area="professor"] .pf-stage strong {
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+  font-weight: var(--weight-bold);
+}
+[data-area="professor"] .pf-watch {
+  display: grid;
+  grid-template-columns: minmax(72px, 96px) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+  margin-top: var(--space-3);
+}
+[data-area="professor"] .pf-split {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: var(--card-gap);
+  align-items: start;
+  min-width: 0;
+}
+[data-area="professor"] .pf-banks { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+[data-area="professor"] .pf-bank {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  min-width: 0;
+}
+[data-area="professor"] .pf-bank.on { border-color: var(--accent); background: var(--highlight); }
+[data-area="professor"] .pf-bank-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: var(--space-3);
+  min-width: 0;
+}
+[data-area="professor"] .pf-bank-name {
+  flex: 1 1 0;
+  color: inherit;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  text-decoration: none;
+  min-width: 0;
+}
+[data-area="professor"] .pf-bank-top > .pf-inline { flex: none; flex-wrap: nowrap; }
+[data-area="professor"] .pf-bank-name:hover { color: var(--accent); text-decoration: none; }
+[data-area="professor"] .pf-picks { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+[data-area="professor"] .pf-picks .choice {
+  align-items: flex-start;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--surface);
+  min-width: 0;
+}
+[data-area="professor"] .pf-picks .choice span { min-width: 0; flex: 1; }
+[data-area="professor"] .pf-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  width: 100%;
+}
+[data-area="professor"] .pf-meter .bar { flex: 1 1 auto; min-width: 48px; margin: 0; }
+[data-area="professor"] .pf-meter span {
+  flex: none;
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+[data-area="professor"] .pf-total {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+}
+[data-area="professor"] .pf-stem { min-width: 0; }
+[data-area="professor"] .pf-stem b { display: block; font-weight: var(--weight-bold); }
+[data-area="professor"] .pf-row-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+[data-area="professor"] .table-wrap {
+  max-width: 100%;
+  max-height: min(640px, calc(100vh - var(--header-h) - 160px));
+  overflow: auto;
+}
+[data-area="professor"] table.grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+[data-area="professor"] table.grid th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-2);
+  vertical-align: middle;
+}
+[data-area="professor"] table.grid th:has(.pf-sort) { padding: 0; }
+[data-area="professor"] .pf-sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--hit);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-bold);
+  text-align: left;
+  white-space: nowrap;
+}
+[data-area="professor"] .pf-sort:hover { color: var(--text); background: var(--raised); }
+[data-area="professor"] th[aria-sort="ascending"] .pf-sort,
+[data-area="professor"] th[aria-sort="descending"] .pf-sort { color: var(--accent); }
+[data-area="professor"] table.grid td {
+  vertical-align: middle;
+  padding: var(--space-3) var(--space-4);
+}
+[data-area="professor"] table.grid input[type="number"],
+[data-area="professor"] table.grid select {
+  min-height: var(--hit);
+  width: 104px;
+  max-width: 100%;
+}
+[data-area="professor"] .pf-wide table.grid select { width: 100%; }
+[data-area="professor"] .pf-wide table.grid { min-width: 760px; }
+[data-area="professor"] .pf-attend table.grid { min-width: 960px; }
+[data-area="professor"] .sheet h2,
+[data-area="professor"] .sheet h3 {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-bold);
+}
+[data-area="professor"] .modal { width: min(560px, 100%); }
+[data-area="professor"] .q-block,
+[data-area="professor"] .pf-q { margin: 0; min-width: 0; }
+[data-area="professor"] .pf-q ol { margin: var(--space-3) 0 0; padding-left: var(--space-5); }
+[data-area="professor"] .pf-q li + li { margin-top: var(--space-2); }
+
+@media (min-width: 1024px) {
+  [data-area="professor"] .pf-toolbar:has(.filters, .pf-inline) .pf-search {
+    margin-left: auto;
+    max-width: 360px;
+  }
+}
+[data-area="professor"] td.pf-lock,
+[data-area="professor"] th.pf-lock {
+  white-space: nowrap;
+  min-width: 96px;
+}
+[data-area="professor"] .pf-wide th:first-child,
+[data-area="professor"] .pf-wide td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+[data-area="professor"] .pf-wide thead th:first-child {
+  z-index: 3;
+  background: var(--surface-2);
+}
+@media (max-width: 1099px) {
+  [data-area="professor"] .pf-split { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1023px) {
+  [data-area="professor"] .stat-row,
+  [data-area="professor"] .stat-row.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 767px) {
+  [data-area="professor"] h1,
+  [data-area="professor"] .banner-course h1 {
+    font-size: var(--text-xl);
+    line-height: var(--leading-xl);
+  }
+  [data-area="professor"] .stat-row,
+  [data-area="professor"] .stat-row.cols-3,
+  [data-area="professor"] .pf-weights,
+  [data-area="professor"] .pf-form { grid-template-columns: minmax(0, 1fr); }
+  [data-area="professor"] .pf-form .span-2 { grid-column: auto; }
+  [data-area="professor"] .pf-activity-actions { flex-basis: 100%; padding: 0 var(--space-3) var(--space-3); }
+  [data-area="professor"] .table-cards {
+    max-height: none;
+    overflow: visible;
+  }
+  [data-area="professor"] .table-cards table.grid { min-width: 0; width: 100%; }
+  [data-area="professor"] .table-cards td {
+    align-items: center;
+    min-height: calc(var(--hit) + var(--space-2));
+  }
+  [data-area="professor"] .table-cards td > select,
+  [data-area="professor"] .table-cards td > input {
+    width: auto;
+    max-width: 58%;
+    flex: 0 1 180px;
+  }
+  [data-area="professor"] .table-cards td > .pf-meter { flex: 1 1 120px; max-width: 62%; }
+  [data-area="professor"] .table-cards td > .pf-row-actions { justify-content: flex-end; max-width: 100%; }
+  [data-area="professor"] .banner-course { padding: var(--space-5); }
+}
+
+/* Backend mode notices and home (areas/professor/notices-server.js) */
+[data-area="professor"] .pf-unread { color: var(--danger); font-weight: var(--weight-semibold); }
+[data-area="professor"] .pf-notice-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
+[data-area="professor"] [data-notice-status][role="alert"] { color: var(--danger); }
+
+/* Backend mode assignments and server materials (assignments-server.js, materials-server.js) */
+[data-area="professor"] .pf-release { display: grid; gap: var(--space-2); }
+[data-area="professor"] [data-assignment-status][role="alert"],
+[data-area="professor"] [data-release-status][role="alert"],
+[data-area="professor"] [data-grade-status][role="alert"] { color: var(--danger); }
+[data-area="professor"] .pf-material-edit { padding-block: var(--space-2); }
+[data-area="professor"] .pf-material-edit > summary { cursor: pointer; }
+[data-area="professor"] .pf-material-edit .pf-form { padding-top: var(--space-3); }
+[data-area="professor"] .pf-activity-copy .tiny { display: block; }
+
+/* Backend gradebook, attendance and groups (areas/professor/*-server.js). */
+[data-area="professor"] .pf-grade-item { display: grid; gap: var(--space-2); padding: var(--space-3) 0; border-bottom: var(--border-w) solid var(--border); min-width: 0; }
+[data-area="professor"] .pf-grade-item details { min-width: 0; }
+[data-area="professor"] .pf-grade-item summary { cursor: pointer; color: var(--text-2); font-size: var(--text-sm); }
+[data-area="professor"] .pf-grade-item-form { margin-top: var(--space-3); }
+[data-area="professor"] table.grid input[type="text"] { min-height: var(--hit); width: 100%; min-width: 88px; }
+[data-area="professor"] tr.pf-row-error td { background: var(--danger-soft); }
+[data-area="professor"] .pf-attend-fill { margin-top: var(--space-4); }
+[data-area="professor"] .pf-smart-pin {
+  margin: var(--space-2) 0;
+  font-size: calc(var(--text-2xl) * 2);
+  line-height: 1.2;
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.2em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+[data-area="professor"] .pf-smart-qr { width: min(320px, 100%); }
+[data-area="professor"] .pf-smart-token { overflow-wrap: anywhere; }
+[data-area="professor"] .pf-team-members { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-2); }
+[data-area="professor"] .pf-team-member { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+[data-area="professor"] .pf-team-member select { min-height: var(--hit); max-width: 100%; }
+[data-area="professor"] .pf-team details summary { cursor: pointer; color: var(--text-2); font-size: var(--text-sm); margin-top: var(--space-3); }
+[data-area="professor"] .pf-lecture-upload { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3) 0; border-top: var(--border-w) solid var(--border); }
+[data-area="professor"] .pf-lecture-upload progress { width: 100%; }
+[data-area="professor"] .pf-lecture-upload .pf-sub { overflow-wrap: anywhere; }
+[data-area="professor"] .pf-lecture-items { margin: 0 0 var(--space-3); padding-left: 1.1em; display: grid; gap: var(--space-2); }
+[data-area="professor"] .pf-lecture-items li { overflow-wrap: anywhere; }
+
+/* Backend mode delete, answer-key correction and grading options (delete-server.js, quizzes-server.js) */
+[data-area="professor"] .pf-delete { display: grid; gap: var(--space-2); justify-items: start; min-width: 0; }
+[data-area="professor"] .pf-delete p { margin: 0; overflow-wrap: anywhere; }
+[data-area="professor"] .pf-regrade { margin-top: var(--space-3); border-top: var(--border-w) solid var(--border); padding-top: var(--space-3); min-width: 0; }
+[data-area="professor"] .pf-regrade fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+[data-area="professor"] .pf-regrade .choice span { overflow-wrap: anywhere; }
+[data-area="professor"] .pf-grading-options { margin: 0; padding-left: 0; list-style: none; display: grid; gap: var(--space-2); }
+[data-area="professor"] .pf-grading-options li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; overflow-wrap: anywhere; }
