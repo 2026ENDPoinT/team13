@@ -15,5 +15,20 @@ RestartSec=5
 MemoryHigh=1536M
 MemoryMax=2G
 
+# 학생·교수자가 쓴 글이 agy 로 들어가므로, agy 가 무엇을 하려 해도 피해가 이 안에 머물게 한다.
+# 쓰기는 agy 상태(~/.gemini)와 개인 /tmp 만, 권한 상승(sudo) 금지, 비밀값·소스·백업 디렉터리는 보이지 않게 한다.
+# (설정 파일은 systemd 가 EnvironmentFile 로 먼저 읽으므로 막아도 된다.)
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/.gemini
+InaccessiblePaths=-/home/ubuntu/projects -/home/ubuntu/.ssh -/home/ubuntu/backups -/home/ubuntu/.config/agy-llm-gateway -/home/ubuntu/.hermes/.env -/home/ubuntu/.hermes/state.db -/home/ubuntu/reports -/home/ubuntu/.local/share/stock-report
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
 [Install]
 WantedBy=multi-user.target

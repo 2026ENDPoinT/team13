@@ -3,7 +3,9 @@
 
   1순위: Google Antigravity 구독의 Gemini 4 Hydrogen — 헤르메스 플러그인 antigravity-agy 의 transport 로
          로그인된 agy CLI 를 요청마다 한 번 실행한다(텍스트만, 도구 호출 지원).
-  2순위: agy 가 실패하면(쿼터·로그아웃·시간 초과·오류) Hive API 의 DeepSeek 로 같은 요청을 다시 보낸다.
+  2순위: Gemini 가 안 되면 바로 Hive API 의 DeepSeek 로 같은 요청을 보낸다.
+         - agy 오류·로그아웃·쿼터 초과, 60초 안에 답이 없음, 동시 실행 자리(2개)가 없음 → 그 요청은 기다리지 않고 DeepSeek
+         - 쿼터 초과·로그아웃·agy 없음 → 15분, 그 밖의 실패 → 1분 동안 agy 를 건너뛰고 곧바로 DeepSeek(차단기)
 
 백엔드(api·worker 컨테이너)는 같은 컨테이너 안 127.0.0.1:18090 의 socat 중계(llm-relay-*)를 거쳐
 이 게이트웨이(astra-egress 브리지 172.24.0.1:18090)로 온다. 백엔드 설정은 http 를 loopback 에만 허용한다.
@@ -11,7 +13,9 @@
 설정: /home/ubuntu/.config/agy-llm-gateway/env (600)
   GATEWAY_TOKEN       백엔드가 보내는 Bearer 값(ASTRA_LLM_API_KEY)
   AGY_MODEL           기본 gemini-4-hydrogen-medium
-  AGY_TIMEOUT         agy 한 번의 제한 시간(초), 기본 150
+  AGY_TIMEOUT         agy 한 번의 제한 시간(초), 기본 60
+  AGY_COOLDOWN        일반 실패 뒤 agy 를 건너뛰는 시간(초), 기본 60
+  AGY_HARD_COOLDOWN   쿼터·로그아웃 뒤 건너뛰는 시간(초), 기본 900
   FALLBACK_BASE_URL   https://api-cdn.thehive.ai/api/v3
   FALLBACK_MODEL      deepseek-ai/deepseek-v4.1-flash-1017
   FALLBACK_API_KEY    Hive API key
@@ -36,15 +40,52 @@ import transport  # noqa: E402  헤르메스 antigravity-agy 플러그인
 ENV = os.environ
 TOKEN = ENV['GATEWAY_TOKEN']
 AGY_MODEL = ENV.get('AGY_MODEL', 'gemini-4-hydrogen-medium')
-AGY_TIMEOUT = float(ENV.get('AGY_TIMEOUT', '150'))
+AGY_TIMEOUT = float(ENV.get('AGY_TIMEOUT', '60'))
+AGY_COOLDOWN = float(ENV.get('AGY_COOLDOWN', '60'))
+AGY_HARD_COOLDOWN = float(ENV.get('AGY_HARD_COOLDOWN', '900'))
+HARD_ERRORS = (transport.AgyQuotaExhausted, transport.AgyLoggedOut, transport.AgyMissing)
+# 백엔드 ASTRA_LLM_TIMEOUT(300s) 안에 agy 와 폴백을 함께 끝낸다. 폴백에는 남은 시간만 준다.
+REQUEST_BUDGET = float(ENV.get('REQUEST_BUDGET', '290'))
 FALLBACK_URL = ENV['FALLBACK_BASE_URL'].rstrip('/') + '/chat/completions'
 FALLBACK_MODEL = ENV['FALLBACK_MODEL']
 FALLBACK_KEY = ENV['FALLBACK_API_KEY']
 HOST, PORT = ENV.get('LISTEN', '172.24.0.1:18090').rsplit(':', 1)
 MAX_BODY = 16 * 2**20
-# agy 가 동시에 너무 많이 뜨지 않게 한다(백엔드 api·worker 각 2 = 최대 4).
-AGY_SLOTS = threading.BoundedSemaphore(int(ENV.get('AGY_CONCURRENCY', '4')))
+# agy 는 헤르메스 에이전트와 같은 Antigravity 구독 쿼터(5시간·주간)를 쓴다. 동시에 2개까지만 띄우고,
+# 자리가 없으면 기다리지 않고 바로 폴백으로 보낸다.
+AGY_SLOTS = threading.BoundedSemaphore(int(ENV.get('AGY_CONCURRENCY', '2')))
 client = transport.Client(timeout=AGY_TIMEOUT)
+
+
+class Breaker:
+    """agy 가 실패하면 잠시 agy 를 건너뛴다. 실패가 계속될 때 요청마다 agy 를 기다리지 않게 한다."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.open_until = 0.0
+        self.reason = None
+
+    def skip(self):
+        with self.lock:
+            return self.reason if time.monotonic() < self.open_until else None
+
+    def trip(self, error):
+        seconds = AGY_HARD_COOLDOWN if isinstance(error, HARD_ERRORS) else AGY_COOLDOWN
+        with self.lock:
+            self.open_until = max(self.open_until, time.monotonic() + seconds)
+            self.reason = type(error).__name__
+        log(event='agy_paused', reason=self.reason, seconds=int(seconds))
+
+    def reset(self):
+        with self.lock:
+            self.open_until, self.reason = 0.0, None
+
+
+breaker = Breaker()
+
+
+class AgySkipped(Exception):
+    """agy 를 부르지 않고 바로 폴백한다(차단기 열림·자리 없음). 차단기를 다시 걸지 않는다."""
 
 
 def log(**fields):
@@ -52,23 +93,33 @@ def log(**fields):
 
 
 def via_agy(body):
+    paused = breaker.skip()
+    if paused:
+        raise AgySkipped(f'paused:{paused}')
+    if not AGY_SLOTS.acquire(blocking=False):
+        raise AgySkipped('busy')
     kwargs = {k: body[k] for k in ('messages', 'tools', 'tool_choice') if k in body}
-    if not AGY_SLOTS.acquire(timeout=30):
-        raise transport.AgyError('agy concurrency limit')
     try:
         response = client.chat.completions.create(model=AGY_MODEL, timeout=AGY_TIMEOUT, **kwargs)
+    except Exception as error:
+        breaker.trip(error)
+        raise
     finally:
         AGY_SLOTS.release()
+    breaker.reset()
     data = response.model_dump()
     data['model'] = AGY_MODEL
     return data
 
 
-def via_fallback(body):
+def via_fallback(body, remaining):
     payload = dict(body, model=FALLBACK_MODEL)
+    # Hive 의 DeepSeek 는 추론 토큰이 max_tokens 를 먹으면 본문이 비어서 온다. 추론을 끄고 답만 받는다.
+    payload.pop('thinking', None)
+    payload['reasoning_effort'] = 'none'
     request = urllib.request.Request(FALLBACK_URL, data=json.dumps(payload).encode(), method='POST', headers={
         'Authorization': f'Bearer {FALLBACK_KEY}', 'Content-Type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=280) as response:
+    with urllib.request.urlopen(request, timeout=max(10.0, remaining)) as response:
         return response.status, response.read()
 
 
@@ -88,7 +139,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/healthz':
-            return self.reply(200, {'ok': True, 'primary': AGY_MODEL, 'fallback': FALLBACK_MODEL})
+            return self.reply(200, {'ok': True, 'primary': AGY_MODEL, 'fallback': FALLBACK_MODEL,
+                                    'primary_paused': breaker.skip()})
         self.reply(404, {'error': {'message': 'not found'}})
 
     def do_POST(self):
@@ -118,7 +170,7 @@ class Handler(BaseHTTPRequestHandler):
             reason = type(error).__name__
         fb_started = time.monotonic()
         try:
-            status, raw = via_fallback(body)
+            status, raw = via_fallback(body, REQUEST_BUDGET - (fb_started - started))
         except urllib.error.HTTPError as error:
             status, raw = error.code, error.read()
         except Exception as error:
