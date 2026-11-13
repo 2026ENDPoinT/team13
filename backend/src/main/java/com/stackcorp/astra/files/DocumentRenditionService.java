@@ -81,6 +81,9 @@ class DocumentRenditionService implements DocumentRenditions {
 
 	private static final SecureRandom RANDOM = new SecureRandom();
 
+	/** lease_owner(VARCHAR(100))에서 잡을 때마다 붙이는 9자({@code #} + 16진수 8자리)를 뺀 길이. */
+	private static final int LEASE_OWNER_NAME_MAX = 91;
+
 	private final FileRecords files;
 
 	private final ConversionRecords conversions;
@@ -137,10 +140,11 @@ class DocumentRenditionService implements DocumentRenditions {
 				return read(file, job.key());
 			}
 			if (job.state() == State.REQUESTED) {
+				String lease = leaseOwner(this.owner);
 				Optional<Claimed> claimed = transition(
-						() -> this.conversions.claim(job.id(), this.owner, this.properties.lease()));
+						() -> this.conversions.claim(job.id(), lease, this.properties.lease()));
 				if (claimed.isPresent()) {
-					return execute(file, claimed.get(), this.owner);
+					return execute(file, claimed.get(), lease);
 				}
 				continue;
 			}
@@ -185,7 +189,8 @@ class DocumentRenditionService implements DocumentRenditions {
 	}
 
 	boolean convertNext(String owner) {
-		Optional<Claimed> claimed = transition(() -> this.conversions.claimNext(owner, this.properties.lease()));
+		String lease = leaseOwner(owner);
+		Optional<Claimed> claimed = transition(() -> this.conversions.claimNext(lease, this.properties.lease()));
 		if (claimed.isEmpty()) {
 			return false;
 		}
@@ -194,11 +199,11 @@ class DocumentRenditionService implements DocumentRenditions {
 			.filter((f) -> f.ready() && f.versionNo() == job.versionNo() && f.previewFormat().isPresent());
 		if (file.isEmpty()) {
 			// 대기하는 동안 파일이 지워졌거나 검사 판정이 바뀌었다. 지운 파일이면 GC가 행을 expired로 닫는다.
-			fail(job, owner, "not_found");
+			fail(job, lease, "not_found");
 			return true;
 		}
 		try {
-			execute(file.get(), job, owner);
+			execute(file.get(), job, lease);
 		}
 		catch (RenditionException ex) {
 			log.info("conversion finished without rendition conversionJobId={} code={} detail={}", job.id(), ex.code(),
@@ -418,6 +423,13 @@ class DocumentRenditionService implements DocumentRenditions {
 
 	private static String thumbnailKey(String key, ThumbnailVariant variant) {
 		return "renditions/" + key + "/thumbnails/" + variant.code() + ".jpg";
+	}
+
+	// 잡을 때마다 worker 이름 뒤에 임의 값을 붙인다. 같은 process의 다른 thread가 lease가 끝난 행을 다시 잡아도, 늦게 끝난 앞 시도는
+	// lease_owner가 달라 그 행을 닫거나 객체를 지우지 못한다(A1). 붙인 값까지 lease_owner 열(100자)에 들어가게 이름을 자른다.
+	private static String leaseOwner(String owner) {
+		String name = owner.length() > LEASE_OWNER_NAME_MAX ? owner.substring(0, LEASE_OWNER_NAME_MAX) : owner;
+		return name + "#" + HexFormat.of().toHexDigits(RANDOM.nextInt());
 	}
 
 	private static String defaultOwner() {

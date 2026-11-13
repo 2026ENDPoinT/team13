@@ -207,6 +207,29 @@ class MaterialFlowTests extends IntegrationTest {
 		this.professor.get("/api/uploads/" + good).andExpect(jsonPath("$.state").value("clean"));
 	}
 
+	@Test
+	void registersAMaterialWhoseTitleIsLongerThanTheAttachmentGroupLabel() throws Exception {
+		// 자료 제목은 300자까지 받는다. 첨부 그룹 표시명 칸(200자)보다 길어도 등록되고 제목은 그대로 남는다(#15).
+		String title = "가".repeat(199) + "😀" + "나".repeat(50);
+		long uploadId = this.professor.uploaded(this.course, "long.pdf", TestPdfs.pdf(1));
+		JsonNode material = ApiClient.json(this.professor
+			.postJson(materials(this.course),
+					"{\"weekNo\":3,\"title\":\"%s\",\"uploadIds\":[%d]}".formatted(title, uploadId))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.title").value(title)));
+		long activityId = material.get("activityId").asLong();
+		assertThat(this.jdbc.sql("SELECT title FROM learning_activities WHERE activity_id = :id")
+			.param("id", activityId)
+			.query(String.class)
+			.single()).isEqualTo(title);
+		// 첨부 그룹은 ID로만 가리킨다. 표시명은 쓰지 않는다.
+		assertThat(this.jdbc.sql("""
+				SELECT COUNT(*) FROM learning_activities a
+				JOIN attachment_groups g ON g.attachment_group_id = a.attachment_group_id
+				WHERE a.activity_id = :id AND g.group_title IS NULL
+				""").param("id", activityId).query(Long.class).single()).isEqualTo(1L);
+	}
+
 	private Registered register(String body) throws Exception {
 		long uploadId = this.professor.uploaded(this.course, "material.pdf", TestPdfs.pdf(1));
 		JsonNode material = ApiClient

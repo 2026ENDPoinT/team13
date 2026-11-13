@@ -15,7 +15,7 @@
 | `fck-nat-in-service` | `AWS/AutoScaling GroupInServiceInstances` | 최솟값 1 미만, 1분 × 5회. 지표가 없어도 경보 | 외부로 나가는 길이 끊겨 배포, SSM, 로그 전송, 학교 IdP·LLM 호출이 멈춘다 | ASG 활동 기록에서 교체 실패 이유를 본다. 로그인은 IdP 호출이 필요하므로 학교 쪽 공지를 준비한다 |
 | `rds-cpu` | `AWS/RDS CPUUtilization` | 평균이 설정값 초과, 5분 × 3회 | 느린 query나 부하 급증 | Performance Insights에서 상위 query를 보고 아래 API p95 알람과 같이 본다 |
 | `rds-free-storage` | `AWS/RDS FreeStorageSpace` | 최솟값이 설정값 미만, 5분 | 공간이 차면 모든 쓰기가 멈춘다 | 커진 테이블(`audit_events`, `learning_heartbeats` 등)을 확인하고 storage를 늘린다 |
-| `rds-connections` | `AWS/RDS DatabaseConnections` | 최댓값이 설정값 초과, 5분 × 2회 | connection이 새거나 pool 설정이 맞지 않는다 | 아래 DB pool 알람과 같이 본다. api, worker의 pool 상한 합(10 + 5)과 비교한다 |
+| `rds-connections` | `AWS/RDS DatabaseConnections` | 최댓값이 설정값 초과, 5분 × 2회 | connection이 새거나 pool 설정이 맞지 않는다 | 아래 DB pool 알람과 같이 본다. api, worker의 pool 상한 합(10 + 10)과 비교한다 |
 | `cloudfront-5xx-rate` | `AWS/CloudFront 5xxErrorRate` | 평균이 설정값 초과, 5분 × 2회 | 사용자가 보는 오류. origin(api) 장애도 여기 잡힌다 | 아래 API 5xx 알람과 api healthcheck를 본다. api가 멀쩡하면 CloudFront와 VPC origin 설정을 본다 |
 
 ## 2. 앱 지표 알람 (지표를 내보낸 뒤 Terraform에 더함)

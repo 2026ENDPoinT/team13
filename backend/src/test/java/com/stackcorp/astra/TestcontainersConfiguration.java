@@ -2,6 +2,7 @@ package com.stackcorp.astra;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -110,10 +111,12 @@ public class TestcontainersConfiguration {
 	}
 
 	// 영상 transcoder도 편의상 같은 process에서 띄운다. ffmpeg와 ffprobe가 PATH에 있어야 한다(ADR-0016).
+	// transcoder는 시작할 때 work root의 transcode-* 를 지우므로, 다른 test JVM과 공유하는 OS 임시 directory가 아니라 전용
+	// directory를 준다.
 	@Bean(destroyMethod = "close")
 	TranscoderServer transcoderServer() throws IOException {
-		return TranscoderServer.start(new InetSocketAddress("127.0.0.1", 0),
-				TranscoderServer.Limits.fromEnvironment(java.util.Map.of()));
+		return TranscoderServer.start(new InetSocketAddress("127.0.0.1", 0), TranscoderServer.Limits.fromEnvironment(
+				java.util.Map.of("TRANSCODER_WORK_DIR", Files.createTempDirectory("astra-transcoder").toString())));
 	}
 
 	@Bean

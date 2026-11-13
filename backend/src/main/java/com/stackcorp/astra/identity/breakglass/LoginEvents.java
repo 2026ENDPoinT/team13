@@ -1,6 +1,7 @@
 package com.stackcorp.astra.identity.breakglass;
 
 import java.time.Duration;
+import java.util.List;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -10,6 +11,12 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 public class LoginEvents {
+
+	/** 잠겨 있어 비밀번호나 코드를 보지 않고 거절한 로그인의 실패 이유 */
+	static final String LOCKED = "LOCKED";
+
+	/** 잠겨 있어 코드를 보지 않고 거절한 TOTP 재인증의 실패 이유 */
+	static final String STEP_UP_LOCKED = "STEP_UP_LOCKED";
 
 	private final JdbcClient jdbc;
 
@@ -41,8 +48,22 @@ public class LoginEvents {
 			.single();
 	}
 
+	/**
+	 * 잠금 판정에 쓰는 실패 수. 잠긴 동안 거절한 시도({@link #LOCKED}, {@link #STEP_UP_LOCKED})는 세지 않는다. 세면 계정 이름을 아는
+	 * 사람이 잠긴 동안 계속 시도해 잠금을 끝없이 늘릴 수 있다.
+	 */
 	int failuresWithin(long userId, Duration window) {
-		return count(userId, "FAILURE", window);
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM login_events
+				 WHERE user_id = :user AND login_result = 'FAILURE'
+				   AND (failure_reason IS NULL OR failure_reason NOT IN (:locked))
+				   AND logged_in_at > DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL :seconds SECOND)
+				""")
+			.param("user", userId)
+			.param("locked", List.of(LOCKED, STEP_UP_LOCKED))
+			.param("seconds", window.toSeconds())
+			.query(Integer.class)
+			.single();
 	}
 
 	boolean succeededWithin(long userId, Duration window) {

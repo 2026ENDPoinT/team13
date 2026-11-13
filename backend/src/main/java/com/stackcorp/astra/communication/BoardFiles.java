@@ -87,20 +87,20 @@ class BoardFiles {
 	 * 강의실 게시글 첨부. 부르는 쪽의 transaction 안에서 부른다.
 	 * @return 첨부 그룹 ID. 업로드가 없으면 null
 	 */
-	Long attach(long userId, long courseId, List<Long> uploadIds, String title) {
-		return attach(PURPOSE, userId, courseId, uploadIds, title);
+	Long attach(long userId, long courseId, List<Long> uploadIds) {
+		return attach(PURPOSE, userId, courseId, uploadIds);
 	}
 
 	/**
 	 * @param courseId 과목 용도면 그 과목. 과목 밖 용도면 null
 	 * @return 첨부 그룹 ID. 업로드가 없으면 null
 	 */
-	Long attach(String purpose, long userId, Long courseId, List<Long> uploadIds, String title) {
+	Long attach(String purpose, long userId, Long courseId, List<Long> uploadIds) {
 		if (uploadIds.isEmpty()) {
 			return null;
 		}
 		try {
-			return this.attachments.attach(new AttachRequest(userId, courseId, purpose, uploadIds, title));
+			return this.attachments.attach(new AttachRequest(userId, courseId, purpose, uploadIds));
 		}
 		catch (AttachmentException ex) {
 			throw notReady();
@@ -112,10 +112,10 @@ class BoardFiles {
 	 * transaction이 모두 되돌린다.
 	 * @return 바꾼 뒤의 첨부 그룹 ID. 남은 첨부가 없고 그룹도 없었으면 null
 	 */
-	Long change(String purpose, long userId, Long courseId, Long attachmentGroupId, Change change, String title) {
+	Long change(String purpose, long userId, Long courseId, Long attachmentGroupId, Change change) {
 		try {
 			return this.attachments
-				.change(new ChangeRequest(userId, courseId, purpose, attachmentGroupId, change.keep(), change.add(), title))
+				.change(new ChangeRequest(userId, courseId, purpose, attachmentGroupId, change.keep(), change.add()))
 				.orElse(null);
 		}
 		catch (AttachmentException ex) {

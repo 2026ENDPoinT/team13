@@ -108,6 +108,26 @@ class BreakGlassAuthTests extends IntegrationTest {
 	}
 
 	@Test
+	void attemptsWhileLockedDoNotExtendTheLock() throws Exception {
+		Cookie csrf = csrf();
+		for (int i = 0; i < BreakGlassLogin.MAX_FAILURES; i++) {
+			this.mvc.perform(from("198.51.100.24", login(csrf, "wrong", currentCode())))
+				.andExpect(status().isUnauthorized());
+		}
+		ageLoginEvents(10);
+		// 잠긴 동안 계정 이름을 아는 사람이 계속 시도한다.
+		for (int i = 0; i < BreakGlassLogin.MAX_FAILURES + 1; i++) {
+			this.mvc.perform(from("198.51.100.24", login(csrf, "wrong", currentCode())))
+				.andExpect(status().isTooManyRequests());
+		}
+		// 처음 실패한 지 16분, 잠긴 동안의 시도는 6분 전이다.
+		ageLoginEvents(6);
+
+		this.mvc.perform(from("198.51.100.25", login(csrf, BREAK_GLASS_PASSWORD, currentCode())))
+			.andExpect(status().isNoContent());
+	}
+
+	@Test
 	void concurrentGuessesCannotGetPastTheFailureLimit() throws Exception {
 		Cookie csrf = csrf();
 		int guesses = 8;
@@ -202,6 +222,14 @@ class BreakGlassAuthTests extends IntegrationTest {
 
 	private Cookie csrf() throws Exception {
 		return this.mvc.perform(get("/api/auth/csrf")).andReturn().getResponse().getCookie("XSRF-TOKEN");
+	}
+
+	/** 계정의 로그인 기록을 그만큼 과거로 옮겨 시간이 지난 것처럼 만든다. */
+	private void ageLoginEvents(int minutes) {
+		this.jdbc.sql("""
+				UPDATE login_events SET logged_in_at = DATE_SUB(logged_in_at, INTERVAL :minutes MINUTE)
+				 WHERE user_id = :id
+				""").param("minutes", minutes).param("id", this.adminId).update();
 	}
 
 	private MockHttpServletRequestBuilder login(Cookie csrf, String password, String code) {

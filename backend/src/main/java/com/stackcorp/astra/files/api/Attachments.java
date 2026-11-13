@@ -52,7 +52,7 @@ public interface Attachments {
 	 * @param courseId 과목 용도면 그 과목. 과목 밖 용도(알림마당, 쪽지)면 null
 	 * @param purpose 업로드 용도. upload_policies.policy_code
 	 */
-	record AttachRequest(long ownerUserId, Long courseId, String purpose, List<Long> uploadIds, String title) {
+	record AttachRequest(long ownerUserId, Long courseId, String purpose, List<Long> uploadIds) {
 		public AttachRequest {
 			uploadIds = List.copyOf(uploadIds);
 		}
@@ -68,7 +68,7 @@ public interface Attachments {
 	 * @param addUploadIds 새로 첨부할 업로드 ID
 	 */
 	record ChangeRequest(long ownerUserId, Long courseId, String purpose, Long attachmentGroupId,
-			List<Long> keepFileIds, List<Long> addUploadIds, String title) {
+			List<Long> keepFileIds, List<Long> addUploadIds) {
 		public ChangeRequest {
 			keepFileIds = List.copyOf(keepFileIds);
 			addUploadIds = List.copyOf(addUploadIds);

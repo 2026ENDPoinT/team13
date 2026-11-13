@@ -43,6 +43,7 @@ import com.stackcorp.astra.TestOfficeFiles;
 import com.stackcorp.astra.TestPdfs;
 import com.stackcorp.astra.TestcontainersConfiguration.TestBuckets;
 import com.stackcorp.astra.files.api.ConversionException;
+import com.stackcorp.astra.files.api.PageConverter;
 import com.stackcorp.astra.files.api.RenditionException;
 import com.stackcorp.astra.files.storage.ObjectStore;
 
@@ -90,6 +91,9 @@ class PreviewApiTests extends IntegrationTest {
 
 	@Autowired
 	PlatformTransactionManager transactionManager;
+
+	@Autowired
+	PageConverter pageConverter;
 
 	long course;
 
@@ -462,6 +466,75 @@ class PreviewApiTests extends IntegrationTest {
 				.param("id", jobId(fileId))
 				.query(Long.class)
 				.single()).isOne();
+		}
+	}
+
+	/**
+	 * worker 하나의 scheduler thread가 여럿이면 같은 process 안에서 lease가 끝난 변환을 다른 thread가 다시 잡을 수 있다(A1). 두 시도는
+	 * worker 이름이 같아도 잡을 때마다 다른 lease 소유자로 남아, 늦게 끝난 앞 시도가 새 시도의 행을 닫거나 객체를 지우지 못한다.
+	 */
+	@Test
+	void aStaleAttemptCannotCloseTheConversionThatTheSameWorkerTookOverAgain() throws Exception {
+		long fileId = attached(pdf(1), "application/pdf", "stale.pdf", true);
+		this.student.post(preview(this.course, fileId)).andExpect(status().isAccepted());
+		CountDownLatch staleStarted = new CountDownLatch(1);
+		CountDownLatch staleRelease = new CountDownLatch(1);
+		DocumentRenditionService stale = worker((document, format, maxPages, pages) -> {
+			staleStarted.countDown();
+			awaitQuietly(staleRelease);
+			throw new ConversionException(ConversionException.Code.FAILED, "앞 시도가 늦게 실패했다");
+		});
+		CountDownLatch retryStarted = new CountDownLatch(1);
+		CountDownLatch retryRelease = new CountDownLatch(1);
+		DocumentRenditionService retry = worker((document, format, maxPages, pages) -> {
+			retryStarted.countDown();
+			awaitQuietly(retryRelease);
+			return this.pageConverter.convert(document, format, maxPages, pages);
+		});
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			Future<Boolean> first = pool.submit(() -> stale.convertNext(WORKER));
+			assertThat(staleStarted.await(30, TimeUnit.SECONDS)).isTrue();
+			this.jdbc.sql("""
+					UPDATE conversion_jobs SET lease_expires_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 SECOND)
+					 WHERE file_id = :file AND conversion_state = 'converting'
+					""").param("file", fileId).update();
+			assertThat(this.renditions.recoverExpired()).isPositive();
+			Future<Boolean> second = pool.submit(() -> retry.convertNext(WORKER));
+			assertThat(retryStarted.await(30, TimeUnit.SECONDS)).isTrue();
+
+			staleRelease.countDown();
+			assertThat(first.get(30, TimeUnit.SECONDS)).isTrue();
+			assertThat(jobs(fileId)).singleElement()
+				.satisfies((j) -> assertThat(j).containsEntry("conversion_state", "converting")
+					.containsEntry("attempt_count", 2L));
+
+			retryRelease.countDown();
+			assertThat(second.get(60, TimeUnit.SECONDS)).isTrue();
+		}
+		finally {
+			staleRelease.countDown();
+			retryRelease.countDown();
+			pool.shutdownNow();
+		}
+		assertThat(jobs(fileId)).singleElement()
+			.satisfies((j) -> assertThat(j).containsEntry("conversion_state", "ready"));
+		this.student.post(preview(this.course, fileId)).andExpect(status().isOk());
+	}
+
+	private DocumentRenditionService worker(PageConverter converter) {
+		return new DocumentRenditionService(this.fileRecords, this.conversions, this.store, converter,
+				new ConversionProperties(Duration.ofHours(1), Duration.ofHours(1), Duration.ofMinutes(15), 3,
+						Duration.ofMinutes(10), WORKER),
+				this.transactionManager, new SimpleMeterRegistry());
+	}
+
+	private static void awaitQuietly(CountDownLatch latch) {
+		try {
+			latch.await(60, TimeUnit.SECONDS);
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
 		}
 	}
 
