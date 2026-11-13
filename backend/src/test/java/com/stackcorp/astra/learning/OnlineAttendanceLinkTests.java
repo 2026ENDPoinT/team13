@@ -407,6 +407,32 @@ class OnlineAttendanceLinkTests extends IntegrationTest {
 		assertThat(record(online, this.stu)).containsExactly("출석", "online");
 	}
 
+	/** 주차 잠금을 기다리는 동안 담당자가 필요 시간을 올렸으면 충족은 올린 필요 시간으로 판정한다. */
+	@Test
+	void heartbeatWaitingBehindARaisedRequirementJudgesTheNewRequirement() throws Exception {
+		long week = week(3);
+		long item = lectureItem(lecture(week));
+		long online = createSession(3, 1, "online");
+		long session = started(this.student, item);
+		this.clock.advance(Duration.ofSeconds(40));
+		beat(this.student, session, 1).andExpect(jsonPath("$.creditedSec").value(40));
+		this.clock.advance(Duration.ofSeconds(60));
+
+		try (WeekLock edit = new WeekLock(week)) {
+			edit.execute("UPDATE online_lecture_items SET required_sec = 600 WHERE online_lecture_item_id = ?", item);
+			Future<Integer> heartbeat = async(() -> ApiClient.json(beat(this.student, session, 2).andExpect(status().isOk()))
+				.get("creditedSec")
+				.asInt());
+			edit.awaitWaiter();
+			edit.commit();
+			assertThat(heartbeat.get(30, TimeUnit.SECONDS)).isEqualTo(60);
+		}
+		assertThat(this.jdbc.sql("""
+				SELECT met_at IS NULL FROM online_lecture_item_progress WHERE user_id = :u AND online_lecture_item_id = :i
+				""").param("u", this.stu).param("i", item).query(Boolean.class).single()).isTrue();
+		assertThat(record(online, this.stu)).isEmpty();
+	}
+
 	/** 충족하지 않는 하트비트는 출석부를 바꾸지 않으므로 주차 잠금을 기다리지 않는다. */
 	@Test
 	void heartbeatThatMeetsNothingDoesNotWaitForTheWeek() throws Exception {

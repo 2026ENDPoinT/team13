@@ -506,22 +506,23 @@ class LearningSessionService {
 	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록하고 출석부 반영을 {@link OnlineAttendance}에 맡긴다. 반영은 잠금 읽기로
 	 * 차시에 걸린 콘텐츠를 모두 충족했는지 다시 보므로, 이 transaction의 snapshot이 그 사이 바뀐 활동을 못 봐도 판정이 맞다. 활동의 모든
 	 * 콘텐츠가 충족되면 활동 완료를 한 번 쓴다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
+	 * <p>
+	 * 필요 시간은 snapshot({@code item})이 아니라 이 UPDATE가 읽는 지금의 콘텐츠 행에서 정한다. 주차 잠금을 기다리는 동안 담당자가
+	 * 필요 시간을 올렸거나 콘텐츠를 뺐으면 그 값으로 판정한다.
 	 * @param lockedWeek 진도를 쓰기 전에 공유 잠금한 주차. 잠그지 않았으면 null
 	 */
 	private void decide(long userId, Item item, Long lockedWeek, LocalDateTime now, String rule) {
-		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
-		if (required == null) {
-			return;
-		}
 		int met = this.jdbc.sql("""
-				UPDATE online_lecture_item_progress SET met_at = :now, decided_status = 'met', rule_version = :rule
-				 WHERE user_id = :user AND online_lecture_item_id = :item AND met_at IS NULL AND credited_in_sec >= :required
+				UPDATE online_lecture_item_progress p
+				  JOIN online_lecture_items i ON i.online_lecture_item_id = p.online_lecture_item_id AND i.deleted_at IS NULL
+				   SET p.met_at = :now, p.decided_status = 'met', p.rule_version = :rule
+				 WHERE p.user_id = :user AND p.online_lecture_item_id = :item AND p.met_at IS NULL
+				   AND p.credited_in_sec >= COALESCE(i.required_sec, i.duration_sec)
 				""")
 			.param("now", now)
 			.param("rule", rule)
 			.param("user", userId)
 			.param("item", item.itemId())
-			.param("required", required)
 			.update();
 		if (met == 0) {
 			return;

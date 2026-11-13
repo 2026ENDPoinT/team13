@@ -163,10 +163,13 @@ class OnlineAttendance {
 		if (met.isEmpty()) {
 			return;
 		}
-		// 이미 판정된 학생은 쓰지 않는다. 이 읽기가 낡아도 아래 쓰기가 미처리일 때만 바꾸므로 판정은 같다.
+		// 이미 판정된 학생은 쓰지 않는다. 잠금 읽기다(차시 → 기록, 사용자 ID 순). snapshot은 그 사이 지워진 기록(스마트출석 회차 취소)을
+		// 아직 판정된 것으로 볼 수 있어, 그 학생을 빠뜨리지 않으려면 최신 값을 읽어야 한다.
 		Set<Long> decided = new HashSet<>(this.jdbc.sql("""
 				SELECT user_id FROM attendance_records
 				 WHERE attendance_session_id = :session AND user_id IN (:users) AND status <> '미처리'
+				 ORDER BY user_id
+				   FOR SHARE
 				""").param("session", target.id()).param("users", met).query(Long.class).list());
 		List<Long> pending = met.stream().filter((u) -> !decided.contains(u)).toList();
 		for (int from = 0; from < pending.size(); from += BATCH) {
