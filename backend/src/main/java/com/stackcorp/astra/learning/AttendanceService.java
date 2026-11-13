@@ -20,6 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -48,23 +49,29 @@ class AttendanceService {
 
 	private final AttendanceTransactions transactions;
 
+	private final OnlineAttendance online;
+
 	private final AuditLog audit;
 
 	AttendanceService(JdbcClient jdbc, CourseWeeks weeks, CourseRosters rosters, LearningClock clock,
-			AttendanceTransactions transactions, AuditLog audit) {
+			AttendanceTransactions transactions, OnlineAttendance online, AuditLog audit) {
 		this.jdbc = jdbc;
 		this.weeks = weeks;
 		this.rosters = rosters;
 		this.clock = clock;
 		this.transactions = transactions;
+		this.online = online;
 		this.audit = audit;
 	}
 
 	/**
-	 * 부르는 쪽 transaction(멱등 원장) 안에서 차시를 만든다.
+	 * 부르는 쪽 transaction(멱등 원장) 안에서 차시를 만든다. 주차를 먼저 배타 잠금하고, 만든 뒤 그 주차의 온라인 학습 반영을 다시
+	 * 판정한다(이미 충족한 학생이 채워진다).
 	 * @return 차시 ID
 	 */
 	long create(long userId, long courseId, SessionInput input, Long makeupOfSessionId) {
+		long week = this.weeks.weekId(courseId, input.weekNo());
+		this.online.lockWeeks(true, List.of(week));
 		if (makeupOfSessionId != null) {
 			String state = this.jdbc.sql("""
 					SELECT session_state FROM attendance_sessions
@@ -80,7 +87,6 @@ class AttendanceService {
 				throw new ApiException(HttpStatus.CONFLICT, "session_not_cancelled", "휴강한 차시만 보강할 수 있습니다.");
 			}
 		}
-		long week = this.weeks.weekId(courseId, input.weekNo());
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		try {
 			this.jdbc.sql("""
@@ -103,18 +109,28 @@ class AttendanceService {
 		catch (DuplicateKeyException ex) {
 			throw sessionExists();
 		}
-		return key.getKey().longValue();
+		long id = key.getKey().longValue();
+		this.online.reconcile(courseId, List.of(week), List.of(id));
+		return id;
 	}
 
-	/** 차시를 고친다. 진행 중인 스마트출석 회차가 있으면 휴강으로 바꾸지 않는다. */
-	@Transactional
+	/**
+	 * 차시를 고친다. 진행 중인 스마트출석 회차가 있으면 휴강으로 바꾸지 않는다. 옮기기 전과 뒤 주차를 배타 잠금하고, 고친 뒤 두 주차의
+	 * 온라인 학습 반영을 다시 판정한다. 이미 쓴 기록은 방식이나 주차가 바뀌어도 그대로다.
+	 * <p>
+	 * READ COMMITTED다. 주차는 차시 행을 잠그기 전에 읽어야 하므로(주차 → 차시 잠금 순서) REPEATABLE READ면 그 읽기가 snapshot을
+	 * 정해, 잠근 뒤의 진행 중 회차 검사가 그 사이 열린 회차를 못 본다. READ COMMITTED는 문장마다 최신 commit을 본다.
+	 */
+	@Transactional(isolation = Isolation.READ_COMMITTED)
 	void update(Actor actor, long courseId, long sessionId, int expectedVersion, SessionInput input,
 			boolean cancelled) {
-		lock(courseId, sessionId, expectedVersion);
+		long from = weekOf(courseId, sessionId);
+		long week = this.weeks.weekId(courseId, input.weekNo());
+		this.online.lockWeeks(true, List.of(from, week));
+		lock(courseId, sessionId, expectedVersion, from);
 		if (cancelled && openRound(sessionId)) {
 			throw new ApiException(HttpStatus.CONFLICT, "round_open", "진행 중인 스마트출석이 있는 차시는 휴강으로 바꿀 수 없습니다.");
 		}
-		long week = this.weeks.weekId(courseId, input.weekNo());
 		try {
 			this.jdbc.sql("""
 					UPDATE attendance_sessions
@@ -137,17 +153,21 @@ class AttendanceService {
 		catch (DuplicateKeyException ex) {
 			throw sessionExists();
 		}
+		this.online.reconcile(courseId, List.of(from, week), List.of(sessionId));
 		this.audit.success(actor.userId(), actor.sessionId(), "attendance_session.update", "attendance_session",
 				sessionId, courseId);
 	}
 
 	/**
 	 * 차시를 지운다. 출석 기록, 스마트출석 회차, 보강 차시, 지우지 않은 학습활동이 가리키면 409다. 지운 학습활동(ADR-0011)의 연결은
-	 * 끊는다. 학습 기록은 활동에 남고 출석부에는 반영되지 않은 연결이다.
+	 * 끊는다. 학습 기록은 활동에 남고 출석부에는 반영되지 않은 연결이다. 지운 뒤 주차에 온라인 차시가 하나 남으면 그 차시를 다시 판정한다.
+	 * READ COMMITTED인 이유는 {@link #update}와 같다. 잠근 뒤의 사용 중 검사가 그 사이 쓴 기록·회차를 본다.
 	 */
-	@Transactional
+	@Transactional(isolation = Isolation.READ_COMMITTED)
 	void delete(Actor actor, long courseId, long sessionId, int expectedVersion) {
-		lock(courseId, sessionId, expectedVersion);
+		long from = weekOf(courseId, sessionId);
+		this.online.lockWeeks(true, List.of(from));
+		lock(courseId, sessionId, expectedVersion, from);
 		boolean inUse = this.jdbc.sql("""
 				SELECT EXISTS (SELECT 1 FROM attendance_records WHERE attendance_session_id = :id)
 				    OR EXISTS (SELECT 1 FROM smart_attendance_rounds WHERE attendance_session_id = :id)
@@ -162,6 +182,7 @@ class AttendanceService {
 				 WHERE attendance_session_id = :id AND deleted_at IS NOT NULL
 				""").param("id", sessionId).update();
 		this.jdbc.sql("DELETE FROM attendance_sessions WHERE attendance_session_id = :id").param("id", sessionId).update();
+		this.online.reconcile(courseId, List.of(from), List.of());
 		this.audit.success(actor.userId(), actor.sessionId(), "attendance_session.delete", "attendance_session",
 				sessionId, courseId);
 	}
@@ -316,14 +337,29 @@ class AttendanceService {
 			.update();
 	}
 
-	private void lock(long courseId, long sessionId, int expectedVersion) {
-		int version = this.jdbc.sql("""
-				SELECT row_version FROM attendance_sessions WHERE attendance_session_id = :id AND course_id = :course
+	// 주차 잠금 전에 읽은 주차가 그대로인지도 본다. 그 사이 다른 명령이 옮겼으면 version도 바뀌었으므로 같은 409다.
+	private void lock(long courseId, long sessionId, int expectedVersion, long weekId) {
+		boolean current = this.jdbc.sql("""
+				SELECT row_version = :version AND course_week_id = :week FROM attendance_sessions
+				 WHERE attendance_session_id = :id AND course_id = :course
 				   FOR UPDATE
-				""").param("id", sessionId).param("course", courseId).query(Integer.class).optional().orElseThrow(ApiException::notFound);
-		if (version != expectedVersion) {
+				""")
+			.param("version", expectedVersion)
+			.param("week", weekId)
+			.param("id", sessionId)
+			.param("course", courseId)
+			.query(Boolean.class)
+			.optional()
+			.orElseThrow(ApiException::notFound);
+		if (!current) {
 			throw Versions.conflict();
 		}
+	}
+
+	private long weekOf(long courseId, long sessionId) {
+		return this.jdbc.sql("""
+				SELECT course_week_id FROM attendance_sessions WHERE attendance_session_id = :id AND course_id = :course
+				""").param("id", sessionId).param("course", courseId).query(Long.class).optional().orElseThrow(ApiException::notFound);
 	}
 
 	private boolean openRound(long sessionId) {

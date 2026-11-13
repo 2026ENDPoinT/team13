@@ -342,7 +342,7 @@ flowchart LR
 | `GET /api/courses/{courseId}/lecture-progress` | 과목 구성원 | 내 콘텐츠별 적립 시간, 출석인정 필요 시간, 충족 시각을 주차별로 |
 | `GET /api/courses/{courseId}/lecture-progress/students?activityId=&page=&size=` | 담당자 | 수강생의 콘텐츠별 진도. 학생은 수강생 명단의 사용자 ID 순으로 쪽을 나눈다(1부터, 크기 1~100, 기본 50, `totalStudents`). `activityId`를 주면 그 영상 활동의 콘텐츠만 열로 낸다. 그 과목의 영상 활동이 아니면 404. 쿼리 수는 쪽과 관계없다 |
 
-lease가 지난 session은 worker가 닫는다(4.3절). 출석인정을 처음 채운 시각을 한 번 기록하고, 활동에 출석 차시가 연결돼 있으면 출석부에 `출석`을 한 번 넣는다. 이후 사건으로 되돌리지 않는다.
+lease가 지난 session은 worker가 닫는다(4.3절). 출석인정을 처음 채운 시각을 한 번 기록하고, 활동의 대상 출석 차시(직접 연결한 차시, 없으면 주차의 유일한 온라인 차시)에 걸린 영상 활동을 모두 충족하면 출석부에 `출석`을 한 번 넣는다. 차시 등록·수정·삭제와 영상 활동 수정·삭제는 그 주차를 다시 판정해 이미 충족한 수강생을 채운다([ADR-0030](adr/0030-attendance-and-smart-rounds.md) 8번). 이후 사건으로 되돌리지 않는다.
 
 HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화면 녹화는 막지 못한다.
 
