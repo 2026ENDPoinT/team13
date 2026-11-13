@@ -19,10 +19,11 @@ locals {
       keys        = ["ASTRA_BREAK_GLASS_EXTERNAL_REF", "ASTRA_BREAK_GLASS_PASSWORD_HASH", "ASTRA_BREAK_GLASS_TOTP_SECRET"]
       required    = false
     }
+    # Required: the environment always sets ASTRA_CLOUDFRONT_KEY_PAIR_ID, and the app refuses to start without the key.
     cloudfront-private-key = {
       description = "PKCS#8 PEM RSA private key matching a public key in the CloudFront key group."
       keys        = ["ASTRA_CLOUDFRONT_PRIVATE_KEY"]
-      required    = false
+      required    = true
     }
     llm-api-key = {
       description = "LLM provider API key (ADR-0008)."

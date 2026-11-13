@@ -58,7 +58,11 @@ final class CloudFrontDeliverySigner implements DeliverySigner {
 	}
 
 	private static PrivateKey parse(String pem) {
-		if (pem == null || !pem.contains("BEGIN PRIVATE KEY")) {
+		if (pem == null || pem.isBlank()) {
+			throw new IllegalArgumentException("astra.cloudfront.key-pair-id가 있으면 astra.cloudfront.private-key"
+					+ "(ASTRA_CLOUDFRONT_PRIVATE_KEY, Secrets Manager의 cloudfront-private-key)도 있어야 합니다.");
+		}
+		if (!pem.contains("BEGIN PRIVATE KEY")) {
 			throw new IllegalArgumentException("astra.cloudfront.private-key는 PKCS#8 PEM이어야 합니다.");
 		}
 		String body = pem.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
