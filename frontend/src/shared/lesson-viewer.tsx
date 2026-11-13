@@ -318,6 +318,9 @@ function LessonBody({ doc }: { doc: LessonDoc }) {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || zoom !== null || isTyping(event.target)) return;
       if ((toolsOpen && overlayDock) || document.querySelector('[aria-modal="true"]')) return;
+      // 한 화면에 뷰어가 여럿이면(교수 자료 목록의 요약 후보) 화면에 보이는 뷰어만 쪽 이동 키를 받는다.
+      const box = root.current ? root.current.getBoundingClientRect() : null;
+      if (!box || box.bottom <= 0 || box.top >= innerHeight) return;
       const key = event.key.toLowerCase();
       const rows = [...(stream.current ? stream.current.querySelectorAll<HTMLElement>(".lv-slide[data-page]") : [])].map((row) => Number(row.dataset.page));
       if (key === "j" || key === "ㅓ") {
