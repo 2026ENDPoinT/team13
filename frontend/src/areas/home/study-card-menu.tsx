@@ -17,11 +17,20 @@ export interface RemoveOptions {
   onRemove: () => Promise<void>;
 }
 
+/** An extra command at the top of the menu (e.g. "요약 만들기"). Reports its own success and failure. */
+export interface MenuAction {
+  label: string;
+  icon: string;
+  /** A short line under the label (e.g. that the content goes to the AI provider). */
+  hint?: string;
+  onSelect: () => Promise<void>;
+}
+
 /**
- * The vertical-dots menu at the right of a card title: "폴더로 이동" (items only) and "삭제" (a second press
- * confirms). The card itself is a stretched link, so this button sits above it and never follows the link.
+ * The vertical-dots menu at the right of a card title: extra `actions`, "폴더로 이동" (items only) and "삭제" (a second
+ * press confirms). The card itself is a stretched link, so this button sits above it and never follows the link.
  */
-export function CardMenu({ title, move, remove }: { title: string; move?: MoveOptions; remove: RemoveOptions }) {
+export function CardMenu({ title, actions, move, remove }: { title: string; actions?: MenuAction[]; move?: MoveOptions; remove: RemoveOptions }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"main" | "move">("main");
   const [armed, setArmed] = useState(false);
@@ -75,6 +84,12 @@ export function CardMenu({ title, move, remove }: { title: string; move?: MoveOp
         <div className="study-new-menu" role="menu" aria-label={`${title} 메뉴`}>
           {view === "main" ? (
             <>
+              {(actions || []).map((action) => (
+                <button key={action.label} type="button" role="menuitem" className="study-new-item" onClick={() => run(action.onSelect)}>
+                  <Icon name={action.icon} />
+                  <span>{action.label}{action.hint ? <span className="sf-menu-hint">{action.hint}</span> : null}</span>
+                </button>
+              ))}
               {move ? (
                 <button
                   type="button" role="menuitem" className="study-new-item" aria-disabled={canMove ? undefined : "true"}

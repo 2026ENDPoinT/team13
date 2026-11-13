@@ -1,7 +1,7 @@
 // The study-room view of one of the student's own PDFs (`study_home?kj=&doc=doc-<id>`): the malware-scan state
 // (asked again every `Retry-After` seconds until it is ready), the rejected state, then the document card with the
 // PDF read in this browser. Rename, move between folders and delete go to `/api/me/study-room/documents/**`.
-// These documents never offer model features (page summary, study chat): they are not sent to any model.
+// A ready document also offers its AI page summary (study-doc-summary.tsx), above the document card.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Course } from "../../data.ts";
 import { navigate } from "../../router.tsx";
@@ -16,6 +16,7 @@ import {
 } from "../../shared/study-documents.ts";
 import { listFolders, placeItem, unplaceItem, serverFolderOf, useStudyRoomStore } from "../../shared/study-folders.ts";
 import { folderHref } from "./study-files.tsx";
+import { DocSummarySection } from "./study-doc-summary.tsx";
 
 export type ParsedDoc = StudyDocRecord & PdfSummary;
 
@@ -136,13 +137,19 @@ export function StudyDocumentContent({ course, docId, renderCard, renderOriginal
       body = <ErrorState title="열 수 없는 PDF입니다" body="검사에서 악성 코드가 발견되어 이 PDF는 열거나 내려받을 수 없습니다. 이 PDF를 지우고 원본 파일을 확인해 주세요." />;
       break;
     case "ready":
-      body = renderCard(view.record);
+      body = (
+        <>
+          <DocSummarySection record={view.record} pageCount={view.record.pageCount} />
+          {renderCard(view.record)}
+        </>
+      );
       break;
     case "unread":
       body = (
         <>
           <ErrorState title="PDF 원문을 읽지 못했습니다" body={view.message} />
           {renderOriginal(view.record)}
+          <DocSummarySection record={view.record} pageCount={null} />
         </>
       );
       break;
@@ -239,7 +246,7 @@ function DocumentActions({ record, onRenamed, onStale, say: setMessage }: {
 
   return (
     <div className="course-study__doc-actions">
-      <p className="course-study__note" role="note">내 학습실에만 저장된 PDF입니다. 과목의 다른 사람에게 보이지 않고, AI 요약·질문 같은 외부 AI 기능에는 쓰이지 않습니다.</p>
+      <p className="course-study__note" role="note">내 학습실에만 저장된 PDF입니다. 과목의 다른 사람에게 보이지 않습니다.</p>
       <div className="btn-row">
         <Button kind="secondary" disabled={busy} aria-expanded={mode === "rename" ? "true" : "false"} onClick={() => {
           setTitle(record.title);
