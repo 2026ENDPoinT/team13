@@ -4,6 +4,7 @@
 // lands (`useResource`). Nothing here is persisted; every cache is dropped when the session changes.
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { subscribe as onBackendChange } from "./backend.ts";
+import { ApiError } from "./api.ts";
 
 const visits = new Map<string, { entry: unknown; key: string }>();
 // A history state object that `replaceVisit()` put in place of another stands for that one, so
@@ -43,17 +44,46 @@ export interface Entry<T> {
   data: T | null;
   error: unknown;
   loading: Promise<void> | null;
+  /**
+   * The data `drop()` cleared, until the reload after the write lands. It stays if that reload
+   * fails, unless the failure denies access (401, 403, 404): rows of a course the user may no
+   * longer see are not kept. For display only: a list may keep showing these rows meanwhile, with
+   * its row actions off; nothing may build form state, versions or revisions from it.
+   */
+  previous?: T | null;
 }
 
 export interface Resource<T, A extends unknown[] = any[]> {
   peek(key: string): Entry<T> | null;
+  /**
+   * Loads `key`, sharing a load of it already in flight unless that one started before a `drop()`
+   * of the key: then it waits for that one and asks again.
+   */
   load(key: string, ...args: A): Promise<void>;
+  /** A load of `key` that starts after now: waits for one already in flight (it may have read the state before a write), then loads again. */
+  reload(key: string, ...args: A): Promise<void>;
+  /**
+   * Puts `data` the server just answered (e.g. the view a create returned) in place as a finished
+   * load. `args` are the arguments a later reload of `key` asks the server with.
+   */
+  seed(key: string, data: T, ...args: A): void;
   /** Loads `key` when the screen was navigated to, or when nothing is cached for it yet. */
   visit(scope: string, key: string, ...args: A): Promise<void>;
   /** Changes cached data in place (e.g. a notice marked read) and re-renders its readers. */
   patch(match: (key: string) => boolean, change: (data: T) => void): void;
-  /** Forgets matching keys so the next visit loads them again. */
+  /**
+   * Forgets matching keys after a write. A key no mounted `useResource` reader shows is deleted, so
+   * its next visit loads it. A shown key keeps its entry with `data` and `error` cleared at once
+   * (the cleared data moves to `previous`, for display only): nothing may build forms, versions or
+   * revisions from the pre-write copy, and its readers show their loading text or the previous rows
+   * with their actions off, then the reload's result or its failure. A load that started before the
+   * write no longer counts. Once the writing code has run on (a delete may close the screen), a key
+   * still shown is loaded again with the arguments of the load (or `seed`) that first filled it;
+   * one no longer shown is deleted. A load started after the drop counts as that reload.
+   */
   drop(match: (key: string) => boolean): void;
+  /** Marks `key` as shown by a mounted reader (`useResource` does this); returns the release function. */
+  watch(key: string): () => void;
   clear(): void;
   /** Calls `listener(key)` after any entry changed; returns the unsubscribe function. */
   subscribe(listener: (key: string) => void): () => void;
@@ -67,6 +97,8 @@ export interface Resource<T, A extends unknown[] = any[]> {
  */
 export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args: A) => Promise<T>): Resource<T, A> {
   const entries = new Map<string, Entry<T>>();
+  const origins = new Map<string, A>(); // key -> arguments of the load that created its entry (a first page, not a "more")
+  const readers = new Map<string, number>(); // key -> mounted readers
   const listeners = new Set<(key: string) => void>();
   let generation = 0;
   let changes = 0;
@@ -76,21 +108,42 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
     for (const listener of [...listeners]) listener(key);
   }
 
+  function forget(key: string) {
+    entries.delete(key);
+    origins.delete(key);
+  }
+
+  // Writes noted by drop() per key; a load whose request started before the latest one does not count.
+  const writes = new Map<string, number>();
+  const writesOf = (key: string) => writes.get(key) || 0;
+  const startedAt = new WeakMap<Entry<T>, number>(); // entry -> writesOf(key) when its request started
+
   const resource: Resource<T, A> = {
     peek(key) {
       return entries.get(key) || null;
     },
     load(key, ...args) {
       const current = entries.get(key);
-      if (current && current.loading) return current.loading;
+      if (current && current.loading) {
+        if (startedAt.get(current) === writesOf(key)) return current.loading;
+        return current.loading.then(() => resource.load(key, ...args));
+      }
       const gen = generation;
-      const entry: Entry<T> = { data: current ? current.data : null, error: null, loading: null };
+      const mark = writesOf(key);
+      const counts = () => gen === generation && writesOf(key) === mark;
+      const entry: Entry<T> = { data: current ? current.data : null, error: null, loading: null, previous: current ? current.previous : null };
+      startedAt.set(entry, mark);
+      if (!current) origins.set(key, args);
       entry.loading = Promise.resolve()
         .then(() => fetcher(...args))
         .then((data) => {
-          if (gen === generation) entry.data = data;
+          if (!counts()) return;
+          entry.data = data;
+          entry.previous = null;
         }, (error: unknown) => {
-          if (gen === generation) entry.error = error;
+          if (!counts()) return;
+          entry.error = error;
+          if (error instanceof ApiError && [401, 403, 404].includes(error.status)) entry.previous = null;
         })
         .finally(() => {
           if (gen !== generation) return;
@@ -100,6 +153,16 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       entries.set(key, entry);
       notify(key);
       return entry.loading;
+    },
+    async reload(key, ...args) {
+      const running = entries.get(key)?.loading;
+      if (running) await running;
+      return resource.load(key, ...args);
+    },
+    seed(key, data, ...args) {
+      entries.set(key, { data, error: null, loading: null, previous: null });
+      origins.set(key, args);
+      notify(key);
     },
     visit(scope, key, ...args) {
       const fresh = freshVisit(scope, key);
@@ -115,11 +178,40 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
       }
     },
     drop(match) {
-      for (const key of [...entries.keys()]) if (match(key)) entries.delete(key);
+      for (const key of [...entries.keys()]) {
+        if (!match(key)) continue;
+        if (!readers.get(key)) {
+          forget(key);
+          continue;
+        }
+        const dropped = entries.get(key)!;
+        writes.set(key, writesOf(key) + 1);
+        dropped.previous = dropped.data ?? dropped.previous;
+        dropped.data = null;
+        dropped.error = null;
+        notify(key);
+        const gen = generation;
+        setTimeout(() => {
+          if (gen !== generation || entries.get(key) !== dropped) return;
+          const args = origins.get(key);
+          if (readers.get(key) && args) void resource.load(key, ...args);
+          else forget(key);
+        }, 0);
+      }
+    },
+    watch(key) {
+      readers.set(key, (readers.get(key) || 0) + 1);
+      return () => {
+        const left = (readers.get(key) || 0) - 1;
+        if (left > 0) readers.set(key, left);
+        else readers.delete(key);
+      };
     },
     clear() {
       generation += 1;
       entries.clear();
+      origins.clear();
+      writes.clear();
       notify("");
     },
     subscribe(listener) {
@@ -144,13 +236,44 @@ export function createResource<T, A extends unknown[] = any[]>(fetcher: (...args
 }
 
 /**
+ * What a list shows: the loaded data, or after a write the previous rows until the reload lands
+ * (`stale`: display only; the list turns its row actions off and builds no forms from them).
+ */
+export function shownRows<T>(entry: Entry<T> | null | undefined): { rows: T | null; stale: boolean } {
+  if (!entry) return { rows: null, stale: false };
+  if (entry.data != null) return { rows: entry.data, stale: false };
+  return { rows: entry.previous ?? null, stale: entry.previous != null };
+}
+
+/**
  * The cached entry for `key` (null key: nothing), re-rendering the caller whenever any entry of
- * `resource` changes. `refresh` (optional) runs on window focus and when the tab becomes visible.
+ * `resource` changes. While mounted, `drop()` of `key` reloads it instead of leaving the screen
+ * without an entry. `refresh` (optional) runs on window focus and when the tab becomes visible.
  */
 export function useResource<T>(resource: Resource<T, any[]>, key: string | null, refresh?: () => void): Entry<T> | null {
   useSyncExternalStore(resource.subscribe, resource.version);
   useRefreshOnFocus(refresh);
+  useWatch(key == null ? [] : [{ resource, key }]);
   return key == null ? null : resource.peek(key);
+}
+
+/** Marks every `{resource, key}` as shown while mounted, so `drop()` reloads them (screens composed of several resources). */
+export function useWatch(parts: readonly { resource: Pick<Resource<unknown>, "watch">; key: string }[]) {
+  const latest = useRef(parts);
+  latest.current = parts;
+  const id = parts.map((part) => `${resourceId(part.resource)}:${part.key}`).join("\n");
+  useEffect(() => {
+    const release = latest.current.map((part) => part.resource.watch(part.key));
+    return () => release.forEach((off) => off());
+  }, [id]);
+}
+
+const resourceIds = new WeakMap<object, number>();
+let lastResourceId = 0;
+function resourceId(resource: object): number {
+  let id = resourceIds.get(resource);
+  if (id === undefined) resourceIds.set(resource, (id = ++lastResourceId));
+  return id;
 }
 
 /** Calls the latest `refresh` on window focus and when the tab becomes visible, while mounted. */

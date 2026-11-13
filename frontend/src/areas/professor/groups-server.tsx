@@ -87,7 +87,7 @@ function CmdButton({ label, busyLabel, kind, run, ...rest }: {
 }) {
   const [busy, setBusy] = useState(false);
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   return (
     <Button
       kind={kind}
@@ -256,7 +256,7 @@ function DeleteGroup({ courseId, group }: { courseId: number; group: Group }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   async function press() {
     if (busy) return;
     if (!armed) {

@@ -6,7 +6,7 @@
 // `revision`)대로 부른다. 응답은 메모리에만 둔다.
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { ApiError } from "./api.ts";
-import { freshVisit, useRefreshOnFocus } from "./remote-cache.ts";
+import { freshVisit, useRefreshOnFocus, useWatch } from "./remote-cache.ts";
 import type { Entry, Resource } from "./remote-cache.ts";
 import type { LectureEntry, WeekActivity } from "./lectures-remote.ts";
 import type { Material } from "./materials-remote.ts";
@@ -181,6 +181,7 @@ export function useRoom(courseId: Id): RoomEntry {
   }, [resources]);
   useSyncExternalStore(subscribe, () => resources.map((part) => part.resource.version()).join(","));
   useRefreshOnFocus(() => { void reloadRoom(courseId); });
+  useWatch(resources);
   useEffect(() => {
     const fresh = freshVisit("pf-room", courseKey(courseId)) === "entry";
     for (const part of resources) if (fresh || !part.resource.peek(part.key)) void part.resource.load(part.key, courseId);

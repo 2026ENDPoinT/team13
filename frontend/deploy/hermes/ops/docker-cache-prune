@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# 매주 Docker 빌드 캐시·이름 없는 이미지 정리. docker-cache-prune.timer 가 일요일 KST 05:30 에 돌린다.
+# 백엔드·프론트 배포가 Hermes 에서 이미지를 빌드하므로 캐시가 계속 쌓인다. 최근 7일 캐시는 남겨 다음 빌드를 빠르게 둔다.
+# 볼륨·태그 있는 이미지·멈춘 컨테이너는 건드리지 않는다(docker system prune / volume prune 금지).
+set -euo pipefail
+before=$(df --output=avail -B1 / | tail -1)
+docker builder prune -f --filter until=168h | tail -1
+docker image prune -f | tail -1
+after=$(df --output=avail -B1 / | tail -1)
+echo "freed $(( (after - before) / 1024 / 1024 )) MiB; disk $(df -h --output=pcent / | tail -1 | tr -d ' ') used"

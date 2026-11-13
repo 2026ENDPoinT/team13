@@ -657,10 +657,13 @@ export async function moveAllToAccount({ kj, group, folderId }: MoveScope): Prom
   }
   const done = [newlyMoved && `폴더 ${newlyMoved}개`, moved && `녹음 ${moved}개`].filter(Boolean).join("와 ");
   const notes = [done ? `${done}를 내 계정으로 옮겼습니다.` : ""];
-  if (folderErrors.length) notes.push(`폴더 ${folderErrors.length}개는 옮기지 못했습니다. ${[...new Set(folderErrors)].join(" ")}`);
-  if (errors.length) notes.push(`녹음 ${errors.length}개는 이 브라우저에 남겨 두었습니다. ${[...new Set(errors)].join(" ")}`);
+  // A reason is said once: a folder over the limit also stops the recordings meant for it, with the same sentence.
+  const said = new Set<string>();
+  const unsaid = (reasons: string[]) => [...new Set(reasons)].filter((reason) => !said.has(reason) && said.add(reason)).join(" ");
+  if (folderErrors.length) notes.push(`폴더 ${folderErrors.length}개는 옮기지 못했습니다. ${unsaid(folderErrors)}`.trim());
+  if (errors.length) notes.push(`녹음 ${errors.length}개는 이 브라우저에 남겨 두었습니다. ${unsaid(errors)}`.trim());
   if (unmovable) notes.push(`강의자료 ${unmovable}개는 서버에서 더 이상 열 수 없어 폴더에 옮기지 못했습니다.`);
-  if (stop) notes.push(stop);
+  if (stop) notes.push(unsaid([stop]));
   return notes.filter(Boolean).join(" ") || "옮길 항목이 없습니다.";
 }
 

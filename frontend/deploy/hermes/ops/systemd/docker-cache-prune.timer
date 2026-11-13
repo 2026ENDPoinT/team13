@@ -1,0 +1,9 @@
+[Unit]
+Description=Docker cache prune on Sunday 05:30 KST
+
+[Timer]
+OnCalendar=Sat *-*-* 20:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

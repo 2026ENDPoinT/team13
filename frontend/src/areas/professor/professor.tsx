@@ -1294,8 +1294,9 @@ function SummaryJobPanel({ record }: { record: RemotePdfRecord }) {
       await run();
     } catch (failure) {
       // 409 `llm_consent_required` / 503 `llm_disabled`: lead to the consent section instead of a retry.
+      // The lead states the reason itself; putting `summaryMessage` in front of it said it twice.
       const lead = consentLead(failure);
-      if (live.current) setError(lead ? <>{summaryMessage(failure)} {lead}</> : summaryMessage(failure));
+      if (live.current) setError(lead || summaryMessage(failure));
     } finally {
       if (live.current) setBusy(false);
     }

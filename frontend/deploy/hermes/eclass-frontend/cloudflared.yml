@@ -1,0 +1,11 @@
+tunnel: b6ca641a-bc0d-42ee-81ef-daddbcd9abf2
+credentials-file: /run/secrets/tunnel.json
+ingress:
+  - hostname: eclass.stack-edu.com
+    service: http://127.0.0.1:4190
+    originRequest:
+      httpHostHeader: 127.0.0.1:4190
+  # 옛 주소. Host 를 그대로 넘기면 server.mjs 가 같은 경로의 eclass.stack-edu.com 으로 301 한다.
+  - hostname: astra-eclass.mywiki.pe.kr
+    service: http://127.0.0.1:4190
+  - service: http_status:404

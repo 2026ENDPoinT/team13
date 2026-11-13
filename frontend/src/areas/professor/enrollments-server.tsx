@@ -141,7 +141,7 @@ function RequestRow({ courseId, item }: { courseId: number | string; item: Enrol
   const [reason, setReason] = useState(reasons.get(key) || "");
   const [busy, setBusy] = useState<"" | "APPROVE" | "REJECT">("");
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
   /** 승인 또는 반려. 두 번 눌러도 한 번만 보낸다. */
   async function decide(decision: "APPROVE" | "REJECT") {

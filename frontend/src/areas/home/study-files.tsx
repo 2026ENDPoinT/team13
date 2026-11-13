@@ -168,7 +168,7 @@ function lectureProgressText(items: ProgressItem[]): string {
   const met = items.filter((item) => item.progress && item.progress.status === "met").length;
   if (met === items.length) return PROGRESS_STATE.met;
   const percent = Math.round(items.reduce((sum, item) => sum + (Number(item.progress && item.progress.progressPercent) || 0), 0) / items.length);
-  return `진도 ${percent}% · 인정 ${met}/${items.length}`;
+  return `진도 ${percent}% · 인정 기준 충족 ${met}/${items.length}`;
 }
 
 function LectureCard({ activity, kj, progress }: { activity: LectureRow; kj: string; progress: ProgressWeek[] | null }) {

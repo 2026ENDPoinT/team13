@@ -381,7 +381,7 @@ function ServerLecture({ course, courseId, activityId }: { course: Course; cours
 
 function progressLine(progress: ItemProgress | undefined): string {
   if (!progress) return "아직 학습 기록이 없습니다.";
-  const required = progress.requiredSec == null ? "인정 기준 없음" : `인정 기준 ${durationText(progress.requiredSec)}`;
+  const required = progress.requiredSec == null ? "인정 기준 시간 없음" : `인정 기준 시간 ${durationText(progress.requiredSec)}`;
   const status = String(progress.status);
   return `적립 ${durationText(progress.creditedSec)} / ${required} · ${PROGRESS_STATE[status] || status}`;
 }
@@ -411,7 +411,7 @@ function LectureBody({ data, kj, staleError, progressEntry }: { data: ActivityDe
 }
 
 function ItemCard({ item, kj, activityId, progress, loading }: { item: LectureItem; kj: string; activityId: number; progress: ItemProgress | undefined; loading: boolean }) {
-  const meta = [item.durationSec != null ? `길이 ${durationText(item.durationSec)}` : null, item.requiredSec != null ? `인정 기준 ${durationText(item.requiredSec)}` : null].filter(Boolean).join(" · ");
+  const meta = [item.durationSec != null ? `길이 ${durationText(item.durationSec)}` : null, item.requiredSec != null ? `인정 기준 시간 ${durationText(item.requiredSec)}` : null].filter(Boolean).join(" · ");
   const state = item.state || "";
   return (
     <article className="progress-card srv-lecture-item">

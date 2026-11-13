@@ -11,7 +11,7 @@ import { backendState, backendStatus, courseIdFor, roleIn } from "../../shared/b
 import { courseById, type Course } from "../../data.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
-import { freshVisit, useResource } from "../../shared/remote-cache.ts";
+import { freshVisit, shownRows, useResource } from "../../shared/remote-cache.ts";
 import { useHome, reloadHome, memberCourses, koDate, koDateTime, homeMessage } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
 import {
@@ -21,6 +21,8 @@ import {
 
 const pf = (screenId: string, extra?: Record<string, string>) => routeFor("professor", "screen", { screenId, ...(extra || {}) });
 const editHref = (kj: string, noticeId: number) => pf("pf_notice_write", { kj, edit: String(noticeId) });
+// Notices created from this screen: after a create it navigates to itself, and the new key gives an empty form.
+let created = 0;
 
 function Retry({ reload }: { reload: () => void }) {
   const [pressed, setPressed] = useState(false);
@@ -93,7 +95,7 @@ export function serverNoticeFields(ctx: ScreenCtx, course: Course, _parts?: unkn
   return (
     <div className="stack">
       {backendPanel()}
-      <NoticeForm key={`${courseId}:${edit || ""}`} course={course} courseId={Number(courseId)} editId={edit} />
+      <NoticeForm key={`${courseId}:${edit || `new:${created}`}`} course={course} courseId={Number(courseId)} editId={edit} />
       <NoticeList course={course} courseId={Number(courseId)} page={page} />
     </div>
   );
@@ -120,7 +122,7 @@ function NoticeForm({ course, courseId, editId }: { course: Course; courseId: nu
   const [latest, setLatest] = useState<CourseNotice | null>(null);
   const live = useRef(true);
   const sheet = useRef<HTMLDivElement>(null);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   useEffect(() => {
     if (!key || !editId) return;
     if (freshVisit("pf-notice-edit", key) === "entry" || !noticeDetails.peek(key)) void noticeDetails.load(key, courseId, editId);
@@ -173,6 +175,7 @@ function NoticeForm({ course, courseId, editId }: { course: Course; courseId: nu
     try {
       if (editId) await updateNotice(courseId, editId, { ...payload, version: version.current.version });
       else await createNotice(courseId, payload);
+      if (!editId) created += 1;
       getState().toast = draft ? "공지를 임시 저장했습니다" : editId ? "공지를 수정했습니다" : "공지를 서버에 등록했습니다";
       navigate(pf("pf_notice_write", { kj: course.id }));
       return;
@@ -258,20 +261,24 @@ function NoticeList({ course, courseId, page, screenId = "pf_notice_write" }: { 
   useEffect(() => {
     if (freshVisit("pf-notices", key) === "entry" || !noticeLists.peek(key)) void noticeLists.load(key, courseId, "", page);
   }, [key, courseId, page]);
-  const data = entry && entry.data;
+  // After a write the list reloads; its previous rows stay on screen for display only (delete off).
+  const { rows: data, stale } = shownRows(entry);
   let list: ReactNode;
   if (!data) {
     list = !entry || !entry.error
       ? <p className="pf-sub" role="status">서버에 등록된 공지를 불러오는 중입니다.</p>
       : <div><p className="err" role="alert">{noticeMessage(entry.error)}</p><Retry reload={load} /></div>;
   } else {
+    const note = entry?.error
+      ? <div><p className="err" role="alert">{noticeMessage(entry.error)}</p>{stale ? <Retry reload={load} /> : null}</div>
+      : stale ? <p className="pf-sub" role="status">저장한 내용을 반영한 목록을 불러오는 중입니다.</p> : null;
     const items = Array.isArray(data.items) ? data.items : [];
-    if (!items.length) list = <p className="pf-sub">{page > 1 ? "이 쪽에는 공지가 없습니다." : "아직 서버에 등록된 공지가 없습니다."}</p>;
+    if (!items.length) list = <>{note}<p className="pf-sub">{page > 1 ? "이 쪽에는 공지가 없습니다." : "아직 서버에 등록된 공지가 없습니다."}</p></>;
     else {
       const after = pf(screenId, page > 1 ? { kj: course.id, page: String(page) } : { kj: course.id });
       list = (
         <>
-          {entry.error ? <p className="err" role="alert">{noticeMessage(entry.error)}</p> : null}
+          {note}
           {items.map((notice) => {
             const href = editHref(course.id, notice.noticeId);
             const flags = noticeFlags(notice);
@@ -291,7 +298,7 @@ function NoticeList({ course, courseId, page, screenId = "pf_notice_write" }: { 
                 </Link>
                 <div className="pf-activity-actions">
                   <Link className="btn btn-ghost" href={href} aria-label={`${notice.title} 수정`}>수정</Link>
-                  <DeleteNotice courseId={courseId} noticeId={notice.noticeId} title={notice.title} after={after} />
+                  <DeleteNotice courseId={courseId} noticeId={notice.noticeId} title={notice.title} after={after} disabled={stale} />
                 </div>
               </div>
             );
@@ -315,11 +322,11 @@ function NoticeList({ course, courseId, page, screenId = "pf_notice_write" }: { 
 }
 
 /** Two presses: the first arms the button, the second sends DELETE. */
-function DeleteNotice({ courseId, noticeId, title, after }: { courseId: number; noticeId: number; title: string; after: string }) {
+function DeleteNotice({ courseId, noticeId, title, after, disabled }: { courseId: number; noticeId: number; title: string; after: string; disabled: boolean }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   function press() {
     if (busy) return;
     if (!armed) {
@@ -345,7 +352,7 @@ function DeleteNotice({ courseId, noticeId, title, after }: { courseId: number; 
     });
   }
   return (
-    <Button kind="ghost" disabled={busy} aria-label={`${title} 삭제`} onClick={press}>
+    <Button kind="ghost" disabled={busy || disabled} aria-label={`${title} 삭제`} onClick={press}>
       {busy ? "삭제하는 중…" : armed ? "한 번 더 누르면 삭제" : "삭제"}
     </Button>
   );

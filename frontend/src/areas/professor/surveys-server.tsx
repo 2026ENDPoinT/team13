@@ -10,7 +10,7 @@ import type { ScreenCtx } from "../../types.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, courseIdFor, roleIn, subscribe } from "../../shared/backend.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
-import { freshVisit, useResource } from "../../shared/remote-cache.ts";
+import { freshVisit, shownRows, useResource } from "../../shared/remote-cache.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { routeFor } from "../../shared/routes.ts";
 import {
@@ -27,6 +27,8 @@ const LOGIN = "ASTRA 서버에 로그인하면 이 과목의 설문을 서버에
 const toInput = (value: string | null | undefined) => (value ? String(value).slice(0, 16) : "");
 const fromInput = (value: string) => (value ? (value.length === 16 ? `${value}:00` : value) : null);
 const periodText = (item: SurveyInfo) => (item.openAt ? `${koDateTime(item.openAt)} ~ ${koDateTime(item.closeAt)}` : `~ ${koDateTime(item.closeAt)}`);
+// Surveys created from this screen: after a create it navigates to itself, and the new key gives an empty form.
+let created = 0;
 
 function Retry({ reload }: { reload: () => void }) {
   const [pressed, setPressed] = useState(false);
@@ -211,7 +213,7 @@ export function serverSurveyFields(ctx: ScreenCtx, course: Course, _parts?: unkn
   return (
     <div className="stack">
       {backendPanel()}
-      <SurveyForm key={`${courseId}:${edit || "new"}`} week={Number(ctx.state.week) || 1} course={course} courseId={courseId} editId={edit} />
+      <SurveyForm key={`${courseId}:${edit || `new:${created}`}`} week={Number(ctx.state.week) || 1} course={course} courseId={courseId} editId={edit} />
       <SurveyList course={course} courseId={courseId} />
     </div>
   );
@@ -233,7 +235,7 @@ function SurveyForm({ week, course, courseId, editId }: { week: number; course: 
   const revision = useRef(0);
   const sheet = useRef<HTMLDivElement>(null);
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   if (!editId && !drafts.has(formKey)) drafts.set(formKey, [blankQuestion()]);
   useEffect(() => {
     if (!path) return;
@@ -311,6 +313,7 @@ function SurveyForm({ week, course, courseId, editId }: { week: number; course: 
     try {
       if (editId) await updateSurvey(courseId, editId, { ...payload, revision: revision.current });
       else await createSurvey(courseId, payload);
+      if (!editId) created += 1;
       drafts.delete(formKey);
       getState().toast = editId ? "설문을 수정했습니다" : "설문을 서버에 등록했습니다";
       navigate(pf("pf_discuss", { kj: course.id }));
@@ -416,7 +419,8 @@ function SurveyList({ course, courseId }: { course: Course; courseId: number }) 
   useEffect(() => {
     if (freshVisit("pf-surveys", key) === "entry" || !surveyLists.peek(key)) void surveyLists.load(key, courseId);
   }, [key, courseId]);
-  const data = entry && entry.data;
+  // After a write the list reloads; its previous rows (links only) stay on screen meanwhile.
+  const { rows: data, stale } = shownRows(entry);
   let list: ReactNode;
   if (!data) {
     list = !entry || !entry.error
@@ -424,7 +428,9 @@ function SurveyList({ course, courseId }: { course: Course; courseId: number }) 
       : <div><p className="err" role="alert">{surveyMessage(entry.error)}</p><Retry reload={load} /></div>;
   } else {
     const items = Array.isArray(data) ? data : [];
-    list = !items.length
+    const note = entry?.error ? <div><p className="err" role="alert">{surveyMessage(entry.error)}</p><Retry reload={load} /></div>
+      : stale ? <p className="pf-sub" role="status">저장한 내용을 반영한 목록을 불러오는 중입니다.</p> : null;
+    list = <>{note}{!items.length
       ? <p className="pf-sub">아직 서버에 등록된 설문이 없습니다.</p>
       : items.map((item) => {
         const edit = pf("pf_discuss", { kj: course.id, edit: String(item.surveyId) });
@@ -444,7 +450,7 @@ function SurveyList({ course, courseId }: { course: Course; courseId: number }) 
             </div>
           </div>
         );
-      });
+      })}</>;
   }
   return (
     <section className="sheet" aria-label="ASTRA 서버에 등록된 설문">
