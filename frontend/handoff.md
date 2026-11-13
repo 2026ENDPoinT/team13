@@ -1,5 +1,24 @@
 # Handoff
 
+## 2026-11-14 학교 e-Class 자료 PDF 첨부에 "학습실에 저장" 업로드 아이콘
+
+### 작업 내용
+- 문제: 학교에서 가져온 자료의 첨부 줄(`SchoolFileRow`)에는 미리보기·내려받기 아이콘만 있고 "학습실에 저장"이 없었다.
+- 학교 자료(`materialId` 전달) PDF 첨부 줄에 파란 업로드 아이콘을 넣었다. 이미 복사된 파일(번호 id)은 일반 첨부와 같이 `SaveToStudy` 폴더 창을 연다. 아직 복사 전(`school-file-<n>`)이면 누를 때 내용 요청으로 먼저 복사하고(검사 중이면 `Retry-After`대로 다시 시도), 자료 목록에서 같은 이름 파일의 번호 id를 읽어 폴더 창을 바로 연다. 학교 오류(다시 로그인·너무 큼 등)는 내려받기와 같은 안내를 쓴다.
+- 학교 공지 첨부(`notices-server.tsx`)는 그대로 미리보기·내려받기만이다.
+- `SaveToStudy`에 `autoOpen`, `SaveTrigger`에 `disabled`를 추가하고 `SaveTrigger`를 내보냈다.
+
+### 변경 파일
+- `src/shared/school-files.tsx`, `src/shared/save-to-study.tsx`, `src/areas/learning/activity-server.tsx`
+
+### 검증
+- `npm run typecheck`·`npm test` 통과.
+- 학교 자료 응답을 브라우저 요청 가로채기로 흉내 내 확인: 첨부 줄에 미리보기·내려받기·저장 아이콘, 저장 누르면 내용 요청 → 자료 목록 다시 읽기 → 폴더 창 열림(이 로컬 백엔드는 학습실 엔드포인트가 없어 목업 창).
+- 확인 못 함: 실제 학교·학습실 백엔드. 복사된 학교 파일을 서버 학습실 `PUT …/placements/course-files/{fileId}`가 받는지(학교 자료는 학습실 기록이 없다고 `course-pdfs-remote.ts`에 적혀 있다)는 모른다. 받지 않으면 폴더 창에서 서버 오류 문구가 나온다.
+
+### 남은 작업
+- 위 학습실 배치가 실제 백엔드에서 되는지 확인.
+
 ## 2026-11-14 활동 상세 왼쪽에 학습활동 목록 패널(원본 e-Class처럼 아이콘과 함께)
 
 ### 작업 내용
