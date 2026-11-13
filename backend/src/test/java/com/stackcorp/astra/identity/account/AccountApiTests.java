@@ -307,7 +307,10 @@ class AccountApiTests extends IntegrationTest {
 		this.client.delete("/api/me/devices/" + first.deviceUuid())
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.revokedSessions").value(2))
-			.andExpect(jsonPath("$.currentSessionRevoked").value(false));
+			.andExpect(jsonPath("$.currentSessionRevoked").value(false))
+			// 이 브라우저의 session은 그대로이므로 CSRF token도 그대로다(ADR-0004 4번).
+			.andExpect((r) -> assertThat(r.getResponse().getHeaders("Set-Cookie"))
+				.noneSatisfy((c) -> assertThat(c).startsWith("XSRF-TOKEN=")));
 		new ApiClient(this.mvc, first.token()).get("/api/me").andExpect(status().isUnauthorized());
 		new ApiClient(this.mvc, again.token()).get("/api/me").andExpect(status().isUnauthorized());
 		this.client.delete("/api/me/devices/" + first.deviceUuid()).andExpect(status().isNotFound());
