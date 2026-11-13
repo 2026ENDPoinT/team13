@@ -1,8 +1,8 @@
 // 학생 활동 상세의 백엔드 부분 중 영상·과제·시험·설문 상세 밖의 것. 서버 자료 상세
-// (`?m=lecture_material&n=srv-<activityId>`, `GET …/activities/{id}`의 설명과 첨부, 내려받기, 미리보기, 학습실),
-// 활동 ID만 있는 예전 연결 주소(`?m=report|test|survey&act=<activityId>`, 활동 상세가 주는 과제·시험·설문 ID로
-// 그 상세로 주소를 바꾼다), 연결된 과목에서 샘플 활동 ID로 열린 상세·플레이어·미리보기의
-// 찾을 수 없음 화면이다. 서버 글은 텍스트로만 넣는다.
+// (`?m=lecture_material&n=srv-<activityId>`, `GET …/activities/{id}`의 설명과 첨부, 내려받기, 미리보기, 학습실), 학교 e-Class에서
+// 가져온 자료 상세(`?m=lecture_material&n=school-<n>`, 학생이 열 때만 학교에서 읽는다), 활동 ID만 있는 예전 연결 주소
+// (`?m=report|test|survey&act=<activityId>`, 활동 상세가 주는 과제·시험·설문 ID로 그 상세로 주소를 바꾼다), 연결된 과목에서
+// 샘플 활동 ID로 열린 상세·플레이어·미리보기의 찾을 수 없음 화면이다. 서버 글은 텍스트로만 넣는다.
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Button, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { Link } from "../../router.tsx";
@@ -17,6 +17,10 @@ import { materialMessage } from "../../shared/materials-remote.ts";
 import { rememberMaterials } from "../../shared/course-pdfs-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
 import { SaveToStudy } from "../../shared/save-to-study.tsx";
+import {
+  schoolMaterialDetails, schoolDetailKey, schoolFilesOf, schoolFileRef, schoolProblemOf, SchoolLink, SchoolProblemNote,
+  type SchoolFile, type SchoolMaterialDetail,
+} from "../../shared/school-content.tsx";
 import { resolveActivityHref } from "../../shared/course-activities-remote.ts";
 import type { ScreenCtx, Screen } from "../../types.ts";
 import type { ActivityParts } from "./learning.tsx";
@@ -149,25 +153,102 @@ function MaterialLoaded({ kj, courseId, activityId, parts }: { kj: string; cours
   return <MaterialBody data={data} kj={kj} courseId={courseId} parts={parts} staleError={entry.error} />;
 }
 
+// ---------- 학교 자료 상세 ----------
+
+/** A file of a school material: preview and download only. Study tools and summaries stay off (the school has none). */
+function SchoolFileRow({ kj, courseId, file, schoolUrl }: { kj: string; courseId: number | string; file: SchoolFile; schoolUrl: string | null | undefined }) {
+  const preview = hrefFor(find("65_file_preview"), { n: schoolFileRef(file), kj });
+  return (
+    <article className="file-row srv-material-file" data-file={String(file.fileId)}>
+      <div>
+        <b>{file.name}</b>
+        <p className="tiny">{[String(file.extension || "").toUpperCase(), sizeText(file.sizeBytes)].filter(Boolean).join(" · ")}</p>
+      </div>
+      <div className="btn-row">
+        <Link href={preview} className="btn btn-secondary">미리보기</Link>
+        {downloadControl(courseId, { fileId: file.fileId, name: file.name, schoolUrl })}
+      </div>
+    </article>
+  );
+}
+
+function SchoolMaterialBody({ data, kj, courseId, parts }: { data: SchoolMaterialDetail; kj: string; courseId: number | string; parts: ActivityParts }) {
+  const files = schoolFilesOf(data);
+  return (
+    <div className="act-body" data-school-material={data.activityId}>
+      {parts.typeLine("material")}
+      <h1>{data.title}</h1>
+      <p className="tiny">{[data.weekNo != null ? `${data.weekNo}주차` : "", "학교 e-Class 자료"].filter(Boolean).join(" · ")}</p>
+      {parts.metaTable([
+        ...(data.author ? [["작성자", data.author] as [string, string]] : []),
+        ...(data.postedAt ? [["게시일", koDateTime(data.postedAt)] as [string, string]] : []),
+        ["첨부", files.length ? `${files.length}개` : "없음"],
+      ])}
+      <Prose text={data.description} />
+      <h2>첨부파일</h2>
+      {files.length ? files.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={data.schoolUrl} />) : <p className="tiny">첨부 파일이 없습니다.</p>}
+      <div className="btn-row">
+        <SchoolLink url={data.schoolUrl} />
+        <Link href={hrefFor(find("46_room_files_list"), { kj })} className="btn btn-secondary">파일모음</Link>
+        <Link href={listHref(kj)} className="btn btn-ghost">학습활동 목록</Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The school detail is read once per visit of this address (opening it counts as a view at the school), never on
+ * focus and never by a list. A failed read shows its school state: sign in again, try again, or open it on e-Class.
+ */
+function SchoolMaterialLoaded({ kj, courseId, activityId, parts }: { kj: string; courseId: number | string; activityId: string; parts: ActivityParts }) {
+  const key = schoolDetailKey(courseId, activityId);
+  const load = () => void schoolMaterialDetails.load(key, courseId, activityId);
+  const entry = useResource(schoolMaterialDetails, key);
+  useEffect(() => {
+    if (freshVisit("school-material-detail", key) === "entry" || !schoolMaterialDetails.peek(key)) load();
+  });
+  const data = entry && entry.data;
+  if (entry && entry.error && schoolProblemOf(entry.error)) {
+    return (
+      <div className="act-body">
+        {parts.typeLine("material")}
+        {data ? <h1>{data.title}</h1> : null}
+        <SchoolProblemNote error={entry.error} schoolUrl={data && data.schoolUrl} retry={load} />
+        <div className="btn-row"><Link href={listHref(kj)} className="btn btn-ghost">학습활동 목록</Link></div>
+      </div>
+    );
+  }
+  if (!data) {
+    if (!entry || !entry.error) return <LoadingState title="학교 자료를 불러오는 중입니다" />;
+    if (missing(entry.error)) {
+      return <EmptyState title="자료를 찾을 수 없습니다" body="학교 e-Class에서 지워졌거나 볼 수 있는 권한이 없습니다." actions={<Link href={listHref(kj)} className="btn btn-secondary">학습활동 목록</Link>} />;
+    }
+    return <ErrorState title="자료를 불러오지 못했습니다" body={materialMessage(entry.error)} actions={<RetryButton reload={load} />} />;
+  }
+  return <SchoolMaterialBody data={data} kj={kj} courseId={courseId} parts={parts} />;
+}
+
 function MaterialDetail({ screen, parts }: { screen: Screen; parts: ActivityParts }) {
   const kj = screen.course || "";
   const activityId = screen.serverMaterial ?? 0;
+  const school = screen.serverSchoolMaterial || null;
   const { blocked, offLate } = useGate(kj);
   const courseId = courseIdFor(kj);
   let main: ReactNode;
   if (offLate) main = <EmptyState title="활동을 찾을 수 없습니다" body="ASTRA 서버에 연결되어 있지 않습니다." />;
   else if (blocked || courseId == null) main = <div className="act-body">{parts.typeLine("material")}{blocked}</div>;
+  else if (school) main = <SchoolMaterialLoaded kj={kj} courseId={courseId} activityId={school} parts={parts} />;
   else main = <MaterialLoaded kj={kj} courseId={courseId} activityId={activityId} parts={parts} />;
   return (
-    <section className="bleed act-layout is-open" data-item-open={`srv-${activityId}`}>
+    <section className="bleed act-layout is-open" data-item-open={school || `srv-${activityId}`}>
       <div className="act-main">{main}</div>
     </section>
   );
 }
 
-/** `screen.serverMaterial` 자료 상세(백엔드 모드). `parts`는 learning.tsx 도우미다. */
+/** `screen.serverMaterial` 또는 `screen.serverSchoolMaterial` 자료 상세(백엔드 모드). `parts`는 learning.tsx 도우미다. */
 export function remoteMaterialDetail(screen: Screen, ctx: ScreenCtx, parts: ActivityParts): ReactNode {
-  return <MaterialDetail key={`${screen.course}:${screen.serverMaterial}`} screen={screen} parts={parts} />;
+  return <MaterialDetail key={`${screen.course}:${screen.serverSchoolMaterial || screen.serverMaterial}`} screen={screen} parts={parts} />;
 }
 
 // ---------- 활동 ID 연결 ----------

@@ -1,6 +1,8 @@
 // 미리보기 (`preview_form.acl?n=srv-<fileId>&kj=<course>`) of a server file: the backend preview
 // session (converting → page images), the inline image view for PNG/JPEG, and the published file
-// summary next to it when there is one. `anon` shows only the login strip.
+// summary next to it when there is one. `anon` shows only the login strip. An uncopied school file
+// (`n=school-file-<n>`) opens the same preview with its string id (the backend copies it and redirects); it has no
+// published summary, so the summary aside is not asked for.
 import { useEffect, useState, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { backendStatus, courseIdFor } from "../../shared/backend.ts";
@@ -9,6 +11,8 @@ import { serverPreview } from "../../shared/preview-remote.tsx";
 import { downloadControl } from "../../shared/uploads-remote.tsx";
 import { fileOverview, studyMessage, type FileOverview } from "../../shared/study-chat-remote.ts";
 import { markdown } from "../../shared/page-summary.tsx";
+import { materialLists, materialKey } from "../../shared/materials-remote.ts";
+import { schoolMaterialsOf, SchoolLink, SCHOOL_FILE_ID } from "../../shared/school-content.tsx";
 import type { ScreenCtx } from "../../types.ts";
 
 /** `srv-<fileId>` → numeric file id, else null. */
@@ -17,9 +21,21 @@ function serverFileIdOf(id: string | null | undefined): string | null {
   return match ? match[1] : null;
 }
 
+/** The school file `fileId` and its material from the cached materials list (never read for this). */
+function cachedSchoolFile(courseId: number | string, fileId: string) {
+  const entry = materialLists.peek(materialKey(courseId));
+  for (const material of schoolMaterialsOf(entry && entry.data)) {
+    const file = (material.files || []).find((item) => String(item.fileId) === fileId);
+    if (file) return { material, file };
+  }
+  return null;
+}
+
 /** Screen body for a server file preview, or null when this is not one (the sample preview stays). */
 export function serverPreviewScreen(ctx: ScreenCtx): ReactNode {
-  const fileId = serverFileIdOf(ctx.params && ctx.params.get("n"));
+  const ref = ctx.params && ctx.params.get("n");
+  const school = SCHOOL_FILE_ID.test(String(ref || "")) ? String(ref) : null;
+  const fileId = school || serverFileIdOf(ref);
   const status = backendStatus();
   if (!fileId || status === "off") return null;
   if (status !== "ready") return <section className="srv-preview-page"></section>;
@@ -27,6 +43,22 @@ export function serverPreviewScreen(ctx: ScreenCtx): ReactNode {
   const courseId = courseIdFor(kj);
   if (!courseId) {
     return <section className="srv-preview-page"><EmptyState title="이 과목은 ASTRA 서버에 없습니다" body="서버에 있는 과목에서 자료를 열어 주세요." /></section>;
+  }
+  if (school) {
+    const known = cachedSchoolFile(courseId, school);
+    const name = (known && known.file.name) || "문서";
+    const schoolUrl = known && known.material.schoolUrl;
+    return (
+      <section className="srv-preview-page" data-school-file={school}>
+        <h1>{known ? known.material.title || name : "학교 자료 미리보기"}</h1>
+        <div className="srv-preview-layout">
+          {serverPreview({
+            courseId, fileId: school, label: name, schoolUrl,
+            fallback: () => <div className="btn-row">{downloadControl(courseId, { fileId: school, name, schoolUrl })}<SchoolLink url={schoolUrl} kind="ghost" /></div>,
+          })}
+        </div>
+      </section>
+    );
   }
   const record = remoteRecord(`srv-${fileId}`);
   const name = (record && (record.fileName || record.title)) || "문서";

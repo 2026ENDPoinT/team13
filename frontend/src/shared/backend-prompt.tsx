@@ -5,7 +5,7 @@
 // The password is cleared after the request; break-glass login is never offered here.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "../ui/kit.tsx";
-import { backendState, connect, loginAs, loginWithEclass, personaFor, offers, startSchoolLogin } from "./backend.ts";
+import { backendState, backendStatus, connect, loginAs, loginWithEclass, personaFor, offers, startSchoolLogin } from "./backend.ts";
 
 const UNKNOWN_METHODS = "로그인 방법을 확인하지 못했습니다. 다시 확인을 누르거나 잠시 후 다시 시도하세요.";
 
@@ -17,7 +17,8 @@ interface Message {
   alert: boolean;
 }
 
-export function BackendLoginForm({ text }: { text?: string }) {
+/** `onSignedIn` runs after a sign-in in this form leaves the session `ready`. */
+export function BackendLoginForm({ text, onSignedIn }: { text?: string; onSignedIn?: () => void }) {
   const { methods } = backendState();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
@@ -49,6 +50,7 @@ export function BackendLoginForm({ text }: { text?: string }) {
     say("로그인하는 중입니다.");
     attempt().then(() => {
       if (live.current) say("");
+      if (onSignedIn && backendStatus() === "ready") onSignedIn();
     }, (error: unknown) => {
       if (live.current) say(error instanceof Error ? error.message : String(error), true);
     }).finally(() => {

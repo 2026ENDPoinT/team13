@@ -9,6 +9,7 @@ import { ErrorState, LoadingState } from "../ui/kit.tsx";
 import { apiPostStatus, ApiError } from "./api.ts";
 import { retryLater } from "./remote-cache.ts";
 import { createDocumentViewer } from "./document-viewer.tsx";
+import { schoolProblemOf, whileScanning, SchoolProblemNote, SCHOOL_FILE_ID } from "./school-content.tsx";
 
 const DEFAULT_RETRY_S = 2;
 const MAX_WAIT_POLLS = 150; // about five minutes at Retry-After: 2
@@ -67,19 +68,23 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 export interface AwaitPreviewOptions {
   onState?: (view: PreviewView) => void;
   alive?: () => boolean;
+  /** Called while a school file's copy waits for the virus scan (409 `file_scanning`). */
+  onScan?: () => void;
 }
 
 /**
- * Repeats the request while the server converts, after `Retry-After` seconds each time.
+ * Repeats the request while the server converts, after `Retry-After` seconds each time. A school file answers 409
+ * `file_scanning` while its copy is scanned: that request is repeated after its `Retry-After`, a bounded number of times.
  * `onState(view)` sees every answer; stops early (resolving the last view) once `alive()` is false.
  */
-export async function awaitPreview(courseId: Id, fileId: Id, { onState, alive }: AwaitPreviewOptions = {}): Promise<PreviewView> {
-  let view = await openPreview(courseId, fileId);
+export async function awaitPreview(courseId: Id, fileId: Id, { onState, alive, onScan }: AwaitPreviewOptions = {}): Promise<PreviewView> {
+  const open = () => whileScanning(() => openPreview(courseId, fileId), { alive, onWait: onScan });
+  let view = await open();
   if (onState) onState(view);
   for (let i = 0; view.state === "converting" && i < MAX_WAIT_POLLS; i += 1) {
     await wait(view.retryAfter * 1000);
     if (alive && !alive()) return view;
-    view = await openPreview(courseId, fileId);
+    view = await open();
     if (onState) onState(view);
   }
   return view;
@@ -121,6 +126,8 @@ export interface ServerPreviewOptions {
   compact?: boolean;
   /** Shown under failed/unsupported states (e.g. a download button). */
   fallback?: () => ReactNode;
+  /** For a school file: where it opens on e-Class when STack cannot copy or show it. */
+  schoolUrl?: string | null;
 }
 
 /**
@@ -135,20 +142,26 @@ export function serverPreview(options: ServerPreviewOptions): ReactNode {
 
 type Phase =
   | { kind: "opening" }
+  | { kind: "scanning" }
   | { kind: "view"; view: PreviewView }
   | { kind: "slow" }
   | { kind: "error"; error: unknown };
 
-function ServerPreview({ courseId, fileId, label = "문서", compact = false, fallback }: ServerPreviewOptions) {
+function ServerPreview({ courseId, fileId, label = "문서", compact = false, fallback, schoolUrl }: ServerPreviewOptions) {
   const [phase, setPhase] = useState<Phase>({ kind: "opening" });
+  const [attempt, setAttempt] = useState(0);
   const base = useRef<string | null>(null);
   const renewing = useRef<Promise<string | null> | null>(null);
 
   useEffect(() => {
     let live = true;
+    setPhase({ kind: "opening" });
     awaitPreview(courseId, fileId, {
       onState: (view) => {
         if (live) setPhase({ kind: "view", view });
+      },
+      onScan: () => {
+        if (live) setPhase({ kind: "scanning" });
       },
       alive: () => live,
     }).then((view) => {
@@ -159,7 +172,7 @@ function ServerPreview({ courseId, fileId, label = "문서", compact = false, fa
     return () => {
       live = false;
     };
-  }, [courseId, fileId]);
+  }, [courseId, fileId, attempt]);
 
   /** Renews the page cookie (one shared request); resolves the fresh base, or null. */
   const renew = () => {
@@ -178,8 +191,11 @@ function ServerPreview({ courseId, fileId, label = "문서", compact = false, fa
 
   let content: ReactNode;
   if (phase.kind === "opening") content = <LoadingState title="미리보기를 여는 중입니다" />;
+  else if (phase.kind === "scanning") content = <LoadingState title="학교에서 받은 파일을 검사하는 중입니다" />;
   else if (phase.kind === "slow") content = <ErrorState title="미리보기 준비가 오래 걸립니다" body="잠시 후 다시 열어 주세요." actions={extra} />;
-  else if (phase.kind === "error") content = <ErrorState title="미리보기를 열지 못했습니다" body={previewMessage(phase.error)} actions={extra} />;
+  else if (phase.kind === "error" && schoolProblemOf(phase.error)) {
+    content = <><SchoolProblemNote error={phase.error} schoolUrl={schoolUrl} retry={() => setAttempt((n) => n + 1)} />{extra}</>;
+  } else if (phase.kind === "error") content = <ErrorState title="미리보기를 열지 못했습니다" body={previewMessage(phase.error)} actions={extra} />;
   else {
     const { view } = phase;
     if (view.state === "converting") {
@@ -201,6 +217,9 @@ function ServerPreview({ courseId, fileId, label = "문서", compact = false, fa
           renderPage: (number: number) => <PreviewPage key={number} number={number} base={base.current ?? ""} renew={renew} />,
         })
         : <ErrorState title="쪽 이미지를 열 수 없습니다" body="이 서버에는 쪽 이미지 전달이 설정되어 있지 않습니다." actions={extra} />;
+    } else if (view.state === "unsupported" && SCHOOL_FILE_ID.test(String(fileId))) {
+      // The inline image address takes native ids only; an uncopied school file offers its download instead.
+      content = <ErrorState title="미리보기가 없는 형식입니다" body="원본을 내려받아 확인하세요." actions={extra} />;
     } else if (view.state === "unsupported") {
       content = <InlineImage src={imageUrl(courseId, fileId)} label={label} extra={extra} />;
     } else {
