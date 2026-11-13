@@ -148,13 +148,14 @@ flowchart LR
 | `summary` | 강의 자료의 쪽별 요약 생성 작업, 후보 확인, 게시, 조회 | `files`, `identity` |
 | `integration` | 학교 IdP, 학사 동기화, AI, 외부 allowlist client | port를 정의한 모듈의 공개 API(`identity`, `catalog`, `learning`, `files`, `summary`) |
 | `shared` | 오류 형식, requestId, 요청 제한, 멱등 원장, 감사 기록. 목록 query 규칙은 첫 페이지 목록과 함께 만든다 | 없음. 모든 모듈이 쓸 수 있다 |
-| `home` | 메인 화면 집계 조회(`/api/me/home`)와 할 일 목록. 쓰기 없음 | `catalog`, `learning`, `assessment`, `communication`의 공개 API. 어떤 모듈도 `home`에 의존하지 않는다 |
+| `home` | 메인 화면 집계 조회(`/api/me/home`), 담당자 메인(`/api/me/teaching`), 할 일 목록, 캘린더. 쓰기 없음 | `catalog`, `learning`, `assessment`, `communication`의 공개 API. 어떤 모듈도 `home`에 의존하지 않는다 |
 
 의존 방향은 [db/README.md](../db/README.md) 2.1절의 FK 방향을 따른다. 순환은 의존 역전으로 끊는다. 이벤트를 써도 listener가 발행 측 타입을 참조하면 의존이 생기므로 순환을 끊지 못한다.
 
 - 알림: `notifications`는 `catalog` 소유이고 `activity_id`로 `learning`을 가리킨다. `catalog`는 `learning`에 의존하지 않는다. 알림 생성 API(`catalog.api.Notifications`)는 `catalog`가 공개 API로 정의하고, 이미 `catalog`에 의존하는 `learning`, `assessment`, `communication`이 원래 변경과 같은 transaction 안에서 호출한다. transaction 밖에서 부르면 실패한다. 대상 ID와 `activity_id`는 값으로 받고 `catalog`는 그 행을 읽지 않는다. 대상을 숨기는 변경(삭제, 비공개, 예약으로 되돌림)도 같은 transaction에서 `withdraw`를 부른다([ADR-0027](adr/0027-notifications-in-producer-transaction.md)).
 - 캘린더: 학사일정은 `catalog`, 활동 마감은 `learning`에 있어 둘을 함께 읽는 `GET /api/me/calendar`는 `home`에 둔다. 시간표는 `catalog`의 테이블만 쓰므로 `catalog`에 둔다.
 - 할 일: 별도 테이블 없이 활성 수강 × 공개 활동 × serverTime으로 계산한다([reference/db/design/20_catalog.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/db/design/20_catalog.md)). 계산에 `learning`, `assessment`가 필요하므로 `home`에 둔다.
+- 담당자 메인: 채점 대기(`assessment.api.GradingQueue`), 변환 중·실패 영상(`learning.api.PendingVideos`), 답을 기다리는 질문(`communication.api.OpenQuestions`), 처리할 신청(`catalog.api.EnrollmentRequests`)을 각 모듈이 과목 ID 목록 하나로 세어 주고 `home`이 모은다. 과제 채점 대기는 수강생 명단이 필요하므로 `assessment`가 `catalog.api.CourseRosters`의 여러 과목 조회로 명단을 읽는다.
 - 외부 연동: `identity`가 `ExternalIdentityProvider` 같은 포트를 공개 API로 정의하고 `integration`이 구현한다. 다른 모듈도 외부 결과가 필요하면 같은 방식을 쓴다.
 - 요약과 전달: `summary`가 `LlmClient` port를, `files`가 문서 변환 port와 전달 서명 port를 공개 API로 정의하고 `integration`이 구현한다. S3를 읽고 쓰는 모듈은 `files` 하나다([ADR-0007](adr/0007-confidential-content-placement.md)).
 - 활동 쪽 목록과 평가 ID: 주차 목록, 할 일, 캘린더의 행이 과제·퀴즈·설문 화면으로 바로 이어지도록 `learning`이 `learning.api.ActivityTargets` port를 정의하고 `assessment`가 구현한다. `learning`은 `assessment`에 의존하지 않는다. 활동 ID를 모아 쿼리 한 번으로 묻는다.
@@ -311,7 +312,8 @@ flowchart LR
 - session이 유효하면 IdP redirect를 거치지 않는다.
 - `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
 - 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 최근 7일 안에 공개된 본인 성적 항목 5개(`newGrades`: 항목, 과목, 공개 일시. 점수와 의견은 없다), 안 읽은 쪽지 수(`unreadMessages`), 안 읽은 알림 수(`unreadNotifications`)다.
-- 쿼리는 과목 수와 관계없이 17개 이하다(DB 시계, 과목, 마감 전 활동 1과 완료 판정 4와 평가 ID 1, 안 읽은 공지 수, 최근 공지, 안 읽은 쪽지 수, 안 읽은 알림 수, 새 성적 5). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 과제와 퀴즈가 있고 점수를 공개한 상태에서도 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
+- 과목 카드에는 과목마다 진행 주(`currentWeek`, `weekCount`), 본인 영상 진도율(`progressPercent`), 본인 출석(`attendance: {attended, total}`)이 있다. 주는 수업 기간(정규 과목은 학기 `start_date`~`end_date`, 비정규 과정은 학습기간)을 시작일부터 7일씩 나눈 것이고, 오늘은 DB 시계의 날짜(기관 시간대, ADR-0039)다. 시작 전이면 0, 끝난 뒤면 `weekCount`, 기간이 없으면 둘 다 null이다. 진도율은 학생 진도 화면(`GET /api/courses/{courseId}/lecture-progress`)과 같이 학생에게 열린 영상 콘텐츠 가운데 출석인정을 채운 비율(버림)이고, 열린 콘텐츠가 없으면 null이다. 출석은 출석부 요약과 같은 기록에서 출석·지각·공결 차시 수(`attended`)와 판정한 차시 수(`total`, 휴강과 미판정 제외)다. 담당 과목은 진도율과 출석이 null이다.
+- 쿼리는 과목 수와 관계없이 21개 이하다(DB 시계, 과목, 마감 전 활동 1과 완료 판정 4와 평가 ID 1, 안 읽은 공지 수, 최근 공지, 알림마당 공지 2, 영상 진도 1, 출석 1, 안 읽은 쪽지 수, 안 읽은 알림 수, 새 성적 5). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 과제, 퀴즈, 영상, 출석 차시가 있고 점수를 공개한 상태에서도 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
 - 할 일은 학생으로 수강하는 과목의, 공개됐고 `open_at <= now < close_at`인 학습활동 가운데 본인이 아직 끝내지 않은 것이다. 마감 일시가 없는 활동은 넣지 않는다. 완료는 `assessment.api.ActivityCompletions`가 판정한다: 과제는 최종 제출, 퀴즈는 온라인 시험이고 이어갈 응시가 없고 허용 횟수를 다 쓴 때, 강의실 설문은 참여 원장의 완료다. 끝낸 활동은 표시를 달아 남기지 않고 목록과 전체 수에서 뺀다. 원본 할일 팝업(`03_팝업_할일.md`)이 미완료 활동만 보이고 그 수를 헤더 배지로 쓰며, frontend도 `total`을 "남은 활동" 수로 쓰기 때문이다. 마감 전 활동은 500개까지 읽고 넘으면 `truncated`다. 영상과 자료의 완료는 보지 않는다(12절).
 
 ## 7. 영상과 문서 전달
@@ -488,9 +490,12 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/home` | 로그인한 사용자 | 6절의 집계. 알림마당 최근 공지 5개(`communityNotices`, 고정 먼저)와 읽지 않은 알림마당 고정 공지 5개까지(`noticesForMe`, 진입 공지 EP-0190)를 기관 역할의 대상으로 더한다 |
+| `GET /api/me/home` | 로그인한 사용자 | 6절의 집계. 알림마당 최근 공지 5개(`communityNotices`, 고정 먼저)와 읽지 않은 알림마당 고정 공지 5개까지(`noticesForMe`, 진입 공지 EP-0190)를 기관 역할의 대상으로 더한다. `courses[]`마다 `currentWeek`, `weekCount`, `progressPercent`, `attendance`(6절) |
 | `GET /api/me/todo?courseId=&cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수. 평가 활동에는 `assignmentId`·`quizId`·`surveyId` 중 하나. `courseId`를 주면 그 과목만(내 과목이 아니면 404, 담당 과목이면 비어 있다). cursor는 같은 `courseId`로만 이어 보낸다 |
 | `GET /api/me/todo/count?courseId=` | 로그인한 사용자 | `{serverTime, total, truncated}`. 목록과 같은 값을 항목 없이. `courseId`는 목록과 같다 |
+| `GET /api/me/teaching` | 로그인한 사용자. 담당 과목만 센다 | 담당자 메인(교수 홈의 통계 줄, 확인할 일, 다가오는 일정). 원본에 같은 화면이 없는 새 계약이다. `courses[]`는 담당 과목마다 채점 대기 과제 수와 제출 수, 채점 대기 퀴즈 수와 응시 수, 변환 실패·변환 중 영상 콘텐츠 수, 답을 기다리는 질문 수, 처리할 신청 수(처리 권한이 없으면 null). `tasks[]`는 그 행(유형, 과목, 제목, 수, `activityId`·`assignmentId`·`quizId`·`questionId`), `upcoming[]`은 지금부터 14일 안에 시작(`open`)하거나 마감(`close`)하는 담당 과목 활동이고 행은 `GET /api/me/calendar`의 활동과 같은 속성에 `event`, `at`을 더했다. 담당 과목이 없으면(학생) 목록이 모두 비어 있다. 404를 쓰지 않는 것은 `/api/me/home`이 담당 과목에 빈 할 일을 주는 것과 맞춘 것이다 |
+
+담당자 메인의 수는 각 모듈이 정한다. 과제 채점 대기는 수강생 명단(`CourseRosters`)에 있는 학생의 최종 제출 가운데 과제 성적 항목 점수가 빈 것이다. 과제 목록의 `submittedCount`에서 성적부의 `gradedCount`를 뺀 규칙과 같고, 수강을 취소한 학생의 제출은 성적부에서 채점할 수 없으므로 세지 않는다. 퀴즈는 퀴즈 목록의 `awaitingGradingCount`(수동 채점을 기다리는 응시)다. 영상은 지우지 않은 콘텐츠의 `video_state`가 `failed` 또는 `processing`인 것이다. 질문은 답글이 없고 해결로 표시하지 않았고 FAQ가 아닌 질의응답 질문이다. 신청은 신청 목록(`GET /api/courses/{courseId}/enrollment-requests`)과 같이 교수와 비정규 담당자만 처리하는 비정규 `PENDING`, 청강 `REQUESTED`다. 지운 활동, 폐강 과목은 넣지 않는다. 과목 수와 관계없이 쿼리는 14개 이하이고(DB 시계, 과목, 채점 대기 5, 영상 1, 질문 2, 신청 1, 마감 1, 시작 1, 평가 ID 1), `TeachingApiTests`가 DB 문장 수로 확인한다. 확인할 일의 질문은 오래 기다린 순서로 20개, 전체는 100개, 다가오는 일정은 50개까지이고 넘으면 `tasksTruncated`, `upcomingTruncated`다. 과목별 수는 자르지 않는다.
 
 ### 7.10 과제 등록과 제출
 
@@ -777,6 +782,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 감사 기록 보존과 누락 | `audit_events`의 보존 기간이 정해지지 않아 지우지 않는다(SC-07). transaction 밖의 기록은 저장 실패 때 경고 로그만 남기고 빠진다 | 기관 정책을 받아 보존 기간을 정한다. 빠진 수를 9절 지표에 넣는다 |
 | 멱등 key와 목록 query 규칙 | `Idempotency-Key`는 필수인 명령(5절, 없으면 400 `idempotency_key_required`) 밖에서는 선택이라 header를 보내지 않는 client는 재전송으로 자료를 두 번 만들 수 있다. SC-09의 page size 상한, cursor, 정렬 key allowlist는 목록마다 따로 있고 `shared`의 공통 규칙은 아직 없다 | frontend가 만드는 명령에도 header를 보낸다. 첫 페이지 목록(공지, 게시판)과 함께 `shared`에 query 규칙을 만든다 |
 | 할 일의 완료 판정 | 과제, 퀴즈, 설문은 본인이 끝내면 빠진다(6절). 영상(다 본 영상)과 자료는 완료를 보지 않아 마감까지 남는다. 횟수 제한이 없는 퀴즈와 오프라인 시험도 마감까지 남는다(EP-0144의 "미완료"는 원본에서도 기준 미확인). 마감 전 활동이 500개를 넘으면 마감이 늦은 쪽은 보지 않는다(`truncated`) | `learning`의 진도 완료(출석 인정)를 공개 API로 내어 `home`이 같은 방식으로 뺀다. 횟수 제한이 없는 퀴즈를 언제 끝난 것으로 볼지 학교 기준을 받는다 |
+| 담당자 메인과 과목 카드의 기준 | 담당자 메인에 이의신청 수가 없다(이의신청 기능 없음). 팀 과제(`owner_type = group`) 제출은 채점 대기로 세지 않는다. 다가오는 일정에 학사일정은 넣지 않는다. 과목 카드의 진행 주는 학기·학습기간만 보고 과목이 정한 주차 날짜(`course_weeks.starts_on`)는 보지 않으며, 학기 날짜가 없는 과목은 null이다. 출석의 `total`은 판정한 차시만 세어 앞으로 열릴 차시는 넣지 않는다(7.9절, 6절) | 이의신청을 만들 때 `assessment`가 수를 내는 API를 더한다. 학교가 주차 날짜를 쓰면 `learning`이 과목별 현재 주차를 내는 API로 바꾼다 |
 | 과제 제출의 멱등 receipt | 공용 원장 없이 제출 버전 행과 `(submitted_by_user_id, idempotency_key)` 유일 제약으로 처리한다(ADR-0015) | `shared`에 원장을 만들면 receipt 조회를 옮기고 두 컬럼을 정리한다 |
 | 익명 설문의 운영자 재식별 | 저장된 행(행 ID, 시각, requestId)으로는 참여와 응답을 맞출 수 없다(V34). 참여와 응답을 한 transaction으로 쓰므로 binlog·redo log·general log나 data file을 보는 운영자(물리 접근, 물리 백업)는 응답자를 맞출 수 있고, 같은 날 완료한 사람이 한 명뿐이면 일 단위 시각으로도 맞춰진다. '익명'은 교수자에게 비식별인 범위다(SC-05-A, [ADR-0022](adr/0022-survey-anonymity-and-idempotency.md)). 재응답과 분기 문항은 없다 | 강한 익명성이나 재응답이 필요하면 응답을 다른 저장소와 권한으로 옮기고 가명 token과 key 권한을 함께 설계해 결정을 받는다 |
 | 기동 시간과 AOT cache | 3.1절의 JDK AOT cache를 이미지에 넣지 않았다. training run에 DB가 필요해 이미지 빌드 안에서 만들 수 없다 | 배포 중 중단 시간이 문제가 되면 배포 단계에서 training run을 돌려 cache를 만드는 방식을 정한다 |
