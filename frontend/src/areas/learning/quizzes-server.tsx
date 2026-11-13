@@ -5,6 +5,7 @@
 import { Fragment, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Badge, Button, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { Link, navigate } from "../../router.tsx";
+import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { getState, render, toast } from "../../store.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor, subscribe } from "../../shared/backend.ts";
@@ -161,9 +162,7 @@ function QuizScreen({ screen, parts }: { screen: Screen; parts: DetailParts }) {
     main = <QuizDetailView courseId={courseId} kj={kj} quizId={quizId} parts={parts} />;
   }
   return (
-    <section className="bleed act-layout is-open" data-item-open={`srv-${quizId}`}>
-      <div className="act-main">{main}</div>
-    </section>
+    <ActivityShell kj={kj} itemOpen={`srv-${quizId}`}>{main}</ActivityShell>
   );
 }
 

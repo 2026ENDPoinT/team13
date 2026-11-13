@@ -6,6 +6,7 @@ import { Fragment, useEffect, useReducer, useRef, useState, type ChangeEvent, ty
 import { Badge, Button, Dialog, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { Link, closeDialog } from "../../router.tsx";
+import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { toast } from "../../store.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor, subscribe } from "../../shared/backend.ts";
@@ -186,9 +187,7 @@ function AssignmentDetailScreen({ screen, parts }: { screen: Screen; parts: Deta
     }
   }
   return (
-    <section className="bleed act-layout is-open" data-item-open={`srv-${assignmentId}`}>
-      <div className="act-main">{main}</div>
-    </section>
+    <ActivityShell kj={kj} itemOpen={`srv-${assignmentId}`}>{main}</ActivityShell>
   );
 }
 

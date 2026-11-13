@@ -1,5 +1,25 @@
 # Handoff
 
+## 2026-11-14 활동 상세 왼쪽에 학습활동 목록 패널(원본 e-Class처럼 아이콘과 함께)
+
+### 작업 내용
+- 요청: 자료·영상 등 활동 상세 화면에서 원본 e-Class처럼 왼쪽 패널에 그 과목의 활동 목록이 종류 아이콘과 함께 보이게.
+- 새 `src/shared/activity-rail.tsx`(`ActivityShell`, `ActivityRail`)와 `activity-rail.css`. 상세 옆에 붙박이 패널(1024px 이상, 그 아래는 "학습활동 목록" 접는 줄): 종류 칩(영상·자료·과제·시험·설문)과 진행중·미제출 칩, 왼쪽 주차 번호(누르면 그 주로 이동), 주차별 행(종류 아이콘·종류 이름·완료 ✓·제목·상태), 지금 보는 활동 강조와 처음 그릴 때 그 위치로 스크롤. 학교 e-Class 행은 새 탭 링크로 남는다. 거른 상태는 같은 과목에서 다른 활동으로 옮겨도 유지한다.
+- 상세 5곳(자료·학교 자료, 영상 상세, 과제, 시험, 설문)의 바깥틀을 `ActivityShell`로 바꿨다(`learning/activity-server.tsx`·`lectures-server.tsx`·`assignments-server.tsx`·`quizzes-server.tsx`·`surveys-server.tsx`).
+- 강의실·목록이 쓰던 상태 글·기간·주 범위·구독 훅을 `src/shared/activity-state.ts`로 옮겨 두 곳이 같이 쓴다(`course/activities-server.tsx`는 거기서 가져온다).
+
+### 변경 파일
+- `src/shared/activity-rail.tsx`(새), `src/shared/activity-rail.css`(새), `src/shared/activity-state.ts`(새), `src/app.css`
+- `src/areas/course/activities-server.tsx`, `src/areas/learning/{activity,lectures,assignments,quizzes,surveys}-server.tsx`
+
+### 검증
+- `npm run typecheck` 통과, `npm test` 통과.
+- 백엔드(8080) + 개발자 로그인(Origin을 4190으로 바꿔 주는 임시 프록시 47196 경유, `npm run dev -- --port 47193`)으로 확인: 영상·과제 상세에 패널, 종류 칩으로 거르기, 다른 활동 눌러 이동·강조 이동, 760px에서 접는 줄.
+- 확인 못 함: 샘플(목업) 모드 상세(`learning.tsx`)는 이 패널이 없다. 시험 응시 화면·학교 e-Class 자료 상세·어두운 테마는 화면으로 보지 않았다.
+
+### 남은 작업
+- 샘플 모드 활동 상세에도 같은 패널을 넣을지 결정.
+
 ## 2026-11-14 학교 e-Class 공지: 목록·상세(연 공지만 학교에서 읽기), 첨부, 읽음·확인 안 보냄
 
 ### 작업 내용

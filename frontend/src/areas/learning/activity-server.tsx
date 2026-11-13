@@ -6,6 +6,7 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Button, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { Link } from "../../router.tsx";
+import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { hrefFor, find } from "../../manifest.ts";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor } from "../../shared/backend.ts";
@@ -219,9 +220,7 @@ function MaterialDetail({ screen, parts }: { screen: Screen; parts: ActivityPart
   else if (school) main = <SchoolMaterialLoaded kj={kj} courseId={courseId} activityId={school} parts={parts} />;
   else main = <MaterialLoaded kj={kj} courseId={courseId} activityId={activityId} parts={parts} />;
   return (
-    <section className="bleed act-layout is-open" data-item-open={school || `srv-${activityId}`}>
-      <div className="act-main">{main}</div>
-    </section>
+    <ActivityShell kj={kj} itemOpen={school || `srv-${activityId}`}>{main}</ActivityShell>
   );
 }
 
@@ -271,11 +270,9 @@ function ActivityLink({ screen, parts }: { screen: Screen; parts: ActivityParts 
     shown = <ErrorState title={`${TYPE_NAME[type]}을 찾지 못했습니다`} body={materialMessage(view.error)} actions={<RetryButton reload={() => setAttempt((n) => n + 1)} />} />;
   }
   return (
-    <section className="bleed act-layout is-open">
-      <div className="act-main">
+    <ActivityShell kj={kj}>
         <div className="act-body" aria-live="polite">{parts.typeLine(type)}{shown}</div>
-      </div>
-    </section>
+    </ActivityShell>
   );
 }
 
