@@ -23,8 +23,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
- * 공개 카탈로그 조회. 과목과 비정규 과정의 공개 항목(이름, 코드, 학기, 담당자 이름, 수업 시간, 접수 기간, 정원과 신청 인원)만
- * 읽는다. 수강생 명단과 학습활동은 읽지 않는다. 폐강 과목은 어디에도 나오지 않는다.
+ * 공개 카탈로그 조회. 과목과 비정규 과정의 공개 항목(이름, 코드, 학기, 담당자 이름, 수업 시간, 접수 기간, 정원과 신청 인원, 기본
+ * 표지 템플릿 키)만 읽는다. 수강생 명단과 학습활동은 읽지 않는다. 폐강 과목은 어디에도 나오지 않는다.
  */
 @Repository
 class CatalogQueries {

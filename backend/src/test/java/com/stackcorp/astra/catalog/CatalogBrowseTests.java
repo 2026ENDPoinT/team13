@@ -226,6 +226,11 @@ class CatalogBrowseTests extends IntegrationTest {
 		assertThat(offerings.get(coveredOffering).get("coverTemplate").asString()).isEqualTo("dynamic_7");
 		assertThat(offerings.get(plainOffering).has("coverTemplate")).isTrue();
 		assertThat(offerings.get(plainOffering).get("coverTemplate").isNull()).isTrue();
+		student.send(post("/api/catalog/offerings/" + coveredOffering + "/enrollments")
+			.header("Idempotency-Key", "cover-1")).andExpect(status().isCreated());
+		Map<Long, JsonNode> mineOfferings = byCourse(ApiClient.json(student.get("/api/me/courses?type=NONREGULAR")));
+		assertThat(offerings.get(coveredOffering).get("coverTemplate"))
+			.isEqualTo(mineOfferings.get(coveredOffering).get("coverTemplate"));
 
 		// 상세는 목록 항목을 그대로 담는다.
 		student.get("/api/catalog/courses/" + covered).andExpect(jsonPath("$.course.coverTemplate").value("dynamic_13"));
