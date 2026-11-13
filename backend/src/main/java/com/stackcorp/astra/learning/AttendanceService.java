@@ -20,6 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -116,8 +117,11 @@ class AttendanceService {
 	/**
 	 * 차시를 고친다. 진행 중인 스마트출석 회차가 있으면 휴강으로 바꾸지 않는다. 옮기기 전과 뒤 주차를 배타 잠금하고, 고친 뒤 두 주차의
 	 * 온라인 학습 반영을 다시 판정한다. 이미 쓴 기록은 방식이나 주차가 바뀌어도 그대로다.
+	 * <p>
+	 * READ COMMITTED다. 주차는 차시 행을 잠그기 전에 읽어야 하므로(주차 → 차시 잠금 순서) REPEATABLE READ면 그 읽기가 snapshot을
+	 * 정해, 잠근 뒤의 진행 중 회차 검사가 그 사이 열린 회차를 못 본다. READ COMMITTED는 문장마다 최신 commit을 본다.
 	 */
-	@Transactional
+	@Transactional(isolation = Isolation.READ_COMMITTED)
 	void update(Actor actor, long courseId, long sessionId, int expectedVersion, SessionInput input,
 			boolean cancelled) {
 		long from = weekOf(courseId, sessionId);
@@ -157,8 +161,9 @@ class AttendanceService {
 	/**
 	 * 차시를 지운다. 출석 기록, 스마트출석 회차, 보강 차시, 지우지 않은 학습활동이 가리키면 409다. 지운 학습활동(ADR-0011)의 연결은
 	 * 끊는다. 학습 기록은 활동에 남고 출석부에는 반영되지 않은 연결이다. 지운 뒤 주차에 온라인 차시가 하나 남으면 그 차시를 다시 판정한다.
+	 * READ COMMITTED인 이유는 {@link #update}와 같다. 잠근 뒤의 사용 중 검사가 그 사이 쓴 기록·회차를 본다.
 	 */
-	@Transactional
+	@Transactional(isolation = Isolation.READ_COMMITTED)
 	void delete(Actor actor, long courseId, long sessionId, int expectedVersion) {
 		long from = weekOf(courseId, sessionId);
 		this.online.lockWeeks(true, List.of(from));

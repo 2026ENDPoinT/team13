@@ -1,5 +1,6 @@
 package com.stackcorp.astra.learning;
 
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -25,6 +26,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import io.micrometer.core.instrument.Counter;
@@ -51,6 +54,9 @@ import io.micrometer.core.instrument.Timer;
 class LearningSessionService {
 
 	private static final int START_ATTEMPTS = 3;
+
+	/** MySQL이 교착으로 transaction을 되돌릴 때의 SQLSTATE. */
+	private static final String DEADLOCK = "40001";
 
 	private final JdbcClient jdbc;
 
@@ -124,20 +130,48 @@ class LearningSessionService {
 	}
 
 	/**
-	 * 교착이나 잠금 시간 초과로 진 transaction은 전부 되돌아가므로 처음부터 다시 실행한다. 적립은 주차 행을 잠그고 출석 차시를 잠금 읽기로
-	 * 판정해, 차시·영상 활동 명령과 드물게 엇갈릴 수 있다(OnlineAttendance).
+	 * 교착으로 진 transaction은 전부 되돌아가므로 처음부터 다시 실행한다. 적립은 주차 행을 잠그고 출석 차시를 잠금 읽기로 판정해,
+	 * 차시·영상 활동 명령과 드물게 엇갈릴 수 있다(OnlineAttendance). 활동이 그 사이 다른 주차로 옮겨졌으면 옮긴 주차를 순서를 어겨 잠그지
+	 * 않고 다시 실행한다. 새 transaction은 옮긴 주차를 읽는다. 잠금 시간 초과는 다시 실행하지 않는다. 한 요청이 기다리는 시간은 잠금
+	 * 시간 초과 한 번까지다. 교착은 바로 감지되어 기다림을 늘리지 않는다.
 	 */
 	private <T> T retried(Supplier<T> work) {
 		for (int attempt = 1;; attempt++) {
 			try {
 				return work.get();
 			}
-			catch (PessimisticLockingFailureException ex) {
-				if (attempt == START_ATTEMPTS) {
+			catch (PessimisticLockingFailureException | OnlineAttendance.WeekMoved ex) {
+				if (attempt == START_ATTEMPTS || !retryable(ex)) {
 					throw ex;
 				}
 			}
 		}
+	}
+
+	private static boolean retryable(RuntimeException ex) {
+		if (ex instanceof OnlineAttendance.WeekMoved) {
+			return true;
+		}
+		return ex instanceof PessimisticLockingFailureException locking
+				&& locking.getMostSpecificCause() instanceof SQLException sql && DEADLOCK.equals(sql.getSQLState());
+	}
+
+	/**
+	 * 지표는 commit한 뒤에만 센다. 교착으로 되돌아가 다시 실행한 시도는 세지 않는다. transaction 밖(lease worker)이면 바로 센다.
+	 */
+	private static void afterCommit(Runnable action) {
+		if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+			action.run();
+			return;
+		}
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+
+			@Override
+			public void afterCommit() {
+				action.run();
+			}
+
+		});
 	}
 
 	/**
@@ -248,7 +282,8 @@ class LearningSessionService {
 					session.creditAuthorizedUntil());
 		}
 		else {
-			this.heartbeatGap.record(Duration.between(session.baseline(), now));
+			Duration gap = Duration.between(session.baseline(), now);
+			afterCommit(() -> this.heartbeatGap.record(gap));
 			beat = session.bound() ? boundBeat(session, loginSessionId, item, access, positionSec, now)
 					: unboundBeat(session, item, access, positionSec, now);
 			this.jdbc.sql("""
@@ -386,8 +421,12 @@ class LearningSessionService {
 	 * 공유 잠금한다. 차시·영상 활동 명령이 주차를 배타 잠금하고 출석부를 다시 판정하므로 충족과 그 판정이 서로 엇갈리지 않는다.
 	 */
 	private void apply(Session session, Item item, Credit credit, Integer positionSec, LocalDateTime now) {
+		Long lockedWeek = null;
+		if (credit.seconds() > 0 && meets(session.userId(), item, credit.seconds())) {
+			lockedWeek = item.weekId();
+			this.attendance.lockWeeks(false, List.of(lockedWeek));
+		}
 		if (credit.seconds() > 0) {
-			this.attendance.lockWeeks(false, List.of(item.weekId()));
 			this.jdbc.sql("""
 					INSERT INTO learning_credit_ledger (learning_session_id, from_at, to_at, credited_sec, in_period_yn, rule_version)
 					VALUES (:session, :from, :to, :seconds, 1, :rule)
@@ -409,8 +448,30 @@ class LearningSessionService {
 			recordProgress(session.userId(), item, credit.seconds(), positionSec, now, session.rule());
 		}
 		if (credit.seconds() > 0) {
-			decide(session.userId(), item, now, session.rule());
+			decide(session.userId(), item, lockedWeek, now, session.rule());
 		}
+	}
+
+	/**
+	 * 이 적립으로 콘텐츠가 처음 충족되는지. 출석부를 바꿀 수 있는 하트비트는 이것뿐이라 그때만 진도를 쓰기 전에 활동 주차를 공유 잠금한다
+	 * ({@link OnlineAttendance}). 이 사용자의 진도는 이 사용자의 session 행 잠금 아래에서만 바뀌므로 잠그지 않고 읽어도 최신이다.
+	 */
+	private boolean meets(long userId, Item item, int seconds) {
+		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
+		if (required == null) {
+			return false;
+		}
+		return this.jdbc.sql("""
+				SELECT met_at IS NULL AND credited_in_sec + :seconds >= :required FROM online_lecture_item_progress
+				 WHERE user_id = :user AND online_lecture_item_id = :item
+				""")
+			.param("seconds", seconds)
+			.param("required", required)
+			.param("user", userId)
+			.param("item", item.itemId())
+			.query(Boolean.class)
+			.optional()
+			.orElse(seconds >= required);
 	}
 
 	/** @param rule 이 진도를 바꾼 적립 규칙 버전 */
@@ -442,10 +503,12 @@ class LearningSessionService {
 	}
 
 	/**
-	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록한다. 활동의 모든 콘텐츠가 충족되면 활동 완료를 한 번 쓰고 출석부 반영을
-	 * {@link OnlineAttendance}에 맡긴다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
+	 * 기간 안 적립이 필요 시간에 닿으면 충족 시각을 한 번 기록하고 출석부 반영을 {@link OnlineAttendance}에 맡긴다. 반영은 잠금 읽기로
+	 * 차시에 걸린 콘텐츠를 모두 충족했는지 다시 보므로, 이 transaction의 snapshot이 그 사이 바뀐 활동을 못 봐도 판정이 맞다. 활동의 모든
+	 * 콘텐츠가 충족되면 활동 완료를 한 번 쓴다. 담당자가 이미 정한 출석 상태는 바꾸지 않는다.
+	 * @param lockedWeek 진도를 쓰기 전에 공유 잠금한 주차. 잠그지 않았으면 null
 	 */
-	private void decide(long userId, Item item, LocalDateTime now, String rule) {
+	private void decide(long userId, Item item, Long lockedWeek, LocalDateTime now, String rule) {
 		Integer required = ItemProgress.required(item.requiredSec(), item.durationSec());
 		if (required == null) {
 			return;
@@ -463,6 +526,7 @@ class LearningSessionService {
 		if (met == 0) {
 			return;
 		}
+		this.attendance.credit(userId, item.activityId(), lockedWeek, now, rule);
 		boolean complete = this.jdbc.sql("""
 				SELECT NOT EXISTS (
 				  SELECT 1 FROM online_lecture_items i
@@ -477,7 +541,6 @@ class LearningSessionService {
 				INSERT INTO activity_progress (user_id, activity_id, completed_at) VALUES (:user, :activity, :now) AS n
 				ON DUPLICATE KEY UPDATE completed_at = COALESCE(activity_progress.completed_at, n.completed_at)
 				""").param("user", userId).param("activity", item.activityId()).param("now", now).update();
-		this.attendance.credit(userId, item.activityId(), now, rule);
 	}
 
 	/** 학습 시작은 명시적 POST라 열람 기록과 이어보기 포인터를 여기서 남긴다(SC-04). */
@@ -574,11 +637,11 @@ class LearningSessionService {
 	/** @return count. 사유는 코드가 정한 값(button, unload, forced, superseded, lease_expired)뿐이다 */
 	private int closed(String reason, int count) {
 		if (count > 0) {
-			Counter.builder("astra.learning.sessions.closed")
+			Counter counter = Counter.builder("astra.learning.sessions.closed")
 				.description("닫힌 학습 session 수")
 				.tag("reason", reason)
-				.register(this.meters)
-				.increment(count);
+				.register(this.meters);
+			afterCommit(() -> counter.increment(count));
 		}
 		return count;
 	}

@@ -3,11 +3,13 @@ package com.stackcorp.astra.learning;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Function;
 
 import com.stackcorp.astra.catalog.api.CourseRosters;
 import com.stackcorp.astra.learning.AttendanceCodes.Method;
@@ -24,14 +26,18 @@ import org.springframework.stereotype.Component;
  * 영상 활동이다. 지우지 않았고 공개한 활동만 센다. 학생이 걸린 활동의 모든 콘텐츠를 충족하면 그 차시에 {@code 출석}이다.</li>
  * <li>휴강한 차시에는 쓰지 않는다. 기록이 없거나 {@code 미처리}일 때만 쓰고(ADR-0030 1번) 쓴 기록은 어떤 사건으로도 지우지 않는다.</li>
  * </ul>
- * 잠금은 주차 행이다. 적립하는 하트비트는 진도를 쓰기 전에 활동 주차를 공유 잠금하고, 차시나 영상 활동을 바꾸는 명령은 바꾸기 전에 관련
- * 주차를 ID 순으로 배타 잠금한 뒤 같은 transaction에서 {@link #reconcile}로 다시 판정한다. 판정의 읽기는 잠금 읽기라 transaction의
- * snapshot과 관계없이 commit된 최신 값을 본다. 그래서 충족과 차시 변경이 동시에 일어나도 한쪽이 다른 쪽의 결과를 보고 판정한다.
+ * 잠금은 주차 행이다. 콘텐츠를 처음 충족하는 하트비트는 진도를 쓰기 전에 활동 주차를 공유 잠금하고, 차시나 영상 활동을 바꾸는 명령은
+ * 바꾸기 전에 관련 주차를 ID 순으로 배타 잠금한 뒤 같은 transaction에서 {@link #reconcile}로 다시 판정한다. 판정의 읽기는 잠금
+ * 읽기라 transaction의 snapshot과 관계없이 commit된 최신 값을 본다. 그래서 충족과 차시 변경이 동시에 일어나도 한쪽이 다른 쪽의 결과를
+ * 보고 판정한다. 충족하지 않는 하트비트는 출석부를 바꾸지 않으므로 주차를 잠그지 않는다.
  */
 @Component
 class OnlineAttendance {
 
 	private static final String ONLINE = Method.ONLINE.db;
+
+	/** 한 번에 쓰는 기록 수. */
+	static final int BATCH = 200;
 
 	private final JdbcClient jdbc;
 
@@ -56,11 +62,14 @@ class OnlineAttendance {
 	}
 
 	/**
-	 * 학생이 방금 활동의 모든 콘텐츠를 충족했다. 대상 차시가 있고 그 차시에 걸린 활동을 모두 충족했으면 출석부에 쓴다. 부르는 쪽은 진도를
-	 * 쓰기 전에 활동 주차를 공유 잠금했다. 그 사이 활동이 다른 주차로 옮겨졌으면 옮긴 주차도 잠근다.
+	 * 학생이 방금 콘텐츠 하나를 충족했다. 대상 차시가 있고 그 차시에 걸린 활동을 모두 충족했으면 출석부에 쓴다. 판정은 잠금 읽기라
+	 * 부르는 쪽 snapshot이 그 사이 바뀐 활동·콘텐츠를 못 봐도 맞다.
+	 * @param lockedWeek 부르는 쪽이 진도를 쓰기 전에 공유 잠금한 주차. 잠그지 않았으면 null이고 여기서 잠근다
 	 * @param rule 이 충족을 만든 적립 규칙 버전
+	 * @throws WeekMoved 잠근 뒤 활동이 다른 주차로 옮겨졌다. 옮긴 주차를 순서를 어겨 더 잠그면 두 주차를 ID 순으로 잠그는 명령과
+	 * 교착할 수 있어, 부르는 쪽 transaction을 처음부터 다시 실행하게 한다
 	 */
-	void credit(long userId, long activityId, LocalDateTime now, String rule) {
+	void credit(long userId, long activityId, Long lockedWeek, LocalDateTime now, String rule) {
 		Optional<Link> link = this.jdbc.sql("""
 				SELECT course_week_id, attendance_session_id FROM learning_activities
 				 WHERE activity_id = :activity AND deleted_at IS NULL
@@ -72,7 +81,12 @@ class OnlineAttendance {
 		if (link.isEmpty()) {
 			return;
 		}
-		lockWeeks(false, List.of(link.get().weekId()));
+		if (lockedWeek == null) {
+			lockWeeks(false, List.of(link.get().weekId()));
+		}
+		else if (lockedWeek != link.get().weekId()) {
+			throw new WeekMoved();
+		}
 		Long target = link.get().sessionId() != null ? link.get().sessionId()
 				: single(onlineSessions(link.get().weekId())).orElse(null);
 		if (target != null) {
@@ -106,7 +120,8 @@ class OnlineAttendance {
 	}
 
 	/**
-	 * 걸린 콘텐츠를 모두 충족한 학생을 사용자 ID 순서로 채운다.
+	 * 걸린 콘텐츠를 모두 충족했고 아직 판정되지 않은 학생을 사용자 ID 순서로 한꺼번에 채운다. 읽기는 콘텐츠, 진도, 판정된 기록 세 번이고
+	 * 쓰기는 {@value #BATCH}명마다 한 번이다.
 	 * @param rule 규칙 버전. null이면 학생이 충족한 진도의 최신 규칙 버전이다
 	 */
 	private void decide(Target target, List<Long> users, LocalDateTime now, String rule) {
@@ -144,37 +159,50 @@ class OnlineAttendance {
 			String version = rs.getString(2);
 			rules.merge(user, version == null ? "" : version, (a, b) -> a.compareTo(b) >= 0 ? a : b);
 		});
-		for (long user : users) {
-			if (metCount.getOrDefault(user, 0) == items.size()) {
-				write(target.id(), user, now, rule != null ? rule : rules.get(user));
-			}
+		List<Long> met = users.stream().filter((u) -> metCount.getOrDefault(u, 0) == items.size()).toList();
+		if (met.isEmpty()) {
+			return;
+		}
+		// 이미 판정된 학생은 쓰지 않는다. 이 읽기가 낡아도 아래 쓰기가 미처리일 때만 바꾸므로 판정은 같다.
+		Set<Long> decided = new HashSet<>(this.jdbc.sql("""
+				SELECT user_id FROM attendance_records
+				 WHERE attendance_session_id = :session AND user_id IN (:users) AND status <> '미처리'
+				""").param("session", target.id()).param("users", met).query(Long.class).list());
+		List<Long> pending = met.stream().filter((u) -> !decided.contains(u)).toList();
+		for (int from = 0; from < pending.size(); from += BATCH) {
+			write(target.id(), pending.subList(from, Math.min(pending.size(), from + BATCH)), now,
+					(u) -> rule != null ? rule : rules.get(u));
 		}
 	}
 
-	// 기록이 없으면 넣고, 미처리면 바꾼다. 이미 판정된 기록(담당자, 스마트출석, 먼저 쓴 온라인)은 그대로 둔다.
-	private void write(long sessionId, long userId, LocalDateTime now, String rule) {
+	/**
+	 * 기록이 없으면 넣고, 미처리면 바꾼다. 이미 판정된 기록(담당자, 스마트출석, 먼저 쓴 온라인)은 그대로 둔다. 상태는 다른 열이 바꾸기 전
+	 * 상태를 보도록 마지막에 정한다.
+	 */
+	private void write(long sessionId, List<Long> users, LocalDateTime now, Function<Long, String> rule) {
+		StringBuilder values = new StringBuilder();
+		Map<String, Object> params = new HashMap<>();
+		params.put("session", sessionId);
+		params.put("now", now);
+		for (int i = 0; i < users.size(); i++) {
+			values.append(i == 0 ? "" : ", ").append("(:session, :u").append(i)
+				.append(", '출석', 'online', 100.00, :now, :r").append(i).append(')');
+			params.put("u" + i, users.get(i));
+			params.put("r" + i, rule.apply(users.get(i)));
+		}
 		this.jdbc.sql("""
 				INSERT INTO attendance_records (attendance_session_id, user_id, status, source, progress_percent, decided_at,
 				                                rule_version)
-				VALUES (:attendance, :user, '출석', 'online', 100.00, :now, :rule)
-				ON DUPLICATE KEY UPDATE attendance_record_id = attendance_record_id
-				""")
-			.param("attendance", sessionId)
-			.param("user", userId)
-			.param("now", now)
-			.param("rule", rule)
-			.update();
-		this.jdbc.sql("""
-				UPDATE attendance_records
-				   SET status = '출석', source = 'online', progress_percent = 100.00, decided_at = :now, rule_version = :rule,
-				       row_version = row_version + 1
-				 WHERE attendance_session_id = :attendance AND user_id = :user AND status = '미처리'
-				""")
-			.param("attendance", sessionId)
-			.param("user", userId)
-			.param("now", now)
-			.param("rule", rule)
-			.update();
+				VALUES %s AS n
+				ON DUPLICATE KEY UPDATE
+				  source = IF(attendance_records.status = '미처리', n.source, attendance_records.source),
+				  progress_percent = IF(attendance_records.status = '미처리', n.progress_percent, attendance_records.progress_percent),
+				  decided_at = IF(attendance_records.status = '미처리', n.decided_at, attendance_records.decided_at),
+				  rule_version = IF(attendance_records.status = '미처리', n.rule_version, attendance_records.rule_version),
+				  row_version = IF(attendance_records.status = '미처리', attendance_records.row_version + 1,
+				                   attendance_records.row_version),
+				  status = IF(attendance_records.status = '미처리', n.status, attendance_records.status)
+				""".formatted(values)).params(params).update();
 	}
 
 	private List<Long> onlineSessions(long weekId) {
@@ -219,6 +247,15 @@ class OnlineAttendance {
 
 		Target automatic() {
 			return new Target(this.id, this.courseId, this.weekId, this.method, this.state, true);
+		}
+
+	}
+
+	/** 공유 잠금한 뒤 활동이 다른 주차로 옮겨졌다. 부르는 쪽 transaction을 되돌리고 처음부터 다시 실행한다. */
+	static final class WeekMoved extends RuntimeException {
+
+		WeekMoved() {
+			super("영상 활동이 다른 주차로 옮겨졌습니다.", null, false, false);
 		}
 
 	}

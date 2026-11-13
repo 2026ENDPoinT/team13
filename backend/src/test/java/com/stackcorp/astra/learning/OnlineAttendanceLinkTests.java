@@ -10,13 +10,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import javax.sql.DataSource;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,6 +69,11 @@ class OnlineAttendanceLinkTests extends IntegrationTest {
 	@Autowired
 	AttendanceSummaries summaries;
 
+	@Autowired
+	DataSource dataSource;
+
+	final ExecutorService pool = Executors.newCachedThreadPool();
+
 	long course;
 
 	long stu;
@@ -91,6 +106,7 @@ class OnlineAttendanceLinkTests extends IntegrationTest {
 	@AfterEach
 	void release() {
 		this.clock.release();
+		this.pool.shutdownNow();
 	}
 
 	@Test
@@ -361,6 +377,185 @@ class OnlineAttendanceLinkTests extends IntegrationTest {
 				.query(Integer.class)
 				.single()).isEqualTo(1);
 		}
+	}
+
+	/**
+	 * 하트비트가 snapshot을 정한 뒤 주차 잠금을 기다리는 동안 담당자가 같은 활동의 아직 충족하지 않은 콘텐츠를 뺐다. 하트비트의 snapshot은
+	 * 뺀 콘텐츠를 아직 살아 있는 것으로 보지만 출석 판정은 최신 값으로 한다.
+	 */
+	@Test
+	void heartbeatWaitingBehindALectureEditJudgesTheEditedLecture() throws Exception {
+		long week = week(3);
+		long lecture = lecture(week);
+		long removed = lectureItem(lecture);
+		long kept = lectureItem(lecture);
+		long online = createSession(3, 1, "online");
+		long session = started(this.student, kept);
+		this.clock.advance(Duration.ofSeconds(60));
+
+		try (WeekLock edit = new WeekLock(week)) {
+			edit.execute("UPDATE online_lecture_items SET deleted_at = CURRENT_TIMESTAMP(3) WHERE online_lecture_item_id = ?",
+					removed);
+			Future<String> heartbeat = async(() -> ApiClient.json(beat(this.student, session, 1).andExpect(status().isOk()))
+				.get("progress")
+				.get("status")
+				.asString());
+			edit.awaitWaiter();
+			edit.commit();
+			assertThat(heartbeat.get(30, TimeUnit.SECONDS)).isEqualTo("met");
+		}
+		assertThat(record(online, this.stu)).containsExactly("출석", "online");
+	}
+
+	/** 충족하지 않는 하트비트는 출석부를 바꾸지 않으므로 주차 잠금을 기다리지 않는다. */
+	@Test
+	void heartbeatThatMeetsNothingDoesNotWaitForTheWeek() throws Exception {
+		long week = week(3);
+		long item = lectureItem(lecture(week));
+		this.jdbc.sql("UPDATE online_lecture_items SET required_sec = 600 WHERE online_lecture_item_id = :i")
+			.param("i", item)
+			.update();
+		createSession(3, 1, "online");
+		long session = started(this.student, item);
+		this.clock.advance(Duration.ofSeconds(60));
+
+		try (WeekLock edit = new WeekLock(week)) {
+			Future<Integer> heartbeat = async(() -> ApiClient.json(beat(this.student, session, 1).andExpect(status().isOk()))
+				.get("creditedSec")
+				.asInt());
+			assertThat(heartbeat.get(30, TimeUnit.SECONDS)).isEqualTo(60);
+		}
+	}
+
+	/** 주차 잠금을 기다리는 동안 활동이 다른 주차로 옮겨지면 하트비트는 처음부터 다시 실행해 옮긴 주차의 차시에 반영한다. */
+	@Test
+	void lectureMovedWhileTheHeartbeatWaitsIsCreditedInItsNewWeek() throws Exception {
+		long week = week(3);
+		long lecture = lecture(week);
+		long item = lectureItem(lecture);
+		long before = createSession(3, 1, "online");
+		long after = createSession(4, 1, "online");
+		long moved = week(4);
+		long session = started(this.student, item);
+		this.clock.advance(Duration.ofSeconds(60));
+
+		try (WeekLock edit = new WeekLock(week)) {
+			edit.execute("UPDATE learning_activities SET course_week_id = ? WHERE activity_id = ?", moved, lecture);
+			Future<Integer> heartbeat = async(() -> ApiClient.json(beat(this.student, session, 1).andExpect(status().isOk()))
+				.get("creditedSec")
+				.asInt());
+			edit.awaitWaiter();
+			edit.commit();
+			assertThat(heartbeat.get(30, TimeUnit.SECONDS)).isEqualTo(60);
+		}
+		assertThat(record(after, this.stu)).containsExactly("출석", "online");
+		assertThat(record(before, this.stu)).isEmpty();
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM learning_credit_ledger WHERE learning_session_id = :s")
+			.param("s", session)
+			.query(Integer.class)
+			.single()).isEqualTo(1);
+	}
+
+	/** 휴강 요청이 주차를 찾은 뒤 잠금을 기다리는 동안 열린 스마트출석 회차를 휴강 검사가 본다. */
+	@Test
+	void cancelWaitingForTheWeekSeesARoundOpenedMeanwhile() throws Exception {
+		long session = createSession(3, 1, "smart");
+		try (WeekLock other = new WeekLock(week(3))) {
+			Future<Integer> cancel = async(
+					() -> updateSession(session, 3, 1, "smart", true, 1).andReturn().getResponse().getStatus());
+			other.awaitWaiter();
+			this.professor.postJson(sessionPath(this.course, session) + "/smart-rounds", "{\"method\":\"pin\"}")
+				.andExpect(status().isCreated());
+			other.commit();
+			assertThat(cancel.get(30, TimeUnit.SECONDS)).isEqualTo(409);
+		}
+		assertThat(this.jdbc.sql("SELECT session_state FROM attendance_sessions WHERE attendance_session_id = :s")
+			.param("s", session)
+			.query(String.class)
+			.single()).isNotEqualTo("cancelled");
+	}
+
+	/** 삭제 요청이 주차를 찾은 뒤 잠금을 기다리는 동안 쓴 출석 기록을 사용 중 검사가 본다(FK 오류 500이 아니라 409). */
+	@Test
+	void deleteWaitingForTheWeekSeesARecordWrittenMeanwhile() throws Exception {
+		long session = createSession(3, 1, "manual");
+		try (WeekLock other = new WeekLock(week(3))) {
+			Future<ResultActions> delete = async(() -> this.professor
+				.send(MockMvcRequestBuilders.delete(sessionPath(this.course, session)).header("If-Match", "\"1\"")));
+			other.awaitWaiter();
+			setRecord(this.professor, this.course, session, this.stu, "\"0\"", "present", "확인")
+				.andExpect(status().isOk());
+			other.commit();
+			delete.get(30, TimeUnit.SECONDS)
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("session_in_use"));
+		}
+		assertThat(record(session, this.stu)).containsExactly("출석", "manual");
+	}
+
+	private <T> Future<T> async(Callable<T> task) {
+		return this.pool.submit(task);
+	}
+
+	/**
+	 * 주차 행을 배타 잠금한 두 번째 transaction. 차시·영상 활동 명령이 주차를 쥔 상태를 흉내 낸다. 다른 연결이 이 주차의 잠금 문장을
+	 * 실행 중이면 이 잠금을 기다리는 것이다(이 transaction이 끝나기 전에는 끝날 수 없다). 시간이 아니라 그 상태를 process 목록으로
+	 * 확인한다. 같은 계정의 연결은 PROCESS 권한 없이 보인다.
+	 */
+	private final class WeekLock implements AutoCloseable {
+
+		private final Connection connection;
+
+		private final long weekId;
+
+		private final long connectionId;
+
+		WeekLock(long weekId) throws Exception {
+			this.weekId = weekId;
+			this.connection = OnlineAttendanceLinkTests.this.dataSource.getConnection();
+			this.connection.setAutoCommit(false);
+			execute("SELECT course_week_id FROM course_weeks WHERE course_week_id = ? FOR UPDATE", weekId);
+			try (PreparedStatement statement = this.connection.prepareStatement("SELECT CONNECTION_ID()");
+					ResultSet rs = statement.executeQuery()) {
+				rs.next();
+				this.connectionId = rs.getLong(1);
+			}
+		}
+
+		void execute(String sql, Object... args) throws Exception {
+			try (PreparedStatement statement = this.connection.prepareStatement(sql)) {
+				for (int i = 0; i < args.length; i++) {
+					statement.setObject(i + 1, args[i]);
+				}
+				statement.execute();
+			}
+		}
+
+		void awaitWaiter() throws Exception {
+			long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+			while (OnlineAttendanceLinkTests.this.jdbc.sql("""
+					SELECT COUNT(*) FROM information_schema.PROCESSLIST
+					 WHERE ID NOT IN (:me, CONNECTION_ID()) AND INFO LIKE :statement
+					""")
+				.param("me", this.connectionId)
+				.param("statement", "%FROM course_weeks WHERE course_week_id = " + this.weekId + " FOR %")
+				.query(Integer.class)
+				.single() == 0) {
+				assertThat(System.nanoTime()).as("다른 transaction이 주차 잠금을 기다리지 않았다").isLessThan(deadline);
+				Thread.sleep(10);
+			}
+		}
+
+		void commit() throws Exception {
+			this.connection.commit();
+		}
+
+		@Override
+		public void close() throws Exception {
+			this.connection.rollback();
+			this.connection.close();
+		}
+
 	}
 
 	/** 콘텐츠 하나를 새 session으로 60초 들어 충족한다(필요 시간 60초). */
