@@ -7,6 +7,7 @@ import { Link, closeDialog } from "../../router.tsx";
 import { readForm, showErrors } from "../../forms.ts";
 import { Badge, Button, EmptyState, LoadingState, Pagination, Table, Tabs, Field } from "../../ui/kit.tsx";
 import { Icon } from "../../ui/icon.tsx";
+import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import { hrefFor, find } from "../../manifest.ts";
 import { passFilter, attendStatus, activityHref, typeLabel, boardRows, ownsRow } from "../../shared/format.ts";
 import type { BoardRow } from "../../shared/format.ts";
@@ -715,6 +716,7 @@ function renderFiles(screen: Screen, ctx: ScreenCtx): ReactNode {
               <div className="crs-file-actions">
                 <Link className="icon-btn" href={href} aria-label={`${file.name} 미리보기`}><Icon name="search" /></Link>
                 <button type="button" className="icon-btn" data-file={file.name} aria-label={`${file.name} 내려받기`} onClick={fileSample}><Icon name="file" /></button>
+                <SaveToStudy kj={course.id} file={{ fileId: file.id, name: file.name }} courseName={course.cardTitle || course.ko} />
               </div>
             </article>
           );

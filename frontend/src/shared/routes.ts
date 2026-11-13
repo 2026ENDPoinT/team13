@@ -6,10 +6,6 @@ import { isClosedActivity } from "./activity-library.ts";
 
 const POP: Record<string, string> = {
   myinfo: "14_pop_myinfo",
-  avatar: "14b_pop_avatar_set",
-  files: "16_pop_file",
-  history: "15_pop_history",
-  "history-login": "15b_pop_history_login_tab",
   settings: "11_pop_setup_theme",
   notify: "03_pop_notification",
   "notify-unread": "03b_pop_notification_unread",

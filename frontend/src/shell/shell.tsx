@@ -1,7 +1,6 @@
 import { useEffect, useReducer, type ReactNode } from "react";
-import { Button, Field } from "../ui/kit.tsx";
 import { Icon } from "../ui/icon.tsx";
-import { BrandLogo, FabArt } from "../ui/assets.tsx";
+import { BrandLogo } from "../ui/assets.tsx";
 import { courseById, student, professor, type AppState, type Course } from "../data.ts";
 import { hrefFor, find } from "../manifest.ts";
 import { GoButton, Link } from "../router.tsx";
@@ -11,15 +10,14 @@ import { courseNav, specialCourseNav } from "../areas/course/screens.ts";
 import { professorHomeNav, professorCourseNav } from "../areas/professor/screens.ts";
 import { AssistantTray } from "../shared/assistant-tray.tsx";
 import { ChatDock } from "../areas/home/chat-dock.tsx";
+import { collapseHero } from "../areas/home/home.tsx";
 import { useBadge, unreadLabel, type UnreadKind } from "../shared/unread-badges.tsx";
-import { serverTutorPanel } from "../shared/study-chat-panel.tsx";
 import { backendState, backendStatus, serverCourses } from "../shared/backend.ts";
 // Also puts the server course views behind `courseById` (data.ts) before the first render.
 import "../shared/course-view.ts";
 import { profiles, peekAccount, reloadAccount } from "../shared/account-remote.ts";
 import { personAvatar } from "../shared/avatar-remote.tsx";
-import { getState, render, save } from "../store.ts";
-import { readForm, showErrors } from "../forms.ts";
+import { getState, render } from "../store.ts";
 import type { NavItem, Role, Screen, ScreenCtx } from "../types.ts";
 
 const copy: Record<"ko" | "en", Record<string, string>> = {
@@ -227,56 +225,6 @@ function SideNav({ screen, chromeRole, course, lang }: { screen: Screen; chromeR
   );
 }
 
-function askTutor() {
-  const state = getState();
-  const data = readForm();
-  const question = String(data.tutor || "").trim();
-  if (!question) return showErrors({ tutor: "질문을 입력하세요" });
-  const thread = state.draft.tutor || [{ from: "테크뇽", text: "자료에서 궁금한 점을 적어 주세요. 답은 샘플이고 학교 서버로 보내지 않습니다." }];
-  thread.push({ from: "나", text: question });
-  thread.push({ from: "테크뇽", text: "샘플 답변입니다. 문서 원문을 학교 서버로 보내지 않았고, 이 대화는 브라우저 안에만 있습니다." });
-  state.draft.tutor = thread;
-  state.toast = "테크뇽에 남겼습니다";
-  save();
-  render();
-}
-
-function toggleTechnyon() {
-  const state = getState();
-  state.technyonOpen = !state.technyonOpen;
-  save();
-  render();
-}
-
-/** 테크뇽 학습 도우미: a server material's study chat, else the sample thread kept in this browser. */
-function TechPanel({ ctx }: { ctx: ScreenCtx }) {
-  // Backend mode on a server material: the real study chat (shared/study-chat-panel); null keeps the mock.
-  const server = serverTutorPanel(ctx);
-  const thread: { from: string; text: string }[] = ctx.state.draft.tutor || [
-    { from: "테크뇽", text: "자료에서 궁금한 점을 적어 주세요. 답은 샘플이고 학교 서버로 보내지 않습니다." },
-  ];
-  return (
-    <aside className="tech-panel" aria-label="학습 도우미">
-      <div className="tech-h">
-        <div>
-          <strong>테크뇽 · 학습 도우미</strong>
-          <span className="tiny">{server ? "이 자료로 묻고 답합니다. 대화는 ASTRA 서버에 남습니다" : "자료 질문을 이 브라우저 안에서만 남깁니다"}</span>
-        </div>
-        <button type="button" className="x" aria-label="닫기" onClick={toggleTechnyon}>×</button>
-      </div>
-      <div className="tech-b">
-        {server ? server : (
-          <>
-            {thread.map((line, index) => <p key={index}><b>{line.from}</b> {line.text}</p>)}
-            <Field label="질문" name="tutor"><input data-name="tutor" placeholder="이 자료에 대해 물어보기" /></Field>
-            <Button kind="primary" onClick={askTutor}>보내기</Button>
-          </>
-        )}
-      </div>
-    </aside>
-  );
-}
-
 export interface ShellProps {
   ctx: ScreenCtx;
   /** Full-width block above the columns (student home). */
@@ -288,14 +236,16 @@ export interface ShellProps {
   children: ReactNode;
 }
 
-/** The page frame: top bar, side menu, main slot, aside, assistant tray, and the 테크뇽 button. */
+/** The page frame: top bar, side menu, main slot, aside, and the assistant tray. */
 export function Shell({ ctx, hero, aside, dialog, children }: ShellProps) {
-  const { state, screen, params } = ctx;
+  const { state, screen } = ctx;
   const lang = state.lang === "en" ? "en" : "ko";
   const chromeRole: Role = screen.role === "any" ? state.role : screen.role;
   const course = courseById(state.courseId);
   const showAside = screen.kind === "home" || screen.kind === "room" || screen.kind === "mobile";
   const collapsed = screen.aside === "0";
+  // 녹음 화면과 학습실 자료 요약(LessonViewer)은 좌측 메뉴 없이 본문만 쓴다.
+  const noNav = screen.kind === "lecture" || (screen.kind === "study" && screen.mode === "summary");
   const isCourse = screen.layout === "course" || screen.layout === "prof";
   const navOpen = state.navOpen || screen.mobileMenu === "nav";
   // Student home opens with a full-width hero above the menu, main column, and aside.
@@ -309,17 +259,14 @@ export function Shell({ ctx, hero, aside, dialog, children }: ShellProps) {
     navOpen ? "nav-open" : "",
     screen.mobileMenu === "aside" ? "show-aside" : "",
   ].filter(Boolean).join(" ");
-  // Main keeps its Plan tray; the server-material tutor remains reachable only in backend mode.
-  const serverFile = backendStatus() !== "off" && /^srv-[1-9][0-9]{0,17}$/.test(params.get(screen.kind === "preview" ? "n" : "doc") || "");
-  const tutorOpen = serverFile && Boolean(state.technyonOpen);
   return (
-    <div className="chrome">
+    <div className={noNav ? "chrome no-nav" : "chrome"}>
       <header className="topbar">
         <div className="top-start">
           <button type="button" className="icon-btn menu-toggle" aria-label={navOpen ? "메뉴 닫기" : "메뉴"} aria-expanded={navOpen ? "true" : "false"} onClick={toggleNav}>
             <Icon name="menu" />
           </button>
-          <Link className="brand" href={routeFor(chromeRole, "home")} aria-label="STack 홈">
+          <Link className="brand" href={routeFor(chromeRole, "home")} aria-label="STack 홈" onClick={(event) => collapseHero(event, hasHero)}>
             <BrandLogo />
             <span className="word"><span className="brand-name">STack</span></span>
           </Link>
@@ -342,18 +289,12 @@ export function Shell({ ctx, hero, aside, dialog, children }: ShellProps) {
       </header>
       <div className={bodyClass}>
         {hasHero ? <div className="hero-slot">{hero}</div> : null}
-        <SideNav screen={screen} chromeRole={chromeRole} course={course} lang={lang} />
-        <button type="button" className="scrim" aria-label="메뉴 닫기" onClick={toggleNav} />
+        {noNav ? null : <SideNav screen={screen} chromeRole={chromeRole} course={course} lang={lang} />}
+        {noNav ? null : <button type="button" className="scrim" aria-label="메뉴 닫기" onClick={toggleNav} />}
         <div className="slot">{children}</div>
         {(showAside && !collapsed) || screen.mobileMenu === "aside" ? <aside className="aside">{aside?.()}</aside> : null}
       </div>
       <AssistantTray screen={screen} dock={<ChatDock />} />
-      {tutorOpen ? <TechPanel ctx={ctx} /> : null}
-      {serverFile ? (
-        <button type="button" className={`fab${tutorOpen ? " open" : ""}`} aria-label={tutorOpen ? "테크뇽 닫기" : "테크뇽"} aria-expanded={tutorOpen ? "true" : "false"} onClick={toggleTechnyon}>
-          {tutorOpen ? <span>×</span> : <FabArt />}
-        </button>
-      ) : null}
       <div className="dialog-root">{dialog}</div>
     </div>
   );

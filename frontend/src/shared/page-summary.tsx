@@ -9,7 +9,8 @@ const TAGS: Record<string, string> = { core: "핵심", support: "보충", backgr
 // `code` | $$math$$ | $math$ | **bold** | *italic* | [text](url)
 const INLINE = /(`[^`\n]+`)|(\$\$[^$]+\$\$|\$[^$\n]+\$)|(\*\*(?=\S)[\s\S]+?\*\*)|(\*(?=[^\s*])[^*\n]+?\*)|(\[[^\]\n]+\]\([^)\s]+\))/g;
 
-function inline(text: unknown): ReactNode[] {
+/** Inline markdown (`code`, **bold**, *italic*, [text](url) as plain text) → React nodes. */
+export function inline(text: unknown): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   const source = String(text);
@@ -98,7 +99,8 @@ export function markdown(text: unknown): ReactNode {
   );
 }
 
-function pageFile(base: string, page: number): string {
+/** Page image `NNN.jpg` under a server image base ("/doc/<hex>/"). */
+export function pageFile(base: string, page: number): string {
   return `${base}${String(page).padStart(3, "0")}.jpg`;
 }
 

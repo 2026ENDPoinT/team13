@@ -1,5 +1,6 @@
 import { Fragment, cloneElement, isValidElement, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon } from "../../ui/icon.tsx";
+import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import { Badge, Button, EmptyState, Field, Tabs } from "../../ui/kit.tsx";
 import { Link, GoButton, navigate } from "../../router.tsx";
 import { activities, events, courseById, courses, people, files, surveyQuestions } from "../../data.ts";
@@ -132,8 +133,10 @@ function koWhen(value?: string): string {
 function typeLine(type: string, titleTag?: ReactNode, iconName?: string): ReactNode {
   return <div className="type-line"><span className={`type-ico ${type}`} aria-hidden="true"><Icon name={iconName || TYPE_ICON[type] || "file"} /></span>{titleTag || <span>{typeLabel(type)}</span>}</div>;
 }
-function fileRow(name: string, meta?: string, href?: string): ReactNode {
-  return <div className="file-row" key={name}><Icon name="file" /><span><b>{name}</b><span className="tiny">{meta}</span></span>{href ? <Link className="btn btn-secondary" href={href}>미리보기</Link> : null}</div>;
+function fileRow(name: string, meta?: string, href?: string, save?: { kj: string; fileId: string }): ReactNode {
+  return <div className="file-row" key={name}><Icon name="file" /><span><b>{name}</b><span className="tiny">{meta}</span></span>{save
+    ? <div className="btn-row file-row-actions">{href ? <Link className="btn btn-secondary" href={href}>미리보기</Link> : null}<SaveToStudy kj={save.kj} file={{ fileId: save.fileId, name }} /></div>
+    : href ? <Link className="btn btn-secondary" href={href}>미리보기</Link> : null}</div>;
 }
 function seedMail(state: AppState): void {
   if (state.draft.mailSeeded) return;
@@ -210,7 +213,7 @@ function materialDetail(a: Activity, course: Course, ctx: ScreenCtx): ReactNode 
   return <div className="act-body">{typeLine("material")}<h1>{a.title}</h1>{a.body ? <div className="prose"><p>{a.body}</p></div> : null}{a.fileName ? <p className="tiny">{a.fileName}</p> : null}
     {a.fileId ? <div className="btn-row"><Button kind="primary" onClick={() => void downloadActivity(a)}>다운로드</Button></div> : null}
     {metaTable([["공개일", "2026.10.30 (금)"], ["작성자", course.instructor], ["조회수", "130"]])}<h2>첨부파일</h2>
-    {owned.length ? owned.map((file) => fileRow(file.name, `${file.size}${file.week ? ` · ${file.week}주` : ""}`, preview)) : fileRow("week5-cases.pdf", "1.2 MB", preview)}
+    {owned.length ? owned.map((file) => fileRow(file.name, `${file.size}${file.week ? ` · ${file.week}주` : ""}`, preview, { kj: course.id, fileId: file.id })) : fileRow("week5-cases.pdf", "1.2 MB", preview, { kj: course.id, fileId: "f1" })}
     <div className="btn-row"><Link href={preview} className="btn btn-primary">문서 미리보기</Link></div>{summaryAside(ctx.state, true)}
   </div>;
 }
@@ -381,7 +384,7 @@ function summaryAside(state: AppState, embed: boolean): ReactNode {
   else if (tab === "quiz") body = <><p className="lead">{SUMMARY.quiz.q}</p>{SUMMARY.quiz.options.map((option) => { const picked = state.summaryChoice === option.id; return <Fragment key={option.id}><button type="button" className={`btn btn-secondary quiz-opt${picked ? " on" : ""}`} aria-pressed={picked} onClick={() => update((s) => { s.summaryChoice = option.id; })}>{option.text}</button>{picked ? <p className="tiny">{option.id === SUMMARY.quiz.answer ? "샘플 정답입니다. 점수는 저장하지 않습니다." : "이 보기는 샘플 정답이 아닙니다."}</p> : null}</Fragment>; })}</>;
   else if (tab === "cards") body = <button type="button" className="flash" aria-pressed={Boolean(state.summaryFlip)} onClick={() => update((s) => { s.summaryFlip = !s.summaryFlip; })}><span className="tiny">{state.summaryFlip ? "뒷면" : "앞면"}</span><strong>{state.summaryFlip ? SUMMARY.card.back : SUMMARY.card.front}</strong><span className="tiny">눌러서 뒤집기</span></button>;
   else body = <><p>이 자료는 표를 사례 단위로 읽고, 열 이름을 질문으로 둡니다.</p><ol className="key-points"><li>한 행은 사례 하나입니다.</li><li>열 이름은 다시 읽을 질문입니다.</li><li>자주 보는 열과 가끔 보는 열을 나눕니다.</li><li>원문 문장은 옮기지 않았습니다.</li></ol>{SUMMARY.summary.map((block) => <article className="sum-block" key={block.title}><h3>{block.title}{block.pages ? <span className="page-chip">{block.pages}</span> : null}</h3>{block.body ? <p>{block.body}</p> : null}{block.problem ? <p><b>문제 </b>{block.problem}</p> : null}{block.answer ? <p><b>메모 </b>{block.answer}</p> : null}</article>)}</>;
-  return <aside className={`summary-panel${embed ? " embed" : ""}${state.summaryOpen ? " open" : ""}`} aria-label="테크뇽 요약"><div className="sum-h"><Icon name="book" /><div><strong>테크뇽 요약</strong><span className="tiny">원문 3쪽</span></div><Badge tone="success">요약 완료</Badge>{embed ? null : <button type="button" className="x sum-close" aria-label="요약 닫기" onClick={() => update((s) => { s.summaryOpen = !s.summaryOpen; })}>×</button>}</div><div className="sum-tabs" role="tablist">{tabs.map(([id, label]) => <button key={id} type="button" role="tab" className={tab === id ? "on" : ""} aria-selected={tab === id} onClick={() => setTab(id)}>{label}</button>)}</div><div className="sum-b">{body}</div></aside>;
+  return <aside className={`summary-panel${embed ? " embed" : ""}${state.summaryOpen ? " open" : ""}`} aria-label="자료 요약"><div className="sum-h"><Icon name="book" /><div><strong>자료 요약</strong><span className="tiny">원문 3쪽</span></div><Badge tone="success">요약 완료</Badge>{embed ? null : <button type="button" className="x sum-close" aria-label="요약 닫기" onClick={() => update((s) => { s.summaryOpen = !s.summaryOpen; })}>×</button>}</div><div className="sum-tabs" role="tablist">{tabs.map(([id, label]) => <button key={id} type="button" role="tab" className={tab === id ? "on" : ""} aria-selected={tab === id} onClick={() => setTab(id)}>{label}</button>)}</div><div className="sum-b">{body}</div></aside>;
 }
 function renderPreview(ctx: ScreenCtx): ReactNode {
   const server = serverPreviewScreen(ctx); if (server) return server;
@@ -391,7 +394,7 @@ function renderPreview(ctx: ScreenCtx): ReactNode {
   const viewer = createDocumentViewer({ documentId: `lecture-preview:${fileId}`, pageCount: PAGES.length, label: "week5-cases.pdf", initialPage: ctx.state.previewPage || 1,
     onPageChange(page) { if (ctx.state.previewPage !== page) { ctx.state.previewPage = page; save(); } },
     renderPage(number) { const doc = PAGES[number - 1]; return <article className="preview-doc" style={{ "--doc-scale": zoom } as CSSProperties}><p className="kicker">{doc.kicker}</p><h1>{doc.title}</h1><p>{doc.body}</p><p>긴 문단도 줄 길이 안에서 읽히게 두었습니다. 확대는 글자 크기만 바꾸고, 가로 스크롤을 만들지 않습니다.</p></article>; },
-    extras: <><span className="tiny">{Math.round(zoom * 100)}%</span><Button kind="ghost" aria-label="축소" onClick={() => changeZoom(-1)}>축소</Button><Button kind="ghost" aria-label="확대" onClick={() => changeZoom(1)}>확대</Button><Button kind="ghost" onClick={() => changeZoom("reset")}>100%</Button><Button aria-expanded={Boolean(ctx.state.summaryOpen)} onClick={() => update((state) => { state.summaryOpen = !state.summaryOpen; })}>테크뇽 요약</Button></>,
+    extras: <><span className="tiny">{Math.round(zoom * 100)}%</span><Button kind="ghost" aria-label="축소" onClick={() => changeZoom(-1)}>축소</Button><Button kind="ghost" aria-label="확대" onClick={() => changeZoom(1)}>확대</Button><Button kind="ghost" onClick={() => changeZoom("reset")}>100%</Button><Button aria-expanded={Boolean(ctx.state.summaryOpen)} onClick={() => update((state) => { state.summaryOpen = !state.summaryOpen; })}>자료 요약</Button></>,
   });
   return <section className="bleed preview-layout"><div className="viewer">{viewer}</div>{summaryAside(ctx.state, false)}</section>;
 }

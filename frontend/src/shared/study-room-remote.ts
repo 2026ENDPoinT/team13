@@ -5,6 +5,7 @@
 import { apiGet, apiSend, apiUpload, ApiError, newRequestKey } from "./api.ts";
 import { backendStatus, courseIdFor, subscribe } from "./backend.ts";
 import { createResource, retryLater } from "./remote-cache.ts";
+import type { RecordingStudyResults } from "./recording-study.ts";
 
 type Id = number | string;
 
@@ -22,8 +23,8 @@ export interface ServerFolder {
 
 export type RecordingState = "scanning" | "ready" | "rejected";
 
-/** A recording as the server returns it. */
-export interface ServerRecording {
+/** Recording metadata plus optional backend-produced results (README: 녹음 전사·요약 연동 계약). */
+export interface ServerRecording extends RecordingStudyResults {
   id: number;
   courseId: number;
   title: string;

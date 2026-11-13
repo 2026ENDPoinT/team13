@@ -1,5 +1,5 @@
 import {
-  createRef, useEffect, useLayoutEffect, useSyncExternalStore,
+  createRef, useEffect, useLayoutEffect, useState, useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from "react";
 import { getState, render } from "../store.ts";
@@ -605,6 +605,26 @@ function useTrayFocus(): void {
   });
 }
 
+/** 챗봇 입력창이 닫히는 애니메이션 길이(ms). shell.css `.chat-dock-slot[data-state="leaving"]`의 transition-duration보다 조금 길게 둔다. */
+const DOCK_EXIT_MS = 160;
+
+/**
+ * `show`가 꺼져도 `exitMs` 동안은 `mounted`를 유지해 퇴장 애니메이션이 끝나기 전에 요소가 사라지지 않게 한다.
+ * 퇴장 중에 다시 켜지면 타이머를 취소한다(요소는 그대로 있어 transition이 현재 값에서 되돌아간다).
+ */
+function usePresence(show: boolean, exitMs: number): { mounted: boolean; leaving: boolean } {
+  const [held, setHeld] = useState(show);
+  useEffect(() => {
+    if (show) {
+      setHeld(true);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setHeld(false), exitMs);
+    return () => window.clearTimeout(timer);
+  }, [show, exitMs]);
+  return { mounted: show || held, leaving: !show };
+}
+
 /** 셸이 화면마다 그린다. 계획·요청함이 없고 챗봇 모드도 아니면 아무것도 그리지 않는다. `dock`은 챗봇 입력창. */
 export function AssistantTray({ screen, dock }: { screen: Screen; dock?: ReactNode }): ReactNode {
   useSyncExternalStore(subscribeTray, trayVersionNow);
@@ -617,6 +637,8 @@ export function AssistantTray({ screen, dock }: { screen: Screen; dock?: ReactNo
   const hasPanel = Boolean(run) || list.length > 0;
   // 홈은 히어로 입력창이 화면에 보이는 동안은 숨기고, 스크롤로 벗어났을 때 FAB·입력창을 띄운다. 그 밖의 화면은 챗봇 모드일 때.
   const chat = (screen.kind === "home" ? heroInputOut() : chatUsed()) && currentRole() === "student";
+  const dockShown = chat && (hasPanel || !chatShut());
+  const dockPresence = usePresence(dockShown, DOCK_EXIT_MS);
   if (!hasPanel && !chat) return null;
   const newRun = run && run.id !== openRunId;
   if (newRun) {
@@ -640,7 +662,6 @@ export function AssistantTray({ screen, dock }: { screen: Screen; dock?: ReactNo
   const open = hasPanel && expanded;
   const enter = enterPending && open;
   const mascot = Boolean(run) || chat;
-  const dockShown = chat && (hasPanel || !chatShut());
   const label = run ? "오늘 계획" : list.length ? "요청함" : "챗봇";
   const pillText = run ? `Plan ${progressCount(run)}/${run.steps.length} · ${runLabel(run)}` : list.length ? "요청함" : "챗봇";
   const pillOpen = hasPanel ? open : dockShown;
@@ -667,7 +688,7 @@ export function AssistantTray({ screen, dock }: { screen: Screen; dock?: ReactNo
             ? (
               <picture>
                 <source media="(prefers-reduced-motion: reduce)" srcSet="/app/assets/mascot/orange-mascot-study-blink-still.png" />
-                <img className="tray-mascot" src="/app/assets/mascot/orange-mascot-study-blink.gif" alt="" width="64" height="64" />
+                <img className="tray-mascot" src="/app/assets/mascot/orange-mascot-study-blink.png" alt="" width="64" height="64" />
               </picture>
             )
             : <span>{pillText}</span>}
@@ -675,7 +696,18 @@ export function AssistantTray({ screen, dock }: { screen: Screen; dock?: ReactNo
         </span>
         {mascot ? null : <span className="tray-toggle-open" hidden={!open} aria-hidden="true"><Icon name="close" /></span>}
       </button>
-      {dockShown ? <div className="chat-dock-slot" id="chat-dock">{dock}</div> : null}
+      {dockPresence.mounted
+        ? (
+          <div
+            className="chat-dock-slot" id="chat-dock"
+            data-state={dockPresence.leaving ? "leaving" : "open"}
+            inert={dockPresence.leaving}
+            aria-hidden={dockPresence.leaving ? "true" : undefined}
+          >
+            {dock}
+          </div>
+        )
+        : null}
       <div className="tray-panel" id="assistant-tray-panel" data-key="tray-panel" tabIndex={-1} hidden={!open}>
         <div className="tray-head">
           {run ? <strong>{`Plan ${progressCount(run)}/${run.steps.length}`}</strong> : <strong>요청함</strong>}
@@ -699,7 +731,8 @@ export function AssistantTray({ screen, dock }: { screen: Screen; dock?: ReactNo
 /** 계획·요청함 패널이 없을 때 FAB은 챗봇 입력창을 접고 편다. */
 function toggleChat(): void {
   toggleChatShut();
-  pendingFocus = "tray-toggle";
+  // 펼칠 때는 입력창으로 바로 포커스(오렌지 테두리), 접을 때는 FAB에 둔다.
+  pendingFocus = chatShut() ? "tray-toggle" : "chat-input";
   render();
 }
 

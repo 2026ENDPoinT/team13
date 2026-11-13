@@ -98,8 +98,8 @@
 }
 .crs-plan:hover { border-color: var(--accent); text-decoration: none; }
 .crs-filters { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-/* 학습활동 필터(강의실·학습활동 목록): 활동 종류와 진행 상태를 한 줄씩 둔다. */
-.crs > .crs-filters, .crs-rail .crs-filters { flex-direction: column; align-items: flex-start; }
+/* 학습활동 필터: 활동 종류(영상·과제 …)와 진행 상태(진행중·미제출)를 한 줄에 두고 구분선으로 나눈다. */
+.crs-filters > .crs-filter-row + .crs-filter-row { padding-left: var(--space-3); border-left: 1px solid var(--border); }
 .crs button.chip { font: inherit; cursor: pointer; }
 [data-area="course"] .chip.video { color: var(--video-ink); }
 [data-area="course"] .chip.material { color: var(--material-ink); }

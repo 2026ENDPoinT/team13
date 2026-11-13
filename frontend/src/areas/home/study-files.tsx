@@ -22,6 +22,7 @@ import {
   type LectureRow, type ProgressItem, type ProgressWeek,
 } from "../../shared/lectures-remote.ts";
 import { serverStudySummary, studyLectureHref } from "./study-server.tsx";
+import { LessonViewer, type LessonDoc } from "../../shared/lesson-viewer.tsx";
 import { wallFormat } from "../../shared/home-remote.ts";
 
 const REFRESH_MS = 30000;
@@ -595,20 +596,57 @@ export function sampleSummary(ctx: ScreenCtx): ReactNode {
   }
   const course = courseById(item.courseId);
   return (
-    <section className="study" data-area="home">
+    <section className="study study-summary" data-area="home">
       <p className="term"><Link href={hrefFor(find("study_home"))}>학습실</Link>{" · "}<Link href={folderHref(course.id)}>{courseName(course)}</Link></p>
-      <article className="summary-doc">
-        <div className="sum-h">
-          <Icon name="book" />
-          <div>
-            <strong>자료 요약</strong>
-            <span className="tiny">{`${courseName(course)} · ${item.title}`}</span>
-          </div>
-        </div>
-        <p>{item.sentence}</p>
-        <ol className="key-points">{item.points.map((point, index) => <li key={index}>{point}</li>)}</ol>
-        <p className="tiny">샘플 자료입니다. 실제 PDF를 요약한 결과가 아닙니다.</p>
-      </article>
+      <header className="lv-head">
+        <h1>{item.title}</h1>
+        <p className="tiny">{`${courseName(course)} · 자료 요약 · 샘플`}</p>
+      </header>
+      <LessonViewer doc={sampleLesson(item)} />
     </section>
   );
+}
+
+/**
+ * 샘플 자료를 LessonViewer 모양으로: 1쪽은 표지(제목·한 문장), 2쪽부터 `points` 한 줄씩. 요약 흐름은 앞뒤 두 구간,
+ * 핵심 개념은 용어·뜻, 퀴즈는 같은 자료의 뜻 네 개를 보기로 쓴다(문제마다 정답 자리를 바꿈).
+ */
+function sampleLesson(item: StudyMaterial): LessonDoc {
+  const { points } = item;
+  const half = Math.ceil(points.length / 2);
+  const groups = [points.slice(0, half), points.slice(half)].filter((group) => group.length);
+  let next = 2;
+  const story = groups.map((group, index) => {
+    const from = index === 0 ? 1 : next;
+    next += group.length;
+    return { from, to: next - 1, title: group.map((point) => point.term).join(" · "), answer: group.map((point) => `- **${point.term}**: ${point.meaning}`).join("\n") };
+  });
+  const meanings = points.map((point) => point.meaning);
+  const n = meanings.length;
+  return {
+    id: item.id,
+    title: item.title,
+    pageCount: points.length + 1,
+    source: { kind: "text", pages: [{ page: 1, title: item.title, text: item.sentence }, ...points.map((point, index) => ({ page: index + 2, title: point.term, text: point.text }))] },
+    summary: {
+      story,
+      slides: [{ page: 1, tag: "meta", title: item.title, explain: item.sentence }, ...points.map((point, index) => ({ page: index + 2, tag: "core", title: point.term, explain: point.text }))],
+    },
+    overview: item.sentence,
+    concepts: { status: "ready", error: null, data: points.map((point, index) => ({ term: point.term, meaning: point.meaning, page: index + 2 })) },
+    quiz: {
+      status: "ready", error: null,
+      data: points.map((point, index) => {
+        const shift = (index * 2) % n;
+        return {
+          question: `다음 중 '${point.term}'의 뜻은?`,
+          options: meanings.map((_, at) => meanings[(at + shift) % n]),
+          answer: (index - shift + n) % n,
+          explanation: point.text,
+          page: index + 2,
+        };
+      }),
+    },
+    note: "샘플 자료입니다. 실제 PDF를 요약한 결과가 아닙니다.",
+  };
 }

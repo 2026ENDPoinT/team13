@@ -19,17 +19,3 @@ export function BrandLogo() {
   );
 }
 
-export function FabArt() {
-  return (
-    <img
-      className="asset asset-mascot"
-      src="/app/assets/fab/technyon-120.png"
-      srcSet="/app/assets/fab/technyon-100.png 100w, /app/assets/fab/technyon-120.png 120w"
-      sizes="(max-width: 767px) 50px, 60px"
-      width="60"
-      height="60"
-      alt=""
-    />
-  );
-}
-

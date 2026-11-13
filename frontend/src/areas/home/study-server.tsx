@@ -1,5 +1,5 @@
 // 학습실의 백엔드 화면. `study_summary?doc=srv-<fileId>&kj=`는 서버 자료의 게시된 쪽별 요약과 파일
-// 요약, 테크뇽 학습 대화로 들어가는 버튼을 보이고, `study_lecture?kj=&lecture=srv-<activityId>`는
+// 요약을 보이고, `study_lecture?kj=&lecture=srv-<activityId>`는
 // 영상 강의의 콘텐츠와 본인 진도, 플레이어 링크, 함께 볼 서버 강의자료를 보인다. 연결된 과목에서는
 // 샘플 요약을 실제 자료처럼 보이지 않는다. `off`이면 null을 돌려주어 샘플 요약과 녹음 화면이 그대로
 // 그려진다. 응답은 메모리 캐시(remote-cache.ts)에만 두고 세션이 바뀌면 버린다.
@@ -7,7 +7,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { courseById, studyMaterials, type Course } from "../../data.ts";
 import { hrefFor, find } from "../../manifest.ts";
 import type { ScreenCtx } from "../../types.ts";
-import { getState, save, render } from "../../store.ts";
 import { Link } from "../../router.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { Badge, Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
@@ -18,7 +17,7 @@ import { createResource, freshVisit, useResource, type Entry } from "../../share
 import { listCoursePdfs, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
 import { getPublishedSummary, summaryMessage, type ServerSummary } from "../../shared/course-pdfs-remote.ts";
 import { fileOverview, studyMessage, type FileOverview } from "../../shared/study-chat-remote.ts";
-import { summaryView, markdown } from "../../shared/page-summary.tsx";
+import { LessonViewer, type LessonDoc } from "../../shared/lesson-viewer.tsx";
 import {
   lectureDetails, lectureProgress, detailKey, courseKey, progressOf, lectureIdOf, lectureMessage, studentLectureHref,
   lecturePlayerHref, VIDEO_STATE, PROGRESS_STATE, durationText, windowText,
@@ -52,7 +51,7 @@ function courseOf(kj: string): Course | undefined {
 const folderHref = (kj: string) => hrefFor(find("study_home"), { kj });
 const documentHref = (kj: string, id: string) => hrefFor(find("study_home"), { kj, doc: id });
 
-/** 서버 자료의 요약 화면. `doc` 이름은 `shared/study-chat-panel.tsx`가 테크뇽 패널에서 읽는다. */
+/** 서버 자료의 요약 화면 주소. */
 export const studySummaryHref = (kj: string, id: string): string => hrefFor(find("study_summary"), { doc: id, kj });
 
 /** 학습실에서 서버 영상 강의 하나를 보는 화면. */
@@ -148,7 +147,7 @@ export function serverStudySummary(ctx: ScreenCtx, fallback: () => ReactNode): R
       </SummaryShell>
     );
   }
-  return <ServerSummaryView key={`${kj}:${fileId}`} open={Boolean(ctx.state && ctx.state.technyonOpen)} course={course} courseId={courseId} fileId={fileId} />;
+  return <ServerSummaryView key={`${kj}:${fileId}`} course={course} courseId={courseId} fileId={fileId} />;
 }
 
 function SummaryShell({ course, children }: { course: Course | undefined; children: ReactNode }) {
@@ -161,15 +160,7 @@ function SummaryShell({ course, children }: { course: Course | undefined; childr
   );
 }
 
-/** `technyon`: 테크뇽 대화 패널을 열고 닫는다. */
-function toggleTechnyon() {
-  const state = getState();
-  state.technyonOpen = !state.technyonOpen;
-  save();
-  render();
-}
-
-function ServerSummaryView({ open, course, courseId, fileId }: { open: boolean; course: Course; courseId: Id; fileId: string }) {
+function ServerSummaryView({ course, courseId, fileId }: { course: Course; courseId: Id; fileId: string }) {
   const kj = course.id;
   const docId = `srv-${fileId}`;
   const key = `${courseId}:${fileId}`;
@@ -211,11 +202,9 @@ function ServerSummaryView({ open, course, courseId, fileId }: { open: boolean; 
   } else if (!record) body = <NotFound kj={kj} />;
   else {
     const summary: Entry<PublishedSummary | null> | null = hasSummary ? summaryEntry : { data: null, error: null, loading: null };
-    const overview: Entry<FileOverview | null> | null = hasSummary ? overviewEntry : { data: null, error: null, loading: null };
-    const published = summary && summary.data;
     body = (
       <>
-        <article className="summary-doc" aria-label={`${record.title} 자료 요약`}>
+        <article className="summary-doc" aria-label={`${record.title} 자료`}>
           <div className="sum-h">
             <Icon name="book" />
             <div>
@@ -224,13 +213,13 @@ function ServerSummaryView({ open, course, courseId, fileId }: { open: boolean; 
             </div>
           </div>
           <div className="btn-row study-summary__actions">
-            {published ? <Button kind="primary" aria-expanded={open ? "true" : "false"} onClick={toggleTechnyon}>{open ? "테크뇽 대화 닫기" : "테크뇽에게 이 자료 묻기"}</Button> : null}
             <Link href={documentHref(kj, docId)} className="btn btn-secondary">문서 보기</Link>
           </div>
-          {published ? <p className="tiny">테크뇽은 교수님이 게시한 이 자료의 요약으로 답합니다. 대화는 ASTRA 서버에 남습니다.</p> : null}
         </article>
-        <OverviewSection entry={overview} load={loadOverview} />
-        <PageSummarySection entry={summary} load={loadSummary} courseId={courseId} fileId={fileId} />
+        <PublishedSection
+          entry={summary} overview={hasSummary ? overviewEntry : null} load={loadSummary} loadOverview={loadOverview}
+          docId={docId} title={record.title} pageCount={record.remote ? record.pageCount : null} courseId={courseId} fileId={fileId}
+        />
       </>
     );
   }
@@ -250,48 +239,56 @@ function pending<T>(entry: Entry<T>): boolean {
   return (entry.data == null && !entry.error && Boolean(entry.loading));
 }
 
-function OverviewSection({ entry, load }: { entry: Entry<FileOverview | null> | null; load: () => Promise<void> }) {
-  let body: ReactNode;
-  if (!entry || pending(entry)) body = <p className="tiny">파일 요약을 불러오는 중입니다.</p>;
-  else if (entry.error && !entry.data) body = <><p className="err" role="alert">{detailOf(entry.error, studyMessage)}</p><Retry load={load} /></>;
-  else if (!entry.data) body = <p className="tiny">게시된 파일 요약이 없습니다.</p>;
-  else body = markdown(entry.data.markdown || "");
-  return (
-    <section className="study-section" aria-label="파일 요약">
-      <h2>파일 요약</h2>
-      <div className="study-summary__overview">{body}</div>
-    </section>
-  );
-}
-
 const publishedFormat = wallFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-function PageSummarySection({ entry, load, courseId, fileId }: { entry: Entry<PublishedSummary | null> | null; load: () => Promise<void>; courseId: Id; fileId: string }) {
-  let body: ReactNode;
-  if (!entry || pending(entry)) body = <LoadingState title="쪽별 요약을 불러오는 중입니다" />;
-  else if (entry.error && !entry.data) body = <ErrorState title="쪽별 요약을 불러오지 못했습니다" body={detailOf(entry.error, summaryMessage)} actions={<Retry load={load} />} />;
-  else if (!entry.data) body = <EmptyState title="게시된 요약이 없습니다" body="교수님이 이 자료의 쪽별 요약을 게시하면 여기에서 보고 테크뇽에게 물어볼 수 있습니다." />;
-  else {
-    const published = entry.data;
-    const at = publishedFormat.format(published.publishedAt);
-    body = (
-      <>
-        <p className="tiny">{`${at ? `${at} 게시 · ` : ""}교수님이 검토해 게시한 AI 요약입니다. 원문과 함께 확인해 주세요.`}</p>
-        {summaryView(published, {
-          pageImageBase: published.pageImageBase,
-          refreshImages: async () => {
-            const fresh: PublishedSummary | null = await getPublishedSummary({ backendCourseId: courseId, fileId });
-            return fresh ? fresh.pageImageBase ?? null : null;
-          },
-        })}
-      </>
-    );
-  }
+interface PublishedProps {
+  entry: Entry<PublishedSummary | null> | null;
+  overview: Entry<FileOverview | null> | null;
+  load: () => Promise<void>;
+  loadOverview: () => Promise<void>;
+  docId: string;
+  title: string;
+  pageCount: number | null;
+  courseId: Id;
+  fileId: string;
+}
+
+/** 게시된 요약을 원본 쪽 이미지와 나란히(LessonViewer). 파일 요약은 요약 탭 맨 앞에 붙는다. */
+function PublishedSection({ entry, overview, load, loadOverview, docId, title, pageCount, courseId, fileId }: PublishedProps) {
+  if (!entry || pending(entry)) return <LoadingState title="요약을 불러오는 중입니다" />;
+  if (entry.error && !entry.data) return <ErrorState title="요약을 불러오지 못했습니다" body={detailOf(entry.error, summaryMessage)} actions={<Retry load={load} />} />;
+  if (!entry.data) return <EmptyState title="게시된 요약이 없습니다" body="교수님이 이 자료의 요약을 게시하면 여기에서 원문과 함께 볼 수 있습니다." />;
+  const published = entry.data;
+  const at = publishedFormat.format(published.publishedAt);
+  const pages = [...(published.slides || []).map((slide) => slide.page), ...(published.story || []).map((beat) => beat.to)];
+  const doc: LessonDoc = {
+    id: docId,
+    title,
+    pageCount: pageCount || Math.max(0, ...pages),
+    source: published.pageImageBase
+      ? {
+        kind: "images", base: published.pageImageBase, aspect: null,
+        // 쪽 이미지 쿠키가 끝나면 게시본을 다시 받아 새 주소를 쓴다.
+        refresh: async () => {
+          const fresh: PublishedSummary | null = await getPublishedSummary({ backendCourseId: courseId, fileId });
+          return fresh ? fresh.pageImageBase ?? null : null;
+        },
+      }
+      : null,
+    summary: published,
+    overview: overview && overview.data ? overview.data.markdown || null : null,
+    note: `${at ? `${at} 게시 · ` : ""}교수님이 검토해 게시한 AI 요약입니다. 원문과 함께 확인해 주세요.`,
+  };
   return (
-    <section className="study-section" aria-label="쪽별 요약">
-      <h2>쪽별 요약</h2>
-      <div className="study-summary__pages">{body}</div>
-    </section>
+    <>
+      {overview && overview.error && !overview.data ? (
+        <div className="study-summary__overview" role="alert">
+          <p className="err">{`파일 요약: ${detailOf(overview.error, studyMessage)}`}</p>
+          <Retry load={loadOverview} />
+        </div>
+      ) : null}
+      <LessonViewer doc={doc} />
+    </>
   );
 }
 

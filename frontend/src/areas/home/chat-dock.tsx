@@ -61,6 +61,7 @@ export function ChatDock(): ReactNode {
       <div className={`chat-box${busy ? " is-busy" : ""}`}>
         <input
           ref={input}
+          data-key="chat-input"
           type="text"
           className="chat-input"
           aria-label="챗봇 입력: 과목 이동이나 할 일 요청"

@@ -406,10 +406,7 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
               }}
             />
           </div>
-          <kbd className="cmd-key" aria-hidden="true">{ghost ? "Tab" : "/"}</kbd>
-          <button type="button" className="cmd-go" aria-label="실행" onClick={() => void submitCommand({})}>
-            <span aria-hidden="true">→</span>
-          </button>
+          {ghost ? <kbd className="cmd-key" aria-hidden="true">Tab</kbd> : null}
           <span className="cmd-spin" aria-hidden="true" />
         </div>
         <ul

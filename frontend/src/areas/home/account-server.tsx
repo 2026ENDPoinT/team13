@@ -1,32 +1,24 @@
 // Account dialogs on the ASTRA backend while the connection is not `off`: 내 정보 (profile, registrar
-// sync and contact behind re-authentication), 아바타 (photo upload with an in-page square crop, colour
-// allowlist and short name with `version`), 설정 (server preferences with `version`), 접속 기기·이력
-// (devices, sessions, login events). `anon` shows only the login strip. Server text goes in as text only.
-import { useEffect, useReducer, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { Badge, Button, Dialog, EmptyState, ErrorState, Field, LoadingState, Table } from "../../ui/kit.tsx";
-import { Link } from "../../router.tsx";
+// sync and contact behind re-authentication) and 설정 (server preferences with `version`). `anon` shows only
+// the login strip. Server text goes in as text only.
+import { useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { Button, Dialog, ErrorState, Field, LoadingState } from "../../ui/kit.tsx";
 import { getState, render, save } from "../../store.ts";
 import { systemTheme } from "../../theme.ts";
 import type { ScreenCtx } from "../../types.ts";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
 import { backendStatus, subscribe } from "../../shared/backend.ts";
 import { freshVisit, useResource, type Entry } from "../../shared/remote-cache.ts";
-import { currentRole, routeFor } from "../../shared/routes.ts";
 import { koDateTime } from "../../shared/home-remote.ts";
 import { personAvatar } from "../../shared/avatar-remote.tsx";
 import {
-  AVATAR_COLORS, isAvatarColor, profiles, preferences, sessions, devices, loginEvents,
-  reloadAccount, loadMore, saveAvatar, saveContact, savePreferences,
-  revokeSession, revokeOtherSessions, revokeDevice, isStepUpRequired, isVersionConflict, stepUpMethods,
-  startReauth, stepUpDev, stepUpTotp, accountMessage, THEME_LABEL, LANGUAGE_LABEL, TIME_LABEL, CLIENT_LABEL,
-  takeReauthFailure, syncProfile, isSyncUnavailable, syncMessage, uploadAvatarPhoto, removeAvatarPhoto,
-  awaitAvatarPhoto, photoMessage, PHOTO_MAX_BYTES, PHOTO_TYPES,
-  type AccountResource, type AvatarPhoto, type Profile, type ProfileContact,
+  profiles, preferences, reloadAccount, saveContact, savePreferences, isStepUpRequired, isVersionConflict, stepUpMethods, startReauth, stepUpDev, stepUpTotp, accountMessage, THEME_LABEL, LANGUAGE_LABEL, TIME_LABEL, takeReauthFailure, syncProfile, isSyncUnavailable, syncMessage,
+  type AccountResource, type Profile, type ProfileContact,
 } from "../../shared/account-remote.ts";
 
-export const ACCOUNT_DIALOGS = new Set(["myinfo", "avatar", "settings", "history", "history-login"]);
+export const ACCOUNT_DIALOGS = new Set(["myinfo", "settings"]);
 
-const TITLES: Record<string, string> = { myinfo: "내 정보", avatar: "아바타", settings: "설정", history: "접속 기기", "history-login": "접속 이력" };
+const TITLES: Record<string, string> = { myinfo: "내 정보", settings: "설정" };
 const ROLE: Record<string, string> = { STUDENT: "학생", PROFESSOR: "교수", TA: "조교", STAFF: "교직원" };
 
 // The single cache key account-remote uses for every account resource.
@@ -34,7 +26,6 @@ const ONE = "me";
 
 // What the user typed or picked, kept across re-renders and 409 reloads; dropped on session change.
 interface ContactDraft { phone: string; email: string; open?: boolean }
-interface AvatarDraft { color: string; shortName: string }
 interface PrefDraft {
   language: string;
   timeFormat: string;
@@ -43,11 +34,9 @@ interface PrefDraft {
   version: number;
 }
 let contactDraft: ContactDraft | null = null;
-let avatarDraft: AvatarDraft | null = null;
 let prefDraft: PrefDraft | null = null;
 subscribe(() => {
   contactDraft = null;
-  avatarDraft = null;
   prefDraft = null;
 });
 
@@ -129,16 +118,14 @@ export function serverAccountDialog(name: string, ctx: ScreenCtx): ReactNode {
   if (freshVisit("account-dialog", name) === "entry") {
     notes.clear();
     failedSteps.clear();
-    forgetPhotoDraft();
   }
   const title = TITLES[name] ?? "";
   if (status !== "ready") {
     return shell(title, (
       <div className="acct">
         {backendPanel({ text: "ASTRA 서버에 로그인하면 내 계정 정보를 서버에서 불러옵니다." })}
-        {name === "history" || name === "history-login" ? <HistoryTabs login={name === "history-login"} /> : null}
       </div>
-    ), name.startsWith("history"));
+    ));
   }
   // A failed IdP re-authentication: remember its command, never resend it, clean the address. The
   // replaced history entry gets a new `history.state`, so the visit is marked again (not a new entry).
@@ -148,9 +135,7 @@ export function serverAccountDialog(name: string, ctx: ScreenCtx): ReactNode {
     freshVisit("account-dialog", name);
   }
   if (name === "myinfo") return shell(title, <MyInfo ctx={ctx} />);
-  if (name === "avatar") return shell(title, <AvatarForm />);
-  if (name === "settings") return shell(title, <SettingsForm />);
-  return shell(title, <History login={name === "history-login"} />, true);
+  return shell(title, <SettingsForm />);
 }
 
 // ---------- 내 정보 ----------
@@ -179,7 +164,6 @@ function MyInfo({ ctx }: { ctx: ScreenCtx }) {
         <b>{p.name || ""}</b>
         {dept ? <p>{dept}</p> : null}
         <p className="tiny">{ROLE[p.role ?? ""] || ""}</p>
-        <Link href={routeFor(currentRole(), "pop", { pop: "avatar" })} className="btn btn-secondary">아바타 바꾸기</Link>
       </div>
       <dl className="acct-contact">
         <dt>전화번호</dt><dd>{contact.phone || "등록된 번호 없음"}</dd>
@@ -377,357 +361,6 @@ function StepUpBox({ returnStep, retry, say, failed = false, onDone }: {
   );
 }
 
-// ---------- 아바타 ----------
-
-function AvatarForm() {
-  const entry = useAccount(profiles, "account-avatar");
-  const [note, say] = useNote();
-  const bump = useBump();
-  const [saving, setSaving] = useState(false);
-  if (!entry || (!entry.data && !entry.error)) {
-    return <div className="acct" aria-live="polite"><LoadingState title="아바타를 불러오는 중입니다" /></div>;
-  }
-  if (!entry.data) {
-    return (
-      <div className="acct" aria-live="polite">
-        <ErrorState title="아바타를 불러오지 못했습니다" body={accountMessage(entry.error)} actions={<RetryButton resource={profiles} />} />
-      </div>
-    );
-  }
-  const p = entry.data;
-  const avatar = p.avatar || {};
-  const draft = avatarDraft || {
-    color: isAvatarColor(avatar.color) ? avatar.color : AVATAR_COLORS[0]![0],
-    shortName: avatar.shortName || "",
-  };
-  avatarDraft = draft;
-  // Saving a colour turns a photo avatar back into a colour one and discards a photo still processing.
-  const replacesPhoto = avatar.type === "image" || Boolean(avatar.photo && avatar.photo.state === "processing");
-  const saveColour = async () => {
-    if (saving) return;
-    setSaving(true);
-    say("");
-    try {
-      await saveAvatar({ avatarColor: draft.color, shortName: draft.shortName.trim(), version: avatar.version || 0 });
-      avatarDraft = null;
-      say(replacesPhoto ? "색 아바타를 저장했습니다. 사진 대신 이 아바타를 씁니다." : "아바타를 저장했습니다.");
-    } catch (error) {
-      say(accountMessage(error), true);
-      // Stale version: nothing changed. Reload the profile and keep the choice for another try.
-      if (isVersionConflict(error)) void reloadAccount(profiles);
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div className="acct" aria-live="polite">
-      <PhotoPart p={p} />
-      <h3 className="acct-subhead">색 아바타</h3>
-      <div className="who">
-        <span className={`avatar acct-avatar is-xl avatar-bg-${draft.color}`} aria-hidden="true">
-          {draft.shortName || String(p.name || "").slice(0, 1) || "?"}
-        </span>
-      </div>
-      <Field label="표시 글자">
-        <input value={draft.shortName} maxLength={16} autoComplete="off" aria-describedby="acct-avatar-hint"
-          onChange={(event) => { draft.shortName = event.currentTarget.value; bump(); }} />
-      </Field>
-      <p id="acct-avatar-hint" className="note">
-        {replacesPhoto
-          ? "두 글자까지 씁니다. 비우면 이름의 첫 글자를 씁니다. 색 아바타를 저장하면 사진은 지워집니다."
-          : "두 글자까지 씁니다. 비우면 이름의 첫 글자를 씁니다."}
-      </p>
-      <fieldset className="acct-fieldset">
-        <legend>배경색</legend>
-        <div className="acct-swatches">
-          {AVATAR_COLORS.map(([key, label]) => (
-            <label key={key} className="acct-swatch">
-              <input type="radio" name="avatarColor" value={key} checked={draft.color === key}
-                onChange={(event) => { if (!event.currentTarget.checked) return; draft.color = key; bump(); }} />
-              <span className={`acct-swatch__chip avatar-bg-${key}`} aria-hidden="true" />
-              <span>{label}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      <div className="btn-row">
-        <Link href={routeFor(currentRole(), "pop", { pop: "myinfo" })} className="btn btn-secondary">이전</Link>
-        <Button kind="primary" disabled={saving} aria-busy={saving || undefined} onClick={() => void saveColour()}>
-          {saving ? "저장하는 중…" : "색 아바타 저장"}
-        </Button>
-      </div>
-      <Status note={note} />
-    </div>
-  );
-}
-
-// ---------- 아바타 사진 ----------
-
-const CROP_VIEW = 240; // crop square in CSS px; the drawing buffer is twice that
-const CROP_OUT = 512; // uploaded JPEG side; the server rebuilds a 256 px JPEG
-const CROP_ZOOM_MAX = 4;
-
-interface Crop { bitmap: ImageBitmap; base: number; zoom: number; x: number; y: number }
-
-// The picked photo being cropped (an ImageBitmap in memory, never a URL) and which photo state was
-// last announced. Kept across re-renders; dropped when the dialog is opened again or the session changes.
-let photoDraft: Crop | null = null;
-let photoShown: string | undefined;
-function forgetPhotoDraft(): void {
-  if (photoDraft) photoDraft.bitmap.close();
-  photoDraft = null;
-  photoShown = undefined;
-}
-subscribe(() => forgetPhotoDraft());
-
-/** Drops the crop but keeps which photo state was announced. */
-function dropCrop(): void {
-  const shown = photoShown;
-  forgetPhotoDraft();
-  photoShown = shown;
-}
-
-function clampCrop(crop: Crop): void {
-  const scale = crop.base * crop.zoom;
-  crop.x = Math.min(0, Math.max(CROP_VIEW - crop.bitmap.width * scale, crop.x));
-  crop.y = Math.min(0, Math.max(CROP_VIEW - crop.bitmap.height * scale, crop.y));
-}
-
-/** Zooms around the centre of the crop square. */
-function zoomCrop(crop: Crop, zoom: number): void {
-  const next = Math.min(CROP_ZOOM_MAX, Math.max(1, zoom));
-  const before = crop.base * crop.zoom;
-  const cx = (CROP_VIEW / 2 - crop.x) / before;
-  const cy = (CROP_VIEW / 2 - crop.y) / before;
-  crop.zoom = next;
-  const after = crop.base * next;
-  crop.x = CROP_VIEW / 2 - cx * after;
-  crop.y = CROP_VIEW / 2 - cy * after;
-  clampCrop(crop);
-}
-
-function drawCrop(canvas: HTMLCanvasElement, crop: Crop): void {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const k = canvas.width / CROP_VIEW;
-  const scale = crop.base * crop.zoom * k;
-  ctx.fillStyle = "#ffffff"; // a transparent PNG becomes a JPEG on white
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(crop.bitmap, crop.x * k, crop.y * k, crop.bitmap.width * scale, crop.bitmap.height * scale);
-}
-
-/** Says what changed about the uploaded photo, once per state. */
-function announce(photo: AvatarPhoto | null, say: Say): void {
-  const key = photo ? `${photo.state}:${photo.errorCode || ""}` : "";
-  if (key === photoShown) return;
-  const opened = photoShown === undefined;
-  photoShown = key;
-  if (!photo) return;
-  if (photo.state === "processing") say("사진을 검사하고 다듬는 중입니다. 끝나면 여기에 보입니다.");
-  else if (photo.state === "ready" && !opened) say("사진을 적용했습니다.");
-  else if (photo.state === "failed") say(`올린 사진을 쓰지 못했습니다. ${photoMessage(photo.errorCode)}`, true);
-}
-
-const ARROWS: Record<string, [number, number]> = { ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
-
-/**
- * 사진 고르기·자르기·올리기·지우기. The file is decoded with `createImageBitmap` and drawn into a
- * canvas (the page CSP has no `blob:`), cropped to a square by dragging or the arrow keys and the
- * zoom slider (or + / -), exported with `canvas.toBlob` as a 512 px JPEG and sent as multipart `file`.
- * The server answers 202 `processing`; the profile is re-read until the photo is `ready` or `failed`.
- */
-function PhotoPart({ p }: { p: Profile }) {
-  const [note, say] = useNote("photo");
-  const bump = useBump();
-  const node = useRef<HTMLElement>(null);
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const drag = useRef<{ x: number; y: number } | null>(null);
-  const focusCanvas = useRef(false);
-  const polling = useRef(false);
-  const mounted = useRef(true);
-  const [sending, setSending] = useState(false);
-  const avatar = p.avatar || {};
-  const photo = avatar.photo || null;
-  const hasPhoto = avatar.type === "image";
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
-
-  useEffect(() => {
-    announce(photo, say);
-    const host = node.current;
-    if (!photo || photo.state !== "processing" || polling.current || !host) return;
-    polling.current = true;
-    void awaitAvatarPhoto(host).then((state) => {
-      polling.current = false;
-      if (state === "processing" && mounted.current) say("사진 처리가 오래 걸립니다. 잠시 뒤 이 창을 다시 열어 확인하세요.");
-    });
-  });
-
-  // The crop canvas is drawn imperatively from `photoDraft` after every render.
-  useEffect(() => {
-    const target = canvas.current;
-    if (!target || !photoDraft) return;
-    clampCrop(photoDraft);
-    drawCrop(target, photoDraft);
-    if (focusCanvas.current) {
-      focusCanvas.current = false;
-      target.focus();
-    }
-  });
-
-  const redraw = () => {
-    if (!photoDraft || !canvas.current) return;
-    clampCrop(photoDraft);
-    drawCrop(canvas.current, photoDraft);
-  };
-
-  const setZoom = (value: number) => {
-    if (!photoDraft) return;
-    zoomCrop(photoDraft, value);
-    bump();
-  };
-
-  const pick = async (input: HTMLInputElement) => {
-    const file = input.files && input.files[0];
-    input.value = "";
-    if (!file) return;
-    if (!PHOTO_TYPES.has(file.type)) return say("PNG나 JPEG 파일만 올릴 수 있습니다.", true);
-    if (file.size > PHOTO_MAX_BYTES) return say("5MB 이하의 사진만 올릴 수 있습니다.", true);
-    let bitmap: ImageBitmap;
-    try {
-      bitmap = await createImageBitmap(file);
-    } catch {
-      return say("사진을 읽지 못했습니다. 다른 PNG나 JPEG 파일을 고르세요.", true);
-    }
-    dropCrop();
-    const base = Math.max(CROP_VIEW / bitmap.width, CROP_VIEW / bitmap.height);
-    photoDraft = { bitmap, base, zoom: 1, x: (CROP_VIEW - bitmap.width * base) / 2, y: (CROP_VIEW - bitmap.height * base) / 2 };
-    say("사진을 끌거나 화살표 키로 옮기고 확대를 맞춘 뒤 올리세요.");
-    focusCanvas.current = true;
-    bump();
-  };
-
-  const send = async () => {
-    if (sending || !photoDraft) return;
-    setSending(true);
-    say("");
-    try {
-      const out = document.createElement("canvas");
-      out.width = CROP_OUT;
-      out.height = CROP_OUT;
-      drawCrop(out, photoDraft);
-      const blob = await new Promise<Blob | null>((resolve) => out.toBlob(resolve, "image/jpeg", 0.9));
-      if (!blob) throw new Error("사진을 만들지 못했습니다. 다른 사진을 고르세요.");
-      if (blob.size > PHOTO_MAX_BYTES) throw new Error(photoMessage("too_large"));
-      photoShown = "";
-      await uploadAvatarPhoto(blob, "avatar.jpg");
-      dropCrop();
-      say("사진을 올렸습니다. 검사하고 다듬는 중입니다. 끝나면 여기에 보입니다.");
-    } catch (error) {
-      say(photoMessage(error), true);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const remove = async () => {
-    say("");
-    try {
-      await removeAvatarPhoto();
-      photoShown = "";
-      say("사진을 지웠습니다. 색 아바타를 씁니다.");
-    } catch (error) {
-      say(accountMessage(error), true);
-    }
-  };
-
-  const onKeyDown = (event: KeyboardEvent<HTMLCanvasElement>) => {
-    if (!photoDraft) return;
-    const step = event.shiftKey ? 32 : 8;
-    const move = ARROWS[event.key];
-    if (move) {
-      photoDraft.x += move[0] * step;
-      photoDraft.y += move[1] * step;
-      redraw();
-    } else if (event.key === "+" || event.key === "=") setZoom(photoDraft.zoom + 0.1);
-    else if (event.key === "-" || event.key === "_") setZoom(photoDraft.zoom - 0.1);
-    else return;
-    event.preventDefault();
-  };
-
-  const onPointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
-    const from = drag.current;
-    if (!from || !photoDraft) return;
-    const k = CROP_VIEW / (event.currentTarget.getBoundingClientRect().width || CROP_VIEW);
-    photoDraft.x += (event.clientX - from.x) * k;
-    photoDraft.y += (event.clientY - from.y) * k;
-    drag.current = { x: event.clientX, y: event.clientY };
-    redraw();
-  };
-
-  const stop = () => { drag.current = null; };
-
-  return (
-    <section ref={node} className="acct-photo" aria-labelledby="acct-photo-head">
-      <h3 id="acct-photo-head" className="acct-subhead">사진</h3>
-      <div className="acct-photo__current">
-        {hasPhoto ? avatarBadge(p) : null}
-        <p className="note">{hasPhoto ? "지금 쓰는 사진입니다." : "사진이 없어 색 아바타를 씁니다."}</p>
-        {hasPhoto || avatar.photo ? (
-          <div className="btn-row">
-            <ConfirmButton label="사진 지우기" armedLabel="한 번 더 누르면 사진 지우기" busyLabel="지우는 중…" run={remove} />
-          </div>
-        ) : null}
-      </div>
-      <div className="acct-photo__editor">
-        {!photoDraft ? (
-          <>
-            <Field label="사진 파일">
-              <input type="file" accept="image/png,image/jpeg" aria-describedby="acct-photo-hint" onChange={(event) => void pick(event.currentTarget)} />
-            </Field>
-            <p id="acct-photo-hint" className="note">PNG나 JPEG, 5MB 이하. 고른 뒤 정사각형으로 잘라 올립니다.</p>
-          </>
-        ) : (
-          <>
-            <canvas
-              ref={canvas}
-              className="acct-crop"
-              width={CROP_VIEW * 2}
-              height={CROP_VIEW * 2}
-              tabIndex={0}
-              role="img"
-              aria-label="자를 영역. 화살표 키로 옮기고 + 와 - 키로 확대하거나 줄입니다."
-              onPointerDown={(event) => {
-                drag.current = { x: event.clientX, y: event.clientY };
-                event.currentTarget.setPointerCapture(event.pointerId);
-              }}
-              onPointerMove={onPointerMove}
-              onPointerUp={stop}
-              onPointerCancel={stop}
-              onKeyDown={onKeyDown}
-            />
-            <Field label="확대">
-              <input type="range" min="1" max={String(CROP_ZOOM_MAX)} step="0.05" value={String(photoDraft.zoom)}
-                onChange={(event) => setZoom(Number(event.currentTarget.value))} />
-            </Field>
-            <div className="btn-row">
-              <Button kind="primary" disabled={sending} aria-busy={sending || undefined} onClick={() => void send()}>
-                {sending ? "올리는 중…" : "사진 올리기"}
-              </Button>
-              <Button kind="ghost" onClick={() => { dropCrop(); say(""); }}>취소</Button>
-            </div>
-          </>
-        )}
-      </div>
-      <Status note={note} />
-    </section>
-  );
-}
-
 // ---------- 설정 ----------
 
 function themeModeOf(theme: string): "dark" | "light" | "system" {
@@ -840,221 +473,4 @@ function SettingsForm() {
       <Status note={note} />
     </div>
   );
-}
-
-// ---------- 접속 기기 · 접속 이력 ----------
-
-function HistoryTabs({ login }: { login: boolean }) {
-  return (
-    <div className="filters">
-      <Link href={routeFor(currentRole(), "pop", { pop: "history" })} className={`chip${!login ? " on all" : ""}`} aria-current={!login ? "page" : undefined}>접속 기기</Link>
-      <Link href={routeFor(currentRole(), "pop", { pop: "history-login" })} className={`chip${login ? " on all" : ""}`} aria-current={login ? "page" : undefined}>접속 이력</Link>
-    </div>
-  );
-}
-
-function History({ login }: { login: boolean }) {
-  return (
-    <div className="acct">
-      <HistoryTabs login={login} />
-      {login ? <LoginList /> : <div className="acct"><DeviceList /><SessionList /></div>}
-    </div>
-  );
-}
-
-function MoreButton({ next, loading, more }: { next: string | null; loading: boolean; more: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false);
-  if (!next) return null;
-  const on = busy || loading;
-  return (
-    <div className="btn-row">
-      <Button kind="secondary" disabled={on} aria-busy={busy || undefined} onClick={() => {
-        setBusy(true);
-        void more().finally(() => setBusy(false));
-      }}>
-        {on ? "불러오는 중…" : "더 보기"}
-      </Button>
-    </div>
-  );
-}
-
-/**
- * A button that asks for a second press (`armedLabel`) before `run`. While `run` is pending it shows
- * `busyLabel`; afterwards the plain label, still armed.
- */
-function ConfirmButton({ label, armedLabel, busyLabel, run, ariaLabel, kind = "ghost", disabled = false }: {
-  label: string;
-  armedLabel: string;
-  busyLabel: string;
-  run: () => Promise<void>;
-  ariaLabel?: string;
-  kind?: "ghost" | "secondary";
-  disabled?: boolean;
-}) {
-  const [armed, setArmed] = useState(false);
-  const [text, setText] = useState(label);
-  const [busy, setBusy] = useState(false);
-  return (
-    <Button
-      kind={kind}
-      disabled={disabled || busy}
-      aria-busy={busy || undefined}
-      // The accessible name follows the visible text so the second press is announced.
-      aria-label={ariaLabel ? (armed ? `${ariaLabel}: ${armedLabel}` : ariaLabel) : undefined}
-      onClick={async () => {
-        if (busy) return;
-        if (!armed) {
-          setArmed(true);
-          setText(armedLabel);
-          return;
-        }
-        setBusy(true);
-        try {
-          await run();
-        } finally {
-          setBusy(false);
-          setText(label);
-        }
-      }}
-    >
-      {busy ? busyLabel : text}
-    </Button>
-  );
-}
-
-function DeviceList() {
-  const entry = useAccount(devices, "account-devices");
-  const [note, say] = useNote();
-  const head = <h3>등록된 기기</h3>;
-  let body: ReactNode;
-  if (!entry || (!entry.data && !entry.error)) body = <LoadingState title="기기를 불러오는 중입니다" />;
-  else if (!entry.data) body = <ErrorState title="기기를 불러오지 못했습니다" body={accountMessage(entry.error)} actions={<RetryButton resource={devices} />} />;
-  else if (!entry.data.items.length) body = <EmptyState title="등록된 기기가 없습니다" />;
-  else {
-    const rows = entry.data.items.map((device) => [
-      <span key="name"><b>{device.name || "이름 없는 기기"}</b>{device.current ? " " : null}{device.current ? <Badge tone="success">현재</Badge> : null}</span>,
-      CLIENT_LABEL[device.clientType ?? ""] || device.clientType || "",
-      koDateTime(device.lastAccessAt) || "-",
-      device.certified ? "Y" : "-",
-      <ConfirmButton
-        key={device.deviceId}
-        label="삭제"
-        ariaLabel={`${device.name || "기기"} 삭제`}
-        armedLabel={device.current ? "이 기기에서 로그아웃됩니다. 한 번 더 누르면 삭제" : "한 번 더 누르면 삭제"}
-        busyLabel="삭제하는 중…"
-        run={async () => {
-          say("");
-          try {
-            const result = await revokeDevice(device.deviceId);
-            say(result && result.currentSessionRevoked ? "이 기기를 지워 로그아웃되었습니다." : "기기를 삭제했습니다.");
-          } catch (error) {
-            say(accountMessage(error), true);
-          }
-        }}
-      />,
-    ]);
-    body = (
-      <>
-        <Table headers={["접속환경", "구분", "최종접속일", "기기인증여부", "삭제"]} rows={rows} />
-        <MoreButton next={entry.data.nextCursor} loading={Boolean(entry.loading)} more={() => loadMore(devices)} />
-        <Status note={note} />
-      </>
-    );
-  }
-  return <section className="acct-section" aria-label="등록된 기기">{head}{body}</section>;
-}
-
-function SessionList() {
-  const entry = useAccount(sessions, "account-sessions");
-  const [note, say] = useNote();
-  // Back from a failed IdP re-authentication: offer it again; the command is not resent.
-  const [stepUp, setStepUp] = useState<{ failed: boolean } | null>(() => (failedSteps.has("revoke-others") ? { failed: true } : null));
-  const head = <h3>로그인 중인 세션</h3>;
-  if (!entry || (!entry.data && !entry.error)) {
-    return <section className="acct-section" aria-label="로그인 중인 세션">{head}<LoadingState title="세션을 불러오는 중입니다" /></section>;
-  }
-  if (!entry.data) {
-    return (
-      <section className="acct-section" aria-label="로그인 중인 세션">
-        {head}
-        <ErrorState title="세션을 불러오지 못했습니다" body={accountMessage(entry.error)} actions={<RetryButton resource={sessions} />} />
-      </section>
-    );
-  }
-  const items = Array.isArray(entry.data.sessions) ? entry.data.sessions : [];
-  const rows = items.map((item) => [
-    <span key="agent"><b>{item.userAgent || "알 수 없는 브라우저"}</b>{item.current ? " " : null}{item.current ? <Badge tone="success">지금 세션</Badge> : null}</span>,
-    item.ipAddress || "-",
-    koDateTime(item.authenticatedAt) || "-",
-    koDateTime(item.lastSeenAt) || "-",
-    item.current ? "" : (
-      <ConfirmButton
-        key={item.sessionId}
-        label="끝내기"
-        ariaLabel={`${item.ipAddress || ""} 세션 끝내기`}
-        armedLabel="한 번 더 누르면 끝내기"
-        busyLabel="끝내는 중…"
-        run={async () => {
-          try {
-            await revokeSession(item.sessionId);
-            say("세션을 끝냈습니다.");
-          } catch (error) {
-            say(accountMessage(error), true);
-          }
-        }}
-      />
-    ),
-  ]);
-  const others = items.filter((item) => !item.current).length;
-  const endOthers = async (): Promise<void> => {
-    say("");
-    try {
-      const result = await revokeOtherSessions();
-      setStepUp(null);
-      const revoked = result && typeof result === "object" && "revokedSessions" in result ? Number(result.revokedSessions) || 0 : 0;
-      say(`다른 세션 ${revoked}개를 끝냈습니다.`);
-    } catch (error) {
-      say(accountMessage(error), true);
-      if (isStepUpRequired(error)) setStepUp({ failed: false });
-    }
-  };
-  const returned = new URLSearchParams(location.search).get("step") === "revoke-others";
-  return (
-    <section className="acct-section" aria-label="로그인 중인 세션">
-      {head}
-      {items.length ? <Table headers={["브라우저", "IP", "로그인", "마지막 요청", ""]} rows={rows} /> : <EmptyState title="로그인 중인 세션이 없습니다" />}
-      <div className="btn-row">
-        <ConfirmButton kind="secondary" label="다른 세션 모두 끝내기" armedLabel="한 번 더 누르면 모두 끝내기" busyLabel="끝내는 중…" disabled={others === 0} run={endOthers} />
-      </div>
-      {returned && others ? <p className="note">다시 인증했으면 다른 세션 모두 끝내기를 한 번 더 누르세요.</p> : null}
-      <div>
-        {stepUp ? <StepUpBox returnStep="revoke-others" retry={endOthers} say={say} failed={stepUp.failed} onDone={() => setStepUp(null)} /> : null}
-      </div>
-      <Status note={note} />
-    </section>
-  );
-}
-
-function LoginList() {
-  const entry = useAccount(loginEvents, "account-logins");
-  const head = <p className="note acct-right">최근 7일간의 기록만 조회됩니다.</p>;
-  let body: ReactNode;
-  if (!entry || (!entry.data && !entry.error)) body = <LoadingState title="로그인 기록을 불러오는 중입니다" />;
-  else if (!entry.data) body = <ErrorState title="로그인 기록을 불러오지 못했습니다" body={accountMessage(entry.error)} actions={<RetryButton resource={loginEvents} />} />;
-  else if (!entry.data.items.length) body = <EmptyState title="최근 7일 동안의 로그인 기록이 없습니다" />;
-  else {
-    const rows = entry.data.items.map((item) => [
-      item.ipAddress || "-",
-      item.clientEnvironment || "-",
-      koDateTime(item.loggedInAt) || "-",
-      item.success ? "성공" : <Badge tone="danger">실패</Badge>,
-    ]);
-    body = (
-      <>
-        <Table headers={["IP", "앱", "접속시간", "결과"]} rows={rows} />
-        <MoreButton next={entry.data.nextCursor} loading={Boolean(entry.loading)} more={() => loadMore(loginEvents)} />
-      </>
-    );
-  }
-  return <section className="acct-section" aria-label="로그인 기록">{head}{body}</section>;
 }

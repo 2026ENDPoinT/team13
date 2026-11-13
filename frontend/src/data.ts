@@ -167,8 +167,6 @@ export interface AppState {
   teams: unknown[];
   teamAsk: string;
   applications: Record<string, unknown>;
-  devices: { id: string; name: string; where: string; at: string; current: boolean }[];
-  fileBox: { name: string; at: string }[];
   player: PlayerState;
   previewPage: number;
   weights: Record<string, number>;
@@ -179,7 +177,6 @@ export interface AppState {
   /** Unsaved form input of the open screen, keyed by field. */
   draft: Record<string, any>;
   summaryTab: string;
-  technyonOpen?: boolean;
   authoredActivities?: Activity[];
   deletedActivityIds?: string[];
 }
@@ -316,14 +313,50 @@ export const coursePosts: CoursePost[] = [
 /** Order of this term's enrolled courses on home and in the study room. */
 export const COURSE_ORDER = ["bi", "algo", "ai", "db", "oss", "se", "secu"];
 
+/** 학습실 샘플 자료. `points`는 쪽 하나씩(2쪽부터): 원문 문장과 핵심 개념(용어·뜻), 퀴즈 보기가 이것에서 나온다. */
 export const studyMaterials = [
-  { id: "sm-db", courseId: "bi", title: "관계형 모델 요약", sentence: "표는 한 가지 대상만 담고, 열 이름이 곧 질문입니다.", points: ["엔터티는 한 행의 대상입니다.", "속성은 그 대상의 열입니다.", "키는 행을 서로 구분합니다.", "관계는 두 표를 연결합니다."] },
-  { id: "sm-web", courseId: "algo", title: "시맨틱 문서 구조", sentence: "제목과 구역을 나누면 자료 요약이 원문의 순서를 잃지 않습니다.", points: ["제목 단계는 하나씩만 내려갑니다.", "목록은 순서가 있을 때만 번호를 씁니다.", "표에는 머리글 칸을 둡니다.", "장식 이미지는 대체 글을 비웁니다."] },
-  { id: "sm-ml", courseId: "ai", title: "학습 집합과 검증", sentence: "같은 데이터로 배우고 채점하면 새 사례에서 점수가 떨어집니다.", points: ["학습 집합은 규칙을 맞출 때 씁니다.", "검증 집합은 그 규칙을 고를 때 씁니다.", "시험 집합은 마지막에 한 번만 봅니다.", "과적합은 학습만 잘되고 검증은 나쁠 때입니다."] },
-  { id: "sm-chain", courseId: "db", title: "블록에 남기는 기록", sentence: "앞 블록의 요약을 다음 블록이 가리키면 중간을 조용히 바꾸기 어렵습니다.", points: ["블록은 기록 묶음입니다.", "해시는 그 묶음의 짧은 지문입니다.", "체인은 이전 지문을 다음에 적습니다.", "합의는 어느 체인을 따를지 정합니다."] },
-  { id: "sm-data", courseId: "oss", title: "큰 표 나누기", sentence: "자주 읽는 열과 가끔 읽는 열을 같은 자리에 두면 읽기가 느려집니다.", points: ["행은 사례 하나입니다.", "열 이름은 질문과 같아야 합니다.", "파티션은 표를 구간으로 나눕니다.", "인덱스는 자주 찾는 열의 지름길입니다."] },
-  { id: "sm-cyber", courseId: "se", title: "경계와 권한", sentence: "누구인지 확인하는 일과 무엇을 허용하는 일은 따로 적습니다.", points: ["인증은 누구인지 확인합니다.", "인가는 무엇을 허용하는지 정합니다.", "기록은 나중에 길을 되돌릴 때 씁니다.", "최소 권한은 필요한 문만 엽니다."] },
-  { id: "sm-comp", courseId: "secu", title: "시스템 호출 경계", sentence: "프로그램이 커널에 부탁하는 문 앞에서 검사하면 안쪽을 덜 믿어도 됩니다.", points: ["프로세스는 자신만의 메모리로 돕니다.", "시스템 호출은 그 밖으로 나가는 문입니다.", "권한 검사는 그 문 앞에 둡니다.", "실패는 거절로 돌려주고 삼키지 않습니다."] },
+  { id: "sm-db", courseId: "bi", title: "관계형 모델 요약", sentence: "표는 한 가지 대상만 담고, 열 이름이 곧 질문입니다.", points: [
+    { text: "엔터티는 한 행의 대상입니다.", term: "엔터티", meaning: "표의 한 행이 나타내는 대상" },
+    { text: "속성은 그 대상의 열입니다.", term: "속성", meaning: "그 대상을 설명하는 열" },
+    { text: "키는 행을 서로 구분합니다.", term: "키", meaning: "행을 서로 구분하는 값" },
+    { text: "관계는 두 표를 연결합니다.", term: "관계", meaning: "두 표를 잇는 연결" },
+  ] },
+  { id: "sm-web", courseId: "algo", title: "시맨틱 문서 구조", sentence: "제목과 구역을 나누면 자료 요약이 원문의 순서를 잃지 않습니다.", points: [
+    { text: "제목 단계는 하나씩만 내려갑니다.", term: "제목 단계", meaning: "한 번에 한 단계씩만 내려가는 구역 이름" },
+    { text: "목록은 순서가 있을 때만 번호를 씁니다.", term: "번호 목록", meaning: "순서가 있을 때만 쓰는 목록" },
+    { text: "표에는 머리글 칸을 둡니다.", term: "머리글 칸", meaning: "표의 각 열이 무엇인지 밝히는 칸" },
+    { text: "장식 이미지는 대체 글을 비웁니다.", term: "장식 이미지", meaning: "대체 글을 비워 두는 그림" },
+  ] },
+  { id: "sm-ml", courseId: "ai", title: "학습 집합과 검증", sentence: "같은 데이터로 배우고 채점하면 새 사례에서 점수가 떨어집니다.", points: [
+    { text: "학습 집합은 규칙을 맞출 때 씁니다.", term: "학습 집합", meaning: "규칙을 맞출 때 쓰는 데이터" },
+    { text: "검증 집합은 그 규칙을 고를 때 씁니다.", term: "검증 집합", meaning: "여러 규칙 가운데 하나를 고를 때 쓰는 데이터" },
+    { text: "시험 집합은 마지막에 한 번만 봅니다.", term: "시험 집합", meaning: "마지막에 한 번만 보는 데이터" },
+    { text: "과적합은 학습만 잘되고 검증은 나쁠 때입니다.", term: "과적합", meaning: "학습 점수만 좋고 검증 점수는 나쁜 상태" },
+  ] },
+  { id: "sm-chain", courseId: "db", title: "블록에 남기는 기록", sentence: "앞 블록의 요약을 다음 블록이 가리키면 중간을 조용히 바꾸기 어렵습니다.", points: [
+    { text: "블록은 기록 묶음입니다.", term: "블록", meaning: "기록을 묶은 단위" },
+    { text: "해시는 그 묶음의 짧은 지문입니다.", term: "해시", meaning: "기록 묶음의 짧은 지문" },
+    { text: "체인은 이전 지문을 다음에 적습니다.", term: "체인", meaning: "이전 지문을 다음 블록에 적어 잇는 구조" },
+    { text: "합의는 어느 체인을 따를지 정합니다.", term: "합의", meaning: "어느 체인을 따를지 정하는 규칙" },
+  ] },
+  { id: "sm-data", courseId: "oss", title: "큰 표 나누기", sentence: "자주 읽는 열과 가끔 읽는 열을 같은 자리에 두면 읽기가 느려집니다.", points: [
+    { text: "행은 사례 하나입니다.", term: "행", meaning: "사례 하나" },
+    { text: "열 이름은 질문과 같아야 합니다.", term: "열 이름", meaning: "그 열이 답하는 질문" },
+    { text: "파티션은 표를 구간으로 나눕니다.", term: "파티션", meaning: "표를 구간으로 나눈 조각" },
+    { text: "인덱스는 자주 찾는 열의 지름길입니다.", term: "인덱스", meaning: "자주 찾는 열로 가는 지름길" },
+  ] },
+  { id: "sm-cyber", courseId: "se", title: "경계와 권한", sentence: "누구인지 확인하는 일과 무엇을 허용하는 일은 따로 적습니다.", points: [
+    { text: "인증은 누구인지 확인합니다.", term: "인증", meaning: "누구인지 확인하는 일" },
+    { text: "인가는 무엇을 허용하는지 정합니다.", term: "인가", meaning: "무엇을 허용할지 정하는 일" },
+    { text: "기록은 나중에 길을 되돌릴 때 씁니다.", term: "감사 기록", meaning: "나중에 지나온 길을 되짚을 때 쓰는 기록" },
+    { text: "최소 권한은 필요한 문만 엽니다.", term: "최소 권한", meaning: "필요한 문만 여는 원칙" },
+  ] },
+  { id: "sm-comp", courseId: "secu", title: "시스템 호출 경계", sentence: "프로그램이 커널에 부탁하는 문 앞에서 검사하면 안쪽을 덜 믿어도 됩니다.", points: [
+    { text: "프로세스는 자신만의 메모리로 돕니다.", term: "프로세스", meaning: "자기 메모리 공간에서 도는 실행 단위" },
+    { text: "시스템 호출은 그 밖으로 나가는 문입니다.", term: "시스템 호출", meaning: "프로그램이 커널에 부탁하러 나가는 문" },
+    { text: "권한 검사는 그 문 앞에 둡니다.", term: "권한 검사", meaning: "시스템 호출의 문 앞에서 하는 확인" },
+    { text: "실패는 거절로 돌려주고 삼키지 않습니다.", term: "거절 반환", meaning: "실패를 삼키지 않고 호출한 쪽에 돌려주는 처리" },
+  ] },
 ];
 
 export const events: CalendarEvent[] = [
@@ -474,13 +507,6 @@ export function seedState(): AppState {
     teams: [],
     teamAsk: "",
     applications: {},
-    devices: [
-      { id: "d1", name: "Campus laptop", where: "서울", at: "2026-11-10 08:12", current: true },
-      { id: "d2", name: "Mobile browser", where: "서울", at: "2026-11-09 19:40", current: false },
-    ],
-    fileBox: [
-      { name: "bi-case-note.pdf", at: "2026-10-17" },
-    ],
     player: { id: "v-open", seconds: 420, duration: 32 * 60, playing: false, speed: 1 },
     previewPage: 1,
     weights: { att: 10, rep: 30, mid: 30, fin: 30 },

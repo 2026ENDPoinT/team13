@@ -139,29 +139,6 @@
 }
 .scrim { display: none; }
 
-/* Server-file tutor only; mock mode keeps main's Plan tray without this button or panel. */
-.fab {
-  position: fixed; z-index: 60; right: 28px; bottom: 24px;
-  width: 70px; height: 70px; border: 0; border-radius: 24px;
-  background: var(--surface); color: var(--text); box-shadow: var(--shadow-md);
-  display: grid; place-items: center; padding: 5px; overflow: hidden;
-}
-.fab.open { background: var(--accent); color: var(--on-accent); }
-.fab-face { width: 60px; height: 60px; display: block; }
-.tech-panel {
-  position: fixed; z-index: 59; right: 28px; bottom: 106px;
-  width: min(405px, calc(100% - 32px)); max-height: min(640px, calc(100vh - 140px));
-  overflow: auto; background: var(--surface); color: var(--text);
-  border: var(--border-w) solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
-}
-@media (max-width: 767px) {
-  .fab { right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: 59px; height: 59px; }
-  .tech-panel { top: calc(56px + env(safe-area-inset-top, 0px)); right: 0; bottom: 0; left: 0; width: auto; max-height: none; padding-bottom: env(safe-area-inset-bottom, 0px); }
-}
-.tech-h { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4); border-bottom: var(--border-w) solid var(--border); }
-.tech-h strong { display: block; }
-.tech-b { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
-
 @media (max-width: 1279px) {
   .word .uni { display: none; }
   .body:not(.no-aside) {
@@ -285,20 +262,33 @@ html.layout-mobile.aside-open .aside { display: block; position: relative; heigh
 }
 .tray-toggle-closed, .tray-toggle-open { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
 .tray-pill:hover { background: var(--surface-2); border-color: var(--gray-30); }
-/* 마스코트 FAB(계획 진행 중이거나 챗봇 모드): GIF의 흰 배경을 그대로 살려 둥근 사각형으로 자른다. 테두리는 box-shadow 고리라 배지가 잘리지 않는다. */
+/* 마스코트 FAB(계획 진행 중이거나 챗봇 모드): 배경·테두리 없이 투명 APNG 마스코트만 보인다. */
 .tray-pill.is-mascot {
-  position: relative; display: grid; place-items: center; width: 56px; height: 56px; padding: 0; border: 0;
-  border-radius: var(--radius-lg); background: #fff; color: var(--text);
-  box-shadow: 0 0 0 1px var(--border), 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent), var(--shadow-md);
-  transition: box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+  position: relative; display: grid; place-items: center; width: 64px; height: 64px; padding: 0; border: 0;
+  border-radius: var(--radius-lg); background: transparent; color: var(--text); box-shadow: none;
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
-.tray-pill.is-mascot:hover { background: #fff; box-shadow: 0 0 0 1px var(--accent), 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent), var(--shadow-md); }
-.tray-pill.is-mascot[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--accent), 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent), var(--shadow-md); }
+.tray-pill.is-mascot:hover { background: transparent; border-color: transparent; transform: translateY(-2px); }
 .tray-pill.is-mascot:active { transform: scale(0.97); }
-.tray-mascot { display: block; width: 64px; height: 64px; max-width: none; margin: -4px; clip-path: inset(4px round var(--radius-lg)); pointer-events: none; }
-.tray-pill.is-mascot .tray-count { position: absolute; top: -6px; right: -6px; box-shadow: 0 0 0 2px var(--surface); }
+.tray-pill.is-mascot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tray-mascot { display: block; width: 64px; height: 64px; max-width: none; pointer-events: none; }
+.tray-pill.is-mascot .tray-count { position: absolute; top: -2px; right: -2px; box-shadow: 0 0 0 2px var(--surface); }
 /* 챗봇 입력창: FAB 바로 위. 안내 문장은 입력창 위 말풍선. */
-.chat-dock-slot { width: min(360px, calc(100vw - 2 * var(--space-4))); }
+.chat-dock-slot {
+  --dock-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  width: min(360px, calc(100vw - 2 * var(--space-4)));
+  transform-origin: bottom right; /* 마스코트(FAB)가 있는 우하단에서 자라나고 그리로 돌아간다. */
+  transition: opacity 200ms var(--dock-ease), transform 200ms var(--dock-ease);
+}
+/* 열기: DOM에 들어올 때 이 값에서 출발한다. 닫기: 같은 값으로 더 빠르게(140ms) 돌아간다. 다시 열면 현재 값에서 되돌아온다. */
+@starting-style { .chat-dock-slot { opacity: 0; transform: translateY(12px) scale(0.96); } }
+.chat-dock-slot[data-state="leaving"] { opacity: 0; transform: translateY(12px) scale(0.96); transition-duration: 140ms; pointer-events: none; }
+/* 움직임을 줄이는 설정: 위치·크기 변화는 빼고 페이드만 남긴다. */
+@media (prefers-reduced-motion: reduce) {
+  .chat-dock-slot, .chat-dock-slot[data-state="leaving"] { transition-duration: 120ms; }
+  @starting-style { .chat-dock-slot { transform: none; } }
+  .chat-dock-slot[data-state="leaving"] { transform: none; }
+}
 .chat-dock { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); margin: 0; }
 .chat-say {
   align-self: flex-end; max-width: 100%; margin: 0; padding: var(--space-2) var(--space-3);
@@ -442,3 +432,7 @@ html.layout-mobile.aside-open .aside { display: block; position: relative; heigh
   .plan-row { grid-template-columns: minmax(0, 1fr); align-content: center; gap: 2px; padding: var(--space-1) 0; }
   .plan-title { white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* 좌측 메뉴가 없는 화면(녹음): 본문 한 칸, 메뉴 버튼도 없다. */
+.chrome.no-nav .body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
+.chrome.no-nav .menu-toggle { display: none; }

@@ -16,6 +16,7 @@ import { lectureDetails, detailKey, ACTIVITY_PHASE, type ActivityDetail, type Ac
 import { materialMessage } from "../../shared/materials-remote.ts";
 import { rememberMaterials } from "../../shared/course-pdfs-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
+import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import { resolveActivityHref } from "../../shared/course-activities-remote.ts";
 import type { ScreenCtx, Screen } from "../../types.ts";
 import type { ActivityParts } from "./learning.tsx";
@@ -91,6 +92,7 @@ function FileRow({ kj, courseId, file }: { kj: string; courseId: number | string
       <div className="btn-row">
         <Link href={preview} className="btn btn-secondary">미리보기</Link>
         {downloadControl(courseId, { fileId: file.fileId, name: file.name })}
+        {file.pdf ? <SaveToStudy kj={kj} file={{ fileId: file.fileId, name: file.name }} /> : null}
         {/* 요약 보기는 학생에게 보이는 요약 게시본이 있을 때(`summaryPublished`)만 둔다. */}
         {file.pdf && file.summaryPublished ? <Link href={hrefFor(find("study_summary"), { kj, doc: `srv-${file.fileId}` })} className="btn btn-ghost">요약 보기</Link> : null}
         {file.pdf ? <Link href={hrefFor(find("study_home"), { kj, doc: `srv-${file.fileId}` })} className="btn btn-ghost">학습실에서 열기</Link> : null}

@@ -1,14 +1,12 @@
-// My account on the ASTRA backend (`/api/me/profile`, `/profile/image`, `/profile/sync`, `/contact`,
-// `/preferences`, `/sessions`, `/devices`, `/login-events`) and the re-authentication the backend asks for before sensitive
+// My account on the ASTRA backend (`/api/me/profile`, `/profile/sync`, `/contact`,
+// `/preferences`) and the re-authentication the backend asks for before sensitive
 // commands (403 `step_up_required`, ADR-0029). Everything is the signed-in user's own data and
 // stays in memory only; nothing here is written to storage, the URL or the console.
 import { useEffect } from "react";
-import { apiGet, apiSend, apiUpload, ApiError } from "./api.ts";
-import { backendState, backendStatus, connect, schoolLoginHref } from "./backend.ts";
+import { apiGet, apiSend, ApiError } from "./api.ts";
+import { backendState, backendStatus, schoolLoginHref } from "./backend.ts";
 import { createResource, retryLater, useResource } from "./remote-cache.ts";
 import type { Entry, Resource } from "./remote-cache.ts";
-
-export const ACCOUNT_PAGE = 20;
 
 /** The backend's avatar colour allowlist (ProfileController.AVATAR_COLORS) with the original Korean names. */
 export const AVATAR_COLORS: readonly (readonly [string, string])[] = [
@@ -75,68 +73,14 @@ export interface Preferences {
   version: number;
 }
 
-export interface AccountSession {
-  sessionId: string;
-  current?: boolean;
-  ipAddress?: string | null;
-  userAgent?: string | null;
-  authenticatedAt?: string | null;
-  lastSeenAt?: string | null;
-}
-
-export interface SessionList {
-  sessions?: AccountSession[];
-}
-
-export interface Device {
-  deviceId: string;
-  name?: string | null;
-  current?: boolean;
-  clientType?: string | null;
-  lastAccessAt?: string | null;
-  certified?: boolean;
-}
-
-export interface LoginEvent {
-  ipAddress?: string | null;
-  clientEnvironment?: string | null;
-  loggedInAt?: string | null;
-  success?: boolean;
-}
-
-/** Every loaded page of a cursor list, appended. */
-export interface CursorPage<T> {
-  items: T[];
-  nextCursor: string | null;
-}
-
-export interface RevokeDeviceResult {
-  currentSessionRevoked?: boolean;
-}
-
-/** One of the account caches; the cursor lists take the previous pages as their argument. */
-export type AccountResource<T> = Resource<T, [previous?: CursorPage<unknown> | null]>;
-type Paged<T> = Resource<CursorPage<T>, [previous: CursorPage<T> | null]>;
+/** One of the account caches. */
+export type AccountResource<T> = Resource<T, [previous?: null]>;
 
 const ONE = "me";
 
 /** `GET /api/me/profile`. Every profile response (also the PUT/POST/DELETE ones below) carries `registrarSyncAvailable`. */
 export const profiles = createResource<Profile, [previous?: null]>(() => apiGet<Profile>("/api/me/profile"));
 export const preferences = createResource<Preferences, [previous?: null]>(() => apiGet<Preferences>("/api/me/preferences"));
-export const sessions = createResource<SessionList, [previous?: null]>(() => apiGet<SessionList>("/api/me/sessions"));
-
-// Cursor lists: every loaded page appended, `nextCursor` of the last one.
-function pages<T>(path: string): Paged<T> {
-  return createResource<CursorPage<T>, [previous: CursorPage<T> | null]>(async (previous) => {
-    const params = new URLSearchParams({ size: String(ACCOUNT_PAGE) });
-    if (previous && previous.nextCursor) params.set("cursor", previous.nextCursor);
-    const page = await apiGet<{ items?: T[]; nextCursor?: string | null } | null>(`${path}?${params}`);
-    const items = page && Array.isArray(page.items) ? page.items : [];
-    return { items: previous ? [...previous.items, ...items] : items, nextCursor: (page && page.nextCursor) || null };
-  });
-}
-export const devices = pages<Device>("/api/me/devices");
-export const loginEvents = pages<LoginEvent>("/api/me/login-events");
 
 function live(): boolean {
   return backendStatus() === "ready";
@@ -152,14 +96,7 @@ export function useAccount<T>(resource: AccountResource<T>, scope: string): Entr
 
 export function reloadAccount<T>(resource: AccountResource<T>): Promise<void> {
   if (!live()) return Promise.resolve();
-  return resource === devices || resource === loginEvents ? resource.load(ONE, null) : resource.load(ONE);
-}
-
-/** Next page of a cursor list (devices, login events). */
-export function loadMore<T>(resource: Paged<T>): Promise<void> {
-  const entry = resource.peek(ONE);
-  if (!live() || !entry || !entry.data || !entry.data.nextCursor || entry.loading) return Promise.resolve();
-  return resource.load(ONE, entry.data);
+  return resource.load(ONE);
 }
 
 export function peekAccount<T>(resource: AccountResource<T>): Entry<T> | null {
@@ -171,13 +108,6 @@ function replace<T extends object>(resource: AccountResource<T>, data: T): void 
     for (const key of Object.keys(current)) Reflect.deleteProperty(current, key);
     Object.assign(current, data);
   });
-}
-
-/** Avatar colour and short name. `version` is `avatar.version` from the profile the dialog showed. */
-export async function saveAvatar({ avatarColor, shortName, version }: { avatarColor: string; shortName: string; version: number }): Promise<Profile> {
-  const profile = await apiSend<Profile>("PUT", "/api/me/profile", { avatarColor, shortName, version });
-  replace(profiles, profile);
-  return profile;
 }
 
 /** Phone and e-mail. 403 `step_up_required` without a recent re-authentication. */
@@ -192,37 +122,6 @@ export async function savePreferences(body: Preferences): Promise<Preferences> {
   const saved = await apiSend<Preferences>("PUT", "/api/me/preferences", body);
   replace(preferences, saved);
   return saved;
-}
-
-export async function revokeSession(sessionId: string): Promise<void> {
-  try {
-    await apiSend("POST", `/api/me/sessions/${encodeURIComponent(sessionId)}/revoke`);
-  } finally {
-    reloadAccount(sessions);
-  }
-}
-
-/** Ends every other session. 403 `step_up_required` without a recent re-authentication. */
-export async function revokeOtherSessions(): Promise<unknown> {
-  const result = await apiSend("POST", "/api/me/sessions/revoke-others");
-  reloadAccount(sessions);
-  reloadAccount(devices);
-  return result;
-}
-
-/**
- * Revokes a device and its sessions. When it was this browser the session cookie is gone, so the
- * connection is re-probed (it becomes `anon` and every screen shows the login strip).
- */
-export async function revokeDevice(deviceId: string): Promise<RevokeDeviceResult | null> {
-  const result = await apiSend<RevokeDeviceResult | null>("DELETE", `/api/me/devices/${encodeURIComponent(deviceId)}`);
-  if (result && result.currentSessionRevoked) {
-    await connect();
-    return result;
-  }
-  reloadAccount(devices);
-  reloadAccount(sessions);
-  return result;
 }
 
 /** Registrar sync (`POST /api/me/profile/sync`): the profile re-read from the school system goes into the cache. */
@@ -245,75 +144,6 @@ export function syncMessage(error: unknown): string {
     if (error.status === 404) return "이 계정은 학사 정보와 연결되어 있지 않아 동기화할 수 없습니다.";
   }
   return accountMessage(error);
-}
-
-// ---------- avatar photo (ADR-0038) ----------
-
-export const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
-export const PHOTO_TYPES = new Set<string>(["image/png", "image/jpeg"]);
-
-/**
- * Uploads one photo cropped on the page (`POST /api/me/profile/image`, multipart `file`, CSRF via
- * api.js). A replacing command, so no `Idempotency-Key`. After the 202 `{state:"processing"}` the
- * profile is re-read for `avatar.photo` and the new `avatar.version`.
- */
-export async function uploadAvatarPhoto(blob: Blob, name: string): Promise<unknown> {
-  const form = new FormData();
-  form.append("file", blob, name);
-  const result = await apiUpload<unknown>("/api/me/profile/image", form);
-  await reloadAccount(profiles);
-  return result;
-}
-
-/** Removes the photo (`DELETE /api/me/profile/image`); the returned colour-avatar profile goes into the cache. */
-export async function removeAvatarPhoto(): Promise<Profile> {
-  const profile = await apiSend<Profile>("DELETE", "/api/me/profile/image");
-  replace(profiles, profile);
-  return profile;
-}
-
-/** `avatar.photo` (`{ state, url, errorCode }`) of the cached profile, or null. */
-export function avatarPhoto(): AvatarPhoto | null {
-  const entry = profiles.peek(ONE);
-  const avatar = entry && entry.data && entry.data.avatar;
-  return (avatar && avatar.photo) || null;
-}
-
-const PHOTO_WAIT = [1000, 2000, 3000, 5000, 8000];
-const PHOTO_WAIT_MAX = 120_000;
-
-/**
- * Re-reads the profile while the last photo is `processing` and `node` is on screen (after 1, 2, 3,
- * 5 s, then every 8 s, for at most 2 minutes). Resolves to the final state (`ready`, `failed`, null
- * when the photo is gone), or `processing` when the wait ran out or the node left the document.
- */
-export async function awaitAvatarPhoto(node: Node): Promise<AvatarPhoto["state"] | null> {
-  const started = Date.now();
-  for (let round = 0; ; round += 1) {
-    const photo = avatarPhoto();
-    if (!photo || photo.state !== "processing") return photo ? photo.state : null;
-    if (!live() || !node.isConnected || Date.now() - started > PHOTO_WAIT_MAX) return "processing";
-    await new Promise((resolve) => setTimeout(resolve, PHOTO_WAIT[Math.min(round, PHOTO_WAIT.length - 1)]));
-    if (!live() || !node.isConnected) return "processing";
-    await profiles.load(ONE);
-  }
-}
-
-const PHOTO_ERROR: Record<string, string> = {
-  not_image: "PNG나 JPEG 그림이 아니어서 쓸 수 없습니다. 다른 사진을 고르세요.",
-  too_large: "사진이 너무 큽니다. 5MB 이하의 더 작은 사진을 고르세요.",
-  rejected: "보안 검사를 통과하지 못해 이 사진은 쓸 수 없습니다.",
-  unavailable: "사진 처리 서버에 연결하지 못했습니다. 잠시 후 다시 올리세요.",
-  failed: "사진을 처리하지 못했습니다. 다른 사진으로 다시 시도하세요.",
-};
-
-/** Korean text for `avatar.photo.errorCode` or a failed upload request (400 `not_image`, 413 `too_large`, 429). */
-export function photoMessage(problem: unknown): string {
-  if (problem == null) return PHOTO_ERROR.failed;
-  if (typeof problem === "string") return PHOTO_ERROR[problem] || PHOTO_ERROR.failed;
-  if (problem instanceof ApiError && problem.code && PHOTO_ERROR[problem.code]) return PHOTO_ERROR[problem.code];
-  if (problem instanceof ApiError && problem.status === 413) return PHOTO_ERROR.too_large;
-  return accountMessage(problem);
 }
 
 // ---------- re-authentication (step-up) ----------
@@ -403,4 +233,3 @@ export function accountMessage(error: unknown): string {
 export const THEME_LABEL: Record<string, string> = { system: "기기 기본값", light: "라이트", dark: "다크" };
 export const LANGUAGE_LABEL: Record<string, string> = { ko: "한국어", en: "English" };
 export const TIME_LABEL: Record<string, string> = { 12: "12시간제", 24: "24시간제" };
-export const CLIENT_LABEL: Record<string, string> = { browser: "브라우저", app: "앱" };

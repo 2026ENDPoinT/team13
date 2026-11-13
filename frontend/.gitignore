@@ -5,3 +5,7 @@ verification/local/
 .env*
 !.env.example
 dist/
+
+coverage/
+reports/
+.stryker-tmp/

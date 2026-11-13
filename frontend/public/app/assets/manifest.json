@@ -4,8 +4,6 @@
   "slots": [
     { "id": "brand.logo", "path": "/app/assets/logo/stk-brand-logo-80.png", "width": 40, "height": 40, "objectFit": "contain", "density": "2x" },
     { "id": "brand.logo.mobile", "path": "/app/assets/logo/stk-brand-logo-64.png", "width": 32, "height": 32, "objectFit": "contain", "density": "2x" },
-    { "id": "fab.desktop", "path": "/app/assets/fab/technyon-120.png", "width": 60, "height": 60, "objectFit": "cover", "density": "2x" },
-    { "id": "fab.mobile", "path": "/app/assets/fab/technyon-100.png", "width": 50, "height": 50, "objectFit": "cover", "density": "2x" },
     { "id": "cover.magenta", "path": "/app/assets/covers/cover-magenta-sphere-716x430.png", "width": 233, "height": 140, "objectFit": "cover", "density": "2x" },
     { "id": "cover.pale", "path": "/app/assets/covers/cover-pale-discs-716x430.png", "width": 233, "height": 140, "objectFit": "cover", "density": "2x" },
     { "id": "cover.orbs", "path": "/app/assets/covers/cover-purple-orbs-467x280.png", "width": 233, "height": 140, "objectFit": "cover", "density": "2x" },

@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "vitest": { "configFile": "vitest.config.ts" },
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/shared/format.ts",
+    "src/shared/routes.ts",
+    "src/shared/remote-cache.ts",
+    "src/shared/webm-append.ts",
+    "src/shared/session-drafts.ts",
+    "src/shared/activity-links.ts",
+    "src/shared/assistant/course-match.ts",
+    "src/shared/assistant/aliases.ts",
+    "src/shared/assistant/resolve.ts"
+  ],
+  "reporters": ["clear-text", "html", "json"],
+  "htmlReporter": { "fileName": "reports/mutation/index.html" },
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "thresholds": { "high": 80, "low": 60, "break": 75 },
+  "tsconfigFile": "tsconfig.stryker-skip.json",
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true
+}

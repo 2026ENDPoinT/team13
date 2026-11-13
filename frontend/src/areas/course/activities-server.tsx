@@ -22,6 +22,7 @@ import {
 } from "../../shared/course-activities-remote.ts";
 import { rememberCourseFiles } from "../../shared/course-pdfs-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
+import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import { noticeLists, listKey as noticeListKey, noticeMessage } from "../../shared/notices-remote.ts";
 import { useCourseTodo, reloadCourseTodo, todoHref, todoLabel, todoKind, ddayAt, koDateTime, koDate, homeMessage } from "../../shared/home-remote.ts";
 import { serverActivityHref } from "../../shared/activity-links.ts";
@@ -612,6 +613,7 @@ function RemoteFiles({ ctx, kj, head, searchBox, query }: { ctx: ScreenCtx; kj: 
                       <div className="crs-file-actions">
                         <Link className="icon-btn" href={preview} aria-label={`${file.name} 미리보기`}><Icon name="search" /></Link>
                         {file.fileId == null ? null : downloadControl(courseId, { fileId: file.fileId, name: file.name || "" })}
+                        {file.fileId != null && file.pdf ? <SaveToStudy kj={kj} file={{ fileId: file.fileId, name: file.name || "" }} /> : null}
                       </div>
                     </article>
                   );

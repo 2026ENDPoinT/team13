@@ -92,7 +92,7 @@ function serverFace(stats: CourseStats | undefined): ReactNode[] {
   const weeks = count(stats?.weekCount);
   if (week != null && weeks) {
     body.push(
-      <div key="line" className="progress-line"><span>진행 주</span><span>{`${Math.min(week, weeks)} / ${weeks} 주`}</span></div>,
+      <div key="line" className="progress-line"><span>{`${Math.min(week, weeks)} / ${weeks} 주`}</span></div>,
       <div key="bar" className="bar"><i style={{ width: `${Math.round((Math.min(week, weeks) / weeks) * 100)}%` }} /></div>,
     );
   }
@@ -133,7 +133,7 @@ function CourseCard({ course, mode, options }: { course: Course; mode: CardMode;
     const [done, total] = face.weeks;
     const width = total ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
     body.push(
-      <div key="line" className="progress-line"><span>진행 주</span><span>{`${done} / ${total} 주`}</span></div>,
+      <div key="line" className="progress-line"><span>{`${done} / ${total} 주`}</span></div>,
       <div key="bar" className="bar"><i style={{ width: `${width}%` }} /></div>,
       <div key="pills" className="act-pills">
         <span className="act-pill">{`참여 ${face.join[0]} / ${face.join[1]}`}</span>

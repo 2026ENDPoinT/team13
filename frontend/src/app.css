@@ -5,6 +5,9 @@
 @import "./areas/home/course-study.css";
 @import "./shared/document-viewer.css";
 @import "./shared/backend-ui.css";
+@import "./shared/lesson-viewer.css";
+@import "./shared/save-to-study.css";
+@import "./areas/home/recording-study.css";
 @import "./areas/learning/video-study.css";
 @import "./areas/course/course.css";
 @import "./areas/learning/learning.css";

@@ -72,12 +72,12 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 .pill.material { background: var(--material); color: var(--material-ink); }
 .pill.survey { background: var(--survey); color: var(--survey-ink); }
 
-/* Home: campus-on hero and 나의 하루. The hero is the shell's full-width first row; its text lines up with the menu text. */
+/* Home: campus-on hero and the summary cards (나의 하루). The hero is the shell's full-width first row; its text lines up with the menu text. */
 .home-main { container-type: inline-size; }
-.my-day > .section-label:first-child { margin-top: 0; }
+.my-day > .summary-strip { margin-top: 0; }
 .home-hero {
   --hero-full-h: calc(100dvh - var(--header-h));
-  position: relative; isolation: isolate;
+  position: relative; isolation: isolate; overflow: clip;
   display: flex; align-items: center; gap: var(--space-8);
   min-height: var(--hero-min-h);
   padding: var(--space-9) var(--space-7);
@@ -92,19 +92,27 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
   content: ""; position: absolute; inset: 0; z-index: -2;
   background: url("/app/assets/photos/campus.webp") center 48% / cover no-repeat;
   filter: var(--hero-photo-filter);
+  transform-origin: 70% 55%; will-change: transform;
+  animation: hero-drift 32s ease-in-out infinite alternate;
 }
+/* 배경 사진이 아주 천천히 확대되며 흘러간다. 글자 쪽 어두운 그라데이션(::after)은 고정. */
+@keyframes hero-drift { to { transform: scale(1.12) translate3d(-1.6%, -1.2%, 0); } }
 .home-hero::after {
   content: ""; position: absolute; inset: 0; z-index: -1;
   background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 95%, transparent) 0%, color-mix(in srgb, var(--bg) 76%, transparent) 32%, transparent 75%);
 }
 .home-hero-copy { min-width: 0; width: min(640px, 100%); }
 .home-hero h1 { margin: 0; font-size: var(--text-display); line-height: var(--leading-display); font-weight: var(--weight-semibold); letter-spacing: -0.02em; word-break: keep-all; }
+/* The deadline sentence stays on one line; it is longer than the greeting, so it sizes down to fit the 640px copy column. Narrow screens wrap again. */
+.home-hero h1.hero-oneline { white-space: nowrap; font-size: clamp(22px, 2.1vw, 30px); }
+@media (min-width: 768px) { .home-hero.is-full h1.hero-oneline { font-size: clamp(22px, 2.5vw, 35px); } }
+@media (max-width: 767px) { .home-hero h1.hero-oneline { white-space: normal; font-size: var(--text-display); } }
 .hero-greet > p { margin: var(--space-3) 0 0; color: var(--text-2); font-size: var(--text-sm); line-height: var(--leading-sm); }
 .home-hero.enter h1 { animation: hero-rise var(--duration-reveal) var(--ease-reveal) 50ms both; }
 .home-hero.enter .hero-greet > p { animation: hero-rise var(--duration-reveal) var(--ease-reveal) 160ms both; }
 .home-hero.enter .hero-assist { animation: hero-rise var(--duration-reveal) var(--ease-reveal) 260ms both; }
 @keyframes hero-rise { from { opacity: 0; transform: translateY(16px); } }
-@media (prefers-reduced-motion: reduce) { .home-hero.enter h1, .home-hero.enter .hero-greet > p, .home-hero.enter .hero-assist { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .home-hero::before, .home-hero.enter h1, .home-hero.enter .hero-greet > p, .home-hero.enter .hero-assist { animation: none; } }
 
 /* "N건" is a button that opens the 할 일 dialog; it reads as part of the sentence. */
 .hero-count {
@@ -154,7 +162,7 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 /* 한 줄 명령 입력창: 문장 하나로 이동하거나 계획을 세운다. */
 .cmd { position: relative; }
 .cmd-box {
-  display: flex; align-items: center; gap: var(--space-3); min-height: 64px; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-5);
+  display: flex; align-items: center; gap: var(--space-3); min-height: 64px; padding: var(--space-2) var(--space-5);
   background: color-mix(in srgb, var(--surface) 94%, transparent); border: var(--border-w) solid color-mix(in srgb, var(--brand-orange) 70%, transparent); border-radius: 32px;
   box-shadow: var(--shadow-md);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
@@ -180,17 +188,9 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
   color: var(--text-2); background: var(--surface-2); border: var(--border-w) solid var(--border); border-radius: var(--radius-xs);
 }
 .cmd-box:has(.cmd-input:not(:placeholder-shown)):not(.has-ghost) .cmd-key { display: none; }
-.cmd-go {
-  flex: none; width: var(--hit-touch); height: var(--hit-touch); display: inline-grid; place-items: center; border: 0; border-radius: var(--radius-full);
-  background: var(--accent); color: var(--on-accent); font-size: var(--text-lg); line-height: 1; cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-standard);
-}
-.cmd-go:hover { background: var(--accent-press); }
-.cmd-go:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.cmd-box:has(.cmd-input:placeholder-shown) .cmd-go { display: none; }
 .cmd-spin { display: none; flex: none; width: 18px; height: 18px; margin-right: var(--space-2); border: 2px solid var(--border); border-top-color: var(--accent); border-radius: var(--radius-full); animation: cmd-spin 700ms linear infinite; }
 .cmd-box.is-busy .cmd-spin { display: block; }
-.cmd-box.is-busy .cmd-go, .cmd-box.is-busy .cmd-key { display: none; }
+.cmd-box.is-busy .cmd-key { display: none; }
 @keyframes cmd-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .cmd-spin { animation: none; border-top-color: var(--border); border-right-color: var(--accent); } }
 .cmd-list {
@@ -211,9 +211,17 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 /* 비서의 한 줄 답(입력창 바로 위). 한 줄을 미리 비워 두어 답이 나타나도 입력창이 움직이지 않는다. */
 .cmd-say { min-height: var(--leading-sm); margin: 0; padding: 0 var(--space-5); color: var(--text); font-size: var(--text-sm); line-height: var(--leading-sm); }
 
-/* 누르면 바로 실행되는 추천 문장. */
-.hero-prompts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* 누르면 바로 실행되는 추천 문장. 위(다음 행동 카드)와 아래(비워 둔 답 줄 + 입력창) 사이 빈 공간의 세로 가운데에 놓는다:
+   위 여백 = gap, 아래 여백 = gap + 답 한 줄 + gap 이므로 (답 한 줄 + gap) / 2 만큼 내리고, 같은 만큼 아래 여백을 줄여 전체 높이는 그대로 둔다. */
+.hero-prompts {
+  --prompts-shift: calc((var(--leading-sm) + var(--space-3)) / 2);
+  list-style: none; margin: var(--prompts-shift) 0 calc(var(--prompts-shift) * -1); padding: 2px; display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-2);
+  overflow-x: auto; scrollbar-width: none;
+}
+.hero-prompts::-webkit-scrollbar { display: none; }
+.hero-prompts > li { flex: none; display: flex; align-items: center; }
 .hero-prompt {
+  display: inline-flex; align-items: center; justify-content: center; white-space: nowrap;
   min-height: var(--hit); padding: 0 var(--space-4); border: var(--border-w) solid var(--border); border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--surface) 80%, transparent); color: var(--text);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
@@ -291,7 +299,7 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 @media (prefers-reduced-motion: reduce) {
   .home-hero.is-full .hero-greet, .home-hero.is-full:has(.hero-plan:not([hidden])) .hero-greet { transition: none; }
 }
-.home-hero.is-full .hero-prompts { justify-content: center; }
+.home-hero.is-full .hero-prompts { justify-content: safe center; }
 .home-hero.is-full .hero-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); text-align: left; }
 
 /* 전체화면 ↔ 일반 전환(`html.hero-morph` 동안의 View Transition). 히어로 상자는 위쪽을 기준으로 펼쳐지거나 접히고,

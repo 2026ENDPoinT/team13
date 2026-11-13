@@ -10,16 +10,18 @@ import { Button, ErrorState, LoadingState } from "../../ui/kit.tsx";
 import { ApiError } from "../../shared/api.ts";
 import {
   activeRecording, getRecording, importRecording, formatDuration, recordingExtension, onRecordingEvent,
-  startRecording, pauseRecording, resumeRecording, stopRecording, deleteRecording, moveRecordingToAccount, WARN_SHARE,
+  startRecording, pauseRecording, resumeRecording, stopRecording, deleteRecording, moveRecordingToAccount, appendBlocked, WARN_SHARE,
   unsavedAudio, onUnsavedChange, forgetUnsaved,
   type ActiveRecording, type LocalRecording, type RecordingRecord, type RecordingSource,
 } from "../../shared/course-recordings.ts";
-import { backendState, backendSettled } from "../../shared/backend.ts";
+import { backendState, backendSettled, backendStatus } from "../../shared/backend.ts";
 import { useStudyRoomStore, ownerGroup } from "../../shared/study-folders.ts";
 import { saveBlob } from "../../shared/uploads-remote.tsx";
 import { serverStudyCourse, studyRoomOnServer, peekCourseView, studyRoomMessage, formatBytes, usageText } from "../../shared/study-room-remote.ts";
-import { folderHref } from "./study-files.tsx";
+import { folderHref, recordingHref } from "./study-files.tsx";
 import { serverStudyLecture } from "./study-server.tsx";
+import { RecordingStudyView, demoRecordingStudy } from "./recording-study.tsx";
+import { recordingJobPending } from "../../shared/recording-study.ts";
 
 const SOURCES: { id: RecordingSource; label: string; hint: string }[] = [
   { id: "mic", label: "마이크", hint: "음성 메모나 강의실 수업을 녹음해요." },
@@ -27,7 +29,7 @@ const SOURCES: { id: RecordingSource; label: string; hint: string }[] = [
   { id: "audio", label: "오디오 파일 업로드", hint: "이미 녹음해 둔 MP3·M4A 파일을 올려요." },
 ];
 const dateTime = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
-// How often a recording the server is still scanning is asked for again.
+// Poll only while the server is scanning audio or generating a transcript/summary.
 const SCAN_POLL_MS = 4000;
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -58,36 +60,12 @@ function SourceIcon({ source }: { source: RecordingSource }) {
 /** Where the audio is (or will be) stored, in the sentence the screens show. */
 const storedWhere = (onServer: boolean) => (onServer ? "ASTRA 서버의 내 학습실에 저장되며 나만 들을 수 있습니다" : "이 브라우저에만 저장됩니다");
 
-function TranscriptNote({ source, onServer }: { source?: RecordingSource; onServer: boolean }) {
-  if (source === "audio") {
-    return (
-      <div className="rec-transcript-status" role="status">
-        <strong>전사 준비 · 목업</strong>
-        <p>오디오 파일이 저장되어 재생할 수 있습니다. 전사 API는 연결되지 않아 실제 전사 결과는 생성되지 않습니다.</p>
-      </div>
-    );
-  }
-  return <p className="rec-note">{`전사(글자 변환)는 아직 연결되지 않았습니다. 녹음 파일은 ${storedWhere(onServer)}.`}</p>;
+function TranscriptNote({ onServer }: { onServer: boolean }) {
+  return <p className="rec-note">{onServer ? "녹음 파일은 ASTRA 서버의 내 학습실에 저장됩니다. 전사·요약은 서버에서 제공하는 경우 처리 후 표시됩니다." : "녹음 파일은 이 브라우저에만 저장됩니다. 서버에 저장하기 전에는 실제 전사·요약을 받을 수 없습니다."}</p>;
 }
 
-// MediaRecorder WebM files carry no duration, so the player shows 0:00 and cannot seek.
-// Seeking far past the end once makes the browser scan the file and learn the real length.
-function PlayableAudio({ url, title }: { url: string; title: string }) {
-  const checked = useRef(false);
-  return (
-    <audio
-      className="rec-audio" controls preload="metadata" src={url} aria-label={`${title} 재생`}
-      onLoadedMetadata={(event) => {
-        if (checked.current) return;
-        checked.current = true;
-        const audio = event.currentTarget;
-        if (Number.isFinite(audio.duration)) return;
-        audio.addEventListener("durationchange", () => { audio.currentTime = 0; }, { once: true });
-        audio.currentTime = Number.MAX_SAFE_INTEGER;
-      }}
-    />
-  );
-}
+/** Remounts the recording page body (recording-study.tsx) when the recording changes. */
+const viewKey = (record: RecordingRecord) => `${record.remote ? "srv" : "local"}-${record.id}`;
 
 /** Server study room of the course: usage against the quota, and a warning when no new recording fits. */
 function ServerUsage({ courseId }: { courseId: number | string }) {
@@ -211,9 +189,10 @@ function LiveView({ live }: { live: ActiveRecording }) {
     <div className={`rec-panel rec-live${live.paused ? " paused" : ""}`}>
       <div className="rec-state">
         <span className="rec-dot" aria-hidden="true" />
-        <span>{`${live.paused ? "일시정지" : "녹음 중"} · ${sourceLabel(live.source)}`}</span>
+        <span>{`${live.paused ? "일시정지" : live.appendTo ? "이어서 녹음 중" : "녹음 중"} · ${sourceLabel(live.source)}`}</span>
       </div>
       <strong className="rec-clock">{formatDuration(now.elapsedMs)}</strong>
+      {live.appendTo ? <p className="rec-note">{`"${live.appendTo.title}" 뒤에 이어 녹음합니다. 중지하면 한 파일로 저장됩니다.`}</p> : null}
       {now.limitBytes ? <p className="rec-note">{`파일 크기 ${formatBytes(now.bytes)} / 서버 한도 ${formatBytes(now.limitBytes)}`}</p> : null}
       {near ? <p className="err" role="alert">곧 서버의 파일 크기 한도에 닿습니다. 한도에 닿으면 녹음을 멈추고 저장합니다. 이어서 녹음하려면 그 뒤에 새로 시작하세요.</p> : null}
       <div className="btn-row">
@@ -240,33 +219,93 @@ function LiveView({ live }: { live: ActiveRecording }) {
   );
 }
 
-function DeleteButton({ record, course, onStale }: { record: RecordingRecord; course: Course | null; onStale: () => void }) {
+/**
+ * 머리 오른쪽 다운로드 메뉴: 원본 음성과 서버가 만든 전사문 TXT.
+ * 삭제는 같은 메뉴 맨 아래에 두고, 한 번 더 눌러야 지운다(메뉴를 닫으면 되돌아간다).
+ */
+function DownloadMenu({ record, course, url, fileName, onStale }: { record: RecordingRecord; course: Course | null; url: string; fileName: string; onStale: () => void }) {
+  const [open, setOpen] = useState(false);
   const [armed, setArmed] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const transcription = record.remote && record.state === "ready" && record.transcription?.status === "ready" ? record.transcription.result : null;
+  useEffect(() => {
+    if (!open) return;
+    wrap.current?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
+    const onPointer = (event: PointerEvent) => {
+      if (!wrap.current || !wrap.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!open) setArmed(false);
+  }, [open]);
+  const remove = () => {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setDeleting(true);
+    deleteRecording(record).then(() => {
+      getState().toast = "녹음을 삭제했습니다";
+      navigate(course ? folderHref(course.id) : hrefFor(find("study_home")));
+    }, (error: unknown) => {
+      setDeleting(false);
+      setArmed(false);
+      setOpen(false);
+      showErrors({ "rec-delete": messageOf(error) });
+      // Changed elsewhere (409 version_conflict): read it again so the next press sends the new version.
+      const cause = error instanceof Error ? error.cause : null;
+      if (cause instanceof ApiError && cause.code === "version_conflict") onStale();
+    });
+  };
   return (
-    <Button
-      kind="ghost" disabled={deleting}
-      onClick={() => {
-        if (!armed) {
-          setArmed(true);
-          return;
-        }
-        setDeleting(true);
-        deleteRecording(record).then(() => {
-          getState().toast = "녹음을 삭제했습니다";
-          navigate(course ? folderHref(course.id) : hrefFor(find("study_home")));
-        }, (error: unknown) => {
-          setDeleting(false);
-          setArmed(false);
-          showErrors({ "rec-delete": messageOf(error) });
-          // Changed elsewhere (409 version_conflict): read it again so the next press sends the new version.
-          const cause = error instanceof Error ? error.cause : null;
-          if (cause instanceof ApiError && cause.code === "version_conflict") onStale();
-        });
-      }}
-    >
-      {armed ? "한 번 더 누르면 삭제" : "삭제"}
-    </Button>
+    <div ref={wrap} className="rs-menu">
+      <button
+        ref={trigger} type="button" className="rs-menu-btn" aria-haspopup="menu" aria-expanded={open ? "true" : "false"} aria-label="다운로드"
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name="download" />
+      </button>
+      {open ? (
+        <div className="study-new-menu" role="menu" aria-label="다운로드">
+          {url ? (
+            <a role="menuitem" className="study-new-item" href={url} download={fileName} onClick={() => setOpen(false)}>
+              <Icon name="download" /><span>원본 음성</span>
+            </a>
+          ) : (
+            <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled"><Icon name="download" /><span>원본 음성</span></span>
+          )}
+          {transcription ? (
+            <button type="button" role="menuitem" className="study-new-item" onClick={() => {
+              saveBlob(new Blob([transcription.text], { type: "text/plain;charset=utf-8" }), `${record.title.replace(/[\\/:*?"<>|]/g, "-")}.txt`);
+              setOpen(false);
+            }}>
+              <Icon name="file" /><span>전사문 TXT</span>
+            </button>
+          ) : (
+            <span role="menuitem" aria-disabled="true" className="study-new-item is-disabled" title="서버에서 전사가 완료되면 내려받을 수 있습니다.">
+              <Icon name="file" /><span>전사문 TXT</span>
+            </span>
+          )}
+          <div className="study-new-sep" role="separator" />
+          <button type="button" role="menuitem" className="study-new-item is-danger" disabled={deleting} onClick={remove}>
+            <Icon name="close" /><span>{armed ? "한 번 더 누르면 삭제" : "삭제"}</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -321,6 +360,7 @@ function PlaybackView({ course, id }: { course: Course | null; id: string }) {
   const [playback, setPlayback] = useState<Playback>({ kind: "loading" });
   const [url, setUrl] = useState("");
   const [reads, setReads] = useState(0);
+  const [refreshError, setRefreshError] = useState("");
   // Read once the backend connection settled, and again when the study room moves to the server.
   const onServer = studyRoomOnServer();
   const settled = backendSettled();
@@ -328,9 +368,16 @@ function PlaybackView({ course, id }: { course: Course | null; id: string }) {
     if (!settled) return;
     let live = true;
     getRecording(id).then((record) => {
-      if (live) setPlayback(record && record.courseId === kj ? { kind: "ready", record } : { kind: "missing" });
+      if (live) {
+        setPlayback(record && record.courseId === kj ? { kind: "ready", record } : { kind: "missing" });
+        setRefreshError("");
+      }
     }).catch((error: unknown) => {
-      if (live) setPlayback({ kind: "failed", message: error instanceof ApiError ? studyRoomMessage(error) : "" });
+      if (!live) return;
+      const message = error instanceof ApiError ? studyRoomMessage(error) : "녹음 상태를 불러오지 못했습니다.";
+      setRefreshError(message);
+      setPlayback((previous) => previous.kind === "ready" && !(error instanceof ApiError && [401, 403, 404].includes(error.status))
+        ? previous : { kind: "failed", message });
     });
     return () => {
       live = false;
@@ -347,56 +394,83 @@ function PlaybackView({ course, id }: { course: Course | null; id: string }) {
     setUrl(next);
     return () => URL.revokeObjectURL(next);
   }, [record]);
-  // A recording the server is still scanning is read again until its state changes.
-  const scanning = Boolean(record && record.remote && record.state === "scanning");
+  // Keep the player mounted while the backend generates results. Terminal/missing jobs never poll.
+  const pending = Boolean(record?.remote && (record.state === "scanning" || (record.state === "ready"
+    && (recordingJobPending(record.transcription) || recordingJobPending(record.summary)))));
   useEffect(() => {
-    if (!scanning) return;
+    if (!pending || refreshError) return;
     const timer = window.setTimeout(() => setReads((n) => n + 1), SCAN_POLL_MS);
     return () => window.clearTimeout(timer);
-  }, [scanning, reads]);
+  }, [pending, refreshError, reads]);
+  const refresh = () => {
+    setRefreshError("");
+    setReads((n) => n + 1);
+  };
 
   if (playback.kind === "loading") {
-    return <div className="rec-panel" aria-busy="true"><LoadingState title="녹음을 불러오는 중입니다" /></div>;
+    return <><PlaybackHeading /><div className="rec-panel" aria-busy="true"><LoadingState title="녹음을 불러오는 중입니다" /></div></>;
   }
   if (playback.kind === "missing") {
     return (
-      <div className="rec-panel">
-        <ErrorState
-          title="녹음을 찾을 수 없습니다" body={!course || serverStudyCourse(course.id) != null ? "삭제되었거나 이 과목의 녹음이 아닙니다." : "삭제되었거나 다른 브라우저에서 만든 녹음입니다."}
-          actions={<Link href={course ? folderHref(course.id) : hrefFor(find("study_home"))} className="btn btn-secondary">{course ? "폴더로" : "학습실로"}</Link>}
-        />
-      </div>
+      <>
+        <PlaybackHeading />
+        <div className="rec-panel">
+          <ErrorState
+            title="녹음을 찾을 수 없습니다" body={!course || serverStudyCourse(course.id) != null ? "삭제되었거나 이 과목의 녹음이 아닙니다." : "삭제되었거나 다른 브라우저에서 만든 녹음입니다."}
+            actions={<Link href={course ? folderHref(course.id) : hrefFor(find("study_home"))} className="btn btn-secondary">{course ? "폴더로" : "학습실로"}</Link>}
+          />
+        </div>
+      </>
     );
   }
   if (playback.kind === "failed") {
     return (
-      <div className="rec-panel">
-        <ErrorState
-          title="녹음을 불러오지 못했습니다"
-          body={playback.message || "이 브라우저의 저장소에 접근할 수 없습니다. 사이트 데이터 접근 설정을 확인해 주세요."}
-          actions={<Button kind="ghost" onClick={() => setReads((n) => n + 1)}>다시 불러오기</Button>}
-        />
-      </div>
+      <>
+        <PlaybackHeading />
+        <div className="rec-panel">
+          <ErrorState
+            title="녹음을 불러오지 못했습니다"
+            body={playback.message || "이 브라우저의 저장소에 접근할 수 없습니다. 사이트 데이터 접근 설정을 확인해 주세요."}
+            actions={<Button kind="ghost" onClick={refresh}>다시 불러오기</Button>}
+          />
+        </div>
+      </>
     );
   }
   const ready = playback.record;
   const state = ready.remote ? ready.state : "ready";
   const fileName = ready.fileName || `${ready.title.replace(/[\\/:*?"<>|]/g, "-")}.${recordingExtension(ready.mimeType)}`;
+  // Only an explicitly offline demo gets sample results; server mode never substitutes samples.
+  const study = backendStatus() === "off" ? demoRecordingStudy() : ready.remote && ready.state === "ready"
+    ? { transcription: ready.transcription, summary: ready.summary } : {};
   return (
-    <div className="rec-panel">
-      <h2 className="rec-title">{ready.title}</h2>
-      <p className="rec-meta">{`${sourceLabel(ready.source)} · ${formatDuration(ready.durationMs)} · ${dateTime.format(new Date(ready.createdAt))}`}</p>
-      {state === "scanning" ? <p className="rec-note" role="status">바이러스 검사 중입니다. 검사가 끝나면 재생하고 내려받을 수 있습니다.</p> : null}
-      {state === "rejected" ? <p className="err" role="alert">검사에서 악성 코드가 발견되어 재생하거나 내려받을 수 없습니다. 이 녹음을 삭제하세요.</p> : null}
-      {course && !ready.remote && serverStudyCourse(course.id) != null ? <MoveToAccount record={ready} course={course} /> : null}
-      {url ? <PlayableAudio url={url} title={ready.title} /> : null}
-      <div className="btn-row">
-        {url ? <a className="btn btn-secondary" href={url} download={fileName}>다운로드</a> : null}
-        <DeleteButton record={ready} course={course} onStale={() => setReads((n) => n + 1)} />
-      </div>
-      <TranscriptNote source={ready.source} onServer={Boolean(ready.remote)} />
-    </div>
+    <>
+      <header className="rs-head">
+        <div>
+          <h1>{ready.title}</h1>
+          <p className="tiny">{`${sourceLabel(ready.source)} · ${formatDuration(ready.durationMs)} · ${dateTime.format(new Date(ready.createdAt))}`}</p>
+        </div>
+        <DownloadMenu record={ready} course={course} url={url} fileName={fileName} onStale={() => setReads((n) => n + 1)} />
+      </header>
+      {state === "scanning" ? <p className="rec-note rs-notice" role="status">바이러스 검사 중입니다. 검사가 끝나면 재생하고 내려받을 수 있습니다.</p> : null}
+      {state === "rejected" ? <p className="err rs-notice" role="alert">검사에서 악성 코드가 발견되어 재생하거나 내려받을 수 없습니다. 이 녹음을 삭제하세요.</p> : null}
+      {refreshError ? <div className="rs-notice" role="alert"><p>{refreshError}</p><Button kind="ghost" onClick={refresh}>상태 다시 확인</Button></div> : null}
+      {course && !ready.remote && serverStudyCourse(course.id) != null ? <div className="rs-notice"><MoveToAccount record={ready} course={course} /></div> : null}
+      <RecordingStudyView
+        id={viewKey(ready)} url={url} durationMs={ready.durationMs}
+        blocked={state === "scanning" ? "바이러스 검사가 끝나면 재생할 수 있습니다." : state === "rejected" ? "악성 코드가 발견되어 재생할 수 없습니다." : ""}
+        transcription={study.transcription} summary={study.summary}
+        resume={course ? {
+          blocked: appendBlocked(ready),
+          start: () => startRecording({ courseId: course.id, source: ready.source === "tab" ? "tab" : "mic", appendTo: ready }).then(() => navigate(recordingHref(course.id))),
+        } : null}
+      />
+    </>
   );
+}
+
+function PlaybackHeading() {
+  return <h1><Icon name="mic" /><span>녹음 파일</span></h1>;
 }
 
 export function renderRecording(ctx: ScreenCtx): ReactNode {
@@ -411,8 +485,7 @@ export function renderRecording(ctx: ScreenCtx): ReactNode {
     return (
       <section className="study rec" data-area="home">
         <p className="term"><Link href={hrefFor(find("study_home"))}>학습실</Link>{" · 지금 듣지 않는 과목"}</p>
-        <h1><Icon name="mic" /><span>녹음 파일</span></h1>
-        {backendSettled() ? <PlaybackView key={rec} course={null} id={rec} /> : <div className="rec-panel" aria-busy="true"><LoadingState title="녹음을 불러오는 중입니다" /></div>}
+        {backendSettled() ? <PlaybackView key={`${backendStatus()}:${backendState().me?.userId ?? ""}:${rec}`} course={null} id={rec} /> : <><PlaybackHeading /><div className="rec-panel" aria-busy="true"><LoadingState title="녹음을 불러오는 중입니다" /></div></>}
       </section>
     );
   }
@@ -450,7 +523,7 @@ function Recording({ course, id }: { course: Course; id: string | null }) {
 
   const live = activeRecording();
   let body: ReactNode;
-  if (id) body = <PlaybackView key={id} course={course} id={id} />;
+  if (id) body = <PlaybackView key={`${backendStatus()}:${backendState().me?.userId ?? ""}:${id}`} course={course} id={id} />;
   else if (live && live.courseId !== course.id) {
     const other = courseById(live.courseId);
     body = (
@@ -463,7 +536,7 @@ function Recording({ course, id }: { course: Course; id: string | null }) {
   return (
     <section className="study rec" data-area="home">
       <p className="term"><Link href={hrefFor(find("study_home"))}>학습실</Link>{" · "}<Link href={folderHref(course.id)}>{course.cardTitle || course.ko}</Link></p>
-      <h1><Icon name="mic" /><span>{id ? "녹음 파일" : "강의 녹음"}</span></h1>
+      {id ? null : <h1><Icon name="mic" /><span>강의 녹음</span></h1>}
       {body}
     </section>
   );

@@ -156,7 +156,6 @@ function SubmitDialog({ activity, ctx }: { activity: Activity; ctx: ScreenCtx })
     const target = activityById(new URLSearchParams(location.search).get("n")) || activityById("r-open")!;
     const token = completionToken(target.id);
     state.submissions[target.id] = { who: "minjun", title: title.trim(), body: text.trim(), fileName: file, at: stamp() };
-    state.fileBox.unshift({ name: file, at: stamp().slice(0, 10) });
     state.draft.reportBody = "";
     state.draft.fileName = "";
     state.toast = "과제를 제출했습니다";

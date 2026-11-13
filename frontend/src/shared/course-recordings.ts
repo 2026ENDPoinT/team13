@@ -1,6 +1,6 @@
 // Lecture audio recorded or imported by the student. Backend `ready`: stored on the server in the student's own
 // study room (study-room-remote.ts) and played or downloaded from its content address. Otherwise kept only in this
-// browser's IndexedDB. Recordings are never transcribed or sent to a model in either mode.
+// browser's IndexedDB. Transcription and summary generation belong to the backend; their results stay in memory only.
 // Audio is never dropped: a finished recording is kept in IndexedDB until the server answered 201 for it, and when
 // even IndexedDB refuses it the audio stays in memory and is offered as a download (`unsavedAudio`).
 import {
@@ -16,6 +16,8 @@ import { ApiError } from "./api.ts";
 import { backendSettled, backendState, connect, currentUserId, kjOfCourseId, subscribe as onBackendChange } from "./backend.ts";
 import { saveBlob } from "./uploads-remote.tsx";
 import { toast } from "../store.ts";
+import { appendWebm, isAppendable } from "./webm-append.ts";
+import type { RecordingStudyResults } from "./recording-study.ts";
 
 const DATABASE = "astra-course-recordings";
 const VERSION = 1;
@@ -57,7 +59,7 @@ export interface LocalRecording extends RecordingFields {
 }
 
 /** A recording on the server. `id` is the server id as a string; `url` plays and downloads it. */
-export interface RemoteRecording extends RecordingFields {
+export interface RemoteRecording extends RecordingFields, RecordingStudyResults {
   remote: true;
   backendCourseId: number;
   state: RecordingState;
@@ -84,6 +86,8 @@ export interface ActiveRecording {
   limitBytes: number | null;
   /** True when it is saved only in this browser (recorded in a browser-only folder, or nobody signed in). */
   browserOnly: boolean;
+  /** "이어서 녹음": the recording this one is joined to when it stops. `elapsedMs` and `bytes` include it. */
+  appendTo: { id: string; title: string } | null;
 }
 
 /** Audio that neither IndexedDB nor the server took; kept in memory for this page and offered as a download. */
@@ -114,6 +118,8 @@ interface Session {
   pausedTotal: number;
   pausedAt: number;
   stoppedAt: number;
+  /** "이어서 녹음": the recording continued, and its audio (read at the start, used when this one stops). */
+  append: { record: RecordingRecord; base: Promise<Blob> } | null;
   done?: Promise<RecordingRecord | null>;
 }
 
@@ -239,6 +245,8 @@ export function fromServer(recording: ServerRecording, kj: string): RemoteRecord
     state: recording.state,
     version: recording.version,
     url: contentUrl(recording.id),
+    transcription: recording.transcription,
+    summary: recording.summary,
   };
 }
 
@@ -711,7 +719,8 @@ export function onRecordingEvent(listener: (event: RecordingEvent) => void): () 
 // `finish` checks the account with the server before the upload and keeps the audio here when it does not match.
 onBackendChange((next) => {
   const current = session;
-  if (!current || current.settled || !next.settled) return;
+  // A continued recording took its owner and limit from the recording it continues.
+  if (!current || current.settled || !next.settled || current.append) return;
   current.settled = true;
   current.ownerUserId = next.status === "ready" && next.me ? String(next.me.userId) : null;
   // Now that the study room is known to be on the server, the server's file limit applies to this recording too.
@@ -827,6 +836,9 @@ function elapsed(s: Session, now: number = Date.now()): number {
   return now - s.startedAt.getTime() - s.pausedTotal - (s.pausedAt ? now - s.pausedAt : 0);
 }
 
+/** Bytes of the joined file so far: the continued recording and what was recorded now. */
+const totalBytes = (s: Session) => s.bytes + (s.append ? s.append.record.size : 0);
+
 /** True when a recording started now in `courseId` (inside `folderId`) is saved only in this browser. */
 export function recordsInBrowserOnly(courseId: string, folderId: string | null | undefined): boolean {
   return serverStudyCourse(courseId) == null || Boolean(folderId && localFolder(folderId));
@@ -834,10 +846,29 @@ export function recordsInBrowserOnly(courseId: string, folderId: string | null |
 
 export function activeRecording(): ActiveRecording | null {
   if (!session) return null;
+  const append = session.append;
   return {
-    courseId: session.courseId, source: session.source, paused: Boolean(session.pausedAt), elapsedMs: elapsed(session),
-    bytes: session.bytes, limitBytes: session.limitBytes, browserOnly: recordsInBrowserOnly(session.courseId, session.folderId),
+    courseId: session.courseId, source: session.source, paused: Boolean(session.pausedAt),
+    elapsedMs: elapsed(session) + (append ? append.record.durationMs : 0), bytes: totalBytes(session), limitBytes: session.limitBytes,
+    browserOnly: append ? !append.record.remote : recordsInBrowserOnly(session.courseId, session.folderId),
+    appendTo: append ? { id: append.record.id, title: append.record.title } : null,
   };
+}
+
+/** The audio type MediaRecorder writes for a continuation of `record`, or null when it cannot write a joinable one. */
+function appendType(record: RecordingRecord): string | null {
+  if (typeof MediaRecorder === "undefined" || !isAppendable(record.mimeType)) return null;
+  return [record.mimeType, "audio/webm;codecs=opus", "audio/webm"].find((type) => MediaRecorder.isTypeSupported(type)) || null;
+}
+
+/** Why "이어서 녹음" is not offered for `record` now, or "" when it is. */
+export function appendBlocked(record: RecordingRecord): string {
+  if (session) return "다른 녹음이 진행 중입니다. 그 녹음을 저장한 뒤 이어서 녹음할 수 있습니다.";
+  if (!record.courseId) return "지금 듣지 않는 과목의 녹음이라 이어서 녹음할 수 없습니다.";
+  if (record.remote && record.state !== "ready") return "바이러스 검사가 끝난 녹음만 이어서 녹음할 수 있습니다.";
+  if (!isAppendable(record.mimeType)) return "이 앱에서 녹음한 파일(WebM)만 이어서 녹음할 수 있습니다. 올린 MP3·M4A 같은 파일은 새로 녹음하세요.";
+  if (!appendType(record)) return "이 브라우저는 이 녹음 형식으로 이어서 녹음하지 못합니다. 데스크톱 Chrome 또는 Edge에서 열어 주세요.";
+  return "";
 }
 
 function warnUnload(event: BeforeUnloadEvent): void {
@@ -848,9 +879,13 @@ function warnUnload(event: BeforeUnloadEvent): void {
 /**
  * Must be called from a click handler: browsers only open the mic or tab picker for a user gesture.
  * `folderId`: the open folder the recording is saved into. A browser-only folder keeps it browser-only.
+ * `appendTo`: "이어서 녹음" — when it stops, the new audio is joined to the end of that recording (`appendBlocked`
+ * says when that is not possible); the joined file replaces it where it is stored.
  */
-export async function startRecording({ courseId, source, folderId = null }: { courseId: string; source: "mic" | "tab"; folderId?: string | null }): Promise<void> {
+export async function startRecording({ courseId, source, folderId = null, appendTo = null }: { courseId: string; source: "mic" | "tab"; folderId?: string | null; appendTo?: RecordingRecord | null }): Promise<void> {
   if (session) throw new Error("이미 녹음 중입니다. 지금 녹음을 저장한 뒤 새로 시작하세요.");
+  const blocked = appendTo ? appendBlocked(appendTo) : "";
+  if (blocked) throw new Error(blocked);
   const devices = navigator.mediaDevices;
   if (!devices || typeof MediaRecorder === "undefined" || (source === "tab" ? !devices.getDisplayMedia : !devices.getUserMedia)) {
     throw captureError({ name: "NotSupportedError" }, source === "tab" ? "tab" : "mic");
@@ -871,15 +906,19 @@ export async function startRecording({ courseId, source, folderId = null }: { co
     stream.getTracks().forEach((track) => track.stop());
     throw new Error("공유한 탭의 소리가 없습니다. 탭을 고르는 창에서 '탭 오디오도 공유'를 켠 뒤 다시 시작하세요.");
   }
-  const mimeType = MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
+  const mimeType = appendTo ? appendType(appendTo) : MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
   const recorder = new MediaRecorder(new MediaStream(audio), mimeType ? { mimeType, audioBitsPerSecond: AUDIO_BITS_PER_SECOND } : { audioBitsPerSecond: AUDIO_BITS_PER_SECOND });
   const chunks: Blob[] = [];
-  const server = recordsInBrowserOnly(courseId, folderId) ? null : serverStudyCourse(courseId);
+  // A continuation goes where the recording it continues is; its server file limit covers the joined file.
+  const server = appendTo ? (appendTo.remote ? appendTo.backendCourseId : null) : recordsInBrowserOnly(courseId, folderId) ? null : serverStudyCourse(courseId);
   const current: Session = {
-    courseId, source, folderId, ownerUserId: currentUserId(), settled: backendSettled(), recorder, stream, chunks, bytes: 0,
+    courseId, source, folderId: appendTo ? null : folderId, ownerUserId: currentUserId(), settled: appendTo ? true : backendSettled(), recorder, stream, chunks, bytes: 0,
     limitBytes: server != null ? studyUsage()?.maxFileBytes ?? null : null, limitReached: false, warned: false,
     startedAt: new Date(), pausedTotal: 0, pausedAt: 0, stoppedAt: 0,
+    append: appendTo ? { record: appendTo, base: recordingAudio(appendTo) } : null,
   };
+  // Awaited when it stops; a failure there only means the new audio is saved on its own.
+  current.append?.base.catch(() => {});
   // The file limit is known once this course's study room was read; read it now when it was not (the mic is already open).
   if (server != null && current.limitBytes == null) {
     loadCourseView(server).then((view) => {
@@ -891,12 +930,13 @@ export async function startRecording({ courseId, source, folderId = null }: { co
     chunks.push(event.data);
     current.bytes += event.data.size;
     if (!current.limitBytes) return;
-    if (!current.warned && current.bytes >= current.limitBytes * WARN_SHARE) {
+    const bytes = totalBytes(current);
+    if (!current.warned && bytes >= current.limitBytes * WARN_SHARE) {
       current.warned = true;
       toast(`녹음 파일이 서버 한도(${formatBytes(current.limitBytes)})에 가까워졌습니다. 한도에 닿으면 녹음을 멈추고 저장합니다.`);
     }
     // Stop and save before the file would pass the server's limit instead of failing after the lecture.
-    if (current.bytes >= current.limitBytes * STOP_SHARE && recorder.state !== "inactive") {
+    if (bytes >= current.limitBytes * STOP_SHARE && recorder.state !== "inactive") {
       current.limitReached = true;
       current.stoppedAt = Date.now();
       recorder.stop();
@@ -921,11 +961,66 @@ export async function startRecording({ courseId, source, folderId = null }: { co
   emit({ type: "change" });
 }
 
+/** The stored audio of a recording: the IndexedDB blob, or the server file (owner-only, the session cookie). */
+async function recordingAudio(record: RecordingRecord): Promise<Blob> {
+  if (!record.remote) return record.blob;
+  const response = await fetch(record.url, { credentials: "same-origin" });
+  if (!response.ok) throw new Error(`서버에서 원래 녹음을 받지 못했습니다(${response.status}).`);
+  return response.blob();
+}
+
+/** The folder `record` is in: its browser folder or pending server folder, or its server placement. */
+async function folderOf(record: RecordingRecord): Promise<string | null> {
+  if (!record.remote) return localPlacements()[record.id] || record.pendingFolderId || null;
+  const view = await loadCourseView(record.backendCourseId, true).catch(() => null);
+  const placement = view && view.placements.find((item) => item.kind === "recording" && String(item.itemId) === record.id);
+  return placement ? String(placement.folderId) : null;
+}
+
+/**
+ * "이어서 녹음": joins `blob` to the end of the recording it continues and stores the joined file in its place. A
+ * browser recording is rewritten in IndexedDB under the same id. A server recording is uploaded again as a new
+ * recording (same title, start, folder) and the old one is deleted only after that 201; when that delete fails both
+ * stay and `warning` says so. Throws when nothing was replaced, so the caller saves `blob` on its own.
+ */
+async function joinRecording(current: Session, blob: Blob, durationMs: number): Promise<{ record: RecordingRecord; warning?: string }> {
+  const { record, base } = current.append!;
+  const joined = await appendWebm(await base, blob);
+  const total = record.durationMs + durationMs;
+  if (!record.remote) {
+    const updated = await updateLocalIfPresent(record.id, { blob: joined, size: joined.size, mimeType: joined.type, durationMs: total });
+    if (!updated) throw new Error("이어 붙일 원래 녹음이 이 브라우저에서 지워졌습니다.");
+    return { record: updated };
+  }
+  const input: SaveInput = {
+    courseId: record.courseId, source: record.source, blob: joined, durationMs: total, startedAt: new Date(recordedAt(record.createdAt)),
+    title: record.title, fileName: record.fileName, folderId: await folderOf(record),
+  };
+  let saved: RemoteRecording;
+  try {
+    // One key per continuation: a retried request after a lost answer gets the same recording back.
+    saved = await saveRemote(record.backendCourseId, input, `append-${record.id}-${record.version}-${current.startedAt.getTime()}`, current.ownerUserId);
+  } catch (error) {
+    if (error instanceof AccountStop) throw new Error(KEPT[error.outcome]);
+    throw new ApiErrorMessage(error);
+  }
+  try {
+    await deleteServerRecording({ id: record.id, version: record.version, courseId: record.backendCourseId });
+  } catch (error) {
+    // Already gone (deleted meanwhile) is what was wanted.
+    if (!(error instanceof ApiError && error.status === 404)) {
+      return { record: saved, warning: `이어 붙인 녹음을 저장했지만 원래 녹음을 지우지 못해 둘 다 남아 있습니다. 앞부분만 있는 "${record.title}" 녹음을 지우세요. ${studyRoomMessage(error)}` };
+    }
+  }
+  return { record: saved };
+}
+
 /**
  * Stores a finished recording: IndexedDB first, then (study room on the server, recorded by the account still signed
  * in, not in a browser-only folder) the upload, which deletes the browser copy after 201. If IndexedDB refuses it the
  * in-memory audio is uploaded with its own stable key; if that fails too it stays in memory and is offered as a file.
- * Resolves the stored record, or null when only the in-memory copy is left.
+ * A continuation ("이어서 녹음") is joined to its recording first; if that fails it is stored on its own the same way,
+ * next to that recording. Resolves the stored record, or null when only the in-memory copy is left.
  */
 async function finish(current: Session): Promise<RecordingRecord | null> {
   const durationMs = elapsed(current, current.stoppedAt || Date.now());
@@ -936,11 +1031,25 @@ async function finish(current: Session): Promise<RecordingRecord | null> {
     if (!blob.size) throw new Error("녹음된 소리가 없어 저장하지 않았습니다.");
     const notes: string[] = [];
     if (current.limitReached && current.limitBytes) notes.push(`녹음 파일이 서버 한도(${formatBytes(current.limitBytes)})에 가까워져 녹음을 멈추고 저장했습니다. 이어서 녹음하려면 새로 시작하세요.`);
+    let title: string | undefined;
+    if (current.append) {
+      try {
+        const joined = await joinRecording(current, blob, durationMs);
+        notes.push(...(joined.warning ? [joined.warning] : []));
+        emit({ type: "saved", record: joined.record, ...(notes.length ? { warning: notes.join(" ") } : {}) });
+        return joined.record;
+      } catch (error) {
+        const original = current.append.record;
+        notes.push(`원래 녹음에 이어 붙이지 못해 새 녹음으로 따로 저장했습니다. ${error instanceof Error ? error.message : ""}`.trim());
+        title = `${original.title} (이어서)`;
+        current.folderId = await folderOf(original).catch(() => null);
+      }
+    }
     const browserFolder = current.folderId ? localFolder(current.folderId) : null;
     const server = serverStudyCourse(current.courseId);
     const owner = current.ownerUserId;
     const input: SaveInput = {
-      courseId: current.courseId, source: current.source, blob, durationMs, startedAt: current.startedAt,
+      courseId: current.courseId, source: current.source, blob, durationMs, startedAt: current.startedAt, title,
       // Any folder that is not a browser folder is a server folder (even if the session ended meanwhile): it is kept
       // on the record, never in the browser placement map.
       ownerUserId: owner, pendingFolderId: !browserFolder ? current.folderId : null,

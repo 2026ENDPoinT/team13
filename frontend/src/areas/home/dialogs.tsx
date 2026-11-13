@@ -1,6 +1,6 @@
 import { useRef, type ReactNode } from "react";
 import { Link, navigate, closeDialog } from "../../router.tsx";
-import { getState, save, render, toast } from "../../store.ts";
+import { getState, save, render } from "../../store.ts";
 import { readForm, showErrors, stamp } from "../../forms.ts";
 import { Icon } from "../../ui/icon.tsx";
 import { Button, Dialog, Field } from "../../ui/kit.tsx";
@@ -19,15 +19,9 @@ import { serverNotifications } from "./notifications-server.tsx";
 import { remoteMaterialDialog, remoteInquiryDialog, remoteInquiryWriteDialog, remoteMaterialWriteDialog } from "./community-server.tsx";
 import { communitySurveyDialog } from "./surveys-server.tsx";
 import { serverAccountDialog } from "./account-server.tsx";
-import { serverFileBox } from "./filebox-server.tsx";
 import { serverSiteNoticeDialog, serverSiteNoticeWriteDialog, serverEntryNotices } from "./site-notices-server.tsx";
 
-const MINE = new Set(["welcome", "settings", "display", "profile", "myinfo", "avatar", "files", "history", "history-login", "notify", "notify-unread", "todo", "todo-more", "external", "related", "apply", "chat", "qna-write"]);
-
-const DEVICE: Record<string, string> = {
-  "Campus laptop": "캠퍼스 노트북",
-  "Mobile browser": "모바일 브라우저",
-};
+const MINE = new Set(["welcome", "settings", "display", "profile", "myinfo", "notify", "notify-unread", "todo", "todo-more", "external", "related", "apply", "chat", "qna-write"]);
 
 interface ChatMessage {
   from: string;
@@ -149,16 +143,6 @@ function toggleLang(): void {
   render();
 }
 
-function saveAvatar(): void {
-  const state = getState();
-  const avatar = String(readForm().avatar || "").trim();
-  if (!avatar) return showErrors({ avatar: "표시 글자를 입력하세요" });
-  state.draft.avatar = avatar.slice(0, 2);
-  state.toast = "표시 글자를 저장했습니다";
-  save();
-  render();
-}
-
 function applyCourse(id: string): void {
   const state = getState();
   const motive = String(readForm().motive || "").trim();
@@ -212,9 +196,6 @@ function ProfileMenu({ ctx }: { ctx: ScreenCtx }) {
         <p className="tiny center" hidden={!who.dept}>{who.dept || ""}</p>
         <div className="menu-list">
           <MenuLink href={routeFor(currentRole(), "pop", { pop: "myinfo" })} label="내 정보" />
-          <MenuLink href={routeFor(currentRole(), "pop", { pop: "avatar" })} label="아바타" />
-          <MenuLink href={routeFor(currentRole(), "pop", { pop: "files" })} label="파일함" />
-          <MenuLink href={routeFor(currentRole(), "pop", { pop: "history" })} label="접속 이력" />
           <MenuLink href={routeFor(currentRole(), "pop", { pop: "settings" })} label="설정" />
           <Link className="menu-item" href="/ilos/lo/logout.acl" logout><span>로그아웃</span></Link>
         </div>
@@ -275,8 +256,8 @@ export function renderDialog(name: string, ctx: ScreenCtx): ReactNode | null {
   if (!MINE.has(name)) return null;
   const draft = ctx.state.draft || {};
   const who = person(ctx.state.role);
-  // Backend mode: account dialogs and the file box read the server (account-server.tsx, filebox-server.tsx).
-  const server = name === "files" ? serverFileBox() : serverAccountDialog(name, ctx);
+  // Backend mode: account dialogs read the server (account-server.tsx).
+  const server = serverAccountDialog(name, ctx);
   if (server) return server;
   // Backend `ready`: the entry popup lists the unread pinned 알림마당 notices (`noticesForMe`).
   if (name === "welcome" && backendStatus() === "ready") return serverEntryNotices();
@@ -319,73 +300,6 @@ export function renderDialog(name: string, ctx: ScreenCtx): ReactNode | null {
           {who.dept ? <p>{who.dept}</p> : null}
           <p className="tiny">{ctx.state.role === "professor" ? "교수" : [who.year, "학생"].filter(Boolean).join(" · ")}</p>
           <p className="note">전화번호와 메일은 이 샘플에 두지 않습니다. 학사 시스템에서 확인하세요.</p>
-          <Link href={routeFor(currentRole(), "pop", { pop: "avatar" })} className="btn btn-secondary">아바타 바꾸기</Link>
-        </div>
-      </HomeDialog>
-    );
-  }
-  if (name === "avatar") {
-    const letters = String(draft.avatar || who.avatar || "");
-    return (
-      <HomeDialog title="아바타">
-        <div className="who">
-          <span className="avatar lg">{letters.slice(0, 1)}</span>
-          <p className="note">이니셜만 바꿉니다. 사진은 올리지 않습니다.</p>
-          <Field label="표시 글자" name="avatar"><input data-name="avatar" maxLength={2} defaultValue={letters} /></Field>
-          <Button kind="primary" onClick={saveAvatar}>저장</Button>
-        </div>
-      </HomeDialog>
-    );
-  }
-  if (name === "files") {
-    return (
-      <HomeDialog title="파일함">
-        {ctx.state.fileBox.length
-          ? (
-            <div className="board-list">
-              {ctx.state.fileBox.map((file, index) => {
-                // 견본 파일함의 파일은 과제 제출에서 온다: 그 제출과 강의실로 연다(파일 내용은 이 브라우저에 없다).
-                const activityId = Object.keys(ctx.state.submissions).find((id) => ctx.state.submissions[id].fileName === file.name);
-                const activity = activityId ? activities.find((item) => item.id === activityId) : undefined;
-                const course = activity ? courseById(activity.courseId) : null;
-                return (
-                  <div key={index} className="board-card">
-                    <b>
-                      {activity
-                        ? <Link href={activityHref(activity)} aria-label={`${file.name} 열기 (${activity.title} 제출)`}>{file.name}</Link>
-                        : <Button kind="ghost" onClick={() => toast("샘플 파일은 이 브라우저 밖으로 내려받지 않습니다")}>{file.name}</Button>}
-                    </b>
-                    <span className="tiny">{activity && course ? `${file.at} · ${course.cardTitle || course.ko} · ${activity.title}` : file.at}</span>
-                    {activity && course
-                      ? <Link href={routeFor(currentRole(), "classroom", { kj: course.id, special: course.kind === "special" })}>{`${course.cardTitle || course.ko} 강의실로 가기`}</Link>
-                      : null}
-                  </div>
-                );
-              })}
-            </div>
-          )
-          : <p className="note">올린 파일이 없습니다.</p>}
-      </HomeDialog>
-    );
-  }
-  if (name === "history" || name === "history-login") {
-    const login = name === "history-login";
-    return (
-      <HomeDialog title={login ? "접속 이력" : "접속 기기"}>
-        <div>
-          <div className="filters">
-            <Link href={routeFor(currentRole(), "pop", { pop: "history" })} className={`chip${!login ? " on all" : ""}`}>접속 기기</Link>
-            <Link href={routeFor(currentRole(), "pop", { pop: "history-login" })} className={`chip${login ? " on all" : ""}`}>접속 이력</Link>
-          </div>
-          {ctx.state.devices.map((device) => (
-            <article key={device.id} className="aside-card todo-card">
-              <div>
-                <b>{DEVICE[device.name] || device.name}</b>
-                <div className="tiny">{`${device.where} · ${device.at}`}</div>
-              </div>
-              {device.current ? <span className="status on">현재</span> : null}
-            </article>
-          ))}
         </div>
       </HomeDialog>
     );

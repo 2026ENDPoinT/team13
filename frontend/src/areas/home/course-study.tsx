@@ -147,7 +147,7 @@ function DocumentCard({ record, keepUrl }: { record: ParsedPdf; keepUrl: KeepUrl
           <span>등록일 <UploadedDate value={record.uploadedAt} /></span>
         </div>
         {/* 요약 화면은 학생에게 보이는 요약 게시본이 있을 때(`summaryPublished`)만 연다. */}
-        {record.remote && record.summaryPublished ? <Link href={studySummaryHref(record.courseId, record.id)} className="btn btn-secondary">자료 요약과 테크뇽 대화</Link> : null}
+        {record.remote && record.summaryPublished ? <Link href={studySummaryHref(record.courseId, record.id)} className="btn btn-secondary">자료 요약</Link> : null}
         {record.remote ? <Link href={hrefFor(find("65_file_preview"), { n: record.id, kj: record.courseId })} className="btn btn-secondary">미리보기 화면으로 열기</Link> : null}
       </header>
       {noText ? <p className="course-study__ocr" role="note">텍스트를 추출하지 못한 PDF입니다. 스캔 이미지라면 OCR(문자인식)이 필요하며, 이 화면에서는 OCR을 지원하지 않습니다. 아래에서 원본을 열거나 다운로드할 수 있습니다.</p> : null}

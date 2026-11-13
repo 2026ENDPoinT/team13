@@ -58,17 +58,21 @@ function readHeroMode(): boolean {
   }
 }
 
+function saveHeroMode(): void {
+  try {
+    localStorage.setItem(HERO_MODE_KEY, heroFull ? "full" : "normal");
+  } catch {
+    /* private mode or full storage: keep the choice for this page */
+  }
+}
+
 /**
  * 전환은 View Transition으로 그린다: 히어로가 상단 바 아래에서 펼쳐지고 접히며 나머지 화면은 짧게 겹쳐 바뀐다.
  * 지원하지 않는 브라우저나 동작 줄이기 설정에서는 바로 바꾼다.
  */
 function toggleHeroMode(): void {
   heroFull = !heroFull;
-  try {
-    localStorage.setItem(HERO_MODE_KEY, heroFull ? "full" : "normal");
-  } catch {
-    /* private mode or full storage: keep the choice for this page */
-  }
+  saveHeroMode();
   const apply = () => {
     flushSync(repaint);
     if (heroFull) focusCommand();
@@ -80,6 +84,22 @@ function toggleHeroMode(): void {
   const root = document.documentElement;
   root.classList.add("hero-morph");
   document.startViewTransition(apply).finished.finally(() => root.classList.remove("hero-morph"));
+}
+
+/**
+ * 좌측 상단 로고 버튼: 전체화면이면 일반 모드로 돌린다. 홈에 있으면 접히는 전환을 그리고(그동안 홈으로의 이동은 막는다),
+ * 다른 화면이면 저장값만 일반으로 바꿔 이어지는 홈 이동이 일반 모드로 열리게 한다.
+ */
+export function collapseHero(event: { preventDefault(): void }, onHome: boolean): void {
+  if (!heroFull) return;
+  if (onHome && backendStatus() === "ready") return;
+  if (onHome) {
+    event.preventDefault();
+    toggleHeroMode();
+    return;
+  }
+  heroFull = false;
+  saveHeroMode();
 }
 
 /** 일반 모드에서 명령 입력창을 누르거나 포커스하면 전체화면으로 바꾼다(이미 전체화면이면 아무 일도 하지 않는다). */
@@ -127,10 +147,10 @@ export function homeHero(ctx: ScreenCtx): ReactNode {
         <div className="hero-greet">
           {soon
             ? (
-              <h1>
+              <h1 className="hero-oneline">
                 {`${student.name}님. 마감이 얼마 남지 않은 일이 `}
                 <GoButton className="hero-count" href={soonHref} title="사흘 안 마감 목록 열기">{`${soon}개`}</GoButton>
-                {" 있습니다."}
+                {" 남아있습니다."}
               </h1>
             )
             : <h1>{`${student.name}님, 급한 할 일은 없네요!`}</h1>}
@@ -170,8 +190,7 @@ function myDay(state: AppState): ReactNode {
   const { due, report, week } = myDayGroups(state);
   const firstReport = report.items[0];
   return (
-    <section className="my-day" aria-labelledby="my-day-title">
-      <h2 className="section-label" id="my-day-title">나의 하루</h2>
+    <section className="my-day" aria-label="나의 하루">
       <div className="summary-strip">
         <SummaryCard kind="due" sub={due.at ? `${longDate(due.at.slice(0, 10))} ${due.at.slice(11, 16)}까지` : "예정된 마감 없음"} group={due} unit="건" linkText="할 일 보기" />
         <SummaryCard kind="report" sub={firstReport ? `가장 빠른 마감 ${shortDate((firstReport.due || "").slice(0, 10))}` : "남은 과제 없음"} group={report} unit="건" linkText="과제 보기" />

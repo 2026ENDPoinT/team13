@@ -104,7 +104,9 @@ export function boardRows(screen: Screen, state: AppState): BoardRow[] {
   const posts = state.posts as BoardRow[];
   const course = screen.course || "bi";
   if (screen.board === "global") {
-    return [...notices.filter((n) => n.scope === "global"), ...state.noticesExtra].filter((n: Notice) => !screen.audience || n.audience === screen.audience || n.audience === "all");
+    // 과목 공지(교수가 쓴 `noticesExtra` 포함)는 전체 공지에 섞이지 않는다.
+    return [...notices, ...state.noticesExtra].filter((n: Notice) => n.scope === "global"
+      && (!screen.audience || n.audience === screen.audience || n.audience === "all"));
   }
   if (screen.board === "course") return notices.filter((n) => n.scope === course).concat(state.noticesExtra.filter((n) => n.scope === course));
   if (screen.board === "qna") return state.communityQna as BoardRow[];
