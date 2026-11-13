@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { backendPanel } from "../../shared/backend-prompt.tsx";
-import { backendStatus, subscribe } from "../../shared/backend.ts";
+import { backendStatus, kjOfCourseId, subscribe } from "../../shared/backend.ts";
+import { Link } from "../../router.tsx";
+import { currentRole, routeFor } from "../../shared/routes.ts";
+import { courseById } from "../../data.ts";
 import { ApiError } from "../../shared/api.ts";
 import { freshVisit, useResource } from "../../shared/remote-cache.ts";
 import { sizeText } from "../../shared/uploads-remote.tsx";
@@ -480,31 +483,37 @@ function Row({ item, inTrash, selected, draft, saving, onToggle, onOpen, onRenam
   return <li className="fb-row">
     <input type="checkbox" aria-label={`${item.name} 고르기`} checked={selected} onChange={(event) => onToggle(event.target.checked)} />
     <span className="fb-row__main">
-      {item.kind === "folder" && !inTrash
-        ? <Button kind="ghost" className="fb-row__open" aria-label={`${item.name} 폴더 열기`} onClick={onOpen}>{item.name}</Button>
-        : <b>{item.name}</b>}
-      <span className="tiny">{meta}</span>
+      {inTrash ? <b>{item.name}</b>
+        : item.kind === "folder"
+          ? <Button kind="ghost" className="fb-row__open" aria-label={`${item.name} 폴더 열기`} onClick={onOpen}>{item.name}</Button>
+          : <Button kind="ghost" className="fb-row__open" aria-label={`${item.name} 내려받기`} disabled={downloading || item.state !== "ready"}
+            aria-busy={downloading} onClick={() => { void download(); }}>{item.name}</Button>}
+      <span className="tiny">{downloading ? "내려받는 중…" : meta}</span>
       {!inTrash && item.kind === "file" && item.state && SCAN_STATE[item.state]
         ? <Badge tone={item.state === "rejected" ? "danger" : "neutral"}>{SCAN_STATE[item.state]}</Badge> : null}
     </span>
     {!inTrash ? <>
       <span className="fb-row__tools">
         <Button kind="ghost" aria-label={`${item.name} 이름 바꾸기`} onClick={onRename}>이름 바꾸기</Button>
-        {item.kind === "file" ? <>
-          <Button kind="ghost" aria-label={`${item.name} 내려받기`} disabled={downloading || item.state !== "ready"}
-            aria-busy={downloading} onClick={() => { void download(); }}>{downloading ? "내려받는 중…" : "내려받기"}</Button>
-          <Button kind="ghost" aria-label={`${item.name}을 첨부한 곳`} aria-expanded={showRefs} onClick={() => setShowRefs(!showRefs)}>연결된 곳</Button>
-        </> : null}
+        {item.kind === "file"
+          ? <Button kind="ghost" aria-label={`${item.name}을 첨부한 곳`} aria-expanded={showRefs} onClick={() => setShowRefs(!showRefs)}>연결된 곳</Button>
+          : null}
       </span>
       <div className="fb-row__extra">
         {showRefs ? !refs ? <p className="tiny">불러오는 중입니다.</p>
           : refs.error ? <p className="tiny" role="alert">{fileboxMessage(refs.error)}</p>
-            : refs.data?.length ? <ul className="fb-refs">{refs.data.map((ref, index) => <li key={index}>
-              {`${ref.courseName || "과목"} · ${(ref.purpose && PURPOSE_LABEL[ref.purpose]) || ref.purpose || "첨부"} · ${isoTime(ref.attachedAt)}`}
-            </li>)}</ul> : <p className="tiny">이 파일을 첨부한 곳이 없습니다.</p> : null}
+            : refs.data?.length ? <ul className="fb-refs">{refs.data.map((ref, index) => {
+              // 내 서버 과목이면 그 강의실로 간다.
+              const kj = kjOfCourseId(ref.courseId);
+              const where = `${ref.courseName || "과목"} 강의실`;
+              return <li key={index}>
+                {kj ? <Link href={routeFor(currentRole(), "classroom", { kj, special: courseById(kj).kind === "special" })}>{where}</Link> : where}
+                {` · ${(ref.purpose && PURPOSE_LABEL[ref.purpose]) || ref.purpose || "첨부"} · ${isoTime(ref.attachedAt)}`}
+              </li>;
+            })}</ul> : <p className="tiny">이 파일을 첨부한 곳이 없습니다.</p> : null}
         {draft !== null ? <div className="fb-rename">
           <input autoFocus value={draft} maxLength={255} aria-label={`${item.name}의 새 이름`} onChange={(event) => onDraft(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void onSave(); } }} />
+            onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void onSave(); } }} />
           <Button kind="primary" disabled={saving} aria-busy={saving} onClick={() => { void onSave(); }}>{saving ? "저장하는 중…" : "저장"}</Button>
           <p className="tiny">{item.kind === "file" ? "파일 확장자는 바꿀 수 없습니다." : ""}</p>
         </div> : null}

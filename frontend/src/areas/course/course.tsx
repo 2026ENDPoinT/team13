@@ -8,7 +8,7 @@ import { readForm, showErrors } from "../../forms.ts";
 import { Badge, Button, EmptyState, LoadingState, Pagination, Table, Tabs, Field } from "../../ui/kit.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { hrefFor, find } from "../../manifest.ts";
-import { passFilter, attendStatus, activityHref, typeLabel, boardRows } from "../../shared/format.ts";
+import { passFilter, attendStatus, activityHref, typeLabel, boardRows, ownsRow } from "../../shared/format.ts";
 import type { BoardRow } from "../../shared/format.ts";
 import { activityRow } from "../../shared/activity-row.tsx";
 import { readQuery, writeQuery } from "../../shared/query.tsx";
@@ -246,9 +246,6 @@ const searchBox: SearchBoxFn = (label, ctx, scope) => {
       <Icon name="search" />
       <input
         type="text"
-        data-name="surfaceQuery"
-        data-scope={key}
-        data-focus={key}
         value={value}
         onChange={(event) => {
           writeQuery(getState(), key, event.target.value);
@@ -402,11 +399,11 @@ function Row({ children }: { children: ReactNode }) {
 }
 
 function renderActivityList(screen: Screen, ctx: ScreenCtx): ReactNode {
-  const linked = roomCourse(screen, ctx);
+  // 샘플·백엔드 모드 모두 주소의 과목(kj)이다. 화면 표의 기본 과목(bi)을 쓰면 비정규과목의 필터 칩이 다른 과목으로 간다.
+  const course = roomCourse(screen, ctx);
   // 백엔드 모드: 연결된 과목은 서버 활동만 필터에 맞춰 그린다(areas/course/activities-server.js).
-  const server = backendStatus() !== "off" && serverOwnsActivities(linked);
+  const server = backendStatus() !== "off" && serverOwnsActivities(course);
   const absent = backendStatus() !== "off" && !server;
-  const course = server || absent ? linked : courseById(screen.course || ctx.state.courseId);
   const filter = screen.filter || "all";
   const rows = server || absent ? [] : activitiesOf(course.id).filter((item) => passFilter(item, filter, ctx.state));
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
@@ -634,7 +631,8 @@ function renderBoard(screen: Screen, ctx: ScreenCtx): ReactNode {
   const titles: Record<string, string> = { course: "공지사항", "course-qna": "질의응답", open: "열린게시판" };
   const icons: Record<string, string> = { course: "info", "course-qna": "chat", open: "layers" };
   const title = titles[board] || screen.title;
-  const all = courseRows(screen, ctx.state);
+  const kj = roomCourse(screen, ctx).id;
+  const all = courseRows({ ...screen, course: kj }, ctx.state);
   const q = queryOf(ctx, board);
   const rows = all.filter((row) => matches(q, row.title, row.body, row.author));
   const canWrite = board === "course-qna" || board === "open";
@@ -653,11 +651,13 @@ function renderBoard(screen: Screen, ctx: ScreenCtx): ReactNode {
         {rows.map((row) => {
           let href = "";
           let editHref = "";
-          if (board === "course") href = hrefFor(find("44d_room_notice_view_pop"), { id: row.id });
+          // 수정·삭제는 작성자 본인의 글에만 붙인다.
+          const own = ownsRow(row, ctx.state);
+          if (board === "course") href = hrefFor(find("44d_room_notice_view_pop"), { id: row.id, kj });
           else if (board === "course-qna") {
-            href = hrefFor(find("45d_room_qna_view_pop"), { id: row.id });
-            editHref = hrefFor(find("45b_room_qna_insert_pop"), { id: row.id });
-          } else if (board === "open") editHref = hrefFor(find("47b_room_open_board_insert_pop"), { id: row.id });
+            href = hrefFor(find("45d_room_qna_view_pop"), { id: row.id, kj });
+            if (own) editHref = hrefFor(find("45b_room_qna_insert_pop"), { id: row.id, kj });
+          } else if (board === "open" && own) editHref = hrefFor(find("47b_room_open_board_insert_pop"), { id: row.id, kj });
           return postCard(row, href, Boolean(screen.expand), editHref);
         })}
       </div>
@@ -665,7 +665,7 @@ function renderBoard(screen: Screen, ctx: ScreenCtx): ReactNode {
   }
   return (
     <section className="crs" data-area="course">
-      {head(title, icons[board] || "info", all.length, canWrite ? <Link href={hrefFor(find(writeId))} className="btn btn-primary">{board === "open" ? "글쓰기" : "질문 작성"}</Link> : null)}
+      {head(title, icons[board] || "info", all.length, canWrite ? <Link href={hrefFor(find(writeId), { kj })} className="btn btn-primary">{board === "open" ? "글쓰기" : "질문 작성"}</Link> : null)}
       <div className="crs-toolbar">
         <Tabs items={[{ label: `전체 ${all.length}`, on: true }]} />
         {searchBox(`${title} 검색`, ctx, board)}

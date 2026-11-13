@@ -137,7 +137,7 @@ function ServerNotifications({ filter }: { filter: "all" | "unread" }) {
   const box = useRef<HTMLDivElement>(null);
   const statusRef = useRef<HTMLParagraphElement>(null);
   const entry = useInbox(filter);
-  const unread = useUnread("notifications", 0);
+  const unread = useUnread("notifications");
   const [status, setStatus] = useState<Status | null>(null);
   const [readingAll, setReadingAll] = useState(false);
   // After a row is removed the list repaints; focus moves to the next row (or the status line).

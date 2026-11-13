@@ -230,9 +230,6 @@ function SiteNoticeList({ screen, ctx, head }: { screen: Screen; ctx: ScreenCtx;
       <label className="search board-search">
         <Icon name="search" />
         <input
-          data-name="surfaceQuery"
-          data-scope={SCOPE}
-          data-focus={SCOPE}
           value={readQuery(ctx.state, SCOPE)}
           onChange={(event) => {
             writeQuery(ctx.state, SCOPE, event.target.value);

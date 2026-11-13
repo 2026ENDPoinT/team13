@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { Link, GoButton } from "../../router.tsx";
 import { render as repaint } from "../../store.ts";
 import { Icon } from "../../ui/icon.tsx";
@@ -15,7 +16,7 @@ import type { Screen, ScreenCtx } from "../../types.ts";
 import { renderCourseStudy } from "./course-study.tsx";
 import { studyRoot, sampleSummary } from "./study-files.tsx";
 import { renderRecording } from "./recording.tsx";
-import { commandBar, planPreview } from "./command-bar.tsx";
+import { commandBar, focusCommand, planPreview } from "./command-bar.tsx";
 import { backendStatus, backendState } from "../../shared/backend.ts";
 import { profiles, peekAccount } from "../../shared/account-remote.ts";
 import { courseCards, specialCard, termLabel } from "./course-cards.tsx";
@@ -45,6 +46,59 @@ function longDate(iso: string): string {
 // The greeting rises once per page load; later renders (dialogs, toasts) show it in place.
 let heroPlayed = false;
 
+// 히어로 전체화면(상단 바 아래 화면 전체를 명령 입력에 쓴다) ↔ 일반 모드. 마지막 선택을 브라우저에 남긴다.
+const HERO_MODE_KEY = "astra-hero-mode";
+let heroFull = readHeroMode();
+
+function readHeroMode(): boolean {
+  try {
+    return localStorage.getItem(HERO_MODE_KEY) === "full";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 전환은 View Transition으로 그린다: 히어로가 상단 바 아래에서 펼쳐지고 접히며 나머지 화면은 짧게 겹쳐 바뀐다.
+ * 지원하지 않는 브라우저나 동작 줄이기 설정에서는 바로 바꾼다.
+ */
+function toggleHeroMode(): void {
+  heroFull = !heroFull;
+  try {
+    localStorage.setItem(HERO_MODE_KEY, heroFull ? "full" : "normal");
+  } catch {
+    /* private mode or full storage: keep the choice for this page */
+  }
+  const apply = () => {
+    flushSync(repaint);
+    if (heroFull) focusCommand();
+  };
+  if (!("startViewTransition" in document) || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    apply();
+    return;
+  }
+  const root = document.documentElement;
+  root.classList.add("hero-morph");
+  document.startViewTransition(apply).finished.finally(() => root.classList.remove("hero-morph"));
+}
+
+/** 일반 모드에서 명령 입력창을 누르거나 포커스하면 전체화면으로 바꾼다(이미 전체화면이면 아무 일도 하지 않는다). */
+function expandHero(): void {
+  if (!heroFull) toggleHeroMode();
+}
+
+/** `<>` tilted 45°: outward chevrons expand to full screen, inward ones return to the normal layout. */
+function HeroModeToggle() {
+  const label = heroFull ? "일반 화면으로 보기" : "전체 화면으로 보기";
+  return (
+    <button type="button" className="hero-mode-toggle" aria-label={label} title={label} aria-pressed={heroFull ? "true" : "false"} onClick={toggleHeroMode}>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {heroFull ? <path d="M4 7l5 5-5 5M20 7l-5 5 5 5" /> : <path d="M9 7l-5 5 5 5M15 7l5 5-5 5" />}
+      </svg>
+    </button>
+  );
+}
+
 /** Full-width hero row the shell places above the menu, main column, and aside on student home. */
 export function homeHero(ctx: ScreenCtx): ReactNode {
   const enter = !heroPlayed;
@@ -66,7 +120,7 @@ export function homeHero(ctx: ScreenCtx): ReactNode {
   const soon = myDayGroups(ctx.state).soon.items.length;
   const soonHref = hrefFor(find("01_pop_todo"), { "todo-view": "soon" });
   return (
-    <div className={`home-hero${enter ? " enter" : ""}`}>
+    <div className={`home-hero${enter ? " enter" : ""}${heroFull ? " is-full" : ""}`}>
       <div className="home-hero-copy">
         {soon
           ? (
@@ -78,9 +132,10 @@ export function homeHero(ctx: ScreenCtx): ReactNode {
           )
           : <h1>{`${student.name}님, 급한 할 일은 없네요!`}</h1>}
         <p>{`${parseISO(TODAY).getFullYear()}년 ${longDate(TODAY)}`}</p>
-        {commandBar()}
+        {commandBar(expandHero)}
       </div>
       {planPreview()}
+      <HeroModeToggle />
     </div>
   );
 }
@@ -328,9 +383,6 @@ function renderCommunity(screen: Screen, ctx: ScreenCtx): ReactNode {
       <label className="search board-search">
         <Icon name="search" />
         <input
-          data-name="surfaceQuery"
-          data-scope={scope}
-          data-focus={scope}
           value={readQuery(ctx.state, scope)}
           onChange={(event) => {
             writeQuery(ctx.state, scope, event.target.value);

@@ -61,6 +61,7 @@ export interface FileboxCount {
 
 /** Where a file box file is attached. */
 export interface FileboxReference {
+  courseId?: number | null;
   courseName?: string | null;
   purpose?: string | null;
   attachedAt?: string | null;

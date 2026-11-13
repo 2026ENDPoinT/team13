@@ -1,11 +1,11 @@
 import { useRef, type ReactNode } from "react";
 import { Link, navigate, closeDialog, followBackendRole, HOME_PATH } from "../../router.tsx";
-import { getState, save, render, resetState } from "../../store.ts";
+import { getState, save, render, resetState, toast } from "../../store.ts";
 import { readForm, showErrors, stamp } from "../../forms.ts";
 import { Icon } from "../../ui/icon.tsx";
 import { Button, Dialog, Field } from "../../ui/kit.tsx";
-import { notices, activities, courseById, student, professor } from "../../data.ts";
-import type { Activity } from "../../data.ts";
+import { notices, activities, courseById, student, professor, sampleNotifications } from "../../data.ts";
+import type { Activity, SampleNotification } from "../../data.ts";
 import { boardRows, dday, typeLabel, typeIcon, activityHref, openTodos, myDayGroups } from "../../shared/format.ts";
 import type { BoardRow, MyDayGroup, MyDayGroups } from "../../shared/format.ts";
 import { currentRole, routeFor } from "../../shared/routes.ts";
@@ -57,23 +57,7 @@ function koDue(value: string): string {
   return `${date.getMonth() + 1}월 ${date.getDate()}일 (${"일월화수목금토"[date.getDay()]}) ${h < 12 ? "오전" : "오후"} ${h % 12 || 12}:${m}`;
 }
 
-interface Notify {
-  title: string;
-  read: boolean;
-  activityId?: string;
-  kind?: string;
-  source?: string;
-  when?: string;
-}
-
-const NOTIFY: Notify[] = [
-  { title: "Project 마감이 가까워졌습니다", read: false, activityId: "rep-project" },
-  { title: "11주 1차시가 열렸습니다", read: false, activityId: "lec-11-1" },
-  { title: "텍스트마이닝 미션 2 마감이 가까워졌습니다", read: false, activityId: "r-open" },
-  { title: "주간 일정이 갱신되었습니다", read: true, kind: "일정", source: "주간 일정", when: "11월 2일 (월)" },
-];
-
-function NotifyRow({ item }: { item: Notify }) {
+function NotifyRow({ item }: { item: SampleNotification }) {
   const activity = item.activityId ? activities.find((row) => row.id === item.activityId) : undefined;
   const course = activity ? courseById(activity.courseId) : null;
   const href = activity ? activityHref(activity) : "";
@@ -380,12 +364,25 @@ export function renderDialog(name: string, ctx: ScreenCtx): ReactNode | null {
         {ctx.state.fileBox.length
           ? (
             <div className="board-list">
-              {ctx.state.fileBox.map((file, index) => (
-                <div key={index} className="board-card">
-                  <b>{file.name}</b>
-                  <span className="tiny">{file.at}</span>
-                </div>
-              ))}
+              {ctx.state.fileBox.map((file, index) => {
+                // 견본 파일함의 파일은 과제 제출에서 온다: 그 제출과 강의실로 연다(파일 내용은 이 브라우저에 없다).
+                const activityId = Object.keys(ctx.state.submissions).find((id) => ctx.state.submissions[id].fileName === file.name);
+                const activity = activityId ? activities.find((item) => item.id === activityId) : undefined;
+                const course = activity ? courseById(activity.courseId) : null;
+                return (
+                  <div key={index} className="board-card">
+                    <b>
+                      {activity
+                        ? <Link href={activityHref(activity)} aria-label={`${file.name} 열기 (${activity.title} 제출)`}>{file.name}</Link>
+                        : <Button kind="ghost" onClick={() => toast("샘플 파일은 이 브라우저 밖으로 내려받지 않습니다")}>{file.name}</Button>}
+                    </b>
+                    <span className="tiny">{activity && course ? `${file.at} · ${course.cardTitle || course.ko} · ${activity.title}` : file.at}</span>
+                    {activity && course
+                      ? <Link href={routeFor(currentRole(), "classroom", { kj: course.id, special: course.kind === "special" })}>{`${course.cardTitle || course.ko} 강의실로 가기`}</Link>
+                      : null}
+                  </div>
+                );
+              })}
             </div>
           )
           : <p className="note">올린 파일이 없습니다.</p>}
@@ -416,13 +413,13 @@ export function renderDialog(name: string, ctx: ScreenCtx): ReactNode | null {
   }
   if (name === "notify" || name === "notify-unread") {
     if (backendStatus() !== "off") return <HomeDialog title="알림" className="ntf-modal">{serverNotifications(name)}</HomeDialog>;
-    const unread = NOTIFY.filter((item) => !item.read);
-    const items = name === "notify" ? NOTIFY : unread;
+    const unread = sampleNotifications.filter((item) => !item.read);
+    const items = name === "notify" ? sampleNotifications : unread;
     return (
       <HomeDialog title="알림" className="ntf-modal">
         <div className="ntf">
           <nav className="filters ntf-filters" aria-label="알림 보기">
-            <NotifyChip href={routeFor(currentRole(), "pop", { pop: "notify" })} label="전체" count={NOTIFY.length} on={name === "notify"} />
+            <NotifyChip href={routeFor(currentRole(), "pop", { pop: "notify" })} label="전체" count={sampleNotifications.length} on={name === "notify"} />
             <NotifyChip href={routeFor(currentRole(), "notify", { pop: "notify-unread" })} label="안 읽음" count={unread.length} on={name === "notify-unread"} />
           </nav>
           {items.length
@@ -433,7 +430,7 @@ export function renderDialog(name: string, ctx: ScreenCtx): ReactNode | null {
     );
   }
   if (name === "todo" || name === "todo-more") {
-    if (backendStatus() === "ready") return <HomeDialog title="? ?" className="todo-modal">{serverTodoList()}</HomeDialog>;
+    if (backendStatus() === "ready") return <HomeDialog title="할 일" className="todo-modal">{serverTodoList()}</HomeDialog>;
     return todoDialog(ctx);
   }
   if (name === "chat") {

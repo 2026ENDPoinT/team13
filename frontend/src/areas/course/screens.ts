@@ -47,5 +47,5 @@ export const courseNav: NavItem[] = [
 export const specialCourseNav: NavItem[] = [
   { nav: "classroom", labelKey: "classroom", screenId: "70_nr_room_submain" },
   { nav: "attendance", labelKey: "attendance", screenId: "74_nr_room_attendance" },
-  { nav: "activity", labelKey: "activity", screenId: "50_activity_all", courseId: "sec" },
+  { nav: "activity", labelKey: "activity", screenId: "50_activity_all" },
 ];

@@ -91,7 +91,6 @@
 .nav-link.sub:hover, .nav-link.sub.active { color: var(--primary-60); }
 .nav-link.ext .ico { color: var(--text-2); flex: none; }
 .nav-link.ext:hover .ico { color: inherit; }
-.nav-note { margin: 0; padding: var(--space-3) var(--space-2) var(--space-2); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-2); }
 .top-actions .ico { color: var(--text-2); }
 .top-actions .icon-btn:hover .ico { color: var(--text); }
 .nav-count {

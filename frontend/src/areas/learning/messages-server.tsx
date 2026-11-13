@@ -109,7 +109,7 @@ function Gate({ children }: { children: ReactNode }): ReactNode {
   return <>{children}</>;
 }
 function Tabs({ folder }: { folder: string }): ReactNode {
-  const unread = useUnread("messages", 0);
+  const unread = useUnread("messages");
   const tabs = [["write", "02e_msg_compose", "쪽지쓰기"], ["inbox", "02b_msg_window", unread ? `받은쪽지 ${unread}` : "받은쪽지"], ["sent", "02d_msg_sent_tab", "보낸쪽지"]];
   return <div className="msg-tabs" role="tablist">{tabs.map(([key, id, label]) =>
     <Link key={key} href={screenHref(id)} className={folder === key ? "on" : ""} role="tab" aria-selected={folder === key}>{label}</Link>)}</div>;

@@ -251,6 +251,7 @@ function FolderNameCard({ onDone }: { onDone: (name: string | null) => void }) {
       <input
         ref={input} type="text" className="sf-name-input" maxLength={60} placeholder="폴더 이름" aria-label="새 폴더 이름"
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
           if (event.key === "Enter") finish(true);
           else if (event.key === "Escape") finish(false);
         }}

@@ -379,6 +379,8 @@
   padding: var(--space-4) var(--space-5); margin: 0 0 var(--space-4);
 }
 .att-card.is-current { box-shadow: 0 0 0 2px var(--accent); }
+/* 주차 버튼이 카드로 옮겨 갈 때 붙박이 머리말(.topbar)에 가리지 않게 둔다. */
+.attend .att-card { scroll-margin-top: calc(var(--header-h) + var(--space-4)); }
 .att-card-h h2 { margin: 0; font-size: var(--text-lg); line-height: var(--leading-lg); font-weight: var(--weight-semibold); }
 .att-card-h p { margin: var(--space-1) 0 var(--space-2); }
 .att-session { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; min-height: 44px; }

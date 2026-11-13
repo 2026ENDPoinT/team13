@@ -1,4 +1,4 @@
-import { activities, notices } from "../data.ts";
+import { activities, coursePosts, notices, professor, student } from "../data.ts";
 import type { Activity, ActivityType, AppState, Notice } from "../data.ts";
 import type { Screen } from "../types.ts";
 import { currentRole, routeFor } from "./routes.ts";
@@ -98,22 +98,29 @@ export interface BoardRow {
   audience?: string;
 }
 
+/** Sample rows of `screen.board`; course boards (`course`, `course-qna`, `open`) hold only `screen.course`'s rows. */
 export function boardRows(screen: Screen, state: AppState): BoardRow[] {
   // AppState.posts/communityQna are untyped; saved posts and questions carry BoardRow fields.
   const posts = state.posts as BoardRow[];
+  const course = screen.course || "bi";
   if (screen.board === "global") {
     return [...notices.filter((n) => n.scope === "global"), ...state.noticesExtra].filter((n: Notice) => !screen.audience || n.audience === screen.audience || n.audience === "all");
   }
-  if (screen.board === "course") return notices.filter((n) => n.scope === (screen.course || "bi")).concat(state.noticesExtra.filter((n) => n.scope === (screen.course || "bi")));
+  if (screen.board === "course") return notices.filter((n) => n.scope === course).concat(state.noticesExtra.filter((n) => n.scope === course));
   if (screen.board === "qna") return state.communityQna as BoardRow[];
-  if (screen.board === "course-qna") {
-    const seed: BoardRow[] = [{ id: "seed-q", title: "실습 데이터 형식", body: "CSV와 JSON 중 어떤 형식을 쓰면 되나요?", author: "김서연", at: "2026-11-03", reply: "CSV로 제출해 주세요.", courseId: "bi" }];
-    return seed.concat(posts.filter((p) => p.board === "course-qna"));
+  if (screen.board === "course-qna" || screen.board === "open") {
+    // 저장한 글(최근 글이 앞)과 샘플 글 중 이 과목의 것만. courseId 없이 저장된 예전 글은 bi 과목 글로 본다.
+    const ofCourse = (row: BoardRow) => row.board === screen.board && (row.courseId || "bi") === course;
+    return [...posts.filter(ofCourse), ...coursePosts.filter(ofCourse)];
   }
-  if (screen.board === "open") return posts.filter((p) => p.board === "open");
   if (screen.board === "material") return [];
   if (screen.board === "survey") return [{ id: "campus", title: "캠퍼스 학습 환경 설문", at: "2026-11-01", body: "샘플 설문입니다." }];
   return [];
+}
+
+/** True when the signed-in sample user wrote `row`: only its author may edit or delete a sample post. */
+export function ownsRow(row: BoardRow, state: AppState): boolean {
+  return Boolean(row.author) && row.author === (state.role === "professor" ? professor.name : student.name);
 }
 
 export function activityById(id: string | null | undefined): Activity | undefined {

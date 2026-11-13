@@ -400,7 +400,7 @@ function BoxListBody({ name, currentId, options, rebuild, focusAfter }: BoxListB
           aria-label={inbox ? "받은 쪽지 제목 검색" : "보낸 쪽지 제목 검색"}
           data-msg-search=""
           onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
             event.preventDefault();
             search();
           }}
@@ -680,7 +680,7 @@ function RecipientSearch({ courseId, chosen, onChange }: RecipientSearchOptions)
           aria-label="받는 사람 이름"
           data-recipient-q=""
           onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
             event.preventDefault();
             search();
           }}

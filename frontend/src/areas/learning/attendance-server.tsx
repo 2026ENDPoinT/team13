@@ -43,11 +43,19 @@ subscribe(() => {
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
 
-/** 주차 버튼: 고른 주차를 표시한다(샘플 출석과 같은 상태 칸). */
+/**
+ * 주차 버튼(샘플·서버 출석 공용): 고른 주차를 표시하고, 그 주차 카드(`att-<주>`)를 화면에 보이게 옮겨 초점을 둔다.
+ * 움직임 줄이기 설정이면 바로 옮긴다. 위 머리말에 가리지 않는 여백은 learning.css의 `scroll-margin-top`이다.
+ */
 export function pickAttendanceWeek(week: number): void {
   getState().attendanceWeek = week || 1;
   save();
   render();
+  const card = document.getElementById(`att-${week}`);
+  if (!card) return;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  card.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+  card.focus({ preventScroll: true });
 }
 
 function courseOf(ctx: ScreenCtx) {
@@ -343,7 +351,7 @@ function AttendanceBody({ courseId, selectedWeek }: { courseId: number; selected
             ))}
           </div>
           {weeks.map((week) => (
-            <article key={week.weekNo} className={`att-card${week.weekNo === selected ? " is-current" : ""}`} id={`att-${week.weekNo}`}>
+            <article key={week.weekNo} className={`att-card${week.weekNo === selected ? " is-current" : ""}`} id={`att-${week.weekNo}`} tabIndex={-1}>
               <header className="att-card-h"><h2>{`${week.weekNo}주`}</h2></header>
               {(week.sessions || []).map((session) => <SessionRow key={session.sessionId} session={session} />)}
             </article>

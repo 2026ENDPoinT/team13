@@ -4,11 +4,28 @@
 // already carries the new count sets it at once through `noteUnread`, and a poll that left before
 // it is dropped when it lands. Nothing is polled when the
 // connection is `off`/`anon` or while the page is hidden; becoming visible again reads all counts.
-import { useSyncExternalStore } from "react";
+//
+// 머리말 배지(`useBadge`)는 그 가운데 목록을 마지막으로 연 뒤에 생긴 것만 센다. 아이콘이 여는 목록이 보이는
+// 동안(`useSeenWhileOpen`) 지금 것을 본 것으로 적는다. 견본(`off`/`anon`)은 본 견본 항목 id를, 서버(`ready`)는
+// 사람·종류별로 그때의 서버 수를 AppState `badgeSeen`(store.ts가 이 브라우저에 저장)에 남긴다. 서버 수가 그
+// 아래로 내려가면(읽거나 지움) 기준도 따라 내려가 그 뒤에 온 것이 다시 보인다. 서버의 읽음 상태는 건드리지
+// 않는다: 알림·쪽지의 안 읽음 표시는 목록에서 읽거나 "모두 읽음"을 누를 때만 바뀐다.
+import { useEffect, useSyncExternalStore } from "react";
 import { apiGet } from "./api.ts";
 import { backendState, backendStatus, subscribe, type BackendSnapshot } from "./backend.ts";
+import { openTodos } from "./format.ts";
+import { sampleNotifications } from "../data.ts";
+import { getState, render, save, useAppState } from "../store.ts";
+import type { Screen } from "../types.ts";
 export type UnreadKind = "messages" | "notifications" | "todo";
 export type UnreadListener = (kind: UnreadKind, count: number | null) => void;
+
+declare module "../data.ts" {
+  interface AppState {
+    /** Header badge marks: per kind the sample item ids seen, and per `<userId>:<kind>` the server count when its list was last open. */
+    badgeSeen?: { sample?: Partial<Record<UnreadKind, string[]>>; server?: Record<string, number> };
+  }
+}
 
 const KINDS: UnreadKind[] = ["messages", "notifications", "todo"];
 
@@ -49,7 +66,66 @@ function set(kind: UnreadKind, count: unknown): void {
   const next = typeof count === "number" && Number.isInteger(count) && count >= 0 ? count : null;
   if (counts[kind] === next) return;
   counts[kind] = next;
+  if (next !== null) lowerSeen(kind, next);
   emit(kind);
+}
+
+// Whose server count a seen mark belongs to.
+function serverKey(kind: UnreadKind): string {
+  const me = backendState().me;
+  return `${me ? me.userId : ""}:${kind}`;
+}
+
+/** A server count below its seen mark (items read or removed since) lowers the mark, so later arrivals count again. */
+function lowerSeen(kind: UnreadKind, count: number): void {
+  const marks = getState().badgeSeen?.server;
+  const key = serverKey(kind);
+  const mark = marks ? marks[key] : undefined;
+  if (!marks || mark === undefined || mark <= count) return;
+  marks[key] = count;
+  save();
+}
+
+/** Ids of the sample items behind each header count while the backend is not `ready`. */
+function sampleKeys(kind: UnreadKind): string[] {
+  if (kind === "todo") return openTodos().map((item) => item.id);
+  if (kind === "messages") return getState().messages.filter((item) => item.folder === "inbox" && !item.read).map((item) => item.id);
+  return sampleNotifications.filter((item) => !item.read).map((item) => item.title);
+}
+
+/** What arrived since the list of `kind` was last open: null while the server count is unknown. */
+function unseen(kind: UnreadKind): number | null {
+  const marks = getState().badgeSeen;
+  if (backendStatus() === "ready") {
+    const count = counts[kind];
+    const mark = marks?.server?.[serverKey(kind)] ?? 0;
+    return count === null ? null : Math.max(0, count - mark);
+  }
+  const seen = marks?.sample?.[kind] || [];
+  return sampleKeys(kind).filter((key) => !seen.includes(key)).length;
+}
+
+/** Marks everything `kind` counts now as seen (a server count not read yet is marked when it lands). */
+function markSeen(kind: UnreadKind): void {
+  const state = getState();
+  const marks = state.badgeSeen || (state.badgeSeen = {});
+  if (backendStatus() === "ready") {
+    const count = counts[kind];
+    const server = marks.server || (marks.server = {});
+    const key = serverKey(kind);
+    if (count === null || server[key] === count) return;
+    server[key] = count;
+    save();
+    emit(kind);
+    return;
+  }
+  const keys = sampleKeys(kind);
+  const sample = marks.sample || (marks.sample = {});
+  const seen = sample[kind] || [];
+  if (keys.every((key) => seen.includes(key))) return;
+  sample[kind] = keys;
+  save();
+  render();
 }
 
 const visible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
@@ -115,24 +191,46 @@ onUnread(() => {
   version += 1;
 });
 
-/**
- * The header count of `kind`: the live count while the backend is `ready` (null until read), else the
- * sample `mock`. Re-renders the caller when the count changes.
- */
-export function useUnread(kind: UnreadKind, mock: number): number | null {
+/** The live count of `kind` while the backend is `ready` (null until read, and otherwise). Re-renders the caller when it changes. */
+export function useUnread(kind: UnreadKind): number | null {
   useSyncExternalStore(onUnread, () => version);
-  return backendStatus() === "ready" ? counts[kind] : mock;
+  return backendStatus() === "ready" ? counts[kind] : null;
+}
+
+/** The header badge of `kind` (see the top of this file). Re-renders the caller when it changes. */
+export function useBadge(kind: UnreadKind): number | null {
+  useSyncExternalStore(onUnread, () => version);
+  useAppState();
+  return unseen(kind);
+}
+
+/** The header count whose list `screen` shows (where its icon leads: 할 일·알림 창, 받은 쪽지, 교수 쪽지), or null. */
+function listOn(screen: Screen, params: URLSearchParams): UnreadKind | null {
+  const pop = params.get("pop") || "";
+  if (pop === "todo" || pop === "todo-more") return "todo";
+  if (pop.startsWith("notify")) return "notifications";
+  if ((screen.kind === "messages" && (screen.folder || "inbox") === "inbox") || (screen.kind === "pf-form" && screen.form === "pmessage")) return "messages";
+  return null;
 }
 
 /**
- * The aria-label of a header count button: "<label> 안 읽음 N건" (for `"todo"` "<label> N건") while the
- * backend is `ready`, "<label>" before the count is read, and the sample "<label> N건" otherwise.
+ * Marks a header count seen while `screen` shows its list: on arrival, and again whenever that count changes
+ * meanwhile (the server count the list itself reads).
  */
-export function unreadLabel(kind: UnreadKind, label: string, count: number | null): string {
-  if (backendStatus() !== "ready") return `${label} ${count}건`;
-  if (count == null) return label;
-  // The to-do count is what is left to do, not an unread count.
-  return kind === "todo" ? `${label} ${count}건` : `${label} 안 읽음 ${count}건`;
+export function useSeenWhileOpen(screen: Screen, params: URLSearchParams): void {
+  const kind = listOn(screen, params);
+  useEffect(() => {
+    if (!kind) return;
+    markSeen(kind);
+    return onUnread((changed) => {
+      if (changed === kind) markSeen(kind);
+    });
+  }, [kind]);
+}
+
+/** The aria-label of a header count button: "<label> 새 N건" while its badge shows N, else "<label>". */
+export function unreadLabel(label: string, count: number | null): string {
+  return count ? `${label} 새 ${count}건` : label;
 }
 
 function follow(next: BackendSnapshot): void {

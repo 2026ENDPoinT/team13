@@ -261,6 +261,56 @@ export const notices: Notice[] = [
   { id: "cn1", scope: "bi", title: "[정정] 중간고사 결과 및 성적문의", date: "2026-10-27", author: "박은주", body: "채점 기준을 공지 본문에 다시 적었습니다. 이의는 강의실 이의신청이 아니라 이 샘플의 교수 화면에서만 기록됩니다." },
   { id: "cn2", scope: "bi", title: "[안내] 프로젝트 팀 구성", date: "2026-10-20", author: "박은주", body: "팀 프로젝트 메뉴는 현재 비어 있습니다. 학생 화면에서는 구성 요청만 저장됩니다." },
   { id: "cn3", scope: "sec", title: "비정규 과정 출석 인정 기준", date: "2026-11-01", author: "박은주", body: "영상 진도 90% 이상이면 해당 차시 출석으로 봅니다." },
+  { id: "cn-algo-1", scope: "algo", title: "[과제] 3차 실습: React 상태 나누기", date: "2026-11-05", author: "아비르", body: "useReducer로 장바구니 상태를 나누는 실습입니다. 저장소 주소와 실행 화면 캡처를 함께 제출하세요." },
+  { id: "cn-algo-2", scope: "algo", title: "[휴강] 11월 20일 수업은 녹화 강의로 대체", date: "2026-11-02", author: "아비르", body: "학회 일정으로 대면 수업이 없습니다. 녹화 강의는 학습활동 11주차에 올립니다." },
+  { id: "cn-ai-1", scope: "ai", title: "[과제] 결정트리 실습 데이터 배포", date: "2026-11-06", author: "한지형", body: "붓꽃 데이터로 깊이별 정확도를 비교합니다. 검증 집합은 따로 떼어 두고 시험 집합은 마지막에 한 번만 쓰세요." },
+  { id: "cn-ai-2", scope: "ai", title: "[안내] 기말 프로젝트 주제 제출", date: "2026-10-29", author: "한지형", body: "팀별 주제와 데이터 출처를 한 쪽으로 정리해 11월 19일까지 제출하세요." },
+  { id: "cn-db-1", scope: "db", title: "[안내] 테스트넷 지갑 준비", date: "2026-11-04", author: "이창훈", body: "다음 실습 전에 테스트넷 지갑을 만들고 주소만 제출하세요. 개인 키는 누구에게도 보내지 마세요." },
+  { id: "cn-db-2", scope: "db", title: "[정정] 해시 함수 퀴즈 3번 정답", date: "2026-10-30", author: "이창훈", body: "3번은 2번 보기도 정답으로 인정합니다. 점수는 다음 주에 다시 반영합니다." },
+  { id: "cn-oss-1", scope: "oss", title: "[실습] Spark 클러스터 계정 발급", date: "2026-11-03", author: "김성곤", body: "실습 클러스터 계정을 학번으로 만들었습니다. 첫 접속 때 비밀번호를 바꾸세요." },
+  { id: "cn-oss-2", scope: "oss", title: "[안내] 중간 프로젝트 데이터 크기 제한", date: "2026-10-24", author: "김성곤", body: "원본 데이터는 10GB 이하로 맞춰 주세요. 더 크면 표본을 뽑은 방법을 보고서에 적습니다." },
+  { id: "cn-se-1", scope: "se", title: "[안내] 모의 해킹 실습 윤리 서약서 제출", date: "2026-11-05", author: "손기욱", body: "실습 서버 밖의 시스템은 절대 점검하지 않습니다. 서약서를 내야 실습 계정이 열립니다." },
+  { id: "cn-se-2", scope: "se", title: "[과제] 웹 취약점 분석 보고서 양식", date: "2026-10-28", author: "손기욱", body: "취약점마다 재현 절차, 영향, 대응을 한 쪽씩 적습니다. 양식은 파일모음에 있습니다." },
+  { id: "cn-secu-1", scope: "secu", title: "[안내] 버퍼 오버플로 실습 환경 배포", date: "2026-11-07", author: "박종혁", body: "실습용 가상머신 이미지를 올렸습니다. 호스트와 네트워크를 분리한 상태로 실행하세요." },
+  { id: "cn-secu-2", scope: "secu", title: "[보강] 11월 18일 휴강 보강 일정", date: "2026-10-31", author: "박종혁", body: "보강은 11월 25일 수요일 10시, 창학관 110에서 합니다." },
+];
+
+/** A sample Q&A question (`course-qna`) or open-board post (`open`) of one course. */
+export interface CoursePost {
+  id: string;
+  courseId: string;
+  board: "course-qna" | "open";
+  title: string;
+  body: string;
+  author: string;
+  at: string;
+  reply?: string;
+}
+
+// 박민준(샘플 학생)이 쓴 글만 그 학생이 고치거나 지울 수 있다.
+export const coursePosts: CoursePost[] = [
+  { id: "seed-q", courseId: "bi", board: "course-qna", title: "실습 데이터 형식", body: "CSV와 JSON 중 어떤 형식을 쓰면 되나요?", author: "김서연", at: "2026-11-03", reply: "CSV로 제출해 주세요." },
+  { id: "q-bi-2", courseId: "bi", board: "course-qna", title: "3정규형 예제 질문", body: "강의 자료 18쪽 예제에서 학과명이 이행 종속인 이유를 다시 설명해 주실 수 있나요?", author: "박민준", at: "2026-11-07" },
+  { id: "q-algo-1", courseId: "algo", board: "course-qna", title: "useEffect 의존성 배열 경고", body: "실습 코드에서 의존성 배열에 함수를 넣으라는 경고가 나옵니다. 그대로 두어도 되나요?", author: "이도윤", at: "2026-11-06", reply: "함수를 useCallback으로 감싸거나 effect 안으로 옮기세요." },
+  { id: "q-algo-2", courseId: "algo", board: "course-qna", title: "과제 저장소 공개 범위", body: "과제 저장소를 공개로 올려도 되나요, 비공개로 두고 초대해야 하나요?", author: "최하은", at: "2026-11-04" },
+  { id: "q-ai-1", courseId: "ai", board: "course-qna", title: "검증 정확도가 학습보다 높게 나옵니다", body: "드롭아웃을 넣었더니 검증 정확도가 학습 정확도보다 높습니다. 문제가 있는 건가요?", author: "정우진", at: "2026-11-05", reply: "학습 중에만 드롭아웃이 켜지므로 자주 있는 일입니다." },
+  { id: "q-ai-2", courseId: "ai", board: "course-qna", title: "과제 제출 형식", body: "결정트리 과제를 ipynb 파일 그대로 내도 되나요?", author: "박민준", at: "2026-11-08" },
+  { id: "q-db-1", courseId: "db", board: "course-qna", title: "가스비가 0으로 나오는 이유", body: "테스트넷에서 조회 함수를 호출하면 가스비가 0으로 나옵니다. 정상인가요?", author: "한하린", at: "2026-11-05", reply: "상태를 바꾸지 않는 view 호출은 가스비가 들지 않습니다." },
+  { id: "q-db-2", courseId: "db", board: "course-qna", title: "머클 트리 그림 출처", body: "보고서에 강의 자료의 머클 트리 그림을 써도 되나요?", author: "김서연", at: "2026-11-02" },
+  { id: "q-oss-1", courseId: "oss", board: "course-qna", title: "Spark 작업이 메모리 부족으로 멈춥니다", body: "groupBy 뒤에 collect를 하면 드라이버 메모리가 부족하다고 나옵니다.", author: "이지은", at: "2026-11-04", reply: "collect 대신 결과를 파일로 쓰거나 집계를 먼저 줄이세요." },
+  { id: "q-oss-2", courseId: "oss", board: "course-qna", title: "HDFS 복제 계수", body: "실습 클러스터의 복제 계수를 바꿔도 되나요?", author: "이도윤", at: "2026-11-01" },
+  { id: "q-se-1", courseId: "se", board: "course-qna", title: "실습용 가상머신 이미지 링크", body: "윤리 서약서를 냈는데 가상머신 이미지 링크가 보이지 않습니다.", author: "최하은", at: "2026-11-06", reply: "계정이 열리면 파일모음에 링크가 보입니다." },
+  { id: "q-se-2", courseId: "se", board: "course-qna", title: "XSS 예제가 브라우저에서 막힙니다", body: "실습 예제의 스크립트가 최신 브라우저에서 실행되지 않습니다.", author: "정우진", at: "2026-11-03" },
+  { id: "q-secu-1", courseId: "secu", board: "course-qna", title: "ASLR 끄는 방법", body: "실습 가상머신에서 ASLR을 끄라고 하셨는데 재부팅하면 다시 켜집니다.", author: "한하린", at: "2026-11-08", reply: "실습 스크립트가 시작할 때마다 끄므로 그대로 두면 됩니다." },
+  { id: "q-secu-2", courseId: "secu", board: "course-qna", title: "실습 보고서 분량", body: "버퍼 오버플로 실습 보고서는 몇 쪽 정도로 쓰면 되나요?", author: "김서연", at: "2026-11-05" },
+  { id: "o-bi-1", courseId: "bi", board: "open", title: "SQL 문제 풀이 스터디 모집", body: "매주 화요일 저녁에 SQL 문제를 같이 풉니다. 관심 있으면 댓글 대신 쪽지 주세요.", author: "이지은", at: "2026-11-02" },
+  { id: "o-bi-2", courseId: "bi", board: "open", title: "ERD 도구 추천", body: "과제 ERD는 무료 도구로도 충분했습니다. 써 본 도구를 정리해 둡니다.", author: "박민준", at: "2026-11-06" },
+  { id: "o-algo-1", courseId: "algo", board: "open", title: "프로젝트 팀원 구합니다 (프론트엔드)", body: "백엔드 두 명이 있고 화면을 맡을 분을 찾습니다.", author: "정우진", at: "2026-11-03" },
+  { id: "o-ai-1", courseId: "ai", board: "open", title: "Kaggle 입문 대회 같이 하실 분", body: "타이타닉 대회로 전처리부터 같이 해 보려고 합니다.", author: "최하은", at: "2026-11-04" },
+  { id: "o-db-1", courseId: "db", board: "open", title: "블록체인 세미나 후기", body: "지난주 교내 세미나에서 들은 합의 알고리즘 이야기를 정리했습니다.", author: "이도윤", at: "2026-11-01" },
+  { id: "o-oss-1", courseId: "oss", board: "open", title: "Docker로 Spark 로컬 실행하기", body: "클러스터가 붐빌 때 로컬에서 먼저 돌려 본 방법을 정리했습니다.", author: "한하린", at: "2026-11-05" },
+  { id: "o-se-1", courseId: "se", board: "open", title: "CTF 대회 참가 팀원 모집", body: "12월 교내 CTF에 나갈 팀원 두 명을 찾습니다.", author: "김서연", at: "2026-11-07" },
+  { id: "o-secu-1", courseId: "secu", board: "open", title: "gdb 명령 정리 공유", body: "실습에서 자주 쓴 gdb 명령을 한 쪽으로 정리했습니다.", author: "이도윤", at: "2026-11-06" },
 ];
 
 /** Order of this term's enrolled courses on home and in the study room. */
@@ -304,6 +354,23 @@ export const seedMessages: Message[] = [
   { id: "msg3", folder: "sent", from: "박민준", to: "박은주", title: "팀 구성 문의", body: "그룹 메뉴가 비어 있어 문의드립니다.", at: "2026-11-05 18:40", read: true },
 ];
 
+/** One sample notification (알림 dialog and the header bell). */
+export interface SampleNotification {
+  title: string;
+  read: boolean;
+  activityId?: string;
+  kind?: string;
+  source?: string;
+  when?: string;
+}
+
+export const sampleNotifications: SampleNotification[] = [
+  { title: "Project 마감이 가까워졌습니다", read: false, activityId: "rep-project" },
+  { title: "11주 1차시가 열렸습니다", read: false, activityId: "lec-11-1" },
+  { title: "텍스트마이닝 미션 2 마감이 가까워졌습니다", read: false, activityId: "r-open" },
+  { title: "주간 일정이 갱신되었습니다", read: true, kind: "일정", source: "주간 일정", when: "11월 2일 (월)" },
+];
+
 export const seedQuestions: Question[] = [
   { id: "q1", bankId: "b1", type: "객관식", points: 5, stem: "다음 중 과적합에 해당하는 설명은?", choices: ["훈련 오차는 낮은데 검증 오차가 크다", "훈련과 검증 오차가 함께 크다", "데이터가 전혀 없다", "라벨이 하나뿐이다"], answer: 0 },
   { id: "q2", bankId: "b1", type: "단답", points: 4, stem: "TF-IDF에서 IDF가 낮아지는 단어의 특징을 한 줄로 쓰세요.", choices: [], answer: "여러 문서에 공통으로 등장한다" },
@@ -341,6 +408,18 @@ export const files = [
   { id: "f1", courseId: "bi", name: "week5-cases.pdf", size: "1.2 MB", week: 5, at: "2026-10-02" },
   { id: "f2", courseId: "bi", name: "dataset-guide.pdf", size: "840 KB", week: 8, at: "2026-11-01" },
   { id: "f3", courseId: "bi", name: "syllabus-bi.pdf", size: "220 KB", week: 1, at: "2026-09-01" },
+  { id: "f4", courseId: "algo", name: "week3-react-state.pdf", size: "1.6 MB", week: 3, at: "2026-09-18" },
+  { id: "f5", courseId: "algo", name: "project-guide-web.pdf", size: "540 KB", week: 9, at: "2026-11-05" },
+  { id: "f6", courseId: "ai", name: "week4-decision-tree.pdf", size: "2.1 MB", week: 4, at: "2026-09-24" },
+  { id: "f7", courseId: "ai", name: "iris-dataset-guide.pdf", size: "310 KB", week: 9, at: "2026-11-06" },
+  { id: "f8", courseId: "db", name: "week2-hash-basics.pdf", size: "980 KB", week: 2, at: "2026-09-09" },
+  { id: "f9", courseId: "db", name: "testnet-wallet-setup.pdf", size: "450 KB", week: 9, at: "2026-11-04" },
+  { id: "f10", courseId: "oss", name: "week5-spark-intro.pdf", size: "1.9 MB", week: 5, at: "2026-09-29" },
+  { id: "f11", courseId: "oss", name: "cluster-account-guide.pdf", size: "260 KB", week: 9, at: "2026-11-03" },
+  { id: "f12", courseId: "se", name: "week6-web-vuln.pdf", size: "1.4 MB", week: 6, at: "2026-10-07" },
+  { id: "f13", courseId: "se", name: "vuln-report-template.pdf", size: "180 KB", week: 8, at: "2026-10-28" },
+  { id: "f14", courseId: "secu", name: "week7-buffer-overflow.pdf", size: "2.3 MB", week: 7, at: "2026-10-15" },
+  { id: "f15", courseId: "secu", name: "lab-vm-guide.pdf", size: "620 KB", week: 9, at: "2026-11-07" },
 ];
 
 export const gradeItems = [

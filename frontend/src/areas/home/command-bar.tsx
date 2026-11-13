@@ -27,6 +27,14 @@ interface CommandInput {
 }
 let commandInput: CommandInput | null = null;
 
+/** Puts the caret in the hero's command input (no-op when it is not mounted). */
+export function focusCommand(): void {
+  commandInput?.focus();
+}
+
+// One tap runs the sentence: a plan request, an activity request, and a local classroom jump.
+const PROMPTS = ["오늘 할 일 전부 해줘", "데베 강의 틀어줘", "마감 임박한 과제 열어줘", "기계학습 강의실로 이동"];
+
 const arrowTail = /\s*[→➜>]+\s*$/;
 
 function planReply(text: string): "accept" | "cancel" | null {
@@ -141,12 +149,15 @@ function previewRows(text: string) {
   return { rows: matches.slice(0, MAX_ROWS), more: Math.max(0, matches.length - MAX_ROWS) };
 }
 
-/** 히어로의 행동 줄 + 명령 입력창. */
-export function commandBar(): ReactNode {
-  return <CommandBar />;
+// 입력 중에는 움직이는 GIF 대신 정지 이미지를 보인다(동작 줄이기 설정에서는 늘 정지 이미지).
+const MASCOT_STILL = "/app/assets/mascot/orange-mascot-still.png";
+
+/** 히어로의 다음 행동 줄 + 한 번에 실행하는 추천 문장 + 맨 아래 명령 입력창. */
+export function commandBar(onActivate: () => void): ReactNode {
+  return <CommandBar onActivate={onActivate} />;
 }
 
-function CommandBar() {
+function CommandBar({ onActivate }: { onActivate: () => void }) {
   const actions = nextActions().slice(0, 2);
   const input = useRef<HTMLInputElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
@@ -248,17 +259,47 @@ function CommandBar() {
     }
   };
 
+  const runPrompt = (text: string) => {
+    pendingController?.abort();
+    inputRevision += 1;
+    sayText = "";
+    change(text);
+    setOpen(false);
+    void submitCommand({});
+  };
+
   return (
     <div className="hero-assist">
       {actions.length
         ? <ul className="hero-actions" aria-label="다음 행동">{actions.map((action) => <ActionRow key={action.id} action={action} />)}</ul>
         : null}
+      {ready
+        ? null
+        : (
+          <ul className="hero-prompts" aria-label="추천 문장">
+            {PROMPTS.map((text) => (
+              <li key={text}>
+                <button type="button" className="hero-prompt" disabled={busy} onClick={() => runPrompt(text)}>{text}</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{sayText}</p>
       <div className="cmd" role="search">
         <div
           className={["cmd-box", listShown ? "has-list" : "", ghost ? "has-ghost" : "", busy ? "is-busy" : ""].filter(Boolean).join(" ")}
           data-completion={ghost ? command : ""}
         >
-          <span className="cmd-ico" aria-hidden="true"><Icon name="search" /></span>
+          <span className="cmd-ico" aria-hidden="true">
+            {value
+              ? <img src={MASCOT_STILL} alt="" width="80" height="80" />
+              : (
+                <picture>
+                  <source media="(prefers-reduced-motion: reduce)" srcSet={MASCOT_STILL} />
+                  <img src="/app/assets/mascot/orange-mascot.gif" alt="" width="80" height="80" />
+                </picture>
+              )}
+          </span>
           <div className="cmd-field">
             <div ref={ghostRef} className="cmd-ghost" aria-hidden="true" hidden={!ghost}>
               {ghost && command
@@ -271,7 +312,7 @@ function CommandBar() {
               id="assistant-input"
               className="cmd-input"
               role="combobox"
-              aria-label="과목이나 할 일로 바로 가기"
+              aria-label="과목 이동이나 할 일 계획을 한 줄로 입력"
               aria-autocomplete="both"
               aria-expanded={listShown ? "true" : "false"}
               aria-controls="assistant-list"
@@ -281,7 +322,7 @@ function CommandBar() {
               aria-describedby={ready ? "hero-plan-reply" : undefined}
               aria-busy={busy ? "true" : "false"}
               readOnly={busy}
-              placeholder={ready ? "계획 수정 또는 ㄱㄱ · Enter" : "과목이나 할 일 (예: 데베 강의)"}
+              placeholder={ready ? "계획 수정 또는 ㄱㄱ · Enter" : "무엇을 할까요? 예: 오늘 할 일 전부 해줘"}
               autoComplete="off"
               autoCapitalize="off"
               spellCheck="false"
@@ -300,7 +341,10 @@ function CommandBar() {
                 setSelected(-1);
                 setOpen(true);
               }}
-              onClick={syncCaret}
+              onClick={() => {
+                onActivate();
+                syncCaret();
+              }}
               onSelect={syncCaret}
               onKeyUp={syncCaret}
               onScroll={syncCaret}
@@ -312,6 +356,7 @@ function CommandBar() {
                 setSelected(-1);
               }}
               onFocus={() => {
+                onActivate();
                 setFocused(true);
                 syncCaret();
                 if (valueRef.current.trim()) {
@@ -353,7 +398,6 @@ function CommandBar() {
           {more > 0 ? <li className="cmd-more" role="presentation">{`외 ${more}개 · 과목명을 더 입력해 주세요`}</li> : null}
         </ul>
       </div>
-      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{sayText}</p>
     </div>
   );
 }

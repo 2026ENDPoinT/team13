@@ -38,6 +38,10 @@ const OPEN_LOGIN = "ASTRA 서버에 로그인하면 이 과목의 열린게시�
 
 const missing = (error: unknown) => error instanceof ApiError && error.status === 404;
 
+// 서버의 `canEdit`/`canDelete`만 믿지 않고 화면에서도 가린다: 고치기는 작성자(`mine`)만, 지우기는 작성자나 담당 교수만.
+const editable = (item: { canEdit?: boolean; mine?: boolean }): boolean => Boolean(item.canEdit && item.mine);
+const deletable = (item: { canDelete?: boolean; mine?: boolean }, instructor: boolean): boolean => Boolean(item.canDelete && (item.mine || instructor));
+
 // ---------- memory per form (cleared when the session changes) ----------
 
 interface Memo extends AttachMemo {
@@ -382,7 +386,7 @@ function QnaDetail({ ctx, courseId, id, name, instructor }: { ctx: ScreenCtx; co
     <div className="crs-dialog">
       <div aria-live="polite">
         {post
-          ? questionView(post, courseId, id, ctx, entry.error)
+          ? questionView(post, courseId, id, ctx, entry.error, instructor)
           : errorView(entry, "질문", "질문을 불러오는 중입니다", ["질문을 찾을 수 없습니다", "삭제되었거나 볼 수 있는 권한이 없습니다."], "질문을 불러오지 못했습니다", load)}
       </div>
       <p className="crs-note" role="status">{readNote}</p>
@@ -398,7 +402,7 @@ function QnaDetail({ ctx, courseId, id, name, instructor }: { ctx: ScreenCtx; co
   );
 }
 
-function questionView(post: BoardPost, courseId: Id, id: number, ctx: ScreenCtx, staleError: unknown): ReactNode {
+function questionView(post: BoardPost, courseId: Id, id: number, ctx: ScreenCtx, staleError: unknown, instructor: boolean): ReactNode {
   const actions: ReactNode[] = [
     <CmdButton
       key="like"
@@ -456,8 +460,8 @@ function questionView(post: BoardPost, courseId: Id, id: number, ctx: ScreenCtx,
       </CmdButton>,
     );
   }
-  if (post.canEdit) actions.push(<Link key="edit" href={here(ctx, { pop: "qna-write" })} className="btn btn-secondary">수정</Link>);
-  if (post.canDelete) {
+  if (editable(post)) actions.push(<Link key="edit" href={here(ctx, { pop: "qna-write" })} className="btn btn-secondary">수정</Link>);
+  if (deletable(post, instructor)) {
     actions.push(
       <DeleteButton
         key="delete"
@@ -738,6 +742,19 @@ function PostForm({ ctx, courseId, kind, id, noun }: { ctx: ScreenCtx; courseId:
     );
   }
 
+  // 주소로 바로 연 남의 글: 고칠 양식을 내지 않는다. 내 글이 잠긴 경우(답글이 달린 질문)는 아래 양식에 이유를 적는다.
+  if (id && current && !current.mine) {
+    return (
+      <div className="crs-dialog">
+        <EmptyState
+          title={`다른 사람이 쓴 ${noun}은 고칠 수 없습니다`}
+          body="작성자 본인만 고칠 수 있습니다."
+          actions={<Link href={here(ctx, { pop: viewPop })} className="btn btn-secondary">{`${noun} 보기`}</Link>}
+        />
+      </div>
+    );
+  }
+
   const save = async () => {
     const title = memo.title.trim();
     if (!title) return say(alertOf("제목을 입력하세요."));
@@ -765,7 +782,7 @@ function PostForm({ ctx, courseId, kind, id, noun }: { ctx: ScreenCtx; courseId:
     return undefined;
   };
 
-  const locked = Boolean(id && current && !current.canEdit);
+  const locked = Boolean(id && current && !editable(current));
   let shown = said;
   if (!shown.text && current && entry && !entry.data && entry.error) shown = alertOf(boardMessage(entry.error, noun));
   if (!shown.text && locked && current) shown = alertOf(qna && (current.answerCount ?? 0) > 0 ? "답글이 달린 질문은 고칠 수 없습니다." : `이 ${noun}을 고칠 수 없습니다.`);
@@ -876,10 +893,10 @@ export function remoteOpenPostDialog(ctx: ScreenCtx, course: Course): ReactNode 
   if (blocked || !id || courseId == null) {
     return wideShell("열린게시판", <div className="crs-dialog">{blocked || <EmptyState title="글을 찾을 수 없습니다" body="목록으로 돌아가 다시 선택해 주세요." />}</div>);
   }
-  return wideShell("열린게시판", <OpenPost ctx={ctx} courseId={courseId} id={id} />);
+  return wideShell("열린게시판", <OpenPost ctx={ctx} courseId={courseId} id={id} instructor={roleIn(course.id) === "INSTRUCTOR"} />);
 }
 
-function OpenPost({ ctx, courseId, id }: { ctx: ScreenCtx; courseId: Id; id: number }) {
+function OpenPost({ ctx, courseId, id, instructor }: { ctx: ScreenCtx; courseId: Id; id: number; instructor: boolean }) {
   const key = postKey(courseId, "open", id);
   const load = () => void openDetails.load(key, courseId, id);
   const loadComments = () => void commentLists.load(key, courseId, id);
@@ -896,18 +913,18 @@ function OpenPost({ ctx, courseId, id }: { ctx: ScreenCtx; courseId: Id; id: num
     <div className="crs-dialog">
       <div aria-live="polite">
         {post
-          ? openPostView(post, courseId, id, ctx, entry.error)
+          ? openPostView(post, courseId, id, ctx, entry.error, instructor)
           : errorView(entry, "글", "글을 불러오는 중입니다", ["글을 찾을 수 없습니다", "삭제되었거나 볼 수 있는 권한이 없습니다."], "글을 불러오지 못했습니다", load)}
       </div>
       <p className="crs-note" role="status">{readNote}</p>
       <section className="crs-thread" aria-label="댓글" hidden={!post}>
-        <CommentsThread entry={comments} courseId={courseId} id={id} listKey={key} reload={loadComments} />
+        <CommentsThread entry={comments} courseId={courseId} id={id} listKey={key} reload={loadComments} instructor={instructor} />
       </section>
     </div>
   );
 }
 
-function openPostView(post: BoardPost, courseId: Id, id: number, ctx: ScreenCtx, staleError: unknown): ReactNode {
+function openPostView(post: BoardPost, courseId: Id, id: number, ctx: ScreenCtx, staleError: unknown, instructor: boolean): ReactNode {
   const actions: ReactNode[] = [
     <CmdButton
       key="like"
@@ -925,8 +942,8 @@ function openPostView(post: BoardPost, courseId: Id, id: number, ctx: ScreenCtx,
       {post.liked ? `추천 취소 · ${post.likeCount}` : `추천 · ${post.likeCount}`}
     </CmdButton>,
   ];
-  if (post.canEdit) actions.push(<Link key="edit" href={here(ctx, { pop: "board-write" })} className="btn btn-secondary">수정</Link>);
-  if (post.canDelete) {
+  if (editable(post)) actions.push(<Link key="edit" href={here(ctx, { pop: "board-write" })} className="btn btn-secondary">수정</Link>);
+  if (deletable(post, instructor)) {
     actions.push(
       <DeleteButton
         key="delete"
@@ -967,7 +984,7 @@ function openPostView(post: BoardPost, courseId: Id, id: number, ctx: ScreenCtx,
   );
 }
 
-function CommentsThread({ entry, courseId, id, listKey, reload }: { entry: Entry<CursorList<BoardComment>> | null; courseId: Id; id: number; listKey: string; reload: () => void }) {
+function CommentsThread({ entry, courseId, id, listKey, reload, instructor }: { entry: Entry<CursorList<BoardComment>> | null; courseId: Id; id: number; listKey: string; reload: () => void; instructor: boolean }) {
   const data = entry && entry.data;
   const title = <h3>댓글</h3>;
   if (!data) {
@@ -985,7 +1002,7 @@ function CommentsThread({ entry, courseId, id, listKey, reload }: { entry: Entry
     if (!topIds.has(item.parentCommentId)) orphans.push(item);
     else replies.set(item.parentCommentId, [...(replies.get(item.parentCommentId) || []), item]);
   }
-  const view = (comment: BoardComment) => <CommentView comment={comment} courseId={courseId} id={id} listKey={listKey} memo={memo} />;
+  const view = (comment: BoardComment) => <CommentView comment={comment} courseId={courseId} id={id} listKey={listKey} memo={memo} instructor={instructor} />;
   return (
     <>
       {title}
@@ -1025,7 +1042,7 @@ function CommentsThread({ entry, courseId, id, listKey, reload }: { entry: Entry
   );
 }
 
-function CommentView({ comment, courseId, id, listKey, memo }: { comment: BoardComment; courseId: Id; id: number; listKey: string; memo: Memo }) {
+function CommentView({ comment, courseId, id, listKey, memo, instructor }: { comment: BoardComment; courseId: Id; id: number; listKey: string; memo: Memo; instructor: boolean }) {
   const editButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (refocusComment === comment.commentId && editButton.current) {
@@ -1036,7 +1053,7 @@ function CommentView({ comment, courseId, id, listKey, memo }: { comment: BoardC
   if (comment.deleted) {
     return <div className="crs-comment is-deleted"><p className="crs-note">삭제된 댓글입니다.</p></div>;
   }
-  const editingThis = Boolean(comment.canEdit) && commentEditing.get(listKey) === comment.commentId;
+  const editingThis = editable(comment) && commentEditing.get(listKey) === comment.commentId;
   const actions: ReactNode[] = [];
   if (comment.parentCommentId == null && !editingThis) {
     actions.push(
@@ -1054,8 +1071,8 @@ function CommentView({ comment, courseId, id, listKey, memo }: { comment: BoardC
       </Button>,
     );
   }
-  // Only the author edits a comment (`canEdit`); an instructor may delete it but not change it.
-  if (comment.canEdit && !editingThis) {
+  // Only the author edits a comment; an instructor may delete it but not change it.
+  if (editable(comment) && !editingThis) {
     actions.push(
       <Button
         key="edit"
@@ -1075,7 +1092,7 @@ function CommentView({ comment, courseId, id, listKey, memo }: { comment: BoardC
       </Button>,
     );
   }
-  if (comment.canDelete && !editingThis) {
+  if (deletable(comment, instructor) && !editingThis) {
     actions.push(
       <DeleteButton
         key="delete"

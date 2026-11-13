@@ -9,7 +9,7 @@ import { activities, people, courseById, gradeItems, weekCount, professor as tea
 import type { Activity, ActivityType, AppState, Course } from "../../data.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { routeFor } from "../../shared/routes.ts";
-import { attendStatus, statusLabel, dday, typeLabel } from "../../shared/format.ts";
+import { attendStatus, statusLabel, dday, typeLabel, boardRows } from "../../shared/format.ts";
 import { LECTURES } from "../../media/catalog.ts";
 import { mediaFile, mediaForActivity } from "../../media.ts";
 import { activityPhase, endsAfter, isClosedActivity, removeActivity, upsertActivity } from "../../shared/activity-library.ts";
@@ -183,7 +183,7 @@ function pfFind() {
 function finder(ctx: ScreenCtx, label: string): ReactNode {
   const q = param(ctx, "q");
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Enter") return;
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
     event.preventDefault();
     pfFind();
   };
@@ -2630,7 +2630,8 @@ function noticeBoard(ctx: ScreenCtx): ReactNode {
     return frame("알림마당", ctx, { kicker: "교수", sub: "담당 과목의 강의실 공지를 보고 고치거나 지웁니다." }, serverCourseNotices(ctx));
   }
   const id = param(ctx, "id");
-  const rows = notices.filter((notice) => notice.audience !== "student");
+  // 알림마당은 사이트 공지만: 과목 공지는 각 강의실 공지사항에 있다.
+  const rows = notices.filter((notice) => notice.scope === "global" && notice.audience !== "student");
   const open = rows.find((notice) => notice.id === id);
   return frame("알림마당", ctx, { kicker: "교수", sub: "교수에게 보이는 공지만 모았습니다." },
     open ? (
@@ -2659,8 +2660,7 @@ function qnaBoard(ctx: ScreenCtx): ReactNode {
     return frame("질의응답", ctx, { course: true, kicker: course.ko, sub: "비공개 질문과 익명 작성자 이름도 담당 교수에게는 보입니다.", actions: [backRoom(course)] },
       qnaSection(ctx, course, "pf_qna"));
   }
-  const seed: QnaPost = { id: "seed-q", title: "실습 데이터 형식", body: "CSV와 JSON 중 어떤 형식을 쓰면 되나요?", author: "김서연", at: "2026-11-03" };
-  const posts = [seed, ...postsOf(ctx.state).filter((post) => post.board === "course-qna")];
+  const posts = boardRows({ ...ctx.screen, board: "course-qna", course: course.id }, ctx.state);
   return frame("질의응답", ctx, {
     course: true,
     kicker: course.ko,

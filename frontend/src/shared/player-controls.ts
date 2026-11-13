@@ -110,44 +110,25 @@ async function exitPlayerFullscreen(root: HTMLElement | null): Promise<void> {
   }
 }
 
-export interface FullscreenResult {
-  ok: boolean;
-  exited?: boolean;
-  reason?: string;
-}
-
-function reasonOf(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : "failed";
-}
-
-/** Enters or leaves fullscreen for a `.player-page` (the element, else iOS's native video fullscreen). */
-export async function togglePlayerFullscreen(root: HTMLElement | null): Promise<FullscreenResult> {
-  if (!root) return { ok: false, reason: "missing" };
+/** Enters or leaves fullscreen for a `.player-page` (the element, else iOS's native video fullscreen); failures leave the page as is. */
+export async function togglePlayerFullscreen(root: HTMLElement | null): Promise<void> {
+  if (!root) return;
   const video = videoOf(root);
   try {
-    if (isPlayerFullscreen(root)) {
-      await exitPlayerFullscreen(root);
-      return { ok: true, exited: true };
-    }
+    if (isPlayerFullscreen(root)) return await exitPlayerFullscreen(root);
     const legacyRoot: HTMLElement & WebkitElement = root;
     if (typeof root.requestFullscreen === "function") {
       try {
-        await root.requestFullscreen();
-        return { ok: true };
-      } catch (error) {
-        if (!(video && typeof video.webkitEnterFullscreen === "function")) return { ok: false, reason: reasonOf(error) };
+        return await root.requestFullscreen();
+      } catch {
+        // iOS Safari: element fullscreen fails, the video's native one below works.
       }
     } else if (typeof legacyRoot.webkitRequestFullscreen === "function") {
-      legacyRoot.webkitRequestFullscreen();
-      return { ok: true };
+      return legacyRoot.webkitRequestFullscreen();
     }
-    if (video && typeof video.webkitEnterFullscreen === "function") {
-      video.webkitEnterFullscreen();
-      return { ok: true };
-    }
-    return { ok: false, reason: "unsupported" };
-  } catch (error) {
-    return { ok: false, reason: reasonOf(error) };
+    if (video && typeof video.webkitEnterFullscreen === "function") video.webkitEnterFullscreen();
+  } catch {
+    // Fullscreen refused (no user gesture, policy): the player stays inline.
   }
 }
 

@@ -1,9 +1,7 @@
 import { useEffect, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Button } from "../../ui/kit.tsx";
 import { listCoursePdfs, ensureCoursePdfText, type CoursePdfRecord } from "../../shared/course-pdfs.ts";
 import { createCoursePdfViewer } from "../../shared/document-viewer.tsx";
 import { mediaForActivity } from "../../media.ts";
-import { togglePlayerFullscreen } from "../../shared/player-controls.ts";
 import type { Activity, Course } from "../../data.ts";
 
 type Phase = "transcribing" | "summarizing" | "done";
@@ -75,7 +73,6 @@ function VideoStudy({ course, activity, player, seekTo, server }: { course: Cour
   const [docs, setDocs] = useState<CoursePdfRecord[]>([]);
   const [selectedDoc, setSelectedDoc] = useState("");
   const [, redraw] = useReducer((n: number) => n + 1, 0);
-  const main = useRef<HTMLDivElement>(null);
   const tabList = useRef<HTMLDivElement>(null);
   const focusTab = useRef(false);
 
@@ -120,13 +117,6 @@ function VideoStudy({ course, activity, player, seekTo, server }: { course: Cour
       live = false;
     };
   }, [reading, doc]);
-
-  const toggleFullscreen = async () => {
-    const result = await togglePlayerFullscreen(main.current?.querySelector<HTMLElement>(".player-page") ?? null);
-    if (!result.ok && result.reason === "unsupported") setMessage("이 브라우저는 영상 전체화면을 지원하지 않습니다.");
-    else if (!result.ok) setMessage(`전체화면을 열지 못했습니다: ${result.reason}`);
-    else setMessage(intro);
-  };
 
   const tabs: [StudyTab, string][] = server ? [["materials", "연결된 PDF"]] : [["summary", "영상 요약"], ["transcript", "전사"], ["materials", "연결된 PDF"]];
   const choose = (key: StudyTab) => {
@@ -210,10 +200,9 @@ function VideoStudy({ course, activity, player, seekTo, server }: { course: Cour
       <p className="vs-note" role="status">{message}</p>
       <div className="vs-stage">
         <div className="vs-layout">
-          <div className="vs-main" ref={main}>
+          <div className="vs-main">
             <div className="vs-mode"><span className="vs-mode-label">학습모드</span><span>{activity.title}</span></div>
             {player}
-            <div className="vs-player-actions"><Button kind="secondary" onClick={() => void toggleFullscreen()}>영상 전체화면</Button></div>
             <p className="vs-note">전체화면에서는 강의 플레이어만 표시됩니다. Esc로 돌아오면 학습 노트를 계속 볼 수 있습니다.</p>
           </div>
           <aside className="vs-side" aria-label="영상 및 연결 자료 요약">

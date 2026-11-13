@@ -256,9 +256,6 @@ function SearchBox({ title, ctx, scope }: { title: string; ctx: ScreenCtx; scope
     <label className="search board-search">
       <Icon name="search" />
       <input
-        data-name="surfaceQuery"
-        data-scope={scope}
-        data-focus={scope}
         value={readQuery(ctx.state, scope)}
         onChange={(event) => {
           writeQuery(ctx.state, scope, event.target.value);

@@ -26,9 +26,6 @@ export function pageSearch(ctx: ScreenCtx, scope: string, label = "과목 검색
     <label className="search">
       <Icon name="search" />
       <input
-        data-name="surfaceQuery"
-        data-scope={scope}
-        data-focus={scope}
         value={readQuery(ctx.state, scope)}
         onChange={(event) => {
           writeQuery(ctx.state, scope, event.target.value);

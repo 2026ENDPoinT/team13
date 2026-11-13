@@ -76,6 +76,7 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 .home-main { container-type: inline-size; }
 .my-day > .section-label:first-child { margin-top: 0; }
 .home-hero {
+  --hero-full-h: calc(100dvh - var(--header-h));
   position: relative; isolation: isolate;
   display: flex; align-items: center; gap: var(--space-8);
   min-height: var(--hero-min-h);
@@ -115,8 +116,8 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 .hero-count:hover { text-decoration-color: var(--link); }
 .hero-count:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; }
 
-/* 다음 행동 줄 + 명령 입력창. Rows are opaque enough to read over the campus photo. */
-.hero-assist { position: relative; margin-top: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+/* 명령 입력창 + 추천 문장 + 다음 행동 줄. Rows are opaque enough to read over the campus photo. */
+.hero-assist { position: relative; margin-top: var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .hero-actions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
 .hero-action {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-3);
@@ -150,18 +151,22 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 .hero-action:hover .hero-arrow { transform: translateX(2px); }
 @media (prefers-reduced-motion: reduce) { .hero-action, .hero-arrow, .hero-count { transition: none; } }
 
+/* 한 줄 명령 입력창: 문장 하나로 이동하거나 계획을 세운다. */
 .cmd { position: relative; }
 .cmd-box {
-  display: flex; align-items: center; gap: var(--space-2); min-height: var(--hit-touch); padding: 0 var(--space-2) 0 var(--space-3);
-  background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
+  display: flex; align-items: center; gap: var(--space-3); min-height: 64px; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-5);
+  background: color-mix(in srgb, var(--surface) 94%, transparent); border: var(--border-w) solid color-mix(in srgb, var(--brand-orange) 70%, transparent); border-radius: 32px;
+  box-shadow: var(--shadow-md);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   transition: border-color var(--duration-fast) var(--ease-standard);
 }
-.cmd-box:hover { border-color: var(--gray-30); }
-.cmd-box:focus-within { border-color: var(--accent); outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-.cmd-box.has-list { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.cmd-ico { display: inline-flex; color: var(--text-2); flex: none; }
+.cmd-box:hover { border-color: var(--brand-orange); }
+.cmd-box:focus-within { border-color: var(--brand-orange); outline: 2px solid color-mix(in srgb, var(--brand-orange) 45%, transparent); outline-offset: 1px; }
+/* 마스코트(GIF·정지 PNG 모두 360px 캔버스 기준, 평상시 몸통 지름 162px·중심 176,183)를 36px 슬롯의 원에 맞춘다. 점프 동작은 슬롯 밖으로 나가도록 둔다. */
+.cmd-ico { position: relative; flex: none; width: 36px; height: 36px; }
+.cmd-ico img { position: absolute; left: -21px; top: -23px; width: 80px; height: 80px; max-width: none; pointer-events: none; }
 .cmd-field { position: relative; display: flex; flex: 1; min-width: 0; align-self: stretch; align-items: center; }
-.cmd-input, .cmd-ghost { font: inherit; font-size: var(--text-md); line-height: var(--leading-md); letter-spacing: inherit; }
+.cmd-input, .cmd-ghost { font: inherit; font-size: var(--text-lg); line-height: var(--leading-lg); letter-spacing: inherit; }
 .cmd-input {
   position: relative; width: 100%; min-width: 0; align-self: stretch; padding: 0; border: 0; outline: 0; background: transparent;
   color: var(--text);
@@ -176,7 +181,7 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 }
 .cmd-box:has(.cmd-input:not(:placeholder-shown)):not(.has-ghost) .cmd-key { display: none; }
 .cmd-go {
-  flex: none; width: var(--hit); height: var(--hit); display: inline-grid; place-items: center; border: 0; border-radius: var(--radius-sm);
+  flex: none; width: var(--hit-touch); height: var(--hit-touch); display: inline-grid; place-items: center; border: 0; border-radius: var(--radius-full);
   background: var(--accent); color: var(--on-accent); font-size: var(--text-lg); line-height: 1; cursor: pointer;
   transition: background var(--duration-fast) var(--ease-standard);
 }
@@ -189,9 +194,9 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 @keyframes cmd-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .cmd-spin { animation: none; border-top-color: var(--border); border-right-color: var(--accent); } }
 .cmd-list {
-  position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin: 0; padding: var(--space-1); list-style: none;
-  background: var(--surface); border: var(--border-w) solid var(--accent); border-top-color: var(--border);
-  border-radius: 0 0 var(--radius-md) var(--radius-md); box-shadow: var(--shadow-md);
+  position: absolute; z-index: 5; left: 0; right: 0; bottom: calc(100% + var(--space-2)); margin: 0; padding: var(--space-1); list-style: none; text-align: left;
+  background: var(--surface); border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
 }
 .cmd-list[hidden] { display: none; }
 .cmd-opt {
@@ -203,8 +208,73 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 .cmd-opt:hover, .cmd-opt[aria-selected="true"] { background: var(--accent-soft); }
 .cmd-opt[aria-selected="true"] { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .cmd-more { padding: var(--space-1) var(--space-3) var(--space-2); color: var(--text-2); font-size: var(--text-xs); line-height: var(--leading-xs); }
-/* Sits in the hero's bottom padding so the sentence appearing never moves the page below. */
-.cmd-say { position: absolute; left: 0; right: 0; top: 100%; margin: var(--space-3) 0 0; color: var(--text); font-size: var(--text-sm); line-height: var(--leading-sm); }
+/* 비서의 한 줄 답(입력창 바로 위). 한 줄을 미리 비워 두어 답이 나타나도 입력창이 움직이지 않는다. */
+.cmd-say { min-height: var(--leading-sm); margin: 0; padding: 0 var(--space-5); color: var(--text); font-size: var(--text-sm); line-height: var(--leading-sm); }
+
+/* 누르면 바로 실행되는 추천 문장. */
+.hero-prompts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.hero-prompt {
+  min-height: var(--hit); padding: 0 var(--space-4); border: var(--border-w) solid var(--border); border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface) 80%, transparent); color: var(--text);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  font: inherit; font-size: var(--text-sm); line-height: var(--leading-sm); cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+.hero-prompt:hover:not(:disabled) { background: var(--surface-2); border-color: var(--gray-30); }
+.hero-prompt:active:not(:disabled) { transform: scale(0.97); }
+.hero-prompt:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.hero-prompt:disabled { opacity: 0.6; cursor: default; }
+
+/* 히어로 오른쪽 아래의 전체화면 ↔ 일반 모드 전환. `<>`를 45° 기울여 대각선 확대·축소로 읽힌다. */
+.hero-mode-toggle {
+  position: absolute; z-index: 1; right: var(--space-5); bottom: var(--space-5);
+  display: grid; place-items: center; width: var(--hit); height: var(--hit); padding: 0;
+  border: var(--border-w) solid rgba(255, 255, 255, 0.4); border-radius: var(--radius-full);
+  background: rgba(16, 17, 20, 0.55); color: var(--on-photo);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+.hero-mode-toggle svg { display: block; transform: rotate(-45deg); }
+.hero-mode-toggle:hover { background: rgba(16, 17, 20, 0.75); border-color: var(--on-photo); }
+.hero-mode-toggle:active { transform: scale(0.96); }
+.hero-mode-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* 요청함·Plan 버튼이 화면 오른쪽 아래에 떠 있으면 그 위로 비켜 선다. */
+.chrome:has(> .assistant-tray) .home-hero.is-full .hero-mode-toggle { bottom: calc(24px + 56px + var(--space-4)); }
+
+/* 전체화면: 상단 바 아래를 히어로가 모두 차지한다. 셸의 본문·오른쪽 열은 감추고, 왼쪽 메뉴는 넓은 화면에서만 감춘다(좁은 화면은 메뉴 서랍 유지).
+   인사말은 남는 높이의 가운데, 다음 행동·추천 문장·입력창은 화면 아래에 붙는다. */
+.body:has(> .hero-slot > .home-hero.is-full) { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "hero"; }
+.body:has(> .hero-slot > .home-hero.is-full) > :is(.slot, .aside) { display: none; }
+@media (min-width: 1024px) {
+  .body:has(> .hero-slot > .home-hero.is-full) > .sidenav { display: none; }
+  .home-hero.is-full:has(.hero-plan:not([hidden])) { align-items: stretch; justify-items: center; }
+}
+.home-hero.is-full {
+  min-height: var(--hero-full-h);
+  flex-direction: column; align-items: center;
+  padding: var(--space-9) var(--space-7) calc(var(--space-5) + var(--hit) + var(--space-3));
+}
+.home-hero.is-full::after {
+  background: radial-gradient(ellipse 75% 65% at 50% 50%, color-mix(in srgb, var(--bg) 80%, transparent) 0%, color-mix(in srgb, var(--bg) 58%, transparent) 100%);
+}
+.home-hero.is-full .home-hero-copy { flex: 1; display: flex; flex-direction: column; width: min(760px, 100%); text-align: center; }
+.home-hero.is-full h1, .home-hero.is-full .hero-assist { margin-top: auto; }
+.home-hero.is-full .hero-plan { align-self: center; }
+.home-hero.is-full .hero-prompts { justify-content: center; }
+.home-hero.is-full .hero-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); text-align: left; }
+
+/* 전체화면 ↔ 일반 전환(`html.hero-morph` 동안의 View Transition). 히어로 상자는 위쪽을 기준으로 펼쳐지거나 접히고,
+   넘치는 부분은 잘라서 아래로 늘어나고 위로 줄어드는 것으로 보인다. 이전 모습(old)은 아예 그리지 않고 새 모습만 불투명하게 깔아,
+   이전 배치의 카드·글자가 새 모습 아래에서 비쳐 잘려 보이는 일이 없게 한다. 나머지 화면은 짧게 겹쳐 바뀐다(tokens.css의 테마 원형 전환을 덮어쓴다). */
+.home-hero { view-transition-name: home-hero; }
+html.hero-morph::view-transition-group(home-hero) { animation-duration: 460ms; animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1); }
+html.hero-morph::view-transition-image-pair(home-hero) { overflow: clip; }
+html.hero-morph::view-transition-old(home-hero) { display: none; }
+html.hero-morph::view-transition-new(home-hero) { animation: none; mix-blend-mode: normal; }
+html.hero-morph::view-transition-old(root) { animation: hero-morph-out 240ms ease-out both; }
+html.hero-morph::view-transition-new(root) { animation: hero-morph-in 240ms ease-out both; }
+@keyframes hero-morph-out { to { opacity: 0; } }
+@keyframes hero-morph-in { from { opacity: 0; } }
 
 /* 입력 옆의 실행 전 요약. 위치 이동은 transform만 사용한다. */
 .hero-plan {
@@ -235,20 +305,24 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 .hero-plan-reply { margin: 0; padding-top: var(--space-3); border-top: var(--border-w) solid var(--border); font-size: var(--text-sm); line-height: var(--leading-sm); }
 .hero-plan-reply span { display: block; margin-top: var(--space-1); color: var(--text-2); font-size: var(--text-xs); }
 @media (max-width: 1023px) {
-  .home-hero { flex-direction: column; align-items: flex-start; }
+  .home-hero { --hero-full-h: calc(100dvh - 56px - env(safe-area-inset-top, 0px)); flex-direction: column; align-items: flex-start; }
   .hero-plan { width: min(640px, 100%); }
-  .home-hero:has(.hero-plan:not([hidden])) .cmd-say { position: static; margin: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .hero-plan { transition: none; }
   @starting-style { .hero-plan { opacity: 1; transform: none; } }
+  .hero-prompt, .hero-mode-toggle { transition: none; }
 }
 @media (max-width: 767px) {
   .hero-assist { margin-top: var(--space-4); }
-  .cmd-input, .cmd-ghost { font-size: var(--text-lg); }
+  .cmd-box { min-height: 56px; padding-left: var(--space-4); }
+  .cmd-say { padding: 0 var(--space-4); }
   .cmd-key { display: none; }
   .hero-cta > span:first-child { display: none; }
   .hero-action { padding-right: var(--space-3); }
+  .hero-prompt { min-height: var(--hit-touch); }
+  .hero-mode-toggle { width: var(--hit-touch); height: var(--hit-touch); right: var(--space-3); bottom: var(--space-3); }
+  .home-hero.is-full { padding: var(--space-7) var(--space-4) calc(var(--space-3) + var(--hit-touch) + var(--space-2)); }
 }
 
 .summary-strip { display: grid; grid-template-columns: minmax(0, 1.15fr) repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin-top: var(--space-4); }

@@ -98,9 +98,6 @@ function SearchField({ label, ctx, scope }: { label: string; ctx: ScreenCtx; sco
       <Icon name="search" />
       <input
         type="text"
-        data-name="surfaceQuery"
-        data-scope={scope}
-        data-focus={scope}
         value={value}
         onChange={(event) => {
           writeQuery(ctx.state, scope, event.target.value);

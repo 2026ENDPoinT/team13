@@ -6,12 +6,11 @@ import { courseById, student, professor, type AppState, type Course } from "../d
 import { hrefFor, find } from "../manifest.ts";
 import { GoButton, Link } from "../router.tsx";
 import { routeFor } from "../shared/routes.ts";
-import { openTodos } from "../shared/format.ts";
 import { homeNav, infoNav } from "../areas/home/screens.ts";
 import { courseNav, specialCourseNav } from "../areas/course/screens.ts";
 import { professorHomeNav, professorCourseNav } from "../areas/professor/screens.ts";
 import { AssistantTray } from "../shared/assistant-tray.tsx";
-import { useUnread, unreadLabel, type UnreadKind } from "../shared/unread-badges.tsx";
+import { useBadge, unreadLabel, type UnreadKind } from "../shared/unread-badges.tsx";
 import { serverTutorPanel } from "../shared/study-chat-panel.tsx";
 import { backendState, backendStatus, serverCourses } from "../shared/backend.ts";
 // Also puts the server course views behind `courseById` (data.ts) before the first render.
@@ -45,8 +44,7 @@ function CountBadge({ count }: { count: number | null }) {
 function NavLink({ screen, item, lang, course, role }: { screen: Screen; item: NavItem; lang: "ko" | "en"; course: Course; role: Role }) {
   const target = find(item.screenId);
   const extra: Record<string, string> = { screenId: item.screenId };
-  if (item.courseId) extra.kj = item.courseId;
-  else if (target.course || target.layout === "course" || target.layout === "prof") extra.kj = course.id;
+  if (target.course || target.layout === "course" || target.layout === "prof") extra.kj = course.id;
   const href = routeFor(role, "screen", extra);
   const key = item.labelKey || item.nav || "";
   const label = item.label || copy[lang][key] || key;
@@ -71,7 +69,7 @@ const SCHOOL_LINKS = [
   ["학교 홈페이지", "https://www.seoultech.ac.kr"],
 ] as const;
 
-/** External school services (open in a new tab), followed by a one-line notice. */
+/** External school services; each opens in a new tab, which its accessible name says. */
 function SchoolLinks() {
   return (
     <>
@@ -81,7 +79,6 @@ function SchoolLinks() {
           <Icon name="ext" />
         </a>
       ))}
-      <p className="nav-note">학교 서비스는 새 탭에서 열립니다.</p>
     </>
   );
 }
@@ -165,10 +162,10 @@ function RailTerm({ chromeRole }: { chromeRole: Role }) {
   );
 }
 
-function HeaderCount({ href, kind, label, icon, mock }: { href: string; kind: UnreadKind; label: string; icon: string; mock: number }) {
-  const count = useUnread(kind, mock);
+function HeaderCount({ href, kind, label, icon }: { href: string; kind: UnreadKind; label: string; icon: string }) {
+  const count = useBadge(kind);
   return (
-    <GoButton className="icon-btn" href={href} aria-label={unreadLabel(kind, label, count)}>
+    <GoButton className="icon-btn" href={href} aria-label={unreadLabel(label, count)}>
       <Icon name={icon} />
       <CountBadge count={count} />
     </GoButton>
@@ -311,7 +308,6 @@ export function Shell({ ctx, hero, aside, dialog, children }: ShellProps) {
     navOpen ? "nav-open" : "",
     screen.mobileMenu === "aside" ? "show-aside" : "",
   ].filter(Boolean).join(" ");
-  const todoCount = openTodos().length;
   // Main keeps its Plan tray; the server-material tutor remains reachable only in backend mode.
   const serverFile = backendStatus() !== "off" && /^srv-[1-9][0-9]{0,17}$/.test(params.get(screen.kind === "preview" ? "n" : "doc") || "");
   const tutorOpen = serverFile && Boolean(state.technyonOpen);
@@ -334,9 +330,9 @@ export function Shell({ ctx, hero, aside, dialog, children }: ShellProps) {
           </GoButton>
         ) : <span className="course-switch" aria-hidden="true" />}
         <div className="top-actions">
-          <HeaderCount href={routeFor(chromeRole, "todo")} kind="todo" label="할 일" icon="calendar" mock={todoCount} />
-          <HeaderCount href={routeFor(chromeRole, "message")} kind="messages" label="쪽지" icon="mail" mock={3} />
-          <HeaderCount href={routeFor(chromeRole, "notify")} kind="notifications" label="알림" icon="bell" mock={99} />
+          <HeaderCount href={routeFor(chromeRole, "todo")} kind="todo" label="할 일" icon="calendar" />
+          <HeaderCount href={routeFor(chromeRole, "message")} kind="messages" label="쪽지" icon="mail" />
+          <HeaderCount href={routeFor(chromeRole, "notify")} kind="notifications" label="알림" icon="bell" />
           <GoButton className="profile-btn" href={routeFor(chromeRole, "profile")} aria-label="내 메뉴">
             <HeaderAvatar state={state} />
             <Icon name="caret" />

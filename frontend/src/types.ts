@@ -62,6 +62,5 @@ export interface NavItem {
   nav?: string;
   label?: string;
   labelKey?: string;
-  courseId?: string;
   count?: string | number;
 }

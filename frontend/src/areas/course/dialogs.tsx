@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { courseById, courses, activitiesOf, professor, weekCount } from "../../data.ts";
+import { courseById, courses, activitiesOf, professor, student, weekCount } from "../../data.ts";
 import type { Course } from "../../data.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { getState, save, render } from "../../store.ts";
@@ -7,7 +7,7 @@ import { GoButton, Link, closeDialog } from "../../router.tsx";
 import { readForm, showErrors, stamp } from "../../forms.ts";
 import { Button, Dialog, EmptyState, Field, Table } from "../../ui/kit.tsx";
 import { Icon } from "../../ui/icon.tsx";
-import type { BoardRow } from "../../shared/format.ts";
+import { ownsRow, type BoardRow } from "../../shared/format.ts";
 import { readQuery, writeQuery } from "../../shared/query.tsx";
 import { routeFor } from "../../shared/routes.ts";
 import { backendStatus, courseIdFor } from "../../shared/backend.ts";
@@ -60,7 +60,7 @@ function savePost(board: string) {
     showErrors(errors);
     return;
   }
-  const post: BoardRow = { id: `p-${Date.now()}`, title: String(data.title).trim(), body: String(data.body).trim(), author: "박민준", at: stamp(), board, reply: "" };
+  const post: BoardRow = { id: `p-${Date.now()}`, title: String(data.title).trim(), body: String(data.body).trim(), author: student.name, at: stamp(), board, courseId: state.courseId, reply: "" };
   if (board === "community") state.communityQna.unshift(post);
   else state.posts.unshift(post);
   state.toast = "등록했습니다";
@@ -86,10 +86,18 @@ function saveReply(id: string) {
   closeDialog();
 }
 
-function compose(title: string, board: string, err: Record<string, string>, existing: BoardRow | null | undefined): ReactNode {
-  const editing = Boolean(existing);
+/** New post of `board`, or (with `id`) the edit form of the signed-in user's own post in the current course. */
+function compose(title: string, board: string, err: Record<string, string>, id: string | null, ctx: ScreenCtx): ReactNode {
+  const existing = id ? courseRows(boardScreen(board, ctx.state.courseId), ctx.state).find((row) => row.id === id) : null;
+  const editing = Boolean(id);
   const heading = editing ? title.replace("작성", "수정") : title;
-  return courseDialog(heading === title && editing ? `${title} 수정` : heading, (
+  const dialogTitle = heading === title && editing ? `${title} 수정` : heading;
+  // 주소로 바로 연 수정 창도 작성자 본인의 글만 고친다.
+  if (id && (!existing || !ownsRow(existing, ctx.state))) {
+    const copy = existing ? ["다른 사람이 쓴 글은 고칠 수 없습니다", "작성자 본인만 글을 고치거나 지울 수 있습니다."] : ["글을 찾을 수 없습니다", "삭제되었거나 이 과목의 글이 아닙니다. 목록으로 돌아가 다시 선택해 주세요."];
+    return courseDialog(dialogTitle, <div className="crs-dialog"><EmptyState title={copy[0]} body={copy[1]} /></div>);
+  }
+  return courseDialog(dialogTitle, (
     <div className="crs-dialog" key={existing ? existing.id : "new"}>
       <Field label="제목" error={err.title}><input data-name="title" defaultValue={existing ? existing.title : ""} placeholder="제목을 입력하세요" /></Field>
       <Field label="내용" error={err.body}><textarea data-name="body" placeholder="내용을 4자 이상 입력하세요" defaultValue={existing ? existing.body : ""} /></Field>
@@ -175,9 +183,6 @@ function switcher(ctx: ScreenCtx): ReactNode {
         <Icon name="search" />
         <input
           type="text"
-          data-name="surfaceQuery"
-          data-scope="course:switch"
-          data-focus="course:switch"
           value={readQuery(ctx.state, "course:switch")}
           onChange={(event) => {
             writeQuery(getState(), "course:switch", event.target.value);
@@ -212,8 +217,8 @@ function switcher(ctx: ScreenCtx): ReactNode {
 
 function qnaDialog(ctx: ScreenCtx, name: string, err: Record<string, string>, id: string | null): ReactNode {
   const draft = ctx.state.draft || {};
-  const rows = courseRows(boardScreen("course-qna"), ctx.state);
-  const row = rows.find((item) => item.id === id) || rows[0];
+  const rows = courseRows(boardScreen("course-qna", ctx.state.courseId), ctx.state);
+  const row = id ? rows.find((item) => item.id === id) : rows[0];
   if (!row) {
     return courseDialog("질의응답", <div className="crs-dialog"><EmptyState title="질문을 찾을 수 없습니다" body="목록으로 돌아가 다시 선택해 주세요." /></div>);
   }
@@ -239,8 +244,12 @@ function qnaDialog(ctx: ScreenCtx, name: string, err: Record<string, string>, id
         </>
       ) : (
         <div className="crs-form-actions">
-          <Link className="btn btn-secondary" href={editHref}>수정</Link>
-          <Button kind="ghost" onClick={() => deletePost(row.id, true)}>삭제</Button>
+          {ownsRow(row, ctx.state) ? (
+            <>
+              <Link className="btn btn-secondary" href={editHref}>수정</Link>
+              <Button kind="ghost" onClick={() => deletePost(row.id, true)}>삭제</Button>
+            </>
+          ) : null}
           <Link className="btn btn-secondary" href={replyHref}>답글 쓰기</Link>
         </div>
       )}
@@ -283,13 +292,7 @@ export function renderDialog(name: string, ctx: ScreenCtx): ReactNode {
     if (name === "board-post") return remoteOpenPostDialog(ctx, courseById(ctx.state.courseId));
   }
   if (name === "qna" || name === "qna-reply") return qnaDialog(ctx, name, err, id);
-  if (name === "qna-write" && ctx.screen.board === "course-qna") {
-    const existing = id ? courseRows(boardScreen("course-qna"), ctx.state).find((row) => row.id === id) : null;
-    return compose("질문 작성", "course-qna", err, existing);
-  }
-  if (name === "board-write") {
-    const existing = id ? courseRows(boardScreen("open"), ctx.state).find((row) => row.id === id) : null;
-    return compose("열린게시판", "open", err, existing);
-  }
+  if (name === "qna-write" && ctx.screen.board === "course-qna") return compose("질문 작성", "course-qna", err, id, ctx);
+  if (name === "board-write") return compose("열린게시판", "open", err, id, ctx);
   return null;
 }

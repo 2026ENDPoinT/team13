@@ -6,7 +6,8 @@ import { activities, events, courseById, courses, people, files, surveyQuestions
 import type { Activity, AppState, Course, Message } from "../../data.ts";
 import type { Screen, ScreenCtx } from "../../types.ts";
 import { hrefFor, find } from "../../manifest.ts";
-import { typeLabel, attendStatus, statusLabel, dday, activityHref, playerHref } from "../../shared/format.ts";
+import { typeLabel, attendStatus, statusLabel, dday, playerHref } from "../../shared/format.ts";
+import { currentRole, routeFor } from "../../shared/routes.ts";
 import { isClosedActivity } from "../../shared/activity-library.ts";
 import { richNodes } from "../../shared/rich-text.tsx";
 import { getActivityFile } from "../../shared/activity-files.ts";
@@ -23,7 +24,7 @@ import { serverWeekCalendar, serverTimetable } from "./calendar-server.tsx";
 import { usesServerMessages, serverMessages } from "./messages-server.tsx";
 import { remoteQuizDetail } from "./quizzes-server.tsx";
 import { remoteSurveyDetail } from "./surveys-server.tsx";
-import { remoteAttendance } from "./attendance-server.tsx";
+import { remoteAttendance, pickAttendanceWeek } from "./attendance-server.tsx";
 import { serverPreviewScreen } from "./preview-server.tsx";
 import { remoteLectureDetail, remoteLecturePlayer } from "./lectures-server.tsx";
 import { remoteMaterialDetail, remoteActivityLink, sampleInServerCourse } from "./activity-server.tsx";
@@ -267,6 +268,13 @@ function renderPlayer(screen: Screen, ctx: ScreenCtx): ReactNode {
   const blocked = sampleInServerCourse(a ? a.courseId : screen.course, "영상");
   return blocked || <SamplePlayer key={a?.id || "sample"} activity={a} ctx={ctx} />;
 }
+/** `단원으로`: the classroom opens on this lecture's week, unfolded. */
+function openUnit(week: number) {
+  const state = getState();
+  state.week = week;
+  state.draft.closedWeeks = (state.draft.closedWeeks || []).filter((n: number) => n !== week);
+  save();
+}
 function SamplePlayer({ activity: a, ctx }: { activity?: Activity; ctx: ScreenCtx }) {
   const media = mediaForActivity(a), p = ctx.state.player, id = a?.id || media.id;
   const root = useRef<HTMLElement>(null), video = useRef<HTMLVideoElement>(null), play = useRef<HTMLButtonElement>(null);
@@ -355,10 +363,10 @@ function SamplePlayer({ activity: a, ctx }: { activity?: Activity; ctx: ScreenCt
       <div className="player-tools">{[1, 1.25, 1.5, 2].map((speed) => <button key={speed} type="button" className={`btn btn-ghost${p.speed === speed ? " on" : ""}`} aria-pressed={p.speed === speed} onClick={() => update((state) => { state.player.speed = speed; })}>{speed}x</button>)}
         <button type="button" className={`btn btn-ghost${captionsOn ? " on" : ""}`} aria-pressed={captionsOn} onClick={() => update((state) => { state.player.captions = state.player.captions === false; })}>자막</button>
         <button type="button" className="btn player-full" data-glyph={fullscreen ? "exit" : "enter"} aria-label={fullscreen ? "전체화면 종료" : "전체화면"} aria-pressed={fullscreen} onClick={() => void togglePlayerFullscreen(root.current)}><PlayerIcon name={fullscreen ? "exit" : "enter"} /></button>
-        <button type="button" className={`btn btn-ghost${panel === "notes" ? " on" : ""}`} onClick={() => changePanel("notes")}>강의내용</button><button type="button" className={`btn btn-ghost${panel === "ask" ? " on" : ""}`} onClick={() => changePanel("ask")}>질의하기</button>{a ? <Link href={activityHref(a, a.courseId)} className="btn btn-secondary">단원으로</Link> : null}
+        {fullscreen ? null : <><button type="button" className={`btn btn-ghost${panel === "notes" ? " on" : ""}`} onClick={() => changePanel("notes")}>강의내용</button><button type="button" className={`btn btn-ghost${panel === "ask" ? " on" : ""}`} onClick={() => changePanel("ask")}>질의하기</button></>}{a ? <Link href={routeFor(currentRole(), "classroom", { kj: a.courseId, special: courseById(a.courseId).kind === "special" })} className="btn btn-secondary" onClick={() => openUnit(a.week)}>단원으로</Link> : null}
       </div>
     </div>
-    {panel ? <section className="player-sheet" aria-label={panel === "ask" ? "질의하기" : "강의내용"}><div className="player-sheet-h"><h2>{panel === "ask" ? "질의하기" : "강의내용"}</h2><button type="button" className="x" aria-label="닫기" onClick={() => changePanel(panel)}>×</button></div>
+    {panel && !fullscreen ? <section className="player-sheet" aria-label={panel === "ask" ? "질의하기" : "강의내용"}><div className="player-sheet-h"><h2>{panel === "ask" ? "질의하기" : "강의내용"}</h2><button type="button" className="x" aria-label="닫기" onClick={() => changePanel(panel)}>×</button></div>
       {panel === "notes" ? <div className="prose"><p>{`${media.course} · ${media.week} · ${media.professor}`}</p>{media.cues.map((cue) => <p key={cue.start}>{`${clock(cue.start)} ${cue.text}`}</p>)}</div> : <div>{(ctx.state.draft.playerNotes || []).map((line: string, i: number) => <p className="note" key={i}>{line}</p>)}<Field label="질문" name="playerQ"><textarea data-name="playerQ" placeholder="이 차시에서 궁금한 점을 적으세요." /></Field><Button kind="primary" onClick={ask}>보내기</Button></div>}
     </section> : null}
   </section>;
@@ -388,7 +396,7 @@ function renderPreview(ctx: ScreenCtx): ReactNode {
   return <section className="bleed preview-layout"><div className="viewer">{viewer}</div>{summaryAside(ctx.state, false)}</section>;
 }
 function renderAttendance(screen: Screen, ctx: ScreenCtx): ReactNode {
-  const course = courseById(screen.course || ctx.state.courseId), selected = ctx.state.attendanceWeek || 11;
+  const course = courseById(ctx.state.courseId), selected = ctx.state.attendanceWeek || 11;
   const title = typeLine("report", <h1>출석</h1>, "check");
   if (backendStatus() !== "off") return remoteAttendance(screen, ctx, <header className="attend-head">{title}</header>);
   const counts: Record<string, number> = { present: 0, late: 0, absent: 0, empty: 0 };
@@ -397,11 +405,11 @@ function renderAttendance(screen: Screen, ctx: ScreenCtx): ReactNode {
     counts[status] = (counts[status] || 0) + 1;
     const start = new Date(2026, 7, 31 + i * 7), end = new Date(start); end.setDate(start.getDate() + 6);
     const sessions = status === "late" ? ["late", "present", "present"] : [status, status, status];
-    return <article key={week} className={`att-card${week === selected ? " is-current" : ""}`} id={`att-${week}`}><header className="att-card-h"><h2>{week}주</h2><p className="tiny">{`${koDate(start)} – ${koDate(end)} · ${course.time}${screen.section === "ml" ? " · ML 분반" : ""}`}</p></header>{sessions.map((item, index) => <div key={index} className="att-session"><span className="att-rail" aria-hidden="true"><i /></span><span><b>{index + 1}차시</b><span className="tiny">{course.time}</span></span><span className={`att-status st-${item}`}>{statusLabel(item)}</span></div>)}</article>;
+    return <article key={week} className={`att-card${week === selected ? " is-current" : ""}`} id={`att-${week}`} tabIndex={-1}><header className="att-card-h"><h2>{week}주</h2><p className="tiny">{`${koDate(start)} – ${koDate(end)} · ${course.time}${screen.section === "ml" ? " · ML 분반" : ""}`}</p></header>{sessions.map((item, index) => <div key={index} className="att-session"><span className="att-rail" aria-hidden="true"><i /></span><span><b>{index + 1}차시</b><span className="tiny">{course.time}</span></span><span className={`att-status st-${item}`}>{statusLabel(item)}</span></div>)}</article>;
   });
-  return <section className="bleed attend"><header className="attend-head">{title}{screen.id.startsWith("41") ? <div className="seg"><Link href={hrefFor(find("41_room_attendance"))} className={screen.section === "ml" ? "btn btn-ghost" : "btn btn-secondary"}>본반</Link><Link href={hrefFor(find("41b_room_attendance_ml"))} className={screen.section === "ml" ? "btn btn-secondary" : "btn btn-ghost"}>ML 분반</Link></div> : null}</header>
+  return <section className="bleed attend"><header className="attend-head">{title}{screen.id.startsWith("41") ? <div className="seg"><Link href={hrefFor(find("41_room_attendance"), { kj: course.id })} className={screen.section === "ml" ? "btn btn-ghost" : "btn btn-secondary"}>본반</Link><Link href={hrefFor(find("41b_room_attendance_ml"), { kj: course.id })} className={screen.section === "ml" ? "btn btn-secondary" : "btn btn-ghost"}>ML 분반</Link></div> : null}</header>
     <p className="subhead">{`${course.ko} · ${course.code}`}</p><div className="att-stats"><span>출석 {counts.present}</span><span>지각 {counts.late}</span><span>결석 {counts.absent}</span><span>미정 {counts.empty}</span></div>
-    <div className="attend-weeks" role="tablist" aria-label="주차">{Array.from({ length: 14 }, (_, i) => i + 1).map((week) => <button key={week} type="button" className={`week-num${week === selected ? " on" : ""}`} aria-pressed={week === selected} onClick={() => update((state) => { state.attendanceWeek = week; })}>{week}</button>)}</div>{cards}
+    <div className="attend-weeks" role="group" aria-label="주차">{Array.from({ length: 14 }, (_, i) => i + 1).map((week) => <button key={week} type="button" className={`week-num${week === selected ? " on" : ""}`} aria-pressed={week === selected} onClick={() => pickAttendanceWeek(week)}>{week}</button>)}</div>{cards}
   </section>;
 }
 function messageHref(folder: string, id?: string): string { return hrefFor(find(folder === "sent" ? "02d_msg_sent_tab" : "02c_msg_view"), id ? { id } : {}); }
