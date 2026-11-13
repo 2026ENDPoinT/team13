@@ -12,6 +12,7 @@ type Id = number | string;
 
 /** `GET /api/llm/policy`: the deployment's provider profile and notice. */
 export interface LlmPolicy {
+  /** False when the deployment switch is off or no provider key is configured: no new consent, revoke still works. */
   enabled: boolean;
   noticeVersion: string;
   profileDigest: string;
@@ -29,7 +30,8 @@ export interface LlmConsent {
   scope: string;
   granted: boolean;
   current: boolean;
-  canGrant?: boolean;
+  /** Absent or null (a backend without the field): I may consent. */
+  canGrant?: boolean | null;
 }
 
 export interface LlmUsageCount {
