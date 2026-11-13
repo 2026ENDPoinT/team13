@@ -1,7 +1,9 @@
 package com.stackcorp.astra.home;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -23,9 +25,12 @@ import com.stackcorp.astra.communication.api.CourseNoticeDigest;
 import com.stackcorp.astra.communication.api.MessageCounts;
 import com.stackcorp.astra.learning.api.ActivityTargets;
 import com.stackcorp.astra.learning.api.ActivityTargets.Target;
+import com.stackcorp.astra.learning.api.AttendanceSummaries;
+import com.stackcorp.astra.learning.api.AttendanceSummaries.AttendanceSummary;
 import com.stackcorp.astra.learning.api.DueActivities;
 import com.stackcorp.astra.learning.api.DueActivities.DueActivity;
 import com.stackcorp.astra.learning.api.DueActivities.Position;
+import com.stackcorp.astra.learning.api.LectureProgressSummaries;
 import com.stackcorp.astra.shared.ApiException;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -35,8 +40,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 메인 화면 집계(ADR-0005)와 할 일 목록. 각 모듈의 공개 API만 부르고 다른 모듈의 테이블을 읽지 않는다.
  * 과목 수와 관계없이 쿼리 수가 같다: 시계 1, 과목 1, 할 일 1(마감 전 활동)과 완료 판정 4 이하와 평가 ID 1, 공지 2(안 읽은 수, 최근
- * 공지), 알림마당 공지 2(최근 공지, 진입 공지), 안 읽은 쪽지 1, 안 읽은 알림 수 1, 새 성적 5 이하. 읽기 전용 transaction 하나로 묶어
- * 연결 하나와 같은 snapshot에서 읽는다. 시각은 DB 시계 한 번으로 정해 모든 판정에 같이 쓴다(SC-06).
+ * 공지), 과목 카드의 영상 진도 1과 출석 1, 알림마당 공지 2(최근 공지, 진입 공지), 안 읽은 쪽지 1, 안 읽은 알림 수 1, 새 성적 5 이하.
+ * 읽기 전용 transaction 하나로 묶어 연결 하나와 같은 snapshot에서 읽는다. 시각은 DB 시계 한 번으로 정해 모든 판정에 같이 쓴다(SC-06).
  * <p>
  * 할 일은 학생으로 수강하는 과목의, 마감 전이고 본인이 아직 끝내지 않은 활동이다(원본 할일 팝업의 "미완료 학습활동"). 끝낸 활동은 목록과
  * 건수에서 뺀다. 완료 표시를 달아 남기지 않는 것은 원본 화면과 frontend가 남은 활동만 보여 주고 건수를 배지로 쓰기 때문이다. 완료 판정은
@@ -84,9 +89,14 @@ class HomeService {
 
 	private final ActivityTargets targets;
 
+	private final LectureProgressSummaries progress;
+
+	private final AttendanceSummaries attendance;
+
 	HomeService(JdbcClient jdbc, MemberCourses courses, DueActivities dueActivities, ActivityCompletions completions,
 			ReleasedGrades releasedGrades, CourseNoticeDigest notices, MessageCounts messages,
-			NotificationCounts notifications, CommunityNoticeDigest communityNotices, ActivityTargets targets) {
+			NotificationCounts notifications, CommunityNoticeDigest communityNotices, ActivityTargets targets,
+			LectureProgressSummaries progress, AttendanceSummaries attendance) {
 		this.jdbc = jdbc;
 		this.courses = courses;
 		this.dueActivities = dueActivities;
@@ -97,6 +107,8 @@ class HomeService {
 		this.notifications = notifications;
 		this.communityNotices = communityNotices;
 		this.targets = targets;
+		this.progress = progress;
+		this.attendance = attendance;
 	}
 
 	/**
@@ -109,17 +121,24 @@ class HomeService {
 		Map<Long, MemberCourse> byId = mine.stream()
 			.collect(Collectors.toMap(MemberCourse::courseId, Function.identity()));
 		List<Long> all = mine.stream().map(MemberCourse::courseId).toList();
+		List<Long> studying = studentCourses(mine);
 		Map<Long, Integer> unread = this.notices.unreadCounts(userId, all, now);
-		List<HomeCourse> courseViews = mine.stream()
-			.map((c) -> new HomeCourse(c.courseId(), c.key(), c.name(), c.code(), c.section(), c.role().name(),
-					unread.getOrDefault(c.courseId(), 0)))
-			.toList();
+		Map<Long, Integer> percents = this.progress.percentOf(userId, studying, now);
+		Map<Long, AttendanceSummary> attendances = this.attendance.of(userId, studying);
+		List<HomeCourse> courseViews = mine.stream().map((c) -> {
+			boolean student = c.role() == CourseRole.STUDENT;
+			CourseWeek week = CourseWeek.of(c.startDate(), c.endDate(), now.toLocalDate());
+			AttendanceSummary summary = student ? attendances.get(c.courseId()) : null;
+			return new HomeCourse(c.courseId(), c.key(), c.name(), c.code(), c.section(), c.role().name(),
+					unread.getOrDefault(c.courseId(), 0), week.current(), week.count(),
+					student ? percents.get(c.courseId()) : null,
+					summary == null ? null : CourseAttendance.of(summary));
+		}).toList();
 		List<HomeNotice> latest = this.notices.latest(userId, all, now, HOME_NOTICES)
 			.stream()
 			.map((n) -> new HomeNotice(n.noticeId(), n.courseId(), byId.get(n.courseId()).name(), n.title(), n.pinned(),
 					n.publishedAt(), n.read()))
 			.toList();
-		List<Long> studying = studentCourses(mine);
 		TodoList todo = todo(userId, byId, studying, now, null, HOME_TODO);
 		List<HomeGrade> grades = this.releasedGrades
 			.releasedSince(userId, studying, now.minusDays(NEW_GRADE_DAYS), now, HOME_GRADES)
@@ -258,9 +277,50 @@ class HomeService {
 	/**
 	 * @param role 이 과목에서의 역할. INSTRUCTOR|STUDENT
 	 * @param unreadNotices 게시된 공지 중 읽음으로 표시하지 않은 수
+	 * @param currentWeek 수업 기간({@link MemberCourse#startDate}~{@link MemberCourse#endDate})의 몇째 주인지. 시작일부터 7일씩 1주이고,
+	 * 시작 전이면 0, 끝난 뒤면 weekCount다. 오늘은 DB 시계(기관 시간대)로 정한다. 기간이 없으면 null
+	 * @param weekCount 수업 기간의 주 수(일수를 7로 나눠 올림). 기간이 없으면 null
+	 * @param progressPercent 학생 본인의 영상 진도율(0~100, 버림). 진도 화면과 같이 학생에게 열린 영상 콘텐츠 가운데 출석인정을 채운 비율이다.
+	 * 열린 콘텐츠가 없거나 담당 과목이면 null
+	 * @param attendance 학생 본인의 출석. 담당 과목이면 null
 	 */
 	record HomeCourse(long courseId, String key, String name, String code, String section, String role,
-			int unreadNotices) {
+			int unreadNotices, Integer currentWeek, Integer weekCount, Integer progressPercent,
+			CourseAttendance attendance) {
+	}
+
+	/**
+	 * @param attended 출석, 지각, 공결로 판정한 차시 수
+	 * @param total 판정한 차시 수(휴강 제외). 아직 판정하지 않은 차시는 세지 않는다
+	 */
+	record CourseAttendance(int attended, int total) {
+
+		static CourseAttendance of(AttendanceSummary summary) {
+			return new CourseAttendance(summary.present() + summary.late() + summary.excused(),
+					summary.sessions() - summary.unmarked());
+		}
+
+	}
+
+	/** 수업 기간 안의 주. 시작일부터 7일씩 1주다. */
+	record CourseWeek(Integer current, Integer count) {
+
+		static final CourseWeek UNKNOWN = new CourseWeek(null, null);
+
+		static CourseWeek of(LocalDate start, LocalDate end, LocalDate today) {
+			if (start == null || end == null || end.isBefore(start)) {
+				return UNKNOWN;
+			}
+			int count = (int) ((ChronoUnit.DAYS.between(start, end) + 7) / 7);
+			if (today.isBefore(start)) {
+				return new CourseWeek(0, count);
+			}
+			if (today.isAfter(end)) {
+				return new CourseWeek(count, count);
+			}
+			return new CourseWeek((int) (ChronoUnit.DAYS.between(start, today) / 7) + 1, count);
+		}
+
 	}
 
 	record HomeNotice(long noticeId, long courseId, String courseName, String title, boolean pinned,

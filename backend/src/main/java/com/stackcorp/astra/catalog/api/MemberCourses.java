@@ -1,5 +1,6 @@
 package com.stackcorp.astra.catalog.api;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
@@ -14,8 +15,11 @@ public interface MemberCourses {
 
 	/**
 	 * @param key 과목 키(KJKEY). 없으면 null
+	 * @param startDate 수업 기간 시작일. 정규 과목은 학기 시작일, 비정규 과정은 학습기간 시작일이다. 없으면 null
+	 * @param endDate 수업 기간 종료일(포함). 시작일과 같은 출처다. 없으면 null
 	 */
-	record MemberCourse(long courseId, String key, String name, String code, String section, CourseRole role) {
+	record MemberCourse(long courseId, String key, String name, String code, String section, CourseRole role,
+			LocalDate startDate, LocalDate endDate) {
 	}
 
 }
