@@ -1,0 +1,57 @@
+// CI 는 GitHub Actions(.github/workflows/ci.yml)가 돌린다. Jenkins(yoobin-desktop-linux)는 배포만 맡는다.
+// main 커밋의 CI 워크플로가 성공하면 Hermes 의 e-class 백엔드(compose 프로젝트 astra)를 이 커밋으로 다시 빌드해 바꾼다.
+// 실패하거나 취소되면 배포하지 않는다. Jenkins·Hermes 배포 구성은 Frontend-final/deploy/jenkins/README.md.
+pipeline {
+  agent none
+  options {
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 120, unit: 'MINUTES')
+  }
+  stages {
+    stage('Wait for GitHub Actions CI') {
+      when { branch 'main' }
+      agent { docker { image 'node:22-alpine' } }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'github-token', usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
+          writeFile file: '.jenkins-wait-ci.mjs', text: '''
+            const repo = 'STack-Corp/STack-Backend';
+            const sha = process.env.GIT_COMMIT;
+            const headers = { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json' };
+            const deadline = Date.now() + 90 * 60 * 1000;
+            let seen = false;
+            for (;;) {
+              const res = await fetch(`https://api.github.com/repos/${repo}/actions/runs?head_sha=${sha}&event=push&per_page=20`, { headers });
+              if (!res.ok) { console.error(`GitHub API ${res.status}`); process.exit(1); }
+              const runs = (await res.json()).workflow_runs.filter((r) => r.path === '.github/workflows/ci.yml');
+              const run = runs.sort((a, b) => b.run_attempt - a.run_attempt || b.id - a.id)[0];
+              if (run) {
+                seen = true;
+                if (run.status === 'completed') {
+                  console.log(`CI ${run.conclusion}: ${run.html_url}`);
+                  process.exit(run.conclusion === 'success' ? 0 : 1);
+                }
+                console.log(`CI ${run.status}…`);
+              } else if (Date.now() > deadline - 80 * 60 * 1000 && !seen) {
+                console.error('CI run for this commit did not start within 10 minutes');
+                process.exit(1);
+              }
+              if (Date.now() > deadline) { console.error('CI did not finish in time'); process.exit(1); }
+              await new Promise((r) => setTimeout(r, 30000));
+            }
+          '''
+          sh 'node .jenkins-wait-ci.mjs'
+        }
+      }
+    }
+    stage('Deploy') {
+      when { branch 'main' }
+      agent any
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'hermes-deploy', keyFileVariable: 'KEY')]) {
+          sh 'ssh -i "$KEY" -o BatchMode=yes -o UserKnownHostsFile="$HERMES_KNOWN_HOSTS" "$HERMES_SSH" eclass-backend "$GIT_COMMIT"'
+        }
+      }
+    }
+  }
+}
