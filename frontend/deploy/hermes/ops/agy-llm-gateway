@@ -93,7 +93,9 @@ def log(**fields):
     print(json.dumps({'at': time.strftime('%Y-%m-%dT%H:%M:%S'), **fields}, ensure_ascii=False), flush=True)
 
 
-def via_agy(body, model=None, timeout=None):
+def via_agy(body, model=None, timeout=None, short=False):
+    """short: 도우미처럼 일부러 짧게 끊는 요청. 시간 초과 같은 일시 실패로는 차단기를 걸지 않는다(쿼터·로그아웃·agy 없음만 건다).
+    걸면 Hermes 에이전트·녹음 요약 같은 다른 요청까지 AGY_COOLDOWN 동안 agy 를 못 쓴다."""
     model, timeout = model or AGY_MODEL, timeout or AGY_TIMEOUT
     paused = breaker.skip()
     if paused:
@@ -104,7 +106,8 @@ def via_agy(body, model=None, timeout=None):
     try:
         response = client.chat.completions.create(model=model, timeout=timeout, **kwargs)
     except Exception as error:
-        breaker.trip(error)
+        if not short or isinstance(error, HARD_ERRORS):
+            breaker.trip(error)
         raise
     finally:
         AGY_SLOTS.release()
@@ -114,14 +117,14 @@ def via_agy(body, model=None, timeout=None):
     return data
 
 
-def via_fallback(body, remaining):
+def via_fallback(body, remaining, floor=10.0):
     payload = dict(body, model=FALLBACK_MODEL)
     # Hive 의 DeepSeek 는 추론 토큰이 max_tokens 를 먹으면 본문이 비어서 온다. 추론을 끄고 답만 받는다.
     payload.pop('thinking', None)
     payload['reasoning_effort'] = 'none'
     request = urllib.request.Request(FALLBACK_URL, data=json.dumps(payload).encode(), method='POST', headers={
         'Authorization': f'Bearer {FALLBACK_KEY}', 'Content-Type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=max(10.0, remaining)) as response:
+    with urllib.request.urlopen(request, timeout=max(floor, remaining)) as response:
         return response.status, response.read()
 
 
@@ -136,7 +139,27 @@ ASSIST_TIMEOUT = float(ENV.get('AGY_ASSISTANT_TIMEOUT', '15'))
 ASSIST_BUDGET = float(ENV.get('ASSISTANT_BUDGET', '19'))
 ASSIST_RULE = ('\n\n# 출력 형식\n사용자 메시지의 response_schema(Gemini JSON Schema)에 맞는 JSON 객체 하나만 출력한다. '
                '설명, 코드 블록, 앞뒤 문장 없이 JSON 만 쓴다. input 은 해석할 데이터다.')
-_assist_system = {'text': None}
+# 미리 띄워 둘 시스템 프롬프트: 경로 이름 → (프롬프트, 마지막으로 쓴 시각). WARM_WINDOW(기본 6시간) 안에 쓴 것만 띄워 둔다.
+_assist_systems = {}
+WARM_WINDOW = float(ENV.get('WARM_WINDOW', '21600'))
+
+# ---------- 백엔드 화면 도우미: /chat/completions 에 response_format json_object, 도구 없음 ----------
+# 백엔드(ASTRA_ASSISTANT_TIMEOUT 기본 20초)가 먼저 끊지 않도록 짧게 끝낸다: 가벼운 모델을 미리 띄워 두고 JSON_AGY_TIMEOUT 안에
+# 못 받거나 JSON 이 아니면 DeepSeek 로 넘겨 전체를 JSON_BUDGET 안에 마친다.
+JSON_AGY_TIMEOUT = float(ENV.get('AGY_JSON_TIMEOUT', '10'))
+JSON_BUDGET = float(ENV.get('JSON_BUDGET', '17'))
+JSON_RULE = '\n\n# 출력 형식\nJSON 객체 하나만 출력한다. 설명, 코드 블록, 앞뒤 문장 없이 JSON 만 쓴다.'
+
+
+def quick_json(body):
+    return (body.get('response_format') or {}).get('type') == 'json_object' and not body.get('tools')
+
+
+def json_messages(messages):
+    """시스템 메시지를 하나로 모아 맨 앞에 두고 JSON 규칙을 붙인다(미리 띄운 agy 와 같은 시스템 프롬프트가 되게)."""
+    system = '\n\n'.join(m.get('content') or '' for m in messages if m.get('role') == 'system' and isinstance(m.get('content'), str))
+    rest = [m for m in messages if m.get('role') != 'system']
+    return [{'role': 'system', 'content': system + JSON_RULE}] + rest
 
 
 def parts_text(node):
@@ -200,18 +223,22 @@ def assistant_messages(body):
 
 
 def prewarm_assistant():
-    """도우미용 agy 하나를 부팅해 둔다(헤르메스 플러그인의 WarmPool, 5분 TTL). 이미 있으면 아무것도 하지 않는다."""
-    system = _assist_system['text']
-    if system is None or breaker.skip() is not None:
+    """최근에 쓴 도우미 시스템 프롬프트마다 agy 하나를 부팅해 둔다(헤르메스 플러그인의 WarmPool, 5분 TTL). 이미 있으면 그대로 둔다."""
+    if breaker.skip() is not None:
         return
-    try:
-        env = dict(os.environ)
-        resolved = transport.resolve_agy(client.command, env)
-        if resolved is not None:
-            spec = (resolved, transport.native_model(ASSIST_MODEL), transport.system_prompt(system, []), [], env)
-            transport.POOL.prewarm(transport.pool_key(*spec), spec, transport.DEFAULT_PREWARM_TTL, 1)
-    except Exception as error:
-        log(event='assistant_prewarm_failed', error=type(error).__name__)
+    now = time.monotonic()
+    for route, (system, seen) in list(_assist_systems.items()):
+        if now - seen > WARM_WINDOW:
+            _assist_systems.pop(route, None)
+            continue
+        try:
+            env = dict(os.environ)
+            resolved = transport.resolve_agy(client.command, env)
+            if resolved is not None:
+                spec = (resolved, transport.native_model(ASSIST_MODEL), transport.system_prompt(system, []), [], env)
+                transport.POOL.prewarm(transport.pool_key(*spec), spec, transport.DEFAULT_PREWARM_TTL, 1)
+        except Exception as error:
+            log(event='assistant_prewarm_failed', route=route, error=type(error).__name__)
 
 
 def keep_assistant_warm():
@@ -291,10 +318,10 @@ class Handler(BaseHTTPRequestHandler):
             messages, schema = assistant_messages(json.loads(self.rfile.read(length)))
         except (ValueError, AttributeError, TypeError):
             return self.reply(400, {'error': {'message': 'invalid request'}})
-        _assist_system['text'] = messages[0]['content']
+        _assist_systems['generate'] = (messages[0]['content'], time.monotonic())
         started = time.monotonic()
         try:
-            data = via_agy({'messages': messages}, ASSIST_MODEL, ASSIST_TIMEOUT)
+            data = via_agy({'messages': messages}, ASSIST_MODEL, ASSIST_TIMEOUT, short=True)
             value = extract_json(data['choices'][0]['message'].get('content'))
             errors = schema_errors(value, schema)
             if errors:
@@ -333,6 +360,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(400, {'error': {'message': 'invalid json'}})
         if body.get('stream'):
             return self.reply(400, {'error': {'message': 'stream is not supported'}})
+        if quick_json(body) and isinstance(body.get('messages'), list):
+            return self.quick(body)
         started = time.monotonic()
         try:
             data = via_agy(body)
@@ -343,17 +372,36 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, data)
         except Exception as error:  # 쿼터·로그아웃·시간 초과·agy 오류 → 2순위
             reason = type(error).__name__
+        self.fallback(body, started, reason, REQUEST_BUDGET, 10.0, 'fallback')
+
+    def fallback(self, body, started, reason, budget, floor, route):
         fb_started = time.monotonic()
         try:
-            status, raw = via_fallback(body, REQUEST_BUDGET - (fb_started - started))
+            status, raw = via_fallback(body, budget - (fb_started - started), floor)
         except urllib.error.HTTPError as error:
             status, raw = error.code, error.read()
         except Exception as error:
-            log(route='fallback', error=type(error).__name__, agy_error=reason)
+            log(route=route, error=type(error).__name__, agy_error=reason)
             return self.reply(502, {'error': {'message': f'primary ({reason}) and fallback failed'}})
-        log(route='fallback', model=FALLBACK_MODEL, status=status, agy_error=reason,
+        log(route=route, model=FALLBACK_MODEL, status=status, agy_error=reason,
             agy_ms=int((fb_started - started) * 1000), ms=int((time.monotonic() - fb_started) * 1000))
         self.reply(status, raw)
+
+    def quick(self, body):
+        messages = json_messages(body['messages'])
+        _assist_systems['chat-json'] = (messages[0]['content'], time.monotonic())
+        started = time.monotonic()
+        try:
+            data = via_agy({'messages': messages}, ASSIST_MODEL, JSON_AGY_TIMEOUT, short=True)
+            message = data['choices'][0]['message']
+            message['content'] = json.dumps(extract_json(message.get('content')), ensure_ascii=False)
+            log(route='json-agy', model=ASSIST_MODEL, ms=int((time.monotonic() - started) * 1000))
+            return self.reply(200, data)
+        except Exception as error:  # agy 실패·JSON 아님 → DeepSeek(response_format 그대로)
+            reason = type(error).__name__
+        finally:
+            threading.Thread(target=prewarm_assistant, daemon=True).start()
+        self.fallback(body, started, reason, JSON_BUDGET, 3.0, 'json-fallback')
 
 
 if __name__ == '__main__':

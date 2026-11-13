@@ -15,8 +15,10 @@ services:
     security_opt: ['no-new-privileges:true']
     environment:
       ASTRA_API_ORIGIN: http://api:8080
-      # AI 도우미(마스코트 챗봇): 같은 host 의 agy-llm-gateway(Gemini 4 Hydrogen Low, 실패 시 DeepSeek).
-      # GEMINI_API_KEY(게이트웨이 ASSISTANT_TOKEN)는 assistant.env(600, 저장소 밖)에 있다.
+      # AI 도우미(홈 명령줄·마스코트 챗봇, POST /api/assistant)는 ASTRA_API_ORIGIN 이 있으면 다른 /api 처럼 백엔드로 넘어가고,
+      # 백엔드의 ASTRA_LLM_*(같은 게이트웨이, loopback relay 경유)와 ASTRA_ASSISTANT_* 가 정한다(로그인·한도·감사 기록).
+      # 아래 GEMINI_* 와 assistant.env 의 GEMINI_API_KEY 는 백엔드가 있는 동안 읽히지 않는다(백엔드 없는 샘플 모드의 로컬 중계용).
+      # ASSISTANT_TIMEOUT_MS 는 백엔드의 ASTRA_ASSISTANT_TIMEOUT(기본 20초)으로 바뀌었다. 값·파일 정리는 host 운영자가 정한다.
       GEMINI_API_BASE: http://172.24.0.1:18090
       GEMINI_MODEL: gemini-4-hydrogen-low
       ASSISTANT_TIMEOUT_MS: '20000'

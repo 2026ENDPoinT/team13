@@ -298,7 +298,7 @@ function useKeptUrls(): KeepUrl {
   };
 }
 
-/** One of the student's own study-room PDFs: no published summary, no preview session, no model features. */
+/** One of the student's own study-room PDFs: its own AI summary (study-doc-summary.tsx), no course summary or preview session. */
 function StudyDocument({ course, docId }: { course: Course; docId: string }) {
   const keepUrl = useKeptUrls();
   return (

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Local-only server for the STack e-Class frontend.
-// Static files are read-only; POST /api/assistant may relay JSON to Gemini.
+// Static files are read-only. POST /api/assistant goes to the backend when ASTRA_API_ORIGIN is set; only without a
+// backend (the sample mode) does this server answer it itself by relaying JSON to Gemini (`assistant` below).
 // `--dev` serves the app through Vite (src/, public/) with HMR; otherwise it serves the
 // `npm run build` output in ./dist only.
 // With ASTRA_API_ORIGIN set it also reverse-proxies /api/**, /doc/** and /vod/**
@@ -237,6 +238,10 @@ export function legacyRedirect(hostHeader, rawUrl) {
   return `${base}/`;
 }
 
+// ---------- Local assistant relay: sample mode only (no ASTRA_API_ORIGIN) ----------
+// With a backend configured, /api/assistant is proxied like every other /api path and the backend (ASTRA_LLM_*,
+// ASTRA_ASSISTANT_*) answers it with its own sign-in check, limits and audit; none of the GEMINI_* or ASSISTANT_*
+// settings below are read then. Without a backend this relay keeps the sample demo's assistant working.
 const ASSISTANT_BODY_LIMIT = 16 * 1024;
 const ASSISTANT_INTENTS = ['video', 'report', 'test', 'survey', 'material', 'zoom', 'course', 'plan'];
 // GEMINI_API_BASE: generateContent 를 보낼 origin(기본 Google). 배포에서는 같은 host 의 agy 게이트웨이를 가리킨다.
@@ -550,12 +555,12 @@ function sendProblem(req, res, status, detail, extra = {}) {
   res.end(req.method === 'HEAD' ? undefined : buf);
 }
 
-// Which proxied area a raw path belongs to. /api/catalog, /api/backend and /api/assistant stay local.
+// Which proxied area a raw path belongs to. /api/catalog and /api/backend stay local; /api/assistant is the backend's.
 function proxyScope(rawPath) {
   if (rawPath.startsWith('/doc/') || rawPath.startsWith('/vod/')) return 'media';
   if (!rawPath.startsWith('/api/')) return null;
   const seg = safeSegments(rawPath);
-  if (seg && seg.length === 2 && (seg[1] === 'catalog' || seg[1] === 'backend' || seg[1] === 'assistant')) return null;
+  if (seg && seg.length === 2 && (seg[1] === 'catalog' || seg[1] === 'backend')) return null;
   return 'api';
 }
 
@@ -785,6 +790,7 @@ export function createServer(options = {}) {
       if (!allowedHost(req.headers.host, port)) {
         return sendText(req, res, 421, 'Misdirected request: local host names only.\n');
       }
+      // Reached only without a backend: with ASTRA_API_ORIGIN set, proxyScope sends /api/assistant upstream above.
       if (rawPath === '/api/assistant') {
         if (req.method !== 'POST') {
           return sendText(req, res, 405, 'Method not allowed\n', { Allow: 'POST' });
@@ -955,7 +961,7 @@ if (isMain) {
   server.listen(port, BIND_HOST, () => {
     const actual = server.address().port;
     if (server.astraApiOrigin) {
-      console.log('ASTRA e-Class frontend (backend mode: /api, /doc, /vod are proxied; optional Gemini relay)');
+      console.log('ASTRA e-Class frontend (backend mode: /api (including the assistant), /doc, /vod are proxied)');
       console.log(`Backend ${server.astraApiOrigin}`);
     } else {
       console.log('ASTRA e-Class frontend (sample data, read-only files, optional Gemini relay, no school requests)');

@@ -574,6 +574,7 @@ a.pill:hover { text-decoration: none; }
 .sf-menu .study-new-item[aria-disabled="true"] { color: var(--muted); cursor: not-allowed; }
 .sf-menu .study-new-item.is-danger:not([aria-disabled="true"]) { color: var(--danger); }
 .sf-menu-target { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sf-menu-hint { display: block; margin-top: 2px; color: var(--text-2); font-size: var(--text-xs, 12px); font-weight: normal; white-space: normal; }
 .sf-thumb {
   position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; overflow: hidden;
   border: var(--border-w) solid var(--border); border-radius: var(--radius-md); background: var(--raised);

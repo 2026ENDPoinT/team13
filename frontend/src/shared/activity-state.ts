@@ -90,7 +90,7 @@ function lectureState(row: ActivityRow, item: ServerItem, instructor: boolean): 
 
 /**
  * 학교 e-Class에서 가져온 행의 상태: 본인 완료(`done`), 미완료(진행 중인데 `done: false`), 아니면 서버 시계의 구간.
- * 영상은 출석 차시와 학습시간, 시험은 오프라인 표시를 붙이고, 끝에 그 행이 어디서 열리는지 적는다(학교 자료·영상은 STack 상세).
+ * 영상은 출석 차시와 학습시간, 시험은 오프라인 표시를 붙이고, 끝에 그 행이 어디서 열리는지 적는다(학교 자료·영상·과제는 STack 상세).
  */
 function schoolState(row: ActivityRow): string {
   // A school row's item is its week activity, or for a material only the materials list has, that material.
@@ -105,7 +105,7 @@ function schoolState(row: ActivityRow): string {
     time ? `학습시간 ${time}` : "",
     item.offline === true ? "오프라인" : "",
     row.files && row.files.length ? `파일 ${row.files.length}개` : "",
-    row.external ? "e-Class에서 열기" : row.href ? (row.type === "video" ? "학교 영상" : "학교 자료") : "e-Class 주소 없음",
+    row.external ? "e-Class에서 열기" : row.href ? ({ video: "학교 영상", report: "학교 과제" }[row.type] || "학교 자료") : "e-Class 주소 없음",
   ].filter(Boolean).join(" · ");
 }
 

@@ -8,7 +8,7 @@ import { hrefFor, find } from "../../manifest.ts";
 import { typeIcon } from "../../shared/format.ts";
 import {
   homeEntry, useHome, reloadHome, useTodo, reloadTodo, loadMoreTodo,
-  memberCourses, todoKind, todoLabel, todoHref, ddayAt, koDateTime, homeMessage, wallMs, wallParts,
+  memberCourses, todoKind, todoLabel, todoHref, todoSchoolHref, ddayAt, koDateTime, homeMessage, wallMs, wallParts,
 } from "../../shared/home-remote.ts";
 import type { HomeData, TodoItem, TodoList } from "../../shared/home-remote.ts";
 import type { Entry } from "../../shared/remote-cache.ts";
@@ -160,9 +160,25 @@ function ServerHomeCourses() {
 }
 
 
-function TodoCard({ item, data, serverTime }: { item: TodoItem; data: HomeData; serverTime: unknown }) {
-  const href = todoHref(item, data);
+/**
+ * A to-do item as a link: STack's own screen in this tab, or for a school test or survey the school's address in a new tab
+ * (`noopener noreferrer`, said in its name); a plain block when it opens nowhere.
+ */
+function todoNode(item: TodoItem, data: HomeData | null | undefined, className: string, body: ReactNode): ReactNode {
   const kind = todoKind(item.type);
+  const href = todoHref(item, data);
+  if (href) return <Link className={`${className} todo-link`} href={href} data-todo={kind}>{body}</Link>;
+  const away = todoSchoolHref(item);
+  if (away) {
+    return (
+      <a className={`${className} todo-link`} href={away} target="_blank" rel="noopener noreferrer" data-todo={kind} data-external="eclass"
+        aria-label={`${item.title}, ${todoLabel(item.type)} — 학교 e-Class에서 열기(새 탭)`}>{body}</a>
+    );
+  }
+  return <div className={className} data-todo={kind}>{body}</div>;
+}
+
+function TodoCard({ item, data, serverTime }: { item: TodoItem; data: HomeData; serverTime: unknown }) {
   const body = (
     <>
       <div>
@@ -174,9 +190,7 @@ function TodoCard({ item, data, serverTime }: { item: TodoItem; data: HomeData; 
       <span className="due">{ddayAt(item.closeAt, serverTime)}</span>
     </>
   );
-  return href
-    ? <Link className="aside-card todo-card todo-link" href={href} data-todo={kind}>{body}</Link>
-    : <div className="aside-card todo-card" data-todo={kind}>{body}</div>;
+  return todoNode(item, data, "aside-card todo-card", body);
 }
 
 /** The "할일" part of the right column: count and the first items from the home aggregate. */
@@ -205,7 +219,6 @@ function ServerAsideTodo({ moreHref }: { moreHref: string }) {
 }
 
 function TaskRow({ item, serverTime }: { item: TodoItem; serverTime: unknown }) {
-  const href = todoHref(item, homeEntry()?.data);
   const kind = todoKind(item.type);
   const body = (
     <>
@@ -223,9 +236,7 @@ function TaskRow({ item, serverTime }: { item: TodoItem; serverTime: unknown }) 
       </div>
     </>
   );
-  return href
-    ? <Link className="task-row todo-link" href={href} data-todo={kind}>{body}</Link>
-    : <div className="task-row" data-todo={kind}>{body}</div>;
+  return todoNode(item, homeEntry()?.data, "task-row", body);
 }
 
 /** Body of the to-do dialog: every open item, nearest deadline first, 20 at a time. */

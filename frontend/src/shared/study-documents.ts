@@ -1,9 +1,11 @@
 // The student's own PDFs in the study room (`/api/me/study-room/…/documents`). They are stored like recordings:
-// owned by that one student, private, never published to the course and never sent to a model, counted against
-// the same study-room quota and scanned for malware before they open. Instructors keep registering course
-// materials (course-pdfs-remote.ts); only a student of the course uploads here (`uploadsToStudyRoom`).
+// owned by that one student, private, never published to the course, counted against the same study-room quota and
+// scanned for malware before they open. The student may ask for a page summary of one (`…/documents/{id}/summary`):
+// only then is its content sent to the AI provider. Instructors keep registering course materials
+// (course-pdfs-remote.ts); only a student of the course uploads here (`uploadsToStudyRoom`).
 // Records keep the PDF record shape of course-pdfs.ts so the study room cards and the document viewer show them.
-import { apiBlob, apiGet, apiSend, apiUpload, ApiError } from "./api.ts";
+import { apiBlob, apiGet, apiSend, apiUpload, ApiError, newRequestKey } from "./api.ts";
+import type { ServerSummary } from "./course-pdfs-remote.ts";
 import { backendStatus, courseIdFor, currentUserId, roleIn, subscribe } from "./backend.ts";
 import { retryLater } from "./remote-cache.ts";
 import {
@@ -31,6 +33,8 @@ export interface StudyDocRecord {
   /** The folder the document is placed in, or null in the course root. */
   folderId: string | null;
   version: number;
+  /** The page summary's state; null before any request; undefined on a backend without document summaries. */
+  summaryStatus?: DocSummaryStatus | null;
   pageCount: number | null;
   pages: PdfPage[];
   overview: { page: number; text: string }[];
@@ -76,6 +80,7 @@ export function toDocRecord(doc: ServerDocument, kj: string): StudyDocRecord {
     state: doc.state,
     folderId: doc.folderId == null ? null : String(doc.folderId),
     version: doc.version,
+    ...(doc.summaryStatus === undefined ? {} : { summaryStatus: doc.summaryStatus }),
     pageCount: null,
     pages: [],
     overview: [],
@@ -297,6 +302,83 @@ export async function deleteStudyDocument(record: StudyDocRecord): Promise<void>
   }
 }
 
+// ---------- page summary ----------
+
+/** Where a document's page summary stands. */
+export type DocSummaryStatus = "queued" | "processing" | "ready" | "failed";
+
+/** `POST`/`GET …/documents/{id}/summary`: `message` only when failed, `summary` only when ready. */
+export interface DocSummaryAnswer {
+  status: DocSummaryStatus;
+  message?: string | null;
+  summary?: (ServerSummary & { pageImageBase?: string | null; fileId?: number }) | null;
+}
+
+/** True when the backend offers summaries of the student's documents (its document view carries `summaryStatus`). */
+export function summaryOffered(record: StudyDocRecord): boolean {
+  return record.summaryStatus !== undefined && record.state === "ready";
+}
+
+const pendingSummary = new Map<string, string>(); // document id -> key of a start that ended without an answer
+
+/**
+ * `POST …/documents/{id}/summary`: starts a job (202), or answers the one queued, processing or ready. A start that
+ * ended without an answer keeps its `Idempotency-Key` for the retry.
+ */
+export async function startDocSummary(documentId: Id): Promise<DocSummaryAnswer> {
+  const scope = String(documentId);
+  const key = pendingSummary.get(scope) || newRequestKey();
+  pendingSummary.set(scope, key);
+  try {
+    const answer = await apiSend<DocSummaryAnswer>("POST", `${path(documentId)}/summary`, undefined, { idempotencyKey: key });
+    pendingSummary.delete(scope);
+    return answer;
+  } catch (error) {
+    if (!(error instanceof ApiError && [0, 502, 503, 504].includes(error.status) && error.code !== "llm_disabled")) pendingSummary.delete(scope);
+    throw error;
+  }
+}
+
+/** `GET …/documents/{id}/summary`; null before any request (404 `not_found`). Also renews the page-image cookies. */
+export async function getDocSummary(documentId: Id): Promise<DocSummaryAnswer | null> {
+  try {
+    return await apiGet<DocSummaryAnswer>(`${path(documentId)}/summary`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.code === "not_found") return null;
+    throw error;
+  }
+}
+
+/** Seconds between checks of a queued or processing summary: the server's `Retry-After` (5), kept within 4–10. */
+export function summaryPollDelay(error?: unknown): number {
+  const cause = error instanceof Error && error.cause instanceof ApiError ? error.cause : error;
+  const seconds = cause instanceof ApiError && cause.retryAfter ? cause.retryAfter : 5;
+  return Math.min(10, Math.max(4, seconds));
+}
+
+/** How many times a screen checks a queued or processing summary before it stops and offers a button. */
+export const SUMMARY_CHECKS = 90;
+
+/** Korean message for a failed summary request. */
+export function docSummaryMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) return error instanceof Error && error.message ? error.message : "요약 요청을 처리하지 못했습니다. 잠시 후 다시 시도하세요.";
+  switch (error.code) {
+    case "llm_disabled": return "지금 이 서버에서는 AI 요약을 쓸 수 없습니다(AI 제공자가 설정되지 않았습니다).";
+    case "summary_daily_limit": return `오늘 만들 수 있는 요약 수를 다 썼습니다. ${error.retryAfter ? `${Math.ceil(error.retryAfter / 3600)}시간쯤 뒤` : "내일"} 다시 시도하세요.`;
+    case "file_scanning": return "바이러스 검사가 끝난 뒤에 요약을 만들 수 있습니다. 잠시 후 다시 시도하세요.";
+    case "content_rejected": return "검사에서 악성 코드가 발견된 PDF라 요약을 만들 수 없습니다.";
+    case "idempotency_in_progress": return "같은 요약 요청을 처리하고 있습니다. 잠시 후 다시 확인하세요.";
+    default: break;
+  }
+  switch (error.status) {
+    case 401: return "ASTRA 서버 로그인이 필요합니다. 로그인한 뒤 다시 시도하세요.";
+    case 404: return "이 PDF를 찾을 수 없습니다. 이미 지웠거나 이 계정의 PDF가 아닙니다.";
+    case 429: return `요약 요청이 많습니다. ${error.retryAfter ? `${error.retryAfter}초 뒤` : "잠시 후"} 다시 시도하세요.`;
+    case 503: return "AI 요약을 지금 쓸 수 없습니다. 잠시 후 다시 시도하세요.";
+    default: return studyDocumentMessage(error);
+  }
+}
+
 // ---------- content ----------
 
 const BLOB_CACHE = 4;
@@ -309,6 +391,7 @@ subscribe((next) => {
   session = key;
   generation += 1;
   blobs.clear();
+  pendingSummary.clear();
 });
 
 /**

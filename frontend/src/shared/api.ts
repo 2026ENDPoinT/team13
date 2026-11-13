@@ -119,9 +119,10 @@ interface RequestOptions {
   body?: BodyInit;
   headers?: Record<string, string>;
   as?: "json" | "blob";
+  signal?: AbortSignal;
 }
 
-async function request(method: string, path: string, { json, body, headers = {}, as = "json" }: RequestOptions = {}): Promise<unknown> {
+async function request(method: string, path: string, { json, body, headers = {}, as = "json", signal }: RequestOptions = {}): Promise<unknown> {
   const url = relative(path);
   if (typeof fetch !== "function") throw new ApiError(0, { detail: "이 환경에서는 서버에 연결할 수 없습니다." });
   const mutating = method !== "GET" && method !== "HEAD";
@@ -134,7 +135,7 @@ async function request(method: string, path: string, { json, body, headers = {},
     if (mutating && token != null) sent["X-XSRF-TOKEN"] = token;
     let response: Response;
     try {
-      response = await fetch(url, { method, credentials: "same-origin", cache: "no-store", headers: sent, body: payload });
+      response = await fetch(url, { method, credentials: "same-origin", cache: "no-store", headers: sent, body: payload, signal });
     } catch {
       throw new ApiError(0, { detail: "ASTRA 서버에 연결하지 못했습니다. 네트워크 상태를 확인하세요." });
     }
@@ -167,13 +168,15 @@ export function newRequestKey(): string {
 /**
  * `idempotencyKey` is sent as `Idempotency-Key`; reuse it only to retry the same request.
  * `ifMatch` is the resource `version` the screen last read, sent as `If-Match: "<version>"`.
+ * `signal` cancels the request; a cancelled request rejects with status 0.
  */
 export interface SendOptions {
   idempotencyKey?: string | null;
   ifMatch?: number | string | null;
+  signal?: AbortSignal;
 }
 
-export function apiSend<T = unknown>(method: string, path: string, json?: unknown, { idempotencyKey, ifMatch }: SendOptions = {}): Promise<T> {
+export function apiSend<T = unknown>(method: string, path: string, json?: unknown, { idempotencyKey, ifMatch, signal }: SendOptions = {}): Promise<T> {
   const verb = String(method || "").toUpperCase();
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(verb)) throw new ApiError(0, { detail: "지원하지 않는 요청입니다." });
   const headers: Record<string, string> = idempotencyKey ? { "Idempotency-Key": String(idempotencyKey) } : {};
@@ -182,7 +185,7 @@ export function apiSend<T = unknown>(method: string, path: string, json?: unknow
     if (!Number.isInteger(version) || version < 0) throw new ApiError(0, { detail: "자료 버전을 확인하지 못했습니다. 목록을 새로 불러오세요." });
     headers["If-Match"] = `"${version}"`;
   }
-  return request(verb, path, json === undefined ? { headers } : { json, headers }) as Promise<T>; // server JSON typed by the caller
+  return request(verb, path, json === undefined ? { headers, signal } : { json, headers, signal }) as Promise<T>; // server JSON typed by the caller
 }
 
 export function apiUpload<T = unknown>(path: string, formData: FormData, { idempotencyKey }: { idempotencyKey?: string | null } = {}): Promise<T> {

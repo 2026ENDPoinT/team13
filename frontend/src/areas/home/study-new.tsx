@@ -68,7 +68,7 @@ function NewMenu({ course, folder, say, nameFolder }: NewMenuOptions) {
     const title = file.name.replace(/\.pdf$/i, "").trim() || file.name;
     setUploading(true);
     if (uploadsToStudyRoom(course.id)) {
-      // A student's own PDF: stored privately in this study room (never a course material, never sent to a model).
+      // A student's own PDF: stored privately in this study room (never a course material); sent to the AI provider only when the student asks for its summary.
       // A browser-only folder cannot be named to the server: the PDF goes to the course root and is placed here.
       say("PDF를 내 학습실에 올리고 있습니다.");
       const serverFolder = folder && !folder.local ? folder.id : null;

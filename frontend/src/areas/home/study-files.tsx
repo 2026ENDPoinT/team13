@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { courses, courseById, studyMaterials, COURSE_ORDER, type Course } from "../../data.ts";
 import { hrefFor, find } from "../../manifest.ts";
 import type { ScreenCtx } from "../../types.ts";
-import { Link } from "../../router.tsx";
+import { Link, navigate } from "../../router.tsx";
 import { Icon } from "../../ui/icon.tsx";
 import { Button, EmptyState, LoadingState, ErrorState } from "../../ui/kit.tsx";
 import { readQuery, pageSearch } from "../../shared/query.tsx";
@@ -13,7 +13,11 @@ import {
   listFolders, groupFolders, ownerGroup, unmovablePlacements, createFolder, deleteFolder, leaveFolder, placeItem, unplaceItem, placements, useStudyRoomStore, type StudyFolder, type OwnerGroup,
 } from "../../shared/study-folders.ts";
 import { serverStudyCourse, studyRoomOnServer, studyRoomMessage, studyUsage, usageText, myRecordings, refreshCourseView } from "../../shared/study-room-remote.ts";
-import { studyDocuments, deleteStudyDocument, scanDelay, SCAN_CHECKS, type StudyDocRecord } from "../../shared/study-documents.ts";
+import {
+  studyDocuments, deleteStudyDocument, scanDelay, SCAN_CHECKS, summaryOffered, startDocSummary, docSummaryMessage, summaryPollDelay,
+  type StudyDocRecord,
+} from "../../shared/study-documents.ts";
+import { SUMMARY_SENDS } from "./study-doc-summary.tsx";
 import { serverCourseViews } from "../../shared/course-view.ts";
 import { thumbnailImage } from "../../shared/preview-remote.tsx";
 import { ApiError } from "../../shared/api.ts";
@@ -24,7 +28,7 @@ import {
 } from "../../shared/lectures-remote.ts";
 import { serverStudySummary, studyLectureHref } from "./study-server.tsx";
 import { LessonViewer, type LessonDoc } from "../../shared/lesson-viewer.tsx";
-import { CardMenu } from "./study-card-menu.tsx";
+import { CardMenu, type MenuAction } from "./study-card-menu.tsx";
 import { wallFormat } from "../../shared/home-remote.ts";
 
 const REFRESH_MS = 30000;
@@ -144,27 +148,29 @@ function PdfCard({ record, showCourse, menu }: { record: CoursePdfRecord; showCo
   );
 }
 
+const SUMMARY_TEXT: Record<string, string> = { queued: "AI 요약 중", processing: "AI 요약 중", ready: "AI 요약 있음", failed: "AI 요약 실패" };
+
 /** The student's own PDF in the study room: opens in the document view once the malware scan has passed. */
 function StudyDocCard({ record, menu }: { record: StudyDocRecord; menu?: ReactNode }) {
-  const state = record.state === "scanning" ? "검사 중" : record.state === "rejected" ? "검사 거부" : "내 PDF";
+  const state = record.state === "scanning" ? "검사 중" : record.state === "rejected" ? "검사 거부" : (record.summaryStatus && SUMMARY_TEXT[record.summaryStatus]) || "내 PDF";
   return (
     <FileCard
       href={pdfHref(record)} kind="pdf" badge="PDF" title={record.title} iconName="file"
       meta={[state, shortDate.format(record.uploadedAt)]}
-      label={`${record.title} 내 PDF${record.state === "ready" ? "" : `, ${state}`}`}
+      label={`${record.title} 내 PDF${state === "내 PDF" ? "" : `, ${state}`}`}
       menu={menu}
     />
   );
 }
 
 /**
- * While a document of the course is in the malware scan, reads the course view again every `Retry-After` seconds
- * (10 when the server gave none), at most `SCAN_CHECKS` times; stops as soon as nothing is scanning.
+ * While a document of the course is in the malware scan or its summary is being made, reads the course view again
+ * every `delay` seconds, at most `SCAN_CHECKS` times; stops as soon as nothing is waiting (`delay` null).
  */
-function useScanRefresh(kj: string, scanning: boolean) {
+function useWaitRefresh(kj: string, delay: number | null) {
   useEffect(() => {
-    const server = scanning ? serverStudyCourse(kj) : null;
-    if (server == null) return undefined;
+    const server = delay ? serverStudyCourse(kj) : null;
+    if (server == null || !delay) return undefined;
     let live = true;
     let checks = 0;
     let timer = 0;
@@ -174,14 +180,14 @@ function useScanRefresh(kj: string, scanning: boolean) {
         void refreshCourseView(server).finally(() => {
           if (live && checks < SCAN_CHECKS) next();
         });
-      }, scanDelay() * 1000);
+      }, delay * 1000);
     };
     next();
     return () => {
       live = false;
       window.clearTimeout(timer);
     };
-  }, [kj, scanning]);
+  }, [kj, delay]);
 }
 
 /** Where a recording stands, when it is not simply playable: the server's malware scan, or kept in this browser only. */
@@ -419,7 +425,21 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   // The student's own PDFs come with the server course view (re-rendered by useStudyRoomStore), not the 30 s list.
   const allDocs = data ? studyDocuments(course.id) : [];
   const docs = allDocs.filter((record) => folderOfItem(record) === folderId);
-  useScanRefresh(course.id, allDocs.some((record) => record.state === "scanning"));
+  // Scanning: the server's `Retry-After` (10 s); a summary being made: 4–10 s.
+  const summarizing = allDocs.some((record) => record.summaryStatus === "queued" || record.summaryStatus === "processing");
+  useWaitRefresh(course.id, allDocs.some((record) => record.state === "scanning") ? scanDelay() : summarizing ? summaryPollDelay() : null);
+  const docActions = (record: StudyDocRecord): MenuAction[] => {
+    if (!summaryOffered(record)) return [];
+    if (record.summaryStatus === "ready") return [{ label: "AI 요약 보기", icon: "book", onSelect: async () => navigate(pdfHref(record)) }];
+    if (record.summaryStatus === "queued" || record.summaryStatus === "processing") return [];
+    return [{
+      label: record.summaryStatus === "failed" ? "AI 요약 다시 만들기" : "요약 만들기", icon: "star", hint: SUMMARY_SENDS,
+      onSelect: () => startDocSummary(record.documentId).then(
+        (answer) => say(answer.status === "ready" ? `"${record.title}"의 요약이 준비되었습니다.` : `"${record.title}"의 요약을 만들고 있습니다. 끝나면 카드에 "AI 요약 있음"이 나타납니다.`),
+        (error: unknown) => say(docSummaryMessage(error), true),
+      ).finally(() => void refreshCourseView(record.backendCourseId)),
+    }];
+  };
   const recordings = shown.recordings.filter((record) => folderOfItem(record) === folderId && (folder ? true : groupOf(record) === "mine"));
   const folders = folder ? [] : courseFolders;
   const countIn = (id: string) => [...shown.pdfs, ...allDocs, ...shown.recordings].filter((record) => folderOfItem(record) === id).length;
@@ -454,9 +474,12 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
   };
   // Where an item can go: this course's own folders except the one open now.
   const targets = courseFolders.filter((item) => item.id !== folderId).map((item) => ({ id: item.id, name: item.name }));
-  const itemMenu = (record: { id: string; title: string; remote?: boolean; studyDocument?: true; pendingFolderId?: string }, remove: () => Promise<void>, blocked?: string) => (
+  const itemMenu = (
+    record: { id: string; title: string; remote?: boolean; studyDocument?: true; pendingFolderId?: string }, remove: () => Promise<void>, blocked?: string, actions?: MenuAction[],
+  ) => (
     <CardMenu
       title={record.title}
+      actions={actions}
       move={{
         targets,
         canLeave: Boolean(folderOfItem(record)),
@@ -538,7 +561,7 @@ function CourseFiles({ course, folder, makeCreator }: { course: Course; folder: 
                 menu={itemMenu(record, () => deleteCoursePdf(record.id), record.remote ? "서버에 등록한 자료는 강의자료 화면의 서버 자료 목록에서 삭제합니다." : undefined)}
               />
             ))}
-            {docs.map((record) => <StudyDocCard key={record.id} record={record} menu={itemMenu(record, () => deleteStudyDocument(record))} />)}
+            {docs.map((record) => <StudyDocCard key={record.id} record={record} menu={itemMenu(record, () => deleteStudyDocument(record), undefined, docActions(record))} />)}
             {recordings.map((record) => <RecordingCard key={`rec-${record.id}`} record={record} showCourse={false} menu={itemMenu(record, () => deleteRecording(record))} />)}
             {samples.map((item) => <SampleCard key={item.id} item={item} showCourse={false} />)}
           </>

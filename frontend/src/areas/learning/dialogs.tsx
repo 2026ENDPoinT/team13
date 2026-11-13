@@ -7,7 +7,7 @@ import { readForm, showErrors, stamp } from "../../forms.ts";
 import { events, people, surveyQuestions, activities, courseById, type Activity } from "../../data.ts";
 import { dday, typeLabel, activityHref, activityById } from "../../shared/format.ts";
 import { hrefFor, find } from "../../manifest.ts";
-import { remoteSubmitDialog } from "./assignments-server.tsx";
+import { remoteSubmitDialog, remoteSchoolSubmitDialog } from "./assignments-server.tsx";
 import { backendStatus } from "../../shared/backend.ts";
 import { calendarTodoHref, serverDayDialog } from "./calendar-server.tsx";
 import { homeEntry, todoKind, todoLabel, ddayAt } from "../../shared/home-remote.ts";
@@ -299,6 +299,7 @@ export function renderDialog(name: string, ctx: ScreenCtx): ReactNode {
   if (name === "day" && backendStatus() === "ready") return serverDayDialog(ctx);
   if (name === "day") return <DayDialog day={(ctx.params && ctx.params.get("day")) || "2026-11-10"} />;
   if (name === "submit" && ctx.screen && ctx.screen.serverAssignment) return remoteSubmitDialog(ctx);
+  if (name === "submit" && ctx.screen && ctx.screen.serverSchoolAssignment) return remoteSchoolSubmitDialog(ctx);
   if (name === "recipients" && usesServerMessages(ctx.params)) return serverRecipientDialog(ctx);
   if (name === "submit") {
     const activity = activities.find((item) => item.id === ((ctx.params && ctx.params.get("n")) || "r-open")) || activities.find((item) => item.id === "r-open")!;

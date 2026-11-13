@@ -6,7 +6,7 @@ import { equivalentHref } from "./shared/routes.ts";
 import { getState, save, render, toast } from "./store.ts";
 import { activities, courseById } from "./data.ts";
 import { backendStatus, followRole, logout as logoutBackend } from "./shared/backend.ts";
-import { assignmentIdOf } from "./shared/assignments-remote.ts";
+import { assignmentIdOf, SCHOOL_ASSIGNMENT_ID } from "./shared/assignments-remote.ts";
 import { quizIdOf } from "./shared/quizzes-remote.ts";
 import { surveyIdOf } from "./shared/surveys-remote.ts";
 import { lectureIdOf } from "./shared/lectures-remote.ts";
@@ -46,6 +46,14 @@ export function resolveScreen(pathname: string, params: URLSearchParams): Screen
     return {
       id: `srv-report-${serverId}`, role: "student", title: "과제", path: activityPath, nav: "activity", kind: "activity",
       serverAssignment: serverId, course: courseOf(params), layout: "course",
+    };
+  }
+  // An assignment imported from the school's e-Class (`m=report&n=school-<n>`): read only, submitted at the school.
+  const schoolAssignment = pathname === activityPath && params.get("m") === "report" && SCHOOL_ASSIGNMENT_ID.test(String(itemId || "")) ? String(itemId) : null;
+  if (schoolAssignment) {
+    return {
+      id: `srv-report-${schoolAssignment}`, role: "student", title: "과제", path: activityPath, nav: "activity", kind: "activity",
+      serverSchoolAssignment: schoolAssignment, course: courseOf(params), layout: "course",
     };
   }
   // A backend quiz (`m=test&n=srv-<quizId>`, `&attempt=<attemptId>`) or course survey (`m=survey&n=srv-<surveyId>`).
