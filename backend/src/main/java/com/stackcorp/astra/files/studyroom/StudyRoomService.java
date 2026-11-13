@@ -23,12 +23,14 @@ import com.stackcorp.astra.files.api.FileAction;
 import com.stackcorp.astra.files.storage.ObjectStore;
 import com.stackcorp.astra.files.storage.ObjectStore.Bucket;
 import com.stackcorp.astra.files.studyroom.RecordingStudyViews.Job;
+import com.stackcorp.astra.files.studyroom.StudyRoomRecords.Document;
 import com.stackcorp.astra.files.studyroom.StudyRoomRecords.Folder;
 import com.stackcorp.astra.files.studyroom.StudyRoomRecords.Placement;
 import com.stackcorp.astra.files.studyroom.StudyRoomRecords.Quota;
 import com.stackcorp.astra.files.studyroom.StudyRoomRecords.Recording;
 import com.stackcorp.astra.files.upload.FileNames;
-import com.stackcorp.astra.files.upload.StudyRecordingUploads;
+import com.stackcorp.astra.files.upload.StudyRoomUploads;
+import com.stackcorp.astra.files.upload.StudyRoomUploads.Kind;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
 import com.stackcorp.astra.shared.RateLimiter;
@@ -50,14 +52,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * 학습실의 내 폴더, 항목 배치, 강의 녹음(ADR-0040). 모두 소유자 한 사람만 보고 바꾼다. 다른 사용자의 폴더, 녹음, 배치는 없는 ID와 같은
- * 404이고, 하나라도 섞인 요청은 아무것도 바꾸지 않는다. 담당자, 운영자, 요약·학습 대화가 읽는 길은 없다.
+ * 학습실의 내 폴더, 항목 배치, 강의 녹음, 내 문서(ADR-0040). 모두 소유자 한 사람만 보고 바꾼다. 다른 사용자의 폴더, 녹음, 문서, 배치는
+ * 없는 ID와 같은 404이고, 하나라도 섞인 요청은 아무것도 바꾸지 않는다. 담당자, 운영자, 요약·학습 대화가 읽는 길은 없다.
  * <p>
  * 한 사용자의 변경 명령은 READ COMMITTED transaction 하나에서 study_room_quotas 행을 먼저 잠근 뒤 처리한다. 순서 바꾸기, 배치,
  * 용량 검사가 다른 명령과 엇갈리지 않는다. 교착이나 잠금 대기 초과로 실패한 transaction은 통째로 되돌린 뒤 정해진 횟수만큼 다시 한다.
  * <p>
- * 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 강의자료 배치는 그 과목에서 그 파일을 읽을 수 있어야 한다.
- * 읽기, 이름 바꾸기, 지우기는 소유만 본다. 과목을 잃어도 내 녹음과 폴더는 남고 내가 지울 수 있다.
+ * 만들기(폴더, 녹음, 문서, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 강의자료 배치는 그 과목에서 그 파일을 읽을 수 있어야
+ * 한다. 읽기, 이름 바꾸기, 지우기는 소유만 본다. 과목을 잃어도 내 녹음, 문서, 폴더는 남고 내가 지울 수 있다.
  */
 @Service
 @EnableConfigurationProperties(StudyRoomProperties.class)
@@ -66,6 +68,13 @@ class StudyRoomService {
 	static final int MAX_FOLDER_NAME = 60;
 
 	static final int MAX_TITLE = 200;
+
+	static final int MAX_DOCUMENT_TITLE = 300;
+
+	/** 검사 중인 문서 내용 요청의 409에 붙이는 {@code Retry-After}. 검사 결과 poll 간격(10초)과 같다. */
+	static final Duration SCAN_RETRY_AFTER = Duration.ofSeconds(10);
+
+	private static final String PDF = "application/pdf";
 
 	private static final Logger log = LoggerFactory.getLogger(StudyRoomService.class);
 
@@ -81,7 +90,7 @@ class StudyRoomService {
 
 	private final StudyRoomRecords records;
 
-	private final StudyRecordingUploads uploads;
+	private final StudyRoomUploads uploads;
 
 	private final FileReferences references;
 
@@ -103,7 +112,7 @@ class StudyRoomService {
 
 	private final RecordingStudy recordingStudy;
 
-	StudyRoomService(StudyRoomRecords records, StudyRecordingUploads uploads, FileReferences references,
+	StudyRoomService(StudyRoomRecords records, StudyRoomUploads uploads, FileReferences references,
 			ObjectStore store, FileAccess access, CourseMemberships memberships, RateLimiter rateLimiter,
 			Idempotency idempotency, AuditLog audit, PlatformTransactionManager transactionManager,
 			StudyRoomProperties properties, RecordingStudy recordingStudy) {
@@ -138,7 +147,8 @@ class StudyRoomService {
 		}
 		return new CourseView(courseId,
 				this.records.folders(owner, courseId).stream().map(FolderView::of).toList(),
-				this.records.recordings(owner, courseId).stream().map(RecordingView::of).toList(), placements,
+				this.records.recordings(owner, courseId).stream().map(RecordingView::of).toList(),
+				this.records.documents(owner, courseId).stream().map(DocumentView::of).toList(), placements,
 				usage(owner));
 	}
 
@@ -290,21 +300,27 @@ class StudyRoomService {
 		return inTransaction(() -> {
 			this.records.lockQuota(owner);
 			Folder folder = this.records.folder(owner, folderId).orElseThrow(ApiException::notFound);
-			Optional<Placement> existing;
-			if (kind == ItemKind.RECORDING) {
-				Recording recording = this.records.recording(owner, itemId).orElseThrow(ApiException::notFound);
-				if (recording.courseId() != folder.courseId()) {
-					throw new ApiException(HttpStatus.CONFLICT, "course_mismatch", "녹음과 폴더의 과목이 다릅니다.");
+			switch (kind) {
+				case RECORDING -> {
+					Recording recording = this.records.recording(owner, itemId).orElseThrow(ApiException::notFound);
+					if (recording.courseId() != folder.courseId()) {
+						throw new ApiException(HttpStatus.CONFLICT, "course_mismatch", "녹음과 폴더의 과목이 다릅니다.");
+					}
 				}
-				existing = this.records.placementOfRecording(owner, itemId);
-			}
-			else {
-				// 강의자료는 폴더의 과목에서 지금 읽을 수 있어야 한다. 남의 과목, 지운 자료, 공개 전 자료는 없는 파일과 같은 404다.
-				if (!this.access.allowed(owner, folder.courseId(), itemId, FileAction.READ)) {
-					throw ApiException.notFound();
+				case DOCUMENT -> {
+					Document document = this.records.document(owner, itemId).orElseThrow(ApiException::notFound);
+					if (document.courseId() != folder.courseId()) {
+						throw new ApiException(HttpStatus.CONFLICT, "course_mismatch", "문서와 폴더의 과목이 다릅니다.");
+					}
 				}
-				existing = this.records.placementOfFile(owner, itemId);
+				case COURSE_FILE -> {
+					// 강의자료는 폴더의 과목에서 지금 읽을 수 있어야 한다. 남의 과목, 지운 자료, 공개 전 자료는 없는 파일과 같은 404다.
+					if (!this.access.allowed(owner, folder.courseId(), itemId, FileAction.READ)) {
+						throw ApiException.notFound();
+					}
+				}
 			}
+			Optional<Placement> existing = placement(owner, kind, itemId);
 			int current = existing.map(Placement::version).orElse(0);
 			if (current != expectedVersion) {
 				throw versionConflict();
@@ -322,7 +338,7 @@ class StudyRoomService {
 			else {
 				try {
 					id = this.records.insertPlacement(owner, folderId, kind == ItemKind.COURSE_FILE ? itemId : null,
-							kind == ItemKind.RECORDING ? itemId : null);
+							kind == ItemKind.RECORDING ? itemId : null, kind == ItemKind.DOCUMENT ? itemId : null);
 				}
 				catch (DuplicateKeyException ex) {
 					throw versionConflict();
@@ -351,8 +367,11 @@ class StudyRoomService {
 	}
 
 	private Optional<Placement> placement(long owner, ItemKind kind, long itemId) {
-		return kind == ItemKind.RECORDING ? this.records.placementOfRecording(owner, itemId)
-				: this.records.placementOfFile(owner, itemId);
+		return switch (kind) {
+			case RECORDING -> this.records.placementOfRecording(owner, itemId);
+			case DOCUMENT -> this.records.placementOfDocument(owner, itemId);
+			case COURSE_FILE -> this.records.placementOfFile(owner, itemId);
+		};
 	}
 
 	// ---------- 녹음 ----------
@@ -382,10 +401,10 @@ class StudyRoomService {
 				folderIn(owner, meta.folderId(), courseId);
 			}
 			// 저장하기 전에 한 번 본다. 정확한 검사는 기록할 때 잠근 뒤에 한다.
-			requireRoom(this.records.quota(owner), file.getSize());
+			requireRoom(Kind.RECORDING, this.records.quota(owner), file.getSize());
 		}
-		long uploadId = this.uploads.receive(owner, file, idempotencyKey, new RecordingRequest(courseId, meta),
-				new StudyRecordingUploads.Target() {
+		long uploadId = this.uploads.receive(Kind.RECORDING, owner, file, idempotencyKey,
+				new RecordingRequest(courseId, meta), new StudyRoomUploads.Target() {
 
 					@Override
 					public void reserve(long sizeBytes) {
@@ -397,8 +416,8 @@ class StudyRoomService {
 						if (meta.folderId() != null) {
 							folderIn(owner, meta.folderId(), courseId);
 						}
-						requireRoom(quota, sizeBytes);
-						StudyRoomService.this.records.addUsage(owner, sizeBytes, 1);
+						requireRoom(Kind.RECORDING, quota, sizeBytes);
+						StudyRoomService.this.records.addUsage(owner, sizeBytes, 1, 0);
 					}
 
 					@Override
@@ -411,7 +430,7 @@ class StudyRoomService {
 						// 같은 transaction에서 작업을 만든다. 첫 응답부터 queued다(ADR-0041).
 						StudyRoomService.this.recordingStudy.created(owner, id);
 						if (meta.folderId() != null) {
-							StudyRoomService.this.records.insertPlacement(owner, meta.folderId(), null, id);
+							StudyRoomService.this.records.insertPlacement(owner, meta.folderId(), null, id, null);
 						}
 						StudyRoomService.this.audit.success(owner, actor.sessionId(), "study_room.recording.create",
 								"study_room_recording", id, courseId);
@@ -467,8 +486,8 @@ class StudyRoomService {
 				this.uploads.deleteUploadOf(recording.fileId());
 			}
 			// 지운 파일 행에 가져온 파일 이름(곧 제목)이 남지 않게 한다.
-			this.uploads.forgetName(recording.fileId());
-			this.records.removeUsage(owner, recording.sizeBytes(), 1);
+			this.uploads.forgetName(Kind.RECORDING, recording.fileId());
+			this.records.removeUsage(owner, recording.sizeBytes(), 1, 0);
 			this.audit.success(owner, actor.sessionId(), "study_room.recording.delete", "study_room_recording", id,
 					recording.courseId());
 			return null;
@@ -518,13 +537,173 @@ class StudyRoomService {
 		return recording;
 	}
 
+	// ---------- 문서 ----------
+
+	DocumentView document(long owner, long id) {
+		return DocumentView.of(this.records.document(owner, id).orElseThrow(ApiException::notFound));
+	}
+
+	/**
+	 * 내 PDF를 올려 문서를 만든다. 업로드 정책 study_document로 검사하고, 녹음과 같이 업로드 기록과 같은 transaction에서 용량을 잡고
+	 * 문서 행과 (폴더가 있으면) 배치를 만든다. 과목에 게시하지 않고, 전사·요약·학습 대화·외부 모델 어디에도 보내지 않는다. 검사기가 있으면
+	 * 검사를 마칠 때까지 내용을 내보내지 않는다.
+	 * <p>
+	 * 멱등 key의 규칙은 녹음과 같다. 같은 key의 재전송은 처음 만든 문서의 지금 상태를 돌려주고 한도와 폴더 검사를 다시 하지 않는다. 값이
+	 * 하나라도 다르면 409 {@code idempotency_conflict}, 처음 만든 문서를 그 사이 지웠으면 410 {@code document_deleted}다.
+	 *
+	 * @param rawTitle 없으면 파일 이름에서 {@code .pdf}를 뺀 값
+	 */
+	DocumentView createDocument(Actor actor, long courseId, MultipartFile file, String rawTitle, Long folderId,
+			String idempotencyKey) {
+		long owner = actor.userId();
+		limit(actor);
+		requireMember(owner, courseId);
+		String title = rawTitle == null || rawTitle.isBlank() ? defaultDocumentTitle(file.getOriginalFilename())
+				: documentTitle(rawTitle);
+		if (!keyUsed(owner, idempotencyKey)) {
+			if (folderId != null) {
+				folderIn(owner, folderId, courseId);
+			}
+			// 저장하기 전에 한 번 본다. 정확한 검사는 기록할 때 잠근 뒤에 한다.
+			requireRoom(Kind.DOCUMENT, this.records.quota(owner), file.getSize());
+		}
+		long uploadId = this.uploads.receive(Kind.DOCUMENT, owner, file, idempotencyKey,
+				new DocumentRequest(courseId, title, folderId), new StudyRoomUploads.Target() {
+
+					@Override
+					public void reserve(long sizeBytes) {
+						Quota quota = StudyRoomService.this.records.lockQuota(owner);
+						if (keyUsed(owner, idempotencyKey)) {
+							// 같은 key의 요청이 먼저 끝났다. 이 transaction은 업로드 key 중복으로 되돌아가고 먼저 만든 문서를 돌려준다.
+							return;
+						}
+						if (folderId != null) {
+							folderIn(owner, folderId, courseId);
+						}
+						requireRoom(Kind.DOCUMENT, quota, sizeBytes);
+						StudyRoomService.this.records.addUsage(owner, sizeBytes, 0, 1);
+					}
+
+					@Override
+					public void place(long fileId, String name) {
+						long id = StudyRoomService.this.records.insertDocument(owner, courseId, fileId, title);
+						if (folderId != null) {
+							StudyRoomService.this.records.insertPlacement(owner, folderId, null, null, id);
+						}
+						StudyRoomService.this.audit.success(owner, actor.sessionId(), "study_room.document.create",
+								"study_room_document", id, courseId);
+					}
+
+				});
+		// 지문이 같은 업로드가 있는데 문서가 없으면, 그 업로드로 만든 문서를 그 사이 지운 것이다.
+		long id = this.records.documentOfUpload(owner, uploadId)
+			.orElseThrow(() -> new ApiException(HttpStatus.GONE, "document_deleted",
+					"이 요청으로 만든 문서는 그 뒤 지워졌습니다. 다시 올리려면 새 Idempotency-Key를 쓰세요."));
+		return document(owner, id);
+	}
+
+	/** @param rawTitle 새 제목. null이면 version만 확인하고 바꾸지 않는다 */
+	DocumentView updateDocument(Actor actor, long id, int version, String rawTitle) {
+		String title = rawTitle == null ? null : documentTitle(rawTitle);
+		long owner = actor.userId();
+		limit(actor);
+		return inTransaction(() -> {
+			this.records.lockQuota(owner);
+			Document document = this.records.document(owner, id).orElseThrow(ApiException::notFound);
+			if (document.version() != version) {
+				throw versionConflict();
+			}
+			if (title == null) {
+				return DocumentView.of(document);
+			}
+			if (this.records.renameDocument(owner, id, version, title) == 0) {
+				throw versionConflict();
+			}
+			this.audit.success(owner, actor.sessionId(), "study_room.document.rename", "study_room_document", id,
+					document.courseId());
+			return document(owner, id);
+		});
+	}
+
+	/** 문서와 그 배치를 지우고 파일 참조를 놓는다. 녹음 지우기와 같다. 문서 바이트는 사용량에서 바로 빠진다. */
+	void deleteDocument(Actor actor, long id, int version) {
+		long owner = actor.userId();
+		limit(actor);
+		inTransaction(() -> {
+			this.records.lockQuota(owner);
+			Document document = this.records.document(owner, id).orElseThrow(ApiException::notFound);
+			if (document.version() != version || this.records.deleteDocument(owner, id, version) == 0) {
+				throw versionConflict();
+			}
+			if (this.references.release(document.fileId())) {
+				this.uploads.deleteUploadOf(document.fileId());
+			}
+			// 지운 파일 행에 올린 파일 이름(곧 기본 제목)이 남지 않게 한다.
+			this.uploads.forgetName(Kind.DOCUMENT, document.fileId());
+			this.records.removeUsage(owner, document.sizeBytes(), 0, 1);
+			this.audit.success(owner, actor.sessionId(), "study_room.document.delete", "study_room_document", id,
+					document.courseId());
+			return null;
+		});
+	}
+
+	/**
+	 * 문서 PDF. 소유자만 받는다. 검사를 마치지 않았으면 409 {@code file_scanning}과 {@code Retry-After}, 거부했으면 422
+	 * {@code content_rejected}다(다시 받아도 바뀌지 않으므로 409가 아니다). Range 하나를 받는 것과 감사 기록을 구간과 관계없이 같은
+	 * session의 같은 문서마다 {@link #PLAY_AUDIT_WINDOW}에 한 번 남기는 것은 녹음 재생과 같다.
+	 */
+	ResponseEntity<InputStreamResource> documentContent(Actor actor, long id, String rangeHeader) {
+		this.rateLimiter.check("study-room-play", actor.userId(), this.properties.playRateLimit(),
+				this.properties.rateWindow());
+		Document document = this.records.document(actor.userId(), id).orElseThrow(ApiException::notFound);
+		if (Recording.SCANNING.equals(document.state())) {
+			throw new ApiException(HttpStatus.CONFLICT, "file_scanning", "악성코드 검사를 마치지 않은 문서입니다.",
+					SCAN_RETRY_AFTER);
+		}
+		if (Recording.REJECTED.equals(document.state())) {
+			throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "content_rejected", "검사에서 거부된 문서입니다. 지워 주세요.");
+		}
+		long size = document.sizeBytes();
+		Optional<ByteRange> range = ByteRange.parse(rangeHeader, size);
+		long first = range.map(ByteRange::first).orElse(0L);
+		long last = range.map(ByteRange::last).orElse(size - 1);
+		this.audit.successOnceWithin(actor.userId(), actor.sessionId(), "study_room.document.read",
+				"study_room_document", id, document.courseId(), PLAY_AUDIT_WINDOW);
+		InputStream content = this.store.openRange(Bucket.CONTENT, document.storageKey(), first, last)
+			.orElseThrow(ApiException::notFound);
+		return Downloads.ranged(document.fileName(), PDF, size, first, last, range.isPresent(), content);
+	}
+
+	/** 문서 제목: 앞뒤 공백을 빼고 1~300자(UTF-16 단위), 제어 문자는 받지 않는다. */
+	static String documentTitle(String raw) {
+		String title = raw == null ? "" : raw.strip();
+		if (title.isEmpty() || title.length() > MAX_DOCUMENT_TITLE
+				|| title.codePoints().anyMatch(Character::isISOControl)) {
+			throw ApiException.invalid(
+					"문서 제목은 1자 이상 " + MAX_DOCUMENT_TITLE + "자 이하여야 하고 줄바꿈 같은 제어 문자를 쓸 수 없습니다.");
+		}
+		return title;
+	}
+
+	// 제목을 보내지 않으면 업로드 이름 규칙으로 정리한 파일 이름에서 .pdf를 뺀다. 이름이 올바르지 않으면 업로드가 422로 거부한다.
+	private static String defaultDocumentTitle(String originalName) {
+		String title = FileNames.sanitize(originalName)
+			.map((name) -> name.regionMatches(true, Math.max(0, name.length() - 4), ".pdf", 0, 4)
+					? name.substring(0, name.length() - 4) : name)
+			.map(String::strip)
+			.filter((name) -> !name.isEmpty())
+			.orElse("문서");
+		return title.length() > MAX_DOCUMENT_TITLE ? title.substring(0, MAX_DOCUMENT_TITLE).strip() : title;
+	}
+
 	// ---------- 공통 ----------
 
 	Usage usage(long owner) {
 		Quota quota = this.records.quota(owner);
 		return new Usage(quota.usedBytes(), this.properties.quota().toBytes(), quota.recordingCount(),
-				this.properties.maxRecordings(), this.uploads.maxFileBytes().orElse(null),
-				this.properties.maxFoldersPerCourse());
+				this.properties.maxRecordings(), this.uploads.maxFileBytes(Kind.RECORDING).orElse(null),
+				this.properties.maxFoldersPerCourse(), quota.documentCount(), this.properties.maxDocuments(),
+				this.uploads.maxFileBytes(Kind.DOCUMENT).orElse(null));
 	}
 
 	/**
@@ -573,17 +752,22 @@ class StudyRoomService {
 	}
 
 	/**
-	 * 녹음 하나를 더 둘 수 있는지. 오래가는 이유부터 답한다. 파일 하나의 크기 상한(413 {@code too_large})은 녹음을 지워도 풀리지
-	 * 않으므로 개수(409 {@code too_many_recordings})와 용량(409 {@code quota_exceeded})보다 먼저 본다.
+	 * 녹음이나 문서 하나를 더 둘 수 있는지. 용량은 녹음과 문서가 함께 쓴다. 오래가는 이유부터 답한다. 파일 하나의 크기 상한(413
+	 * {@code too_large})은 지워도 풀리지 않으므로 개수(409 {@code too_many_recordings}, {@code too_many_documents})와 용량(409
+	 * {@code quota_exceeded})보다 먼저 본다.
 	 */
-	private void requireRoom(Quota quota, long bytes) {
-		this.uploads.requireSize(bytes);
-		if (quota.recordingCount() + 1 > this.properties.maxRecordings()) {
+	private void requireRoom(Kind kind, Quota quota, long bytes) {
+		this.uploads.requireSize(kind, bytes);
+		if (kind == Kind.RECORDING && quota.recordingCount() + 1 > this.properties.maxRecordings()) {
 			throw new ApiException(HttpStatus.CONFLICT, "too_many_recordings",
 					"녹음은 " + this.properties.maxRecordings() + "개까지 저장할 수 있습니다.");
 		}
+		if (kind == Kind.DOCUMENT && quota.documentCount() + 1 > this.properties.maxDocuments()) {
+			throw new ApiException(HttpStatus.CONFLICT, "too_many_documents",
+					"문서는 " + this.properties.maxDocuments() + "개까지 저장할 수 있습니다.");
+		}
 		if (quota.usedBytes() + bytes > this.properties.quota().toBytes()) {
-			throw new ApiException(HttpStatus.CONFLICT, "quota_exceeded", "학습실 녹음 용량이 부족합니다.");
+			throw new ApiException(HttpStatus.CONFLICT, "quota_exceeded", "학습실 용량이 부족합니다.");
 		}
 	}
 
@@ -626,7 +810,7 @@ class StudyRoomService {
 
 	enum ItemKind {
 
-		COURSE_FILE("course_file"), RECORDING("recording");
+		COURSE_FILE("course_file"), RECORDING("recording"), DOCUMENT("document");
 
 		private final String code;
 
@@ -650,6 +834,10 @@ class StudyRoomService {
 
 	/** 녹음 업로드의 요청 지문에 들어가는 값. */
 	record RecordingRequest(long courseId, NewRecording recording) {
+	}
+
+	/** 문서 업로드의 요청 지문에 들어가는 값. */
+	record DocumentRequest(long courseId, String title, Long folderId) {
 	}
 
 	/** 폴더 만들기의 멱등 receipt. 이름은 원장에 남기지 않는다. */
@@ -691,23 +879,53 @@ class StudyRoomService {
 
 	}
 
-	/** @param kind course_file(itemId는 파일 ID) 또는 recording(itemId는 녹음 ID) */
-	record PlacementView(String kind, long itemId, long folderId, int version) {
+	/**
+	 * 내 문서.
+	 *
+	 * @param fileName 올린 PDF 파일 이름(업로드 이름 규칙으로 정리한 값). 내려받을 때의 이름이다
+	 * @param state ready, scanning(검사 중, 내용을 받을 수 없음), rejected(검사에서 거부)
+	 * @param folderId 둔 폴더. 과목 학습실 맨 위면 null
+	 * @param updatedAt 마지막으로 바꾼 일시. 바꾼 적이 없으면 createdAt
+	 */
+	record DocumentView(long documentId, long courseId, String title, String fileName, long sizeBytes, String state,
+			Long folderId, Instant createdAt, Instant updatedAt, int version) {
 
-		static PlacementView of(Placement p) {
-			return p.fileId() != null ? new PlacementView(ItemKind.COURSE_FILE.code(), p.fileId(), p.folderId(), p.version())
-					: new PlacementView(ItemKind.RECORDING.code(), p.recordingId(), p.folderId(), p.version());
+		static DocumentView of(Document d) {
+			return new DocumentView(d.id(), d.courseId(), d.title(), d.fileName(), d.sizeBytes(), d.state(),
+					d.folderId(), d.createdAt(), d.updatedAt(), d.version());
 		}
 
 	}
 
-	/** @param maxFileBytes 녹음 파일 하나의 크기 상한(upload_policies). 상한이 없으면 null */
-	record Usage(long usedBytes, long quotaBytes, int recordingCount, int maxRecordings, Long maxFileBytes,
-			int maxFoldersPerCourse) {
+	/**
+	 * @param kind course_file(itemId는 파일 ID), recording(itemId는 녹음 ID), document(itemId는 문서 ID)
+	 */
+	record PlacementView(String kind, long itemId, long folderId, int version) {
+
+		static PlacementView of(Placement p) {
+			if (p.fileId() != null) {
+				return new PlacementView(ItemKind.COURSE_FILE.code(), p.fileId(), p.folderId(), p.version());
+			}
+			if (p.recordingId() != null) {
+				return new PlacementView(ItemKind.RECORDING.code(), p.recordingId(), p.folderId(), p.version());
+			}
+			return new PlacementView(ItemKind.DOCUMENT.code(), p.documentId(), p.folderId(), p.version());
+		}
+
 	}
 
+	/**
+	 * @param usedBytes 녹음과 문서 파일의 바이트 합. quotaBytes를 함께 쓴다
+	 * @param maxFileBytes 녹음 파일 하나의 크기 상한(upload_policies study_recording). 상한이 없으면 null
+	 * @param maxDocumentFileBytes 문서 파일 하나의 크기 상한(upload_policies study_document). 상한이 없으면 null
+	 */
+	record Usage(long usedBytes, long quotaBytes, int recordingCount, int maxRecordings, Long maxFileBytes,
+			int maxFoldersPerCourse, int documentCount, int maxDocuments, Long maxDocumentFileBytes) {
+	}
+
+	/** @param documents 내 문서. 올린 일시 역순이다 */
 	record CourseView(long courseId, List<FolderView> folders, List<RecordingView> recordings,
-			List<PlacementView> placements, Usage usage) {
+			List<DocumentView> documents, List<PlacementView> placements, Usage usage) {
 	}
 
 	record RecordingList(List<RecordingView> recordings, Usage usage) {

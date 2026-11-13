@@ -60,8 +60,10 @@ class MultipartRateLimitFilter extends OncePerRequestFilter {
 				// 파일함에 올리기는 일반 업로드와 같은 제한을 함께 쓴다(FileboxUploads, ADR-0028 12번).
 				new Limit(paths.matcher(HttpMethod.POST, "/api/filebox/files"), "upload", properties.rateLimit(),
 						properties.rateWindow()),
-				// 학습실 녹음 올리기(files.studyroom)도 일반 업로드와 같은 제한을 함께 쓴다(ADR-0040).
+				// 학습실 녹음·문서 올리기(files.studyroom)도 일반 업로드와 같은 제한을 함께 쓴다(ADR-0040).
 				new Limit(paths.matcher(HttpMethod.POST, "/api/me/study-room/courses/{courseId}/recordings"), "upload",
+						properties.rateLimit(), properties.rateWindow()),
+				new Limit(paths.matcher(HttpMethod.POST, "/api/me/study-room/courses/{courseId}/documents"), "upload",
 						properties.rateLimit(), properties.rateWindow()),
 				// 아바타 사진(files.avatar.AvatarImageController). 사용자당 10분에 10번.
 				new Limit(paths.matcher(HttpMethod.POST, "/api/me/profile/image"), "avatar-upload", 10,

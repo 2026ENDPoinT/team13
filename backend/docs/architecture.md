@@ -52,7 +52,7 @@
 | [ADR-0037](adr/0037-quiz-regrade-and-assessment-deletion.md) | 퀴즈 정답 정정은 한 transaction의 재채점이고, 평가 활동 삭제는 활동의 삭제 표시다 |
 | [ADR-0038](adr/0038-avatar-photo.md) | 아바타 사진은 상태를 identity가, 바이트를 files가 갖는다. 올린 원본은 검사 뒤 격리한 converter가 256px JPEG로 다시 만든 것만 내보내고, 본인과 폐강하지 않은 과목을 함께하는 사람만 본다 |
 | [ADR-0039](adr/0039-institution-wall-clock-time.md) | 일시는 기관 시간대(기본 `Asia/Seoul`)의 벽시계로 두고, DB session과 JVM을 그 시간대에 고정한 뒤 시작할 때 세 값이 같은지 확인한다. `Instant`는 절대 시각이고 기관 시간대는 `GET /api/auth/methods`가 알린다 |
-| [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음은 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 녹음 바이트는 업로드 흐름(용도 `study_recording`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 구간 응답으로 내보낸다 |
+| [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음, 내 문서(PDF)는 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 바이트는 업로드 흐름(용도 `study_recording`·`study_document`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 내보낸다 |
 | [ADR-0042](adr/0042-school-activity-import.md) | 학번·학교 비밀번호 로그인 때 그 학생의 학교 session으로 과목마다 학교 강의실 첫 화면을 차례로 읽어 주차·학습활동 목록과 본인 완료 표시를 두고, 학생의 강의실 주차 목록에 `origin: "school"` 행으로 붙인다. 로그인은 짧게만 기다리고 나머지는 뒤에서 이어 가며, 학교 session은 그 작업이 끝나면 버린다. 내용(파일, 영상, 제출물)은 가져오지 않고 학교 e-Class에서 연다 |
 | [ADR-0043](adr/0043-school-content.md) | 학교 로그인으로 열린 학교 session(쿠키)을 STack session에 붙여 메모리에 두고(로그아웃·만료 때 닫는다), 학생이 STack에서 학교 자료·공지를 열 때 그 학생의 학교 session으로 학교 상세를 읽어 서비스 자료·공지 모양으로 준다. 학교 파일(자료·공지 첨부)은 학생이 열 때 받아 과목 파일(용도 `school_file`)로 저장해 같은 과목 구성원이 서비스 파일 경로로 함께 연다. 목록은 학교 쪽 상태를 바꾸지 않는 화면만 읽고(공지의 안 읽은 수도 그 목록에서 센다), 영상 학습창·2차 인증·출석 요청과 공지 확인은 부르지 않는다 |
 
@@ -726,24 +726,29 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 파일을 지우면 같은 commit부터 세 API 모두 404다. GC가 rendition을 닫을 때 썸네일 행과 대기 중인 변환도 닫고 객체를 지운다.
 
-### 7.21 학습실 폴더와 강의 녹음
+### 7.21 학습실 폴더, 강의 녹음, 내 문서
 
-결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음은 쪽별 요약과 학습 대화에 들어가지 않는다. 녹음의 전사·요약은 7.22절이다.
+결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 학생이 학습실에 올리는 자기 PDF도 같은 규칙으로 둔다(ADR-0040 14번). 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 문서, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 문서, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음과 문서는 쪽별 요약과 학습 대화에 들어가지 않는다. 녹음의 전사·요약은 7.22절이고, 문서는 전사·요약·외부 모델 어디에도 가지 않는다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/study-room/courses/{courseId}` | 로그인한 사용자 | 그 과목의 내 폴더(`position` 순), 녹음(녹음 시작 일시 역순), 배치, 사용량. 강의자료 배치는 지금 그 과목에서 그 파일을 읽을 수 있을 때만 나온다 |
+| `GET /api/me/study-room/courses/{courseId}` | 로그인한 사용자 | 그 과목의 내 폴더(`position` 순), 녹음(녹음 시작 일시 역순), 문서(`documents`, 올린 일시 역순), 배치, 사용량. 강의자료 배치는 지금 그 과목에서 그 파일을 읽을 수 있을 때만 나온다. 사용량의 `usedBytes`는 녹음과 문서의 합이고 `documentCount`, `maxDocuments`, `maxDocumentFileBytes`가 함께 나온다 |
 | `POST /api/me/study-room/courses/{courseId}/folders` | 그 과목 구성원 | `{name}`(1~60자, 제어 문자 말고는 `/`, `\`도 받는다). 끝에 붙는다. 201. 같은 과목에 글자 그대로 같은 이름이면 409 `name_conflict`(대소문자·악센트가 다르면 다른 이름), 과목마다 50개까지(409 `too_many_folders`). `Idempotency-Key` 지원: 재전송은 그 폴더의 지금 상태, 그 사이 지웠으면 410 `folder_deleted` |
 | `PATCH /api/me/study-room/folders/{folderId}` · `DELETE` | 소유자 | 이름 바꾸기, 지우기. `If-Match` 필수. 지우면 그 안의 배치도 지워 항목이 과목 맨 위로 돌아간다. 녹음은 남는다 |
 | `PUT /api/me/study-room/courses/{courseId}/folder-order` | 소유자 | `{folders:[{id, version}]}`, 그 과목 폴더 전부를 새 순서로. 목록이 다르면 409 `folder_set_changed`, version이 다르면 409 `version_conflict`. 자리가 바뀐 폴더만 version이 오른다 |
-| `PUT /api/me/study-room/placements/{course-files\|recordings}/{itemId}` | 소유자 | `{folderId}`. 배치가 없으면 `If-Match: "0"`, 있으면 그 배치의 version. 강의자료는 폴더 과목에서 지금 읽을 수 있어야 하고(아니면 404), 녹음은 같은 과목 폴더에만(409 `course_mismatch`) |
-| `DELETE /api/me/study-room/placements/{course-files\|recordings}/{itemId}` | 소유자 | 배치를 지워 과목 맨 위로. `If-Match` 필수 |
+| `PUT /api/me/study-room/placements/{course-files\|recordings\|documents}/{itemId}` | 소유자 | `{folderId}`. 배치가 없으면 `If-Match: "0"`, 있으면 그 배치의 version. 강의자료는 폴더 과목에서 지금 읽을 수 있어야 하고(아니면 404), 녹음과 문서는 같은 과목 폴더에만(409 `course_mismatch`). 응답과 과목 보기의 `kind`는 `course_file`·`recording`·`document` |
+| `DELETE /api/me/study-room/placements/{course-files\|recordings\|documents}/{itemId}` | 소유자 | 배치를 지워 과목 맨 위로. `If-Match` 필수 |
 | `POST /api/me/study-room/courses/{courseId}/recordings` | 그 과목 구성원 | multipart `file`, `title`(1~200자, UTF-16 단위), `source`(`mic`·`tab`·`audio`), `durationMs`(1~86400000), `recordedAt`(offset이 있는 절대 시각, 2000-01-01부터 지금 + 5분까지. 가져온 파일은 파일의 마지막 수정 일시), `folderId`(선택). 용도 `study_recording`(50 MB, `webm, weba, ogg, opus, mp3, m4a, mp4, wav, aac, flac`, 내용 signature 확인)으로 받고 사용자마다 2 GB·500개(409 `quota_exceeded`, `too_many_recordings`). 201. `state`는 `scanning`·`ready`·`rejected`. `Idempotency-Key` 지원(지문에 과목, 제목, 출처, 길이, 시작 일시, 폴더가 들어간다): 재전송은 한도·폴더 검사 없이 그 녹음의 지금 상태, 그 사이 지웠으면 410 `recording_deleted` |
 | `GET /api/me/study-room/recordings` · `/recordings/{recordingId}` | 소유자 | 모든 과목의 내 녹음과 사용량, 녹음 하나(`ETag`). 과목을 잃어도 보인다 |
 | `PATCH /api/me/study-room/recordings/{recordingId}` · `DELETE` | 소유자 | 제목 바꾸기, 지우기. `If-Match` 필수. 지우면 배치를 지우고 파일 참조를 놓는다. 원본은 저장소 GC가 지운다 |
 | `GET /api/me/study-room/recordings/{recordingId}/content` · `HEAD` | 소유자 | 오디오. `Range` 하나면 206과 `Content-Range`, 내용 밖이면 416, 여러 구간이면 200 전체. 언제나 `attachment`, `Accept-Ranges: bytes`, `nosniff`, `CSP: sandbox`, `private, no-store`. 검사 전 409 `not_ready`, 거부 409 `content_rejected`. `HEAD`는 행만 읽는다. 사용자마다 10분에 600번. 감사 기록은 session·녹음마다 10분에 한 번, 저장소를 열기 전에 남긴다. 이미 남겼는지 찾지 못하면 재생을 막지 않고 다시 남긴다 |
+| `POST /api/me/study-room/courses/{courseId}/documents` | 그 과목 구성원 | multipart `file`(PDF), `title`(선택, 1~300자, 없으면 파일 이름에서 `.pdf`를 뺀 값), `folderId`(선택, 그 과목의 내 폴더), `key`(선택). 용도 `study_document`(50 MB, `pdf`, 내용 signature 확인. 아니면 422 `extension_not_allowed`·`content_mismatch`)로 받고 녹음과 함께 2 GB(409 `quota_exceeded`), 문서 500개(409 `too_many_documents`). 201, 본문은 `{documentId, courseId, title, fileName, sizeBytes, state, folderId, createdAt, updatedAt, version}`. 멱등 key는 `Idempotency-Key`나 `key`(둘 다면 같아야 한다, 지문에 과목, 제목, 폴더): 재전송은 그 문서의 지금 상태, 그 사이 지웠으면 410 `document_deleted` |
+| `GET /api/me/study-room/documents/{documentId}` | 소유자 | 문서 하나(`ETag`) |
+| `PATCH /api/me/study-room/documents/{documentId}` | 소유자 | `{title?, version}`. version이 다르면 409 `version_conflict` |
+| `DELETE /api/me/study-room/documents/{documentId}?version=n` | 소유자 | 204. version이 없으면 428, 다르면 409 `version_conflict`. 배치를 지우고 파일 참조를 놓는다. 지운 파일 행의 이름은 `document.pdf`가 된다 |
+| `GET /api/me/study-room/documents/{documentId}/content` | 소유자 | PDF(`application/pdf`, `attachment`, 파일 이름). Range와 응답 header, 요청 제한, 감사 기록(`study_room.document.read`)은 녹음 재생과 같다. 검사 전 409 `file_scanning`과 `Retry-After: 10`, 거부 422 `content_rejected` |
 
-한 사용자의 학습실 변경은 `study_room_quotas`의 그 사용자 행을 먼저 잠그고 차례로 한다. 녹음 파일은 과목 없이(`files.course_id` NULL) 첨부 없이 기록하므로 과목 파일 내려받기, 미리보기, 요약, 학습 대화는 그 파일을 열지 못한다. 변경 명령은 사용자마다 10분에 120번(`astra.study-room.rate-limit`), 녹음 올리기는 업로드 요청 제한도 함께 쓴다.
+한 사용자의 학습실 변경은 `study_room_quotas`의 그 사용자 행을 먼저 잠그고 차례로 한다. 녹음과 문서 파일은 과목 없이(`files.course_id` NULL) 첨부 없이 기록하므로 과목 파일 내려받기, 미리보기, 요약, 학습 대화는 그 파일을 열지 못한다. 변경 명령은 사용자마다 10분에 120번(`astra.study-room.rate-limit`), 녹음·문서 올리기는 업로드 요청 제한도 함께 쓴다. 교수자의 학습실 업로드는 지금처럼 강의자료 등록(`POST /api/courses/{courseId}/materials`)이다.
 
 ### 7.22 학습실 녹음 전사·요약
 

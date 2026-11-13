@@ -32,12 +32,26 @@ class StudyRoomRecords {
 			  JOIN file_blobs b ON b.file_blob_id = f.file_blob_id
 			""";
 
+	private static final String DOCUMENT = """
+			SELECT doc.study_room_document_id, doc.course_id, doc.file_id, doc.document_title, doc.document_version,
+			       f.original_file_name, f.file_size_bytes, f.scan_state, b.blob_state, b.storage_key,
+			       p.study_room_folder_id, doc.created_at, COALESCE(doc.updated_at, doc.created_at)
+			  FROM study_room_documents doc
+			  JOIN files f ON f.file_id = doc.file_id
+			  JOIN file_blobs b ON b.file_blob_id = f.file_blob_id
+			  LEFT JOIN study_room_placements p
+			    ON p.owner_user_id = doc.owner_user_id AND p.study_room_document_id = doc.study_room_document_id
+			""";
+
 	private static final String PLACEMENT = """
 			SELECT p.study_room_placement_id, p.study_room_folder_id, p.file_id, p.study_room_recording_id,
-			       p.placement_version, d.course_id
+			       p.study_room_document_id, p.placement_version, d.course_id
 			  FROM study_room_placements p
 			  JOIN study_room_folders d ON d.study_room_folder_id = p.study_room_folder_id
 			""";
+
+	private static final String QUOTA = "SELECT used_bytes, recording_count, document_count FROM study_room_quotas"
+			+ " WHERE owner_user_id = :owner";
 
 	private final JdbcClient jdbc;
 
@@ -51,38 +65,55 @@ class StudyRoomRecords {
 				INSERT INTO study_room_quotas (owner_user_id) VALUES (:owner)
 				ON DUPLICATE KEY UPDATE owner_user_id = owner_user_id
 				""").param("owner", owner).update();
-		return this.jdbc
-			.sql("SELECT used_bytes, recording_count FROM study_room_quotas WHERE owner_user_id = :owner FOR UPDATE")
+		return this.jdbc.sql(QUOTA + " FOR UPDATE")
 			.param("owner", owner)
-			.query((rs, n) -> new Quota(rs.getLong(1), rs.getInt(2)))
+			.query((rs, n) -> new Quota(rs.getLong(1), rs.getInt(2), rs.getInt(3)))
 			.single();
 	}
 
 	/** 잠그지 않고 읽는다. 행이 없으면 쓴 것이 없다. */
 	Quota quota(long owner) {
-		return this.jdbc.sql("SELECT used_bytes, recording_count FROM study_room_quotas WHERE owner_user_id = :owner")
+		return this.jdbc.sql(QUOTA)
 			.param("owner", owner)
-			.query((rs, n) -> new Quota(rs.getLong(1), rs.getInt(2)))
+			.query((rs, n) -> new Quota(rs.getLong(1), rs.getInt(2), rs.getInt(3)))
 			.optional()
-			.orElse(new Quota(0, 0));
+			.orElse(new Quota(0, 0, 0));
 	}
 
-	/** {@link #lockQuota}로 잠근 뒤 부른다. */
-	void addUsage(long owner, long bytes, int recordings) {
+	/**
+	 * {@link #lockQuota}로 잠근 뒤 부른다. 바이트는 녹음과 문서를 함께 센다.
+	 *
+	 * @param recordings 더할 녹음 수
+	 * @param documents 더할 문서 수
+	 */
+	void addUsage(long owner, long bytes, int recordings, int documents) {
 		this.jdbc.sql("""
-				UPDATE study_room_quotas SET used_bytes = used_bytes + :bytes, recording_count = recording_count + :count
+				UPDATE study_room_quotas
+				   SET used_bytes = used_bytes + :bytes, recording_count = recording_count + :recordings,
+				       document_count = document_count + :documents
 				 WHERE owner_user_id = :owner
-				""").param("bytes", bytes).param("count", recordings).param("owner", owner).update();
+				""")
+			.param("bytes", bytes)
+			.param("recordings", recordings)
+			.param("documents", documents)
+			.param("owner", owner)
+			.update();
 	}
 
 	/** {@link #lockQuota}로 잠근 뒤 부른다. */
-	void removeUsage(long owner, long bytes, int recordings) {
+	void removeUsage(long owner, long bytes, int recordings, int documents) {
 		this.jdbc.sql("""
 				UPDATE study_room_quotas
 				   SET used_bytes = IF(used_bytes >= :bytes, used_bytes - :bytes, 0),
-				       recording_count = IF(recording_count >= :count, recording_count - :count, 0)
+				       recording_count = IF(recording_count >= :recordings, recording_count - :recordings, 0),
+				       document_count = IF(document_count >= :documents, document_count - :documents, 0)
 				 WHERE owner_user_id = :owner
-				""").param("bytes", bytes).param("count", recordings).param("owner", owner).update();
+				""")
+			.param("bytes", bytes)
+			.param("recordings", recordings)
+			.param("documents", documents)
+			.param("owner", owner)
+			.update();
 	}
 
 	// ---------- folders ----------
@@ -217,6 +248,66 @@ class StudyRoomRecords {
 				""").param("upload", uploadId).param("owner", owner).query(Long.class).optional();
 	}
 
+	// ---------- documents ----------
+
+	Optional<Document> document(long owner, long id) {
+		return this.jdbc.sql(DOCUMENT + " WHERE doc.owner_user_id = :owner AND doc.study_room_document_id = :id")
+			.param("owner", owner)
+			.param("id", id)
+			.query(StudyRoomRecords::document)
+			.optional();
+	}
+
+	/** 과목 하나의 내 문서. 올린 일시 역순, 그다음 ID 역순이다. */
+	List<Document> documents(long owner, long courseId) {
+		return this.jdbc.sql(DOCUMENT + """
+				 WHERE doc.owner_user_id = :owner AND doc.course_id = :course
+				 ORDER BY doc.created_at DESC, doc.study_room_document_id DESC
+				""").param("owner", owner).param("course", courseId).query(StudyRoomRecords::document).list();
+	}
+
+	long insertDocument(long owner, long courseId, long fileId, String title) {
+		GeneratedKeyHolder key = new GeneratedKeyHolder();
+		this.jdbc.sql("""
+				INSERT INTO study_room_documents (owner_user_id, course_id, file_id, document_title)
+				VALUES (:owner, :course, :file, :title)
+				""")
+			.param("owner", owner)
+			.param("course", courseId)
+			.param("file", fileId)
+			.param("title", title)
+			.update(key, "study_room_document_id");
+		return key.getKey().longValue();
+	}
+
+	/** @return 바꾼 행 수. version이 다르면 0 */
+	int renameDocument(long owner, long id, int version, String title) {
+		return this.jdbc.sql("""
+				UPDATE study_room_documents SET document_title = :title, document_version = document_version + 1
+				 WHERE owner_user_id = :owner AND study_room_document_id = :id AND document_version = :version
+				""").param("title", title).param("owner", owner).param("id", id).param("version", version).update();
+	}
+
+	/** 문서와 그 배치를 지운다. @return 지운 문서 수. version이 다르면 0 */
+	int deleteDocument(long owner, long id, int version) {
+		this.jdbc.sql("DELETE FROM study_room_placements WHERE owner_user_id = :owner AND study_room_document_id = :id")
+			.param("owner", owner)
+			.param("id", id)
+			.update();
+		return this.jdbc.sql("""
+				DELETE FROM study_room_documents
+				 WHERE owner_user_id = :owner AND study_room_document_id = :id AND document_version = :version
+				""").param("owner", owner).param("id", id).param("version", version).update();
+	}
+
+	/** 업로드로 만든 문서. 그 업로드가 문서 업로드가 아니거나 문서를 지웠으면 비어 있다. */
+	Optional<Long> documentOfUpload(long owner, long uploadId) {
+		return this.jdbc.sql("""
+				SELECT d.study_room_document_id FROM upload_sessions u JOIN study_room_documents d ON d.file_id = u.file_id
+				 WHERE u.upload_id = :upload AND u.owner_user_id = :owner AND d.owner_user_id = :owner
+				""").param("upload", uploadId).param("owner", owner).query(Long.class).optional();
+	}
+
 	/**
 	 * 이 사용자가 이 멱등 key로 올린 업로드가 있는지. 업로드의 용도와 상태는 보지 않는다. 같은 요청인지는 업로드가 지문으로 판정한다.
 	 */
@@ -246,6 +337,14 @@ class StudyRoomRecords {
 			.optional();
 	}
 
+	Optional<Placement> placementOfDocument(long owner, long documentId) {
+		return this.jdbc.sql(PLACEMENT + " WHERE p.owner_user_id = :owner AND p.study_room_document_id = :item")
+			.param("owner", owner)
+			.param("item", documentId)
+			.query(StudyRoomRecords::placement)
+			.optional();
+	}
+
 	/** 과목 하나의 내 폴더에 둔 배치. 볼 수 있는지는 부르는 쪽이 거른다. */
 	List<Placement> placements(long owner, long courseId) {
 		return this.jdbc.sql(PLACEMENT + """
@@ -254,17 +353,19 @@ class StudyRoomRecords {
 				""").param("owner", owner).param("course", courseId).query(StudyRoomRecords::placement).list();
 	}
 
-	/** @param fileId 강의자료 파일이면 그 ID, 녹음이면 null. recordingId는 그 반대다 */
-	long insertPlacement(long owner, long folderId, Long fileId, Long recordingId) {
+	/** 강의자료 파일 ID, 녹음 ID, 문서 ID 가운데 하나만 null이 아니다. */
+	long insertPlacement(long owner, long folderId, Long fileId, Long recordingId, Long documentId) {
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
-				INSERT INTO study_room_placements (owner_user_id, study_room_folder_id, file_id, study_room_recording_id)
-				VALUES (:owner, :folder, :file, :recording)
+				INSERT INTO study_room_placements (owner_user_id, study_room_folder_id, file_id, study_room_recording_id,
+				                                   study_room_document_id)
+				VALUES (:owner, :folder, :file, :recording, :document)
 				""")
 			.param("owner", owner)
 			.param("folder", folderId)
 			.param("file", fileId)
 			.param("recording", recordingId)
+			.param("document", documentId)
 			.update(key, "study_room_placement_id");
 		return key.getKey().longValue();
 	}
@@ -296,12 +397,18 @@ class StudyRoomRecords {
 				rs.getLong(11), state(rs.getString(12), rs.getString(13)), rs.getString(14));
 	}
 
-	private static Placement placement(ResultSet rs, int n) throws SQLException {
-		return new Placement(rs.getLong(1), rs.getLong(2), rs.getObject(3, Long.class), rs.getObject(4, Long.class),
-				rs.getInt(5), rs.getLong(6));
+	private static Document document(ResultSet rs, int n) throws SQLException {
+		return new Document(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getString(4), rs.getInt(5),
+				rs.getString(6), rs.getLong(7), state(rs.getString(8), rs.getString(9)), rs.getString(10),
+				rs.getObject(11, Long.class), rs.getTimestamp(12).toInstant(), rs.getTimestamp(13).toInstant());
 	}
 
-	// 검사 판정(ADR-0018)을 녹음의 상태로 옮긴다. clean으로 가는 길은 검사기의 clean 판정 하나다.
+	private static Placement placement(ResultSet rs, int n) throws SQLException {
+		return new Placement(rs.getLong(1), rs.getLong(2), rs.getObject(3, Long.class), rs.getObject(4, Long.class),
+				rs.getObject(5, Long.class), rs.getInt(6), rs.getLong(7));
+	}
+
+	// 검사 판정(ADR-0018)을 녹음·문서의 상태로 옮긴다. clean으로 가는 길은 검사기의 clean 판정 하나다.
 	private static String state(String scanState, String blobState) {
 		if ("clean".equals(scanState) && "clean".equals(blobState)) {
 			return Recording.READY;
@@ -312,7 +419,8 @@ class StudyRoomRecords {
 		return Recording.SCANNING;
 	}
 
-	record Quota(long usedBytes, int recordingCount) {
+	/** @param usedBytes 녹음과 문서 파일의 바이트 합 */
+	record Quota(long usedBytes, int recordingCount, int documentCount) {
 	}
 
 	record Folder(long id, long courseId, String name, int position, int version, Instant createdAt) {
@@ -334,11 +442,23 @@ class StudyRoomRecords {
 	}
 
 	/**
+	 * @param fileName 업로드할 때의 파일 이름(정리한 값)
+	 * @param state {@link Recording#READY}, {@link Recording#SCANNING}, {@link Recording#REJECTED}
+	 * @param folderId 둔 폴더. 과목 학습실 맨 위면 null
+	 * @param updatedAt 마지막으로 바꾼 일시. 바꾼 적이 없으면 만든 일시
+	 */
+	record Document(long id, long courseId, long fileId, String title, int version, String fileName, long sizeBytes,
+			String state, String storageKey, Long folderId, Instant createdAt, Instant updatedAt) {
+	}
+
+	/**
 	 * @param fileId 강의자료 파일 배치면 그 파일 ID
 	 * @param recordingId 녹음 배치면 그 녹음 ID
+	 * @param documentId 문서 배치면 그 문서 ID
 	 * @param courseId 둔 폴더의 과목
 	 */
-	record Placement(long id, long folderId, Long fileId, Long recordingId, int version, long courseId) {
+	record Placement(long id, long folderId, Long fileId, Long recordingId, Long documentId, int version,
+			long courseId) {
 	}
 
 }
