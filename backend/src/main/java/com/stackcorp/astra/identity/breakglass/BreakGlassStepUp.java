@@ -82,7 +82,7 @@ class BreakGlassStepUp {
 		String refusal = this.transactions.execute((status) -> {
 			this.events.lockAccount(actor.userId());
 			if (this.events.failuresWithin(actor.userId(), BreakGlassLogin.LOCK_WINDOW) >= BreakGlassLogin.MAX_FAILURES) {
-				return reject(actor, ip, "STEP_UP_LOCKED", "locked");
+				return reject(actor, ip, LoginEvents.STEP_UP_LOCKED, "locked");
 			}
 			if (!valid) {
 				return reject(actor, ip, "STEP_UP_BAD_TOTP", "rejected");
