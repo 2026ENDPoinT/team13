@@ -50,6 +50,7 @@
 - [CI/CD](#-cicd)
 - [운영](#-운영)
 - [문서](#-문서)
+- [발표자료](#-발표자료)
 - [팀](#-팀)
 
 ## 💡 왜 만들었나
@@ -215,6 +216,7 @@ team13/
 │   ├── docs/                 #   ADR 41개, C4, 아키텍처, 운영
 │   └── compose.yaml          #   api · worker · converter · transcoder · mysql · clamav
 ├── docs/                     # 이 README의 스크린샷과 아이콘
+├── 발표자료/                  # 해커톤 발표 PDF·HTML·영상
 └── .github/workflows/        # Backend CI, Frontend CI
 ```
 
@@ -299,6 +301,15 @@ flowchart LR
 - [`backend/docs/c4.md`](backend/docs/c4.md), [`backend/docs/architecture.md`](backend/docs/architecture.md) — 구조
 - [`frontend/README.md`](frontend/README.md) — 실행, 환경 변수, 화면 구조
 - [`frontend/docs/TEST_STRATEGY.md`](frontend/docs/TEST_STRATEGY.md) — 테스트 전략
+
+## 🎬 발표자료
+
+ENDPoinT 해커톤 발표 자료입니다.
+
+- [`STack_발표자료.pdf`](%EB%B0%9C%ED%91%9C%EC%9E%90%EB%A3%8C/STack_%EB%B0%9C%ED%91%9C%EC%9E%90%EB%A3%8C.pdf) — 슬라이드 13장
+- [`STack_발표자료.html`](%EB%B0%9C%ED%91%9C%EC%9E%90%EB%A3%8C/STack_%EB%B0%9C%ED%91%9C%EC%9E%90%EB%A3%8C.html) — 다운로드해서 브라우저로 열면 영상 포함 오프라인 재생, `←`/`→` 넘김, `F` 전체화면
+- [`STack_문제영상.mp4`](%EB%B0%9C%ED%91%9C%EC%9E%90%EB%A3%8C/STack_%EB%AC%B8%EC%A0%9C%EC%98%81%EC%83%81.mp4) — 문제 상황 영상 23초
+- [`STack_시연영상.mp4`](%EB%B0%9C%ED%91%9C%EC%9E%90%EB%A3%8C/STack_%EC%8B%9C%EC%97%B0%EC%98%81%EC%83%81.mp4) — 시연 영상 1분 47초
 
 ## 👥 팀
 
