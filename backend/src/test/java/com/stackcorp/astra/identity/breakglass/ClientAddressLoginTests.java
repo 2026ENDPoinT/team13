@@ -22,8 +22,8 @@ import com.stackcorp.astra.TestData;
 import jakarta.servlet.http.Cookie;
 
 /**
- * 로그인 기록과 session에 남기는 브라우저 주소. CloudFront가 넘기는 {@code CloudFront-Viewer-Address}는 연결한 쪽이 설정한 proxy
- * 범위({@link IntegrationTest#TRUSTED_PROXIES})일 때만 믿고, 다른 곳에서 온 같은 header는 무시한다.
+ * 로그인 기록과 session에 남기는 브라우저 주소. {@code X-Forwarded-For}는 연결한 쪽이 설정한 proxy 범위
+ * ({@link IntegrationTest#TRUSTED_PROXIES})일 때만 오른쪽부터 읽고, 다른 곳에서 온 같은 header는 무시한다.
  */
 class ClientAddressLoginTests extends IntegrationTest {
 
@@ -56,12 +56,13 @@ class ClientAddressLoginTests extends IntegrationTest {
 	}
 
 	@Test
-	void recordsTheViewerAddressOnlyWhenTheConnectionComesFromTheTrustedProxy() throws Exception {
+	void recordsTheForwardedAddressOnlyWhenTheConnectionComesFromTheTrustedProxy() throws Exception {
 		Cookie csrf = this.mvc.perform(get("/api/auth/csrf")).andReturn().getResponse().getCookie("XSRF-TOKEN");
 
+		// CloudFront는 브라우저가 보낸 값 뒤에 자기가 본 주소를 덧붙인다. 왼쪽 값은 읽지 않는다.
 		Cookie session = this.mvc
-			.perform(from(CLOUDFRONT, login(csrf, BREAK_GLASS_PASSWORD)).header("CloudFront-Viewer-Address",
-					"203.0.113.9:51234"))
+			.perform(from(CLOUDFRONT, login(csrf, BREAK_GLASS_PASSWORD)).header("X-Forwarded-For",
+					"198.51.100.66, 203.0.113.9"))
 			.andExpect(status().isNoContent())
 			.andReturn()
 			.getResponse()
@@ -71,16 +72,16 @@ class ClientAddressLoginTests extends IntegrationTest {
 				""").param("token", session.getValue()).query(String.class).single()).isEqualTo("203.0.113.9");
 
 		// 같은 header라도 proxy가 아닌 곳에서 오면 연결한 쪽 주소다.
-		this.mvc.perform(login(csrf, "wrong").header("CloudFront-Viewer-Address", "203.0.113.10:1"))
+		this.mvc.perform(login(csrf, "wrong").header("X-Forwarded-For", "203.0.113.10"))
 			.andExpect(status().isUnauthorized());
-		this.mvc.perform(from("10.40.3.4", login(csrf, "wrong")).header("CloudFront-Viewer-Address", "203.0.113.11:1"))
+		this.mvc.perform(from("10.40.3.4", login(csrf, "wrong")).header("X-Forwarded-For", "203.0.113.11"))
 			.andExpect(status().isUnauthorized());
-		// proxy에서 왔어도 header가 둘이거나 형식이 다르면 믿지 않는다. IPv6 주소는 괄호 없이 뒤에 port가 붙는다.
-		this.mvc.perform(from(CLOUDFRONT, login(csrf, "wrong")).header("CloudFront-Viewer-Address", "203.0.113.12:1",
-				"203.0.113.13:1")).andExpect(status().isUnauthorized());
-		this.mvc.perform(from(CLOUDFRONT, login(csrf, "wrong")).header("CloudFront-Viewer-Address", "evil.example:80"))
+		// proxy에서 왔어도 형식이 다르거나 비어 있으면 그 proxy 주소다.
+		this.mvc.perform(from(CLOUDFRONT, login(csrf, "wrong")).header("X-Forwarded-For", "evil.example"))
 			.andExpect(status().isUnauthorized());
-		this.mvc.perform(from(CLOUDFRONT, login(csrf, "wrong")).header("CloudFront-Viewer-Address", "2001:db8::7:443"))
+		this.mvc.perform(from(CLOUDFRONT, login(csrf, "wrong")).header("X-Forwarded-For", ""))
+			.andExpect(status().isUnauthorized());
+		this.mvc.perform(from(CLOUDFRONT, login(csrf, "wrong")).header("X-Forwarded-For", "2001:db8::7"))
 			.andExpect(status().isUnauthorized());
 
 		assertThat(this.jdbc.sql("SELECT ip_address FROM login_events WHERE user_id = :id ORDER BY login_event_id")

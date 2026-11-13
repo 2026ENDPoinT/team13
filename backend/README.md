@@ -16,6 +16,113 @@
 
 2026-11-10 STack-Backend에서 루트 `src/`·MySQL 마이그레이션·`db/`·`docs/`를 커밋 이력과 함께 STack-eclass-Backend로 옮겼다(STAC-90). 2026-11-13 STack-eclass-Backend를 커밋 이력과 함께 다시 STack-Backend로 옮겼고, 이때 캠퍼스 온 백엔드(`backend/`)는 main에서 지웠다. 캠퍼스 온의 마지막 상태는 `archive/campus-on` 브랜치에 있다.
 
+## 구조 한눈에 보기 (C4)
+
+이 레포의 코드와 `compose.yaml`이 정의하는 구조를 C4의 위 두 단계로 그린다. 둥근 끝 상자는 사람, 굵은 파란 상자는 이 시스템과 그 실행 단위, 점선 상자는 외부 시스템, 원통은 저장소다. 실선 화살표는 호출이고, 점선 화살표는 브라우저 redirect나 공유 volume이다.
+
+### System Context
+
+```mermaid
+flowchart LR
+  ST(["학생"])
+  IN(["교수자<br/>교수 · 조교 · 비정규 담당자"])
+  OP(["알림마당 운영자"])
+  BG(["break-glass 관리자"])
+  FE["프론트엔드 · 앞단 proxy<br/>Frontend-final server.mjs<br/>Cloudflare Tunnel"]
+  AS["ASTRA 백엔드<br/>이 레포"]
+  IDP["학교 IdP<br/>OpenID Connect"]
+  EC["학교 e-Class<br/>ILOS 로그인 화면"]
+  LLM["LLM 제공자<br/>OpenAI 호환 API"]
+  S3[("객체 저장소<br/>S3 · S3 호환")]
+  MIR["ClamAV 서명 mirror"]
+  ST & IN & OP & BG -->|"브라우저"| FE
+  FE -->|"/api · /doc · /vod"| AS
+  FE -.->|"로그인 redirect"| IDP
+  AS -->|"code 교환 · JWKS"| IDP
+  AS -->|"학번 로그인 확인 · 수강과목"| EC
+  AS -->|"쪽 요약 · 학습 대화"| LLM
+  AS -->|"파일 읽기 · 쓰기"| S3
+  AS -->|"서명 내려받기"| MIR
+  classDef person fill:#e8f0fe,stroke:#1a73e8
+  classDef system fill:#1a73e8,stroke:#0b3d91,stroke-width:3px,color:#fff
+  classDef ext fill:#f5f5f5,stroke:#777,stroke-dasharray:5 3
+  class ST,IN,OP,BG person
+  class AS system
+  class FE,IDP,EC,LLM,S3,MIR ext
+```
+
+사람은 코드가 정하는 역할로 나눈다. 학생과 교수자는 과목 안의 역할(`catalog.api.CourseMemberships.CourseRole`의 `STUDENT`, `INSTRUCTOR`)이다. 알림마당 운영자는 `community_operators` 행으로 정하고(`communication/CommunityOperators`), break-glass 관리자는 로컬 로그인과 TOTP로 들어오는 계정이다(`identity/breakglass/BreakGlassLogin`).
+
+| 외부 시스템 | 방향 | 오가는 것 |
+|---|---|---|
+| 프론트엔드 · 앞단 proxy | 브라우저 → proxy → 백엔드 | SPA와 `server.mjs`는 [Frontend-final](https://github.com/STack-Corp/Frontend-final) 레포에 있다. `server.mjs`가 `/api`, `/doc`, `/vod`를 api로 넘기고, 그 앞의 Cloudflare Tunnel이 TLS를 끝낸다. Terraform 구성(`infra/`)에서는 CloudFront가 이 자리에 온다 |
+| 학교 IdP | 백엔드 → IdP, 브라우저 → IdP | OpenID Connect code flow와 PKCE. 설정했을 때만 켜진다 |
+| 학교 e-Class | 백엔드 → e-Class | 학번·비밀번호로 학교 화면에 로그인해 보고 이름·학과·학년과 수강과목을 읽는다. 학교에 공개 API가 없어 브라우저와 같은 form 요청을 보낸다. 설정했을 때만 켜진다 |
+| LLM 제공자 | 백엔드 → 제공자 | 교수자가 동의한 자료의 쪽별 요약과 학습 대화. 기본 주소는 DeepSeek이다. API key가 있을 때만 켜진다 |
+| 객체 저장소 | 백엔드 → 저장소 | 업로드 원본, 쪽 이미지, HLS segment 같은 파생물. compose는 저장소를 띄우지 않는다 |
+| ClamAV 서명 mirror | 백엔드 → mirror | 악성코드 서명만 내려받는다. 업로드 파일은 보내지 않는다 |
+
+### Container
+
+```mermaid
+flowchart LR
+  FE["프론트엔드 · 앞단 proxy<br/>Frontend-final"]
+  subgraph HOST["compose 프로젝트 astra"]
+    API["api<br/>Spring Boot"]
+    WK["worker<br/>Spring Boot"]
+    CV["converter<br/>Java · LibreOffice"]
+    TC["transcoder<br/>Java · ffmpeg"]
+    DB[("mysql<br/>MySQL 8.4")]
+    AV["clamav<br/>clamd"]
+    FC["freshclam"]
+  end
+  SCH["학교 IdP · e-Class"]
+  S3[("객체 저장소<br/>S3 · S3 호환")]
+  LLM["LLM 제공자"]
+  MIR["ClamAV 서명 mirror"]
+  FE -->|"HTTP :8080"| API
+  API -->|"HTTPS 로그인 확인"| SCH
+  API & WK -->|"JDBC"| DB
+  API & WK -->|"S3 API"| S3
+  WK -->|"HTTP :8090 문서"| CV
+  WK -->|"HTTP :8091 영상"| TC
+  WK -->|"TCP :3310 검사"| AV
+  WK -->|"HTTPS 요약 · 대화"| LLM
+  FC -.->|"서명 volume"| AV
+  FC -->|"HTTPS 서명"| MIR
+  classDef box fill:#1a73e8,stroke:#0b3d91,stroke-width:3px,color:#fff
+  classDef ext fill:#f5f5f5,stroke:#777,stroke-dasharray:5 3
+  class API,WK,CV,TC,DB,AV,FC box
+  class FE,S3,SCH,LLM,MIR ext
+```
+
+| container | 기술 | 맡는 일 |
+|---|---|---|
+| `api` | Spring Boot 4, Java 25 (Spring profile `api`) | HTTP API와 로그인. 시작할 때 Flyway 마이그레이션을 적용한다. 브라우저 요청은 앞단 proxy를 거쳐서만 온다 |
+| `worker` | api와 같은 jar (Spring profile `worker`) | 배경 작업. 업로드 검사, 문서 변환, 영상 변환, 쪽별 요약, 학습 대화, 정리 작업을 한다. 할 일은 DB의 작업 행에서 가져오고 api와 직접 통신하지 않는다 |
+| `converter` | 같은 jar의 `com.stackcorp.converter`, PDFBox, LibreOffice | 문서를 쪽 이미지·텍스트·썸네일로 바꾸고 아바타 사진을 정규화한다. 외부 network, 비밀값, 저장소 credential이 없다 |
+| `transcoder` | 같은 jar의 `com.stackcorp.transcoder`, ffmpeg | 영상을 HLS segment로 바꾼다. 외부 network, 비밀값, 저장소 credential, 암호화 key가 없다 |
+| `mysql` | MySQL 8.4 (compose profile `mysql`) | 정본 데이터와 작업 행. profile을 끄면 RDS 같은 외부 MySQL을 쓴다 |
+| `clamav` | ClamAV clamd (compose profile `scan`) | 업로드 파일의 악성코드 검사. worker만 닿는다 |
+| `freshclam` | ClamAV freshclam (compose profile `scan`) | 서명을 받아 clamav와 함께 쓰는 volume에 둔다. 다른 container에 닿지 않는다 |
+
+api의 코드는 `com.stackcorp.astra` 아래 패키지 하나가 모듈 하나다. 모듈은 다른 모듈의 `api` 패키지만 쓸 수 있고 `ModuleStructureTests`가 이를 확인한다. worker는 같은 모듈을 실행하고 배경 작업 bean만 더 켠다.
+
+| 모듈 | 맡는 일 |
+|---|---|
+| `identity` | 사용자, 외부 신원 연결, session, 기기, 재인증, break-glass 로그인 |
+| `catalog` | 학기, 과목, 수강, 시간표, 알림 |
+| `learning` | 강의실, 주차, 학습활동, 영상 학습 session, 출석 |
+| `assessment` | 과제, 퀴즈, 설문, 성적 |
+| `communication` | 공지, Q&A, 게시판, 쪽지, 알림마당 |
+| `files` | 업로드, 첨부, 파일함, 학습실, 문서 rendition, 영상 asset, 업로드 검사 작업. 객체 저장소를 부르는 유일한 모듈이다 |
+| `summary` | 강의 자료의 쪽별 요약, LLM 동의, 학습 대화 |
+| `home` | 메인 화면 집계, 할 일, 캘린더. 쓰기가 없다 |
+| `integration` | 다른 모듈이 정의한 port의 구현. 학교 IdP, 학교 e-Class, LLM, converter·transcoder·clamd client, `/doc`·`/vod` cookie 서명. 외부 network를 여는 유일한 모듈이다 |
+| `shared` | 오류 형식, requestId, 시간, 멱등 원장, 감사 로그, 지표. 모든 모듈이 쓴다 |
+
+모듈 안의 구성, port, 배경 작업, 요청 흐름은 [docs/c4.md](docs/c4.md) 3~4절에 있고, 배포 토폴로지와 결정의 이유는 [docs/architecture.md](docs/architecture.md)에 있다.
+
 ## 폴더 구성
 
 | 경로 | 내용 |
@@ -71,7 +178,7 @@ git commit -m "Update reference to <변경 요약>"
 - 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
 - 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
-- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 121 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
+- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 123 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
 
 ## 빌드와 실행
 
@@ -287,6 +394,27 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 | `ASTRA_STUDYROOM_RATE_LIMIT` · `ASTRA_STUDYROOM_RATE_WINDOW` | `120` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 학습실 변경 명령 수. 녹음 올리기는 업로드 제한(`ASTRA_UPLOAD_RATE_LIMIT`)을 쓴다 |
 | `ASTRA_STUDYROOM_PLAY_RATE_LIMIT` | `600` | 한 사용자가 같은 구간 안에 보낼 수 있는 녹음 재생 요청 수(GET·HEAD, 탐색마다 하나) |
 
+### 학습실 녹음 전사·요약 설정
+
+새 학습실 녹음은 올리면 자동으로 Deepgram이 전사하고 요약 모델이 요약한다([ADR-0041](docs/adr/0041-recording-transcription-and-summary.md)). `ASTRA_DEEPGRAM_API_KEY`가 없으면 기능이 꺼진다: 작업을 만들지 않고 응답에 `transcription`, `summary`를 싣지 않는다. Deepgram key만 있고 모델(`ASTRA_LLM_API_KEY`, `ASTRA_LLM_ENABLED`, 위 "LLM 설정")이 없으면 전사만 한다. 요약은 그 모델 설정을 그대로 쓴다. api와 worker가 같은 `.env`를 받아야 한다(api가 작업을 만들고 worker가 처리한다). 이미 만든 작업은 worker에서 그 제공자 설정이 없어지면 `failed`로 닫힌다. 값은 시작할 때 검사하고, 틀리면 앱이 뜨지 않는다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_DEEPGRAM_API_KEY` | 없음 | Deepgram API key. 저장소와 로그에 남기지 않는다 |
+| `ASTRA_DEEPGRAM_URL` | `https://api.deepgram.com` | 이 주소 뒤에 `/v1/listen`을 붙여 부른다. https만(loopback은 http 허용). EU 처리는 `https://api.eu.deepgram.com` |
+| `ASTRA_DEEPGRAM_MODEL` | `nova-3` | 인식 모델 |
+| `ASTRA_DEEPGRAM_LANGUAGE` | `multi` | 인식 언어. `multi`는 한국어·영어가 섞인 강의를 한 모델로 받는다 |
+| `ASTRA_DEEPGRAM_LANGUAGE_HINTS` | `ko,en` | `multi`일 때만 보내는 `language_hint` |
+| `ASTRA_DEEPGRAM_TIMEOUT` | `15m` | 요청 하나의 전체 제한 시간 |
+| `ASTRA_DEEPGRAM_MAX_RESPONSE_BYTES` | `64MB` | 응답 본문 상한 |
+| `ASTRA_RECORDING_STUDY_MAX_RECORDING_MINUTES` | `180` | 녹음 하나의 길이 상한(분) |
+| `ASTRA_RECORDING_STUDY_DAILY_MINUTES` · `ASTRA_RECORDING_STUDY_MONTHLY_MINUTES` | `300` · `1800` | 사용자 한 사람이 하루·한 달(달력 월)에 전사할 수 있는 오디오 분. Deepgram이 잰 실제 길이로 센다 |
+| `ASTRA_RECORDING_STUDY_MAX_CONCURRENT` | `4` | 모든 worker를 합쳐 동시에 처리하는 전사 수, 요약 수(종류마다) |
+| `ASTRA_RECORDING_STUDY_SUMMARY_CHUNK_CHARS` | `24000` | 요약 호출 한 번에 보내는 전사 글자 수. 넘으면 나눠 요약한다 |
+| `ASTRA_RECORDING_STUDY_POLL_INTERVAL` | `10s` | worker가 대기 작업을 찾는 간격 |
+| `ASTRA_RECORDING_STUDY_LEASE` · `ASTRA_RECORDING_STUDY_LEASE_RENEWAL` | `20m` · `1m` | 실행 lease와 갱신 간격(lease보다 짧게) |
+| `ASTRA_RECORDING_STUDY_MAX_ATTEMPTS` · `ASTRA_RECORDING_STUDY_RETRY_BACKOFF` | `4` · `1m` | 일시 오류일 때 실행 횟수와 첫 재시도 대기(4배씩 늘고 1시간 상한) |
+
 ### 온라인 강의 학습 설정
 
 학습 session과 출석 인정 적립은 [ADR-0014](docs/adr/0014-learning-session-credit.md)를 따른다. 적립 간격의 하한과 상한, lease는 하트비트 주기에서 정해진다.
@@ -379,7 +507,7 @@ PIN/QR 출석의 보안 값이다([ADR-0030](docs/adr/0030-attendance-and-smart-
 | `ASTRA_SCHOOL_ACTIVITIES_INTERVAL` | `10m` | 같은 학생이 이 간격 안에 다시 로그인하면 가져오지 않는다 |
 | `ASTRA_SCHOOL_ACTIVITIES_CONCURRENCY` | `4` | 동시에 도는 가져오기 수(1~32). 넘치면 그 로그인은 가져오지 않는다 |
 | `ASTRA_SESSION_ALLOWED_ORIGINS` | 없음 | 상태를 바꾸는 요청에 허용하는 Origin(쉼표 구분). 브라우저가 보내는 모양(`scheme://host[:port]`, 소문자, 기본 port와 끝의 `/` 없이) 그대로 적고, 다른 모양이면 앱이 시작하지 않는다. 비우면 요청 자신의 origin만 허용하는데, proxy 뒤에서는 앱이 보는 Host·scheme이 브라우저의 것과 달라 POST·PUT·DELETE가 모두 403이 된다. 그래서 compose 구성은 이 값을 요구한다(아래 "컨테이너로 실행") |
-| `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES` | 없음 | 이 CIDR(쉼표 구분)에서 온 연결에서만 `CloudFront-Viewer-Address`를 브라우저 주소로 쓴다. CloudFront VPC origin이 있는 app subnet을 넣는다. 비우면 header를 믿지 않고 연결한 쪽 주소를 쓴다 |
+| `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES` | 없음 | 요청을 넘기는 proxy의 주소 또는 CIDR(쉼표 구분). 연결한 쪽 주소가 여기 있을 때만 `X-Forwarded-For`를 오른쪽부터 읽고, 여기 있는 주소를 건너뛴 첫 주소를 브라우저 주소로 쓴다(로그인 기록, session, 학교 비밀번호·break-glass 로그인의 주소 단위 한도. IPv6 한도는 /64 단위로 센다). 믿는 hop마다 받은 header 뒤에 자기가 본 주소를 덧붙여야 안전하다. 덧붙이지 않는 앞단이 믿는 hop 바로 앞에 있으면 브라우저가 보낸 주소가 기록되고 한도도 그 주소로 센다. 비우면 header를 믿지 않고 연결한 쪽 주소를 쓴다. prefix 0(`0.0.0.0/0`, `::/0`), 점 넷이 아닌 IPv4(`10/8`), 범위 밖 bit가 있는 값(`10.0.0.1/8`)은 받지 않고 시작하지 않는다. Terraform 배포는 CloudFront VPC origin이 있는 app subnet, 프론트엔드 서버 뒤 단일 host는 `127.0.0.0/8,::1,<astra_egress 범위>`다([.env.example](.env.example)) |
 | `ASTRA_CLOUDFRONT_BASE_URL` | 없음 | 서비스 도메인(https). signed cookie 정책의 resource 기준 |
 | `ASTRA_CLOUDFRONT_KEY_PAIR_ID` | 없음 | CloudFront key group의 public key ID. 없으면 signed cookie를 발급하지 않는다 |
 | `ASTRA_CLOUDFRONT_PRIVATE_KEY` | 없음 | PKCS#8 PEM RSA 개인 key. `ASTRA_CLOUDFRONT_KEY_PAIR_ID`를 넣으면 필수이고, 없거나 비어 있으면 앱이 시작하지 않는다 |
@@ -481,7 +609,7 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 - 저장소는 S3 API면 된다. AWS S3와 instance role이면 bucket 이름만 넣고, S3 호환 저장소면 `ASTRA_STORAGE_ENDPOINT`, `ASTRA_STORAGE_ACCESS_KEY`, `ASTRA_STORAGE_SECRET_KEY`, `ASTRA_STORAGE_PATH_STYLE=true`를 넣는다. 이 구성은 저장소를 띄우지 않는다. EC2에서 container가 instance role을 쓰려면 instance metadata의 hop limit이 2여야 한다. 그러면 bridge network의 모든 container가 instance metadata에 닿으므로, host firewall이 `egress` network(bridge `astra-egress`, api와 worker만 붙는다)에서 온 것만 통과시킨다([ADR-0020](docs/adr/0020-terraform-layout.md) 6번). Terraform으로 만든 EC2에는 이 규칙이 있다. 다른 host에서 instance role을 쓰면 같은 규칙을 직접 넣는다.
 - api에는 두 설정이 꼭 있어야 하고, 없으면 뜨지 않는다. 브라우저는 api에 직접 오지 않고 앞단을 거치기 때문이다. 앞단은 둘 중 하나다.
   - Terraform 배포: CloudFront가 TLS를 끝내고 `/api/*`를 api로, `/doc/*`·`/vod/*`를 delivery bucket으로 보낸다. 배포 문서가 `.env`에 `ASTRA_SESSION_ALLOWED_ORIGINS`(서비스 주소)와 CloudFront 서명 key를 넣는다([infra/README.md](infra/README.md)).
-  - CDN 없는 단일 host: 프론트엔드 서버(STack-Frontend `server.mjs`)가 같은 host의 127.0.0.1에서 `/api/**`, `/doc/**`, `/vod/**`를 api로 넘긴다(`ASTRA_API_ORIGIN=http://127.0.0.1:8080`). 이 proxy는 Host를 api 주소로 바꾸고 `X-Forwarded-Host`를 붙이지만, 앱은 누구나 보낼 수 있는 `X-Forwarded-*`를 믿지 않는다. 그래서 `ASTRA_SESSION_ALLOWED_ORIGINS`에 브라우저 주소창의 origin(예: `https://eclass.stack-edu.com`)을 넣고, `/doc`, `/vod`는 앱이 직접 응답하도록 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)). [.env.example](.env.example)이 이 구성이다.
+  - CDN 없는 단일 host: 프론트엔드 서버(STack-Frontend `server.mjs`)가 `/api/**`, `/doc/**`, `/vod/**`를 api로 넘긴다. 운영 구성(Frontend-final `deploy/hermes/eclass-frontend/compose.yaml`)은 프론트엔드 container를 `astra_egress` network에 붙여 `ASTRA_API_ORIGIN=http://api:8080`으로 넘기고, cloudflared가 같은 container의 network namespace에서 server.mjs(127.0.0.1:4190)에 붙는다. host에서 띄우면 `ASTRA_API_ORIGIN=http://127.0.0.1:8080`이다. 이 proxy는 Host를 api 주소로 바꾸고 `X-Forwarded-Host`를 붙이지만, 앱은 누구나 보낼 수 있는 `X-Forwarded-Host`·`X-Forwarded-Proto`로 자기 origin을 정하지 않는다(`server.forward-headers-strategy=none`). 그래서 `ASTRA_SESSION_ALLOWED_ORIGINS`에 브라우저 주소창의 origin(예: `https://eclass.stack-edu.com`)을 넣고, `/doc`, `/vod`는 앱이 직접 응답하도록 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)). api가 보는 연결은 모두 `astra_egress` network의 한 주소(프론트엔드 container, host에서 띄우면 bridge gateway)에서 오므로, 브라우저 주소는 `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES`에 그 범위와 loopback을 넣어야 `X-Forwarded-For`에서 읽는다. server.mjs는 loopback에서 온 요청(cloudflared)이면 받은 `X-Forwarded-For` 뒤에 연결한 쪽 주소를 덧붙이고, 그 밖이면 연결한 쪽 주소 하나로 바꾼다. Cloudflare는 받은 값 뒤에 브라우저 주소를 덧붙인다. 이 덧붙임이 이 설정의 전제다. [.env.example](.env.example)이 이 구성이다.
 
   `ASTRA_SESSION_ALLOWED_ORIGINS`가 없으면 `docker compose`가 구성을 거부한다. compose는 api에 `ASTRA_DELIVERY_REQUIRED=true`를 넣으므로 `/doc`, `/vod` 서명이 없으면 api가 시작하지 않고 무엇을 넣을지 로그에 남긴다.
 - `docker compose stop`은 api가 처리 중인 요청을 끝낼 때까지, worker가 실행 중인 요약 작업을 `interrupted`로 닫을 때까지 최대 75초를 기다린다.
@@ -497,8 +625,14 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 | 3 | `ASTRA_SESSION_ALLOWED_ORIGINS` | 사용자가 브라우저로 여는 공개 주소가 들어 있어야 한다 | 프론트엔드 서버를 `https://eclass.stack-edu.com`으로 공개하면 그 값 | 시작은 정상이다. GET은 되지만 POST·PUT·DELETE는 모두 403 `forbidden`("허용하지 않은 출처의 요청입니다.")이 된다. 시작할 때는 알 수 없으므로 올린 뒤 로그인이나 저장을 한 번 해 본다 |
 | 4a | `ASTRA_DELIVERY_ORIGIN_ENABLED`, `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY` | 프론트엔드 서버가 `/doc`, `/vod`를 api로 넘기는 구성(CDN 없음)에서 쓴다. `true`와, Base64로 32 byte 이상인 비밀 key | `ASTRA_DELIVERY_ORIGIN_ENABLED=true`, `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY='<openssl rand -base64 32의 출력>'` | 4a와 4b가 모두 없으면 api가 시작하자마자 `astra.delivery.required=true이지만 /doc, /vod 전달 cookie를 서명할 수 없습니다`와 넣을 변수를 로그에 남기고 끝난다(worker는 이 검사를 하지 않는다). `ENABLED=true`인데 key가 없거나 Base64가 아니면 api와 worker가 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 대며 끝나고, 32 byte보다 짧으면 `astra.delivery.origin.signing-key는 32 byte 이상이어야 합니다`로 끝난다 |
 | 4b | `ASTRA_CLOUDFRONT_BASE_URL`, `ASTRA_CLOUDFRONT_KEY_PAIR_ID`, `ASTRA_CLOUDFRONT_PRIVATE_KEY` | CloudFront가 `/doc`, `/vod`를 내보내는 구성에서 쓴다. 서비스 주소, key group의 public key ID, PKCS#8 PEM 개인 key(줄바꿈은 `\n`, 큰따옴표 안에 한 줄) | `.env.example`의 CloudFront 줄 | 4a와 4b가 모두 없을 때는 4a 칸과 같다. key ID만 있고 개인 key가 없으면 api와 worker가 `ASTRA_CLOUDFRONT_PRIVATE_KEY`를 대며 끝난다. 4a와 함께 두면 `astra.delivery.origin.enabled와 astra.cloudfront.key-pair-id를 함께 설정할 수 없습니다`로 끝난다 |
+| 5 | `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES` | 프론트엔드 서버 뒤 단일 host에서, server.mjs 앞이 받은 `X-Forwarded-For` 뒤에 브라우저 주소를 덧붙이는 앞단(Cloudflare Tunnel)일 때만 쓴다. `127.0.0.0/8,::1,`과 `docker network inspect astra_egress --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'`가 내는 범위. `compose.yaml`은 이 범위를 고정하지 않으므로 network를 다시 만들면 다시 확인한다 | `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES=127.0.0.0/8,::1,172.18.0.0/16` | 주소나 CIDR이 아니거나 안전하지 않은 항목이면 api와 worker가 `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES(astra.client-address.trusted-proxies)의 값 '…'`과 이유를 남기고 시작하지 않는다. 없거나 범위가 틀리면 시작은 정상이지만 모든 요청이 한 주소로 보여, 누군가 학교 비밀번호를 15분 안에 30번 틀리면 그 15분 동안 모두의 학교 비밀번호 로그인이 429가 되고 로그인 기록과 session의 주소가 모두 같다. 앞단이 덧붙이지 않으면 위조한 주소가 기록된다. 올린 뒤 이 host 밖에서 공개 주소로 위조 header 확인을 한다: 자기 학번으로 틀린 비밀번호의 `POST /api/auth/eclass-login`을 `X-Forwarded-For: 203.0.113.99` 한 줄로 한 번, `X-Forwarded-For: 203.0.113.99`와 `X-Forwarded-For: 203.0.113.98` 두 줄로 한 번 보낸다(Cloudflare Access가 앞에 있으면 `cloudflared access curl`). 그 뒤 로그인해 `GET /api/me/login-events`(내 정보의 로그인 기록)를 보면 두 실패의 주소가 자기 공인 주소여야 하고 `203.0.113.99`·`203.0.113.98`이 없어야 한다. 있으면 이 값을 지우고 앞단을 고친다 |
 
-[docker/smoke-test.sh](docker/smoke-test.sh)는 `ASTRA_SESSION_ALLOWED_ORIGINS`가 없으면 compose가 구성을 거부하는지, 띄운 구성의 healthcheck, 공개 port, Host를 바꾸는 프론트엔드 proxy를 거친 상태 변경 요청이 허용 Origin이면 Origin·CSRF 검사를 지나고 목록에 없는 Origin이면 403인지, 같은 이미지와 `.env`에서 `/doc`, `/vod` 서명만 끄면 api가 시작하지 않는지, converter·transcoder의 network 차단과 비밀값 없음, 구성 파일의 network 경계(`egress`에는 api·worker만, clamav는 worker와만), transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, LibreOffice가 converter에만 있고 docx를 쪽으로 바꾸는지, 종료 처리를 확인한다. `X-Forwarded-Host`를 믿지 않는다는 것은 허용 목록이 빈 구성에서 `StackBackendApplicationTests`가 실제 Tomcat으로 확인한다. `scan` 프로필이 떠 있으면 clamav와 freshclam의 실제 도달 범위도 본다. EC2 host에서 실행하면 instance metadata token을 api와 worker만 받는지 보고, 다른 host에서는 이 단계를 건너뛴다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 하고 host에 `jq`가 있어야 한다.
+[docker/smoke-test.sh](docker/smoke-test.sh)는 `ASTRA_SESSION_ALLOWED_ORIGINS`가 없으면 compose가 구성을 거부하는지, 띄운 구성의 healthcheck, 공개 port, Host를 바꾸는 프론트엔드 proxy를 거친 상태 변경 요청이 허용 Origin이면 Origin·CSRF 검사를 지나고 목록에 없는 Origin이면 403인지, 같은 이미지와 `.env`에서 `/doc`, `/vod` 서명만 끄면 api가 시작하지 않는지, converter·transcoder의 network 차단과 비밀값 없음, 구성 파일의 network 경계(`egress`에는 api·worker만, clamav는 worker와만), transcoder의 ffmpeg와 작업 volume, 실행 user, 로그 형식, LibreOffice가 converter에만 있고 docx를 쪽으로 바꾸는지, 종료 처리를 확인한다. `X-Forwarded-Host`를 믿지 않는다는 것은 허용 목록이 비고 연결한 쪽(loopback)을 믿는 proxy로 둔 구성에서 `StackBackendApplicationTests`가 실제 Tomcat으로 확인한다. `scan` 프로필이 떠 있으면 clamav와 freshclam의 실제 도달 범위도 본다. EC2 host에서 실행하면 instance metadata token을 api와 worker만 받는지 보고, 다른 host에서는 이 단계를 건너뛴다. `.env`의 `COMPOSE_PROFILES`에 `mysql`이 있어야 하고 host에 `jq`가 있어야 한다.
+
+#### 이 판으로 올릴 때
+
+- 브라우저 주소를 `CloudFront-Viewer-Address` 대신 `X-Forwarded-For`에서 읽는다. Terraform 배포는 새 image를 먼저 배포하고, 그 뒤에 edge의 origin request policy 변경(`CloudFront-Viewer-Address` 제거)을 apply한다. 순서가 바뀌면 그 사이 이전 image는 header를 받지 못해 모든 요청이 CloudFront 주소 하나로 보인다.
+- 프론트엔드 서버 뒤 단일 host는 `.env`에 `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES`를 넣고 위 점검표 5번의 위조 header 확인을 한다. 이 확인은 Cloudflare와 프론트엔드 서버를 거쳐야 하므로 `docker/smoke-test.sh`에는 없다. 같은 모양의 요청은 `ClientAddressTomcatTests`가 실제 Tomcat으로 확인한다.
 
 ## CI
 

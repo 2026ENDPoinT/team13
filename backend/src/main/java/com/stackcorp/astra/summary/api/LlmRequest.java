@@ -8,8 +8,9 @@ import java.util.List;
 public record LlmRequest(Purpose purpose, String system, List<LlmMessage> messages, int maxOutputTokens,
 		List<LlmTool> tools) {
 
+	/** 요청의 쓰임. 제공자에 보내지 않는다. RECORDING은 학습실 녹음 요약(files의 TextModel port, ADR-0041)이다. */
 	public enum Purpose {
-		PAGES, STORY, REPAIR, CHAT
+		PAGES, STORY, REPAIR, CHAT, RECORDING
 	}
 
 	public LlmRequest {

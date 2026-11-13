@@ -164,6 +164,7 @@ flowchart LR
 - 활동 쪽 목록과 평가 ID: 주차 목록, 할 일, 캘린더의 행이 과제·퀴즈·설문 화면으로 바로 이어지도록 `learning`이 `learning.api.ActivityTargets` port를 정의하고 `assessment`가 구현한다. `learning`은 `assessment`에 의존하지 않는다. 활동 ID를 모아 쿼리 한 번으로 묻는다.
 - 요약 게시 여부: `learning`과 `summary`는 서로 의존하지 않으므로 자료 목록과 파일모음이 묻는 `learning.api.FileSummaries` port를 `integration`이 `summary.api.PublishedSummaries`로 구현한다(`summary.api.CourseStaff`와 같은 방향). 파일 ID를 모아 쿼리 한 번으로 묻는다.
 - 수강생 화면의 학습 열: 최근 학습과 진도율은 `learning`의 기록이고 `catalog`는 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.RosterLearning` port를 정의하고 `learning`이 구현한다. 한 쪽의 사용자 ID를 모아 사용자 수와 관계없이 같은 수의 쿼리로 묻는다.
+- 내 과목의 안 읽은 공지 수: 공지와 읽음 기록은 `communication`의 것이고 `catalog`는 `communication`에 의존하지 않으므로 `catalog`가 `catalog.api.UnreadCourseNotices` port를 정의하고 `communication`이 메인 화면의 `CourseNoticeDigest.unreadCounts`와 같은 집계로 구현한다. 목록의 과목 ID를 모아 과목 수와 관계없이 쿼리 한 번으로 묻는다.
 - 아바타 사진 유무: 이름 옆에 아바타를 그리는 `communication`·`learning` 응답은 사용자 ID 옆에 사진 유무를 준다. 판정은 `files`가 `files.api.AvatarPhotos`로 내보내고 `files/avatar/AvatarImages`가 아바타 경로와 같은 규칙으로 구현한다. 현재 사진은 `identity.api.ProfileImages.withCurrent`로, 공통 과목은 `catalog.api.CourseMates`로 사람 수와 관계없이 쿼리 두 번 이하에 묻는다.
 
 ### 4.2 모듈 규칙
@@ -251,9 +252,9 @@ flowchart LR
 - 모든 응답에 서버가 만든 `X-Request-Id`가 붙는다. filter에서 거부한 401, 403도 같다. client가 보낸 값은 쓰지 않는다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md)).
 - `Idempotency-Key`를 받는 명령은 권한 판정과 입력 검사 뒤 멱등 원장을 거친다. 같은 key와 같은 요청이면 처음 응답을, 다른 요청이면 409 `idempotency_conflict`를, 같은 key가 처리 중이면 3초까지 기다린 뒤 409 `idempotency_in_progress`를 돌려준다(SC-05). key는 사용자와 연산마다 따로다. 같은 key에 다른 요청이면 어떤 명령도 처음 만든 객체를 돌려주지 않는다. 자체 key를 두는 업로드(multipart, 스트림, 파일함)도 같은 규칙의 요청 지문(용도, 과목, 이름, 크기, 내용 hash, 폴더)을 저장해 비교한다([ADR-0010](adr/0010-upload-acceptance.md) 10번). key가 반드시 있어야 하는 명령(수강신청, 과제·퀴즈 제출, 설문 완료, 쪽지 보내기·답장·전달, 파일함 ZIP, 학습 대화 질문)은 `shared.idempotency.Idempotency.requireKey` 하나로 검사하고, header가 없으면 400 `idempotency_key_required`, 형식(1~100자의 영문, 숫자, `.` `_` `-`)이 틀리면 400 `invalid_request`다.
 - 상태를 바꾸거나 민감한 연산은 감사 기록(`audit_events`)을 남긴다. 명령의 transaction 안이면 함께 commit하고, 밖이면 기록 실패가 요청을 실패시키지 않는다. 본문, 파일 이름, 자유 텍스트는 남기지 않는다(SC-09). 남기지 않는 것은 읽음·확인 표시, 본인만 보는 임시저장, 학습 session의 시작·하트비트·종료(학습 원장이 기록이다), 미리보기의 변환 대기 응답뿐이다([ADR-0012](adr/0012-idempotency-ledger-and-audit.md) 2번).
-- 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록·수정, 요약 생성, 공지 작성·수정, 학습 session 시작과 하트비트에 있다. 사용자가 없는 break-glass 로그인만 브라우저 주소 단위로 건다. counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
+- 요청 제한은 사용자와 연산 단위로 건다(SC-09). 지금은 업로드, 자료 등록·수정, 요약 생성, 공지 작성·수정, 학습 session의 시작과 하트비트에 있다. 사용자가 없는 로그인만 브라우저 주소 단위로 건다: break-glass 로그인(15분에 30번)과 학교 비밀번호 로그인의 실패(15분에 30번, 학번 단위 10번과 함께). counter는 process 메모리에 있고 api가 2대가 되면 Valkey로 옮긴다(8절).
 - 개발용 로그인(`POST /api/auth/dev-login`)은 테스트 소스에만 있다. 배포하는 jar에는 들어가지 않고 로컬 실행(`./gradlew bootTestRun`)에서만 열린다. 이 컴퓨터에서 온 요청만 받고, proxy가 붙인 전달 header에 다른 주소가 있으면 거부한다. 이 판정은 연결한 쪽 주소로만 한다.
-- 로그인 기록, session, break-glass 주소 제한에 쓰는 브라우저 주소는 `identity`의 `ClientAddresses`가 정한다. 연결한 쪽 주소가 `astra.client-address.trusted-proxies`(CloudFront VPC origin이 있는 app subnet) 안일 때만 CloudFront가 만든 `CloudFront-Viewer-Address`를 쓰고, 그 밖에는 연결한 쪽 주소다. 기본은 비어 있어 header를 믿지 않는다. `X-Forwarded-For`는 왼쪽 값을 브라우저가 정할 수 있어 쓰지 않는다.
+- 로그인 기록(`login_events`), session(`user_sessions`), 로그인의 주소 단위 제한에 쓰는 브라우저 주소는 `identity`의 `ClientAddresses` 하나가 정한다. 연결한 쪽 주소가 `astra.client-address.trusted-proxies`(주소 또는 CIDR) 안일 때만 `X-Forwarded-For`를 오른쪽부터 읽고, 믿는 주소는 건너뛰어 처음 나오는 믿지 않는 주소를 쓴다. 앞단(CloudFront, Cloudflare, 프론트엔드 서버)은 받은 값 뒤에 자기가 본 주소를 덧붙이므로 왼쪽 값은 읽지 않는다. 이 덧붙임이 전제다. 믿는 hop 바로 앞에 덧붙이지 않는 앞단이 있으면 브라우저가 보낸 값을 읽는다. IP literal이 아닌 값(점 넷이 아닌 IPv4 포함)을 만나면 그 값을 넘긴 proxy 주소를 쓴다. 기본은 비어 있어 header를 믿지 않고, prefix 0이나 범위 밖 bit가 있는 값은 시작할 때 거부한다. Terraform 배포는 CloudFront VPC origin이 있는 app subnet을, 프론트엔드 서버 뒤 단일 host는 loopback(같은 container에서 server.mjs에 붙는 cloudflared)과 `astra_egress` 범위(api에 연결하는 프론트엔드 container, server.mjs를 host에서 띄우면 bridge gateway)를 넣는다. `compose.yaml`은 그 범위를 고정하지 않아 network를 다시 만들면 목록이 맞지 않을 수 있고, 그때는 header를 읽지 않는 쪽으로 틀린다. 주소 단위 제한의 key는 IPv4 주소, IPv6 /64다(`ClientAddresses.limitKey`). 기록에는 주소 그대로 남긴다. Spring·Tomcat의 forwarded header 처리는 `server.forward-headers-strategy=none`으로 고정해, 실행 환경을 알아보고 켜지는 일도 없다. 그래서 Origin 검사가 보는 Host와 scheme은 header로 바뀌지 않는다. 감사 기록과 요청 로그는 주소를 남기지 않는다.
 - 쪽지는 `communication`이 판정한다. 받는사람은 서버가 과목 관계로 계산한 범위 안에서만 고르고, 범위 밖 ID가 하나라도 있으면 보내지 않는다. 보관함의 주인이 아니면 존재와 관계없이 404다. 쪽지 조회는 읽음을 남기지 않고 읽음은 POST 명령이다. 발송, 받는사람 검색, 임시저장에 사용자 단위 요청 제한이 있다([ADR-0025](adr/0025-message-recipient-scope-and-boxes.md)).
 - 과제 제출 첨부는 `assessment`가 판정한다. 제출한 학생과 그 과목 담당자만 읽고, 같은 과목의 다른 학생은 읽지 못한다. 지운 과제의 제출 파일은 보존하지만 제출한 학생과 담당자도 읽지 못한다. 제출물 파일로는 요약 같은 파생물을 만들지 않는다. 학생 응답의 점수와 의견은 점수를 공개한 뒤에만 들어가고, 공개 전에는 속성 자체가 없다(SEC-14). 과제 등록·수정, 임시저장, 최종 제출에도 사용자 단위 요청 제한이 있다.
 - 성적은 `assessment`가 판정한다. 담당자만 성적부를 읽고 쓴다. 학생 성적 API는 session 사용자 본인 것만 돌려주고 대상 학생을 고르는 parameter가 없다. 공개하지 않은 항목의 점수, 의견, 그 점수가 들어간 합계는 속성 자체가 없다(SEC-14). 과제 항목의 이름, 배점, 공개, 점수는 과제 화면에서만, 퀴즈 항목은 퀴즈 화면에서만 바꾸고, 퀴즈 항목의 학생 공개는 `Quiz.release` 하나가 정한다([ADR-0023](adr/0023-gradebook-ownership-release-totals.md)). 학생에게는 보이는 과제·퀴즈의 항목만 나오고 지운 활동의 항목은 누구에게도 없다. 점수 쓰기는 행마다 감사 기록을 남긴다.
@@ -318,7 +319,7 @@ flowchart LR
 - session이 유효하면 IdP redirect를 거치지 않는다.
 - `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
 - 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 최근 7일 안에 공개된 본인 성적 항목 5개(`newGrades`: 항목, 과목, 공개 일시. 점수와 의견은 없다), 안 읽은 쪽지 수(`unreadMessages`), 안 읽은 알림 수(`unreadNotifications`)다.
-- 과목 카드에는 과목마다 진행 주(`currentWeek`, `weekCount`), 본인 영상 진도율(`progressPercent`), 본인 출석(`attendance: {attended, total}`)이 있다. 주는 수업 기간(정규 과목은 학기 `start_date`~`end_date`, 비정규 과정은 학습기간)을 시작일부터 7일씩 나눈 것이고, 오늘은 DB 시계의 날짜(기관 시간대, ADR-0039)다. 시작 전이면 0, 끝난 뒤면 `weekCount`, 기간이 없으면 둘 다 null이다. 진도율은 학생 진도 화면(`GET /api/courses/{courseId}/lecture-progress`)과 같이 학생에게 열린 영상 콘텐츠 가운데 출석인정을 채운 비율(버림)이고, 열린 콘텐츠가 없으면 null이다. 출석은 출석부 요약과 같은 기록에서 출석·지각·공결 차시 수(`attended`)와 판정한 차시 수(`total`, 휴강과 미판정 제외)다. 담당 과목은 진도율과 출석이 null이다.
+- 과목 카드에는 과목마다 진행 주(`currentWeek`, `weekCount`), 본인 영상 진도율(`progressPercent`), 본인 출석(`attendance: {attended, total}`)이 있다. 주는 수업 기간(정규 과목은 학기 `start_date`~`end_date`, 비정규 과정은 학습기간)을 시작일부터 7일씩 나눈 것이고, 오늘은 DB 시계의 날짜(기관 시간대, ADR-0039)다. 시작 전이면 0, 끝난 뒤면 `weekCount`, 기간이 없으면 둘 다 null이다. 진도율은 학생 진도 화면(`GET /api/courses/{courseId}/lecture-progress`)과 같이 학생에게 열린 영상 콘텐츠 가운데 출석인정을 채운 비율(버림)이고, 열린 콘텐츠가 없으면 null이다. 출석은 출석부 요약과 같은 기록에서 출석·지각·공결 차시 수(`attended`)와 판정한 차시 수(`total`, 휴강과 미판정 제외)다. 휴강하지 않은 차시가 하나도 없는 과목(학교에서 가져와 출석부를 쓰지 않는 과목)은 출석이 null이고, 차시가 있으면 아직 판정하지 않았어도 수가 있다. 담당 과목은 진도율과 출석이 null이다.
 - 쿼리는 과목 수와 관계없이 21개 이하다(DB 시계, 과목, 마감 전 활동 1과 완료 판정 4와 평가 ID 1, 안 읽은 공지 수, 최근 공지, 알림마당 공지 2, 영상 진도 1, 출석 1, 안 읽은 쪽지 수, 안 읽은 알림 수, 새 성적 5). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 과제, 퀴즈, 영상, 출석 차시가 있고 점수를 공개한 상태에서도 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
 - 할 일은 학생으로 수강하는 과목의, 공개됐고 `open_at <= now < close_at`인 학습활동 가운데 본인이 아직 끝내지 않은 것이다. 마감 일시가 없는 활동은 넣지 않는다. 완료는 `assessment.api.ActivityCompletions`가 판정한다: 과제는 최종 제출, 퀴즈는 온라인 시험이고 이어갈 응시가 없고 허용 횟수를 다 쓴 때, 강의실 설문은 참여 원장의 완료다. 끝낸 활동은 표시를 달아 남기지 않고 목록과 전체 수에서 뺀다. 원본 할일 팝업(`03_팝업_할일.md`)이 미완료 활동만 보이고 그 수를 헤더 배지로 쓰며, frontend도 `total`을 "남은 활동" 수로 쓰기 때문이다. 마감 전 활동은 500개까지 읽고 넘으면 `truncated`다. 영상과 자료의 완료는 보지 않는다(12절).
 
@@ -421,7 +422,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 역할은 과목 행과 같은 문장에서 정하고 수강생 수는 담당 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
+| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 모든 과목에 역할·학기와 관계없이 안 읽은 공지 수(`unreadNotices`: 메인 화면 과목의 같은 필드와 같은 집계, 강의실 왼쪽 메뉴의 공지 배지)가 있다. 역할은 과목 행과 같은 문장에서 정하고 수강생 수와 안 읽은 공지 수는 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
 | `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나. 항목은 `/api/me/courses`와 같다(`learners`는 담당자에게만) |
 | `GET /api/courses/{courseId}/weeks` | 과목 구성원 | `{serverTime, weeks}`. 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 활동마다 DB 시계로 정한 `phase`(`not_open`·`open`·`late`·`closed`, 과제·퀴즈·설문 화면과 같은 경계)와, 평가 활동이면 `assignmentId`·`quizId`·`surveyId` 중 하나. 자료·영상 활동은 `activityId`가 그 화면의 ID다. 학생에게는 학교 강의실에서 가져온 행(`activityId: "school-<번호>"`, `origin: "school"`, 화면 유형 `type`, `schoolType`, `schoolKind`, `phase`, 본인 `done`(모르면 null), `attendance`, `learningTimeSec`, `offline`, 학교에서 여는 `schoolUrl`)과 학교에만 있는 주차를 같은 목록에 붙인다. 담당자에게는 붙이지 않는다([ADR-0042](adr/0042-school-activity-import.md)). 쿼리는 권한 판정 뒤 학생 5번, 담당자 3번 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부(파일마다 `summaryPublished`), 강의 영상 항목, `phase`, `serverTime`, 평가 활동이면 그 유형의 ID |
@@ -725,7 +726,7 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 ### 7.21 학습실 폴더와 강의 녹음
 
-결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음은 요약과 학습 대화에 들어가지 않는다.
+결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음은 쪽별 요약과 학습 대화에 들어가지 않는다. 녹음의 전사·요약은 7.22절이다.
 
 | API | 권한 | 하는 일 |
 |---|---|---|
@@ -741,6 +742,21 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | `GET /api/me/study-room/recordings/{recordingId}/content` · `HEAD` | 소유자 | 오디오. `Range` 하나면 206과 `Content-Range`, 내용 밖이면 416, 여러 구간이면 200 전체. 언제나 `attachment`, `Accept-Ranges: bytes`, `nosniff`, `CSP: sandbox`, `private, no-store`. 검사 전 409 `not_ready`, 거부 409 `content_rejected`. `HEAD`는 행만 읽는다. 사용자마다 10분에 600번. 감사 기록은 session·녹음마다 10분에 한 번, 저장소를 열기 전에 남긴다. 이미 남겼는지 찾지 못하면 재생을 막지 않고 다시 남긴다 |
 
 한 사용자의 학습실 변경은 `study_room_quotas`의 그 사용자 행을 먼저 잠그고 차례로 한다. 녹음 파일은 과목 없이(`files.course_id` NULL) 첨부 없이 기록하므로 과목 파일 내려받기, 미리보기, 요약, 학습 대화는 그 파일을 열지 못한다. 변경 명령은 사용자마다 10분에 120번(`astra.study-room.rate-limit`), 녹음 올리기는 업로드 요청 제한도 함께 쓴다.
+
+### 7.22 학습실 녹음 전사·요약
+
+결정은 [ADR-0041](adr/0041-recording-transcription-and-summary.md)에 있다. 프론트엔드 계약(Frontend-final `README.md` "녹음 전사·요약 연동 계약", `src/shared/recording-study.ts`)대로 녹음 하나를 돌려주는 응답에 선택 필드 `transcription`, `summary`를 싣는다.
+
+| 응답 | `transcription` / `summary` |
+|---|---|
+| `GET …/recordings/{recordingId}`, `POST …/courses/{courseId}/recordings`(201, 같은 key 재전송 포함), `PATCH …/recordings/{recordingId}` | 작업마다 `{"status":"queued"}`, `{"status":"processing"}`, `{"status":"ready","result":…}`, `{"status":"failed","message":"…"}`. 작업이 없으면 키가 없다 |
+| `GET …/recordings`, `GET …/courses/{courseId}` | 싣지 않는다(키가 없다). 화면은 상세에서만 읽는다 |
+
+- 전사 `result`: `{"segments":[{"at":초,"text":"…"}],"text":"줄바꿈으로 이은 전체"}`. `at`은 0.01초 단위, 오름차순, `0 ≤ at ≤ 실제 길이`. 말소리가 없으면 `segments: []`, `text: ""`.
+- 요약 `result`: `{"overview":"…","sections":[{"title":"…","at":초,"points":[{"term":"…","text":"…","at":초}],"table":{"head":[…],"rows":[[…]]}}],"note":"…"}`. `table`은 있을 때만. 모든 `at`은 전사 줄 시각이고 섹션은 오름차순이다. 모두 일반 텍스트다.
+- 작업은 업로드 transaction에서 `queued`로 만든다(Deepgram key가 있으면 전사, 모델도 있으면 요약). worker(`RecordingStudyRunner`)가 검사를 마친 녹음만 Deepgram으로, 전사가 끝난 녹음만 요약 모델로 처리한다. 실패 문장은 코드마다 정한 한국어 문장이다(`RecordingStudyFailures`).
+- 한도: 녹음 하나 180분, 사용자당 하루 300분·한 달 1800분(Deepgram이 잰 실제 길이로 청구), 종류마다 동시 처리 4개. 실제 길이가 상한을 넘거나 선언보다 허용 범위 넘게 길면 결과를 내주지 않는다.
+- 녹음을 지우면 같은 transaction에서 작업과 결과를 지운다. 처리 중인 결과는 버려진다.
 
 ## 8. Valkey 도입 기준
 
@@ -848,5 +864,6 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 | 아바타 사진 처리 | converter는 한 번에 하나만 처리해 긴 문서 변환 뒤에 사진이 기다린다. 사진 대기열의 길이·나이 지표는 없다. JPEG의 EXIF 회전은 적용하지 않는다(화면이 canvas로 그린 사진을 올린다). 카탈로그 과목 상세의 교수 아바타는 구성원이 아닌 사람에게 사진 없이 이름 글자로만 보인다([ADR-0038](adr/0038-avatar-photo.md)) | 사진 대기열 지표를 `FilesBacklog`에 더하고, 대기가 길면 converter에 사진 전용 실행 slot을 둔다. 교수 사진 공개 범위는 학교와 정한다 |
 | 한국 밖 브라우저의 일시 표시 | offset 없는 일시는 기관 시간대의 벽시계다. 프론트엔드가 `new Date(문자열)`로 읽으면 브라우저 시간대로 해석해 한국 밖에서 시각이 어긋난다([ADR-0039](adr/0039-institution-wall-clock-time.md)) | 프론트엔드가 `GET /api/auth/methods`의 `timeZone`으로 읽고 표시한다. 입력은 `datetime-local` 값을 그대로 보낸다 |
 | 학습실 녹음의 크기와 계정 삭제 | 녹음 파일은 50 MB까지라 브라우저 기본 bitrate로는 긴 강의가 넘을 수 있다. 계정 삭제 흐름이 없어 학습실 행과 녹음 파일은 소유자가 지울 때까지 남고, `users` 행을 cascade 없이 가리킨다([ADR-0040](adr/0040-study-room-sync.md)) | 프론트엔드가 `audioBitsPerSecond`를 낮춘다. 더 긴 녹음이 필요하면 clamd `StreamMaxLength`와 함께 상한을 올리고 스트림 업로드에 기록 자리를 더한다. 계정 삭제를 만들 때 같은 transaction에서 녹음 파일 참조를 놓고 학습실 행을 지운다 |
+| 학습실 녹음의 외부 처리 동의 | Deepgram key가 있으면 새 녹음은 학생 업로드만으로 Deepgram과 요약 모델 제공자에 간다. 녹음에 섞인 교수자·다른 학생의 동의, 과목·학생 단위 끄기, 실패·한도 녹음의 다시 처리, 기능 전 녹음의 처리가 없다. 길이 한도는 보내기 전에는 client가 보낸 길이로만 본다([ADR-0041](adr/0041-recording-transcription-and-summary.md)) | 학교 개인정보 기준과 고지를 받아 동의·끄기 단계를 정한다. 필요하면 재처리 API와 서버 쪽 오디오 길이 측정을 더한다 |
 | 오류 문장의 필드 이름 | 사용자가 입력하거나 고르는 값(제목, 본문, 설명, 기간, 배점, 문항·보기, 강의계획서 항목, 사유, 그룹 이름, 쪽지 고르기)의 400 문장은 화면의 항목 이름으로 바꿨다. `size`, `cursor`, `page`, `revision`, `version`, `If-Match`, `Idempotency-Key`, 열거 값(`type`, `status`, `sort`, `audience` 등), ID 목록의 400 문장은 바르게 만든 client가 보내지 않는 계약 오류라 아직 필드 이름을 쓴다 | client는 계약 오류 문장을 그대로 보이지 말고 `code`와 일반 문구로 바꾼다. 화면에 그대로 보이는 경로가 생기면 그 문장부터 바꾼다 |
 | 쪽지 목록의 기준 시각 | 다음 쪽은 첫 쪽의 기준 시각까지의 쪽지만 낸다. 오래 열어 둔 목록은 그 뒤 온 쪽지를 다음 쪽에 넣지 않는다 | 화면이 새 쪽지를 알리면 cursor 없이 첫 쪽을 다시 읽는다 |

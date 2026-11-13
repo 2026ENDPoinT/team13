@@ -17,6 +17,7 @@ import com.stackcorp.astra.catalog.CatalogQueries.TermView;
 import com.stackcorp.astra.catalog.EnrollmentRecords.Enrollment;
 import com.stackcorp.astra.catalog.api.CourseMemberships;
 import com.stackcorp.astra.catalog.api.CourseMemberships.CourseRole;
+import com.stackcorp.astra.catalog.api.UnreadCourseNotices;
 import com.stackcorp.astra.identity.api.Actor;
 import com.stackcorp.astra.shared.ApiException;
 
@@ -37,6 +38,9 @@ import org.springframework.web.bind.annotation.RestController;
  * 담당 과목에는 수강생 수(`learners`)가 있다. 그 담당자가 보는 수강생 명단(GET /api/courses/{courseId}/students)의 검색어 없는
  * `total`과 같은 사람 수다. 학생에게는 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 목록의 역할은 과목 행과
  * 같은 문장에서, 담당 과목의 수강생 수는 한 번에 읽어 쿼리 수가 과목 수와 관계없다.
+ * <p>
+ * 과목마다 안 읽은 공지 수(`unreadNotices`)가 있다. 강의실 왼쪽 메뉴의 공지 배지에 쓰고, 메인 화면 과목의 같은 필드와 같은 집계다
+ * ({@link UnreadCourseNotices}). 역할과 학기에 관계없이 모든 행에 있고, 모든 과목을 한 번에 센다.
  */
 @RestController
 class CourseController {
@@ -73,13 +77,16 @@ class CourseController {
 
 	private final CourseRosterQueries rosters;
 
+	private final UnreadCourseNotices unreadNotices;
+
 	CourseController(JdbcClient jdbc, CourseMemberships memberships, CatalogQueries queries,
-			EnrollmentRecords enrollments, CourseRosterQueries rosters) {
+			EnrollmentRecords enrollments, CourseRosterQueries rosters, UnreadCourseNotices unreadNotices) {
 		this.jdbc = jdbc;
 		this.memberships = memberships;
 		this.queries = queries;
 		this.enrollments = enrollments;
 		this.rosters = rosters;
+		this.unreadNotices = unreadNotices;
 	}
 
 	/**
@@ -153,7 +160,8 @@ class CourseController {
 		Map<Long, List<String>> instructors = this.queries.instructorNames(ids);
 		Map<Long, List<ScheduleView>> schedules = this.queries.schedules(ids);
 		Map<Long, Enrollment> enrolled = this.enrollments.enrolledOf(actor.userId(), ids);
-		LocalDateTime now = enrolled.isEmpty() ? null : this.queries.now();
+		LocalDateTime now = ids.isEmpty() ? null : this.queries.now();
+		Map<Long, Integer> unread = this.unreadNotices.of(actor.userId(), ids, now);
 		Map<Long, Integer> learners = this.rosters.counts(IntStream.range(0, rows.size())
 			.filter((i) -> roles.get(i) == CourseRole.INSTRUCTOR)
 			.mapToObj((i) -> rows.get(i).courseId())
@@ -174,7 +182,8 @@ class CourseController {
 			views.add(new CourseView(row.courseId(), row.key(), row.name(), row.code(), row.section(), row.term(),
 					role.name(), names, row.type(), row.credit(), schedules.getOrDefault(row.courseId(), List.of()),
 					row.offering(), mine, row.coverTemplate(), row.learningPeriod(), row.lectureType(),
-					role == CourseRole.INSTRUCTOR ? learners.getOrDefault(row.courseId(), 0) : null));
+					role == CourseRole.INSTRUCTOR ? learners.getOrDefault(row.courseId(), 0) : null,
+					unread.getOrDefault(row.courseId(), 0)));
 		}
 		return views;
 	}
@@ -228,11 +237,13 @@ class CourseController {
 	 * @param lectureType 수업형태(예: 이러닝수업). 없으면 null
 	 * @param learners 담당자면 수강생 수: 그 과목의 수강생 명단(GET /api/courses/{courseId}/students)에 나오는 사람 수로, 검색어 없는
 	 * 명단의 `total`과 같다. 학생이면 null
+	 * @param unreadNotices 게시된 과목 공지 중 요청한 사용자가 읽음으로 표시하지 않은 수(자기가 쓴 공지 제외). 메인 화면 과목의
+	 * `unreadNotices`와 같다
 	 */
 	record CourseView(long courseId, String key, String name, String code, String section, TermView term, String role,
 			List<String> instructors, String type, BigDecimal credit, List<ScheduleView> schedules,
 			OfferingSummary offering, MyEnrollment enrollment, String coverTemplate, String learningPeriod,
-			String lectureType, Integer learners) {
+			String lectureType, Integer learners, int unreadNotices) {
 	}
 
 }

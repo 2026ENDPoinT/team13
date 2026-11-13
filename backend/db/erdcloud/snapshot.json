@@ -14398,6 +14398,257 @@
    ]
   },
   {
+   "_id": "7wq882jcbTF8HG9rB",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_room_recording_jobs",
+   "name": "학습실 녹음 전사·요약 작업",
+   "position": {
+    "x": 8830,
+    "y": 50
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "7cfWrMALmbYyA5cQL",
+      "name": "녹음 작업 ID",
+      "pName": "study_room_recording_job_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "녹음 작업 ID",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": []
+   },
+   "fields": [
+    {
+     "_id": "cRdjabPfP3Xs43vAT",
+     "name": "녹음 소유 사용자 ID",
+     "pName": "owner_user_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "녹음 소유 사용자 ID",
+     "relEntity": "qGnfMsvCrBxdAyZWm",
+     "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "iudniM5xqx9dFojqs",
+     "name": "녹음 ID",
+     "pName": "study_room_recording_id",
+     "domain": "",
+     "type": "BIGINT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "녹음 ID",
+     "relEntity": "mghTfTgoNHkh8xbFF",
+     "relFieldId": "BCYyrAdt27jKKfy8Z",
+     "relType": "ZERO_OR_ONE_OR_MANY"
+    },
+    {
+     "_id": "5iYsSA8WDAtz9p6ej",
+     "name": "작업 종류",
+     "pName": "job_kind",
+     "domain": "",
+     "type": "VARCHAR(16)",
+     "defaultValue": "",
+     "isAllowNull": false,
+     "comment": "작업 종류: transcription|summary",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "XRH9pwcmpTAyFtxvT",
+     "name": "상태",
+     "pName": "job_state",
+     "domain": "",
+     "type": "VARCHAR(16)",
+     "defaultValue": "'queued'",
+     "isAllowNull": false,
+     "comment": "상태: queued|processing|ready|failed",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "tDZMR3rL64jrFWjoC",
+     "name": "실패 또는 마지막 재시도 사유 코드",
+     "pName": "failure_code",
+     "domain": "",
+     "type": "VARCHAR(32)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실패 또는 마지막 재시도 사유 코드(화면 문장은 코드로 정한다)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "T8NLyGnYGBbTssR29",
+     "name": "ready 결과",
+     "pName": "result_json",
+     "domain": "",
+     "type": "MEDIUMTEXT",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "ready 결과(프론트 계약 형식 JSON: 전사 segments·text 또는 요약 overview·sections·note)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "MmsSshiLfHKHcouf8",
+     "name": "실행을 시작한 횟수",
+     "pName": "attempt_count",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "실행을 시작한 횟수",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "hGPmxW9h7YsX2RJTy",
+     "name": "다음 실행을 시작할 수 있는 일시",
+     "pName": "next_attempt_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "다음 실행을 시작할 수 있는 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "tPQMdWv2zxKjvYX6D",
+     "name": "실행 중인 worker",
+     "pName": "lease_owner",
+     "domain": "",
+     "type": "VARCHAR(128)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실행 중인 worker",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "hKtP6tTciLcQugGWN",
+     "name": "실행 lease 만료 일시",
+     "pName": "lease_expires_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "실행 lease 만료 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "eEcobzeSz3X7H6Lsu",
+     "name": "전사 실행 동안 사용량에 잡아 둔 오디오 초",
+     "pName": "reserved_seconds",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "전사 실행 동안 사용량에 잡아 둔 오디오 초",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "u5n52HZqogTbhQfZq",
+     "name": "사용량을 잡아 둔 날짜",
+     "pName": "reserved_on",
+     "domain": "",
+     "type": "DATE",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "사용량을 잡아 둔 날짜(study_room_transcription_usage.usage_date)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "LHXnwtv6JGZBNfpGR",
+     "name": "제공자가 처리한 오디오 길이",
+     "pName": "audio_seconds",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "제공자가 처리한 오디오 길이(초, 올림)",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "redYBHZwkpgG2eHaq",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "AWh8pvZrqSWxG6uJM",
+     "name": "마지막 실행 시작 일시",
+     "pName": "started_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "마지막 실행 시작 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "ihsBtGsTEAXP2TwaL",
+     "name": "끝난(ready, failed) 일시",
+     "pName": "finished_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "끝난(ready, failed) 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "b9ce6JN4snzFh4SaL",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
    "_id": "mghTfTgoNHkh8xbFF",
    "_diagramId": "B5bWYfGmFisJTYLka",
    "pName": "study_room_recordings",
@@ -14557,6 +14808,89 @@
     },
     {
      "_id": "Bh9ex7u9a8H5LME3Z",
+     "name": "수정 일시",
+     "pName": "updated_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "",
+     "isAllowNull": true,
+     "comment": "수정 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    }
+   ]
+  },
+  {
+   "_id": "M855WK2q8QKvth7sg",
+   "_diagramId": "B5bWYfGmFisJTYLka",
+   "pName": "study_room_transcription_usage",
+   "name": "학습실 녹음 전사 사용량",
+   "position": {
+    "x": 8830,
+    "y": 638
+   },
+   "keys": {
+    "pks": [
+     {
+      "_id": "bst6AeZmDTLet9LHb",
+      "name": "날짜",
+      "pName": "usage_date",
+      "domain": "",
+      "type": "DATE",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "날짜",
+      "relEntity": null,
+      "relFieldId": null,
+      "relType": null
+     }
+    ],
+    "fks": [
+     {
+      "_id": "ANEJ5DvHi9niYrDx3",
+      "name": "사용자 ID",
+      "pName": "owner_user_id",
+      "domain": "",
+      "type": "BIGINT UNSIGNED",
+      "defaultValue": "",
+      "isAllowNull": false,
+      "comment": "사용자 ID",
+      "relEntity": "qGnfMsvCrBxdAyZWm",
+      "relFieldId": "ZjQ95Bmd9t3WhFXxr",
+      "relType": "ZERO_OR_ONE_OR_MANY"
+     }
+    ]
+   },
+   "fields": [
+    {
+     "_id": "LKBxw5iPJz6422yyx",
+     "name": "전사했거나 전사 중인 오디오 초",
+     "pName": "audio_seconds",
+     "domain": "",
+     "type": "INT UNSIGNED",
+     "defaultValue": "0",
+     "isAllowNull": false,
+     "comment": "전사했거나 전사 중인 오디오 초",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "bWQ9TNdJYt3NnYdxv",
+     "name": "생성 일시",
+     "pName": "created_at",
+     "domain": "",
+     "type": "DATETIME(3)",
+     "defaultValue": "CURRENT_TIMESTAMP(3)",
+     "isAllowNull": false,
+     "comment": "생성 일시",
+     "relEntity": null,
+     "relFieldId": null,
+     "relType": null
+    },
+    {
+     "_id": "s8seftzXqzszvH8Z3",
      "name": "수정 일시",
      "pName": "updated_at",
      "domain": "",
@@ -18935,7 +19269,7 @@
    "pName": "school_activities",
    "name": "학교 강의실 학습활동",
    "position": {
-    "x": 8830,
+    "x": 9480,
     "y": 50
    },
    "keys": {
@@ -19173,7 +19507,7 @@
    "pName": "school_activity_imports",
    "name": "학교 학습활동 가져오기",
    "position": {
-    "x": 8830,
+    "x": 9480,
     "y": 612
    },
    "keys": {
@@ -19255,7 +19589,7 @@
    "pName": "school_activity_states",
    "name": "학교 학습활동 학생 상태",
    "position": {
-    "x": 8830,
+    "x": 9480,
     "y": 862
    },
    "keys": {
@@ -19337,7 +19671,7 @@
    "pName": "school_course_weeks",
    "name": "학교 강의실 주차",
    "position": {
-    "x": 8830,
+    "x": 9480,
     "y": 1112
    },
    "keys": {

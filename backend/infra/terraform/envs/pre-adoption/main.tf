@@ -122,7 +122,7 @@ locals {
     ASTRA_SESSION_ALLOWED_ORIGINS = module.edge.base_url
     ASTRA_OIDC_REDIRECT_URI       = "${module.edge.base_url}/api/auth/callback"
     # CloudFront VPC origin ENIs sit in the app subnet and the app security group admits only them on the
-    # app port, so a peer from this CIDR came through CloudFront and its CloudFront-Viewer-Address is trusted.
+    # app port, so a peer from this CIDR came through CloudFront and the X-Forwarded-For entry it appended is trusted.
     ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES = module.network.private_subnet_cidrs[0]
     # The same zone as the RDS default time_zone. The app pins each session itself and refuses to start on a mismatch.
     ASTRA_TIME_ZONE = var.institution_time_zone

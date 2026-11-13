@@ -14,7 +14,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * 사용자와 연산 단위의 요청 제한(SC-09). IP로 제한하지 않는다. 교내 NAT 하나가 학교 전체를 막기 때문이다. 로그인 전이라 사용자가
- * 없는 break-glass 로그인만 예외로 브라우저 주소 단위 제한({@link #checkAddress})을 쓴다.
+ * 없는 로그인만 예외로 브라우저 주소 단위 제한을 쓴다: break-glass 로그인({@link #checkAddress}), 학교 비밀번호 로그인의 실패
+ * ({@link #checkFailures}, 학번 단위 한도와 함께). 주소는 identity의 ClientAddresses가 정한다.
  * 고정 구간 counter를 이 process의 메모리에 둔다. api 인스턴스가 2대가 되면 저장소를 Valkey로 바꾼다(architecture.md 8절).
  * 거부한 요청 수를 연산별로 센다(astra.ratelimit.rejections). 사용자는 tag에 넣지 않는다.
  */
@@ -24,6 +25,9 @@ public class RateLimiter {
 	private static final int SWEEP_AT = 10_000;
 
 	private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
+
+	// 다음에 끝난 window를 치울 크기. 치운 뒤에도 살아 있는 window가 많으면 그 두 배로 올려, 증가마다 map 전체를 훑지 않게 한다.
+	private volatile int sweepAt = SWEEP_AT;
 
 	private final LongSupplier nanoTime;
 
@@ -50,7 +54,7 @@ public class RateLimiter {
 	/**
 	 * 로그인 전이라 사용자가 없는 명령의 주소 단위 제한. 같은 NAT를 쓰는 사용자끼리 서로 막을 수 있으므로 사용자 단위 제한을 쓸 수 있는
 	 * 명령에는 쓰지 않는다.
-	 * @param address 브라우저 주소(identity의 ClientAddresses)
+	 * @param address 브라우저 주소의 제한 key(identity의 ClientAddresses.limitKey. IPv6는 /64)
 	 * @throws RateLimitedException window 안에 limit번을 넘었을 때
 	 */
 	public void checkAddress(String operation, String address, int limit, Duration window) {
@@ -60,7 +64,7 @@ public class RateLimiter {
 	/**
 	 * 실패만 세는 명령의 앞 단계. window 안에 이미 limit번 실패했으면 거부한다. 세지 않는다. 실패는 {@link #recordFailure}로 센다.
 	 * 성공한 요청이 한도를 쓰지 않아, 같은 주소(NAT, 앞단 proxy)를 쓰는 정상 사용자끼리 서로 막지 않는다.
-	 * @param subject 세는 대상. 예: 브라우저 주소, 학번
+	 * @param subject 세는 대상. 예: 브라우저 주소의 제한 key, 학번
 	 * @throws RateLimitedException 이미 limit번 실패했을 때
 	 */
 	public void checkFailures(String operation, String subject, int limit) {
@@ -86,8 +90,9 @@ public class RateLimiter {
 	private Window increment(String subject, Duration window) {
 		long now = this.nanoTime.getAsLong();
 		long length = window.toNanos();
-		if (this.windows.size() > SWEEP_AT) {
+		if (this.windows.size() > this.sweepAt) {
 			this.windows.values().removeIf((w) -> now - w.startedAt >= w.length);
+			this.sweepAt = Math.max(SWEEP_AT, this.windows.size() * 2);
 		}
 		return this.windows.compute(subject, (key, w) -> {
 			if (w == null || now - w.startedAt >= w.length) {

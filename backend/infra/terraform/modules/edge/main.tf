@@ -142,11 +142,11 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
 
 # Everything the app reads from the viewer: Host (own-origin checks), Origin, Cookie,
 # X-XSRF-TOKEN, Sec-Fetch-*, Sec-WebSocket-*, Idempotency-Key, all query strings.
-# CloudFront always appends to X-Forwarded-For, so its leftmost entries are client-supplied.
-# The viewer address the app may trust is CloudFront-Viewer-Address.
+# CloudFront always appends the viewer address to X-Forwarded-For, so only its rightmost entry is
+# CloudFront's; the app reads it from the right only when the peer is the VPC origin (app subnet).
 resource "aws_cloudfront_origin_request_policy" "api" {
   name    = "${var.name}-api"
-  comment = "All viewer headers, cookies and query strings plus the viewer address"
+  comment = "All viewer headers, cookies and query strings plus the viewer protocol"
 
   cookies_config {
     cookie_behavior = "all"
@@ -155,7 +155,7 @@ resource "aws_cloudfront_origin_request_policy" "api" {
   headers_config {
     header_behavior = "allViewerAndWhitelistCloudFront"
     headers {
-      items = ["CloudFront-Viewer-Address", "CloudFront-Forwarded-Proto"]
+      items = ["CloudFront-Forwarded-Proto"]
     }
   }
 
