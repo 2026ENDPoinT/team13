@@ -43,6 +43,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
+import com.stackcorp.astra.identity.api.SchoolCourseContent;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolAssignment;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
@@ -65,8 +67,9 @@ import com.stackcorp.astra.identity.api.SchoolPasswordVerifier;
  * 그것을 닫으면 버린다. 학교 session을 저장하거나 다른 확인에 다시 쓰지 않는다.</li>
  * <li>강의실은 과목을 session에 묶는 요청({@code eclass_room2.acl}) 뒤 강의실 첫 화면({@code submain_form.acl})을 열어 읽는다.
  * 화면 해석은 {@link CourseRoomPage}다.</li>
- * <li>강의실 안의 내용(파일모음, 자료 상세, 공지 목록과 상세, 첨부 받기)은 과목을 묶은 뒤 같은 session으로 읽는다. 해석은
- * {@link SchoolContentPages}다. 영상 상세({@code online_view_form.acl}만), 강의계획서, 출석, 성적은 {@link SchoolScreenPages}다.
+ * <li>강의실 안의 내용(파일모음, 자료 상세, 공지 목록과 상세, 과제 상세와 본인 제출 정보, 첨부 받기)은 과목을 묶은 뒤 같은
+ * session으로 읽는다. 해석은 {@link SchoolContentPages}다. 영상 상세({@code online_view_form.acl}만), 강의계획서, 출석, 성적은
+ * {@link SchoolScreenPages}다.
  * 이 class는 읽기 요청만 보낸다. 다음은 부르지 않는다(학교에 학습·출석을 알리거나 학교의 확인 절차를 건너뛰는 요청): 영상
  * {@code online_view_navi}·{@code online_view_hisno}·{@code online_view_at}·{@code online_view_time}·{@code online_view_status}·
  * {@code online_view_check}·{@code online_view_replace_*}·{@code online_learning*}, {@code accessone.hellolms.com},
@@ -110,6 +113,8 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 	private static final String NOTICE_LIST = "/ilos/cls/st/notice/notice_list.acl";
 
 	private static final String NOTICE_VIEW = "/ilos/cls/st/notice/notice_view_pop.acl";
+
+	private static final String REPORT_VIEW = "/ilos/cls/st/report/report_view_form.acl";
 
 	/** 공지 목록 한 쪽의 공지 수. 학교 화면은 8개씩 보이지만 요청한 수만큼 준다. */
 	private static final int NOTICE_PAGE = 50;
@@ -318,6 +323,30 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		return SchoolContentPages.post(detail.document(), files, year == null ? 0 : year);
 	}
 
+	/**
+	 * 과제 상세, 과제 첨부, 학생 본인의 제출 파일. 상세 화면 스크립트가 부르는 첨부 목록({@code efile_list.acl}) 두 개만 같은 순서로
+	 * 부른다. 상세가 스크립트로 부르는 다른 요청(제출 확인·삭제·수정 창, 평가·상호평가·차트, 질의응답)은 보내지 않는다.
+	 */
+	private SchoolAssignment assignment(Session session, URI referer, String courseKey, String itemId,
+			String studentId) {
+		if (!ITEM_ID.matcher(itemId).matches()) {
+			throw notFound("item");
+		}
+		Integer year = CourseRoomPage.yearOf(courseKey);
+		bind(session, referer, courseKey);
+		Page detail = session.request(resolve(this.base, REPORT_VIEW + "?RT_SEQ=" + itemId + "&encoding=utf-8"), "GET",
+				null, true, referer);
+		requireSignedIn(detail);
+		String contentSeq = SchoolContentPages.contentSeq(detail.body());
+		String submittedSeq = SchoolContentPages.submittedContentSeq(detail.body());
+		List<SchoolFile> files = contentSeq == null ? List.of()
+				: attachments(session, referer, courseKey, studentId, contentSeq, "report", itemId);
+		List<SchoolFile> submitted = submittedSeq == null || submittedSeq.equals(contentSeq) ? List.of()
+				: attachments(session, referer, courseKey, studentId, submittedSeq, SchoolCourseContent.SUBMISSION,
+						itemId);
+		return SchoolContentPages.assignment(detail.document(), files, submitted, year == null ? 0 : year);
+	}
+
 	/** {@code efile_list.acl}: 내용 하나의 첨부 목록 조각. */
 	private List<SchoolFile> attachments(Session session, URI referer, String courseKey, String studentId,
 			String contentSeq, String activityType, String activityItemId) {
@@ -355,7 +384,7 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		Page detail = session.request(resolve(this.base, VIDEO + "?LECTURE_WEEKS=" + itemId + "&encoding=utf-8"), "GET",
 				null, true, referer);
 		requireSignedIn(detail);
-		return SchoolScreenPages.video(detail.document(), year == null ? 0 : year);
+		return SchoolScreenPages.video(detail.document(), year == null ? 0 : year, courseKey.startsWith("비"));
 	}
 
 	/**
@@ -784,6 +813,13 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 				Duration remaining) {
 			return content(() -> EclassPasswordVerifier.this.notice(open(requestTimeout, remaining), this.referer,
 					courseKey, itemId, this.studentId));
+		}
+
+		@Override
+		public synchronized SchoolAssignment assignment(String courseKey, String itemId, Duration requestTimeout,
+				Duration remaining) {
+			return content(() -> EclassPasswordVerifier.this.assignment(open(requestTimeout, remaining),
+					this.referer, courseKey, itemId, this.studentId));
 		}
 
 		@Override

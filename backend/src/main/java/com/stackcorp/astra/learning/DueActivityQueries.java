@@ -10,7 +10,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 
 /**
- * 공개·시작 판정은 {@link LearningAccess#open}과 같다. 여기에 마감 전({@code now < close_at}) 조건을 더한다.
+ * 공개·시작 판정은 {@link LearningAccess#open}과 같다. 여기에 마감 전({@code now < close_at}) 조건을 더한다. 학교 활동은 학교 강의실
+ * 화면 값(시작·마감 일시, 만료 표시)과 그 학생의 가져온 완료 표시로 같은 판정을 한다.
  */
 @Service
 class DueActivityQueries implements DueActivities {
@@ -41,6 +42,32 @@ class DueActivityQueries implements DueActivities {
 			.query((rs, n) -> new DueActivity(rs.getLong("activity_id"), rs.getLong("course_id"),
 					rs.getString("activity_type"), rs.getString("title"), rs.getObject("open_at", LocalDateTime.class),
 					rs.getObject("close_at", LocalDateTime.class)))
+			.list();
+	}
+
+	@Override
+	public List<SchoolDueActivity> schoolDue(long userId, Collection<Long> courseIds, LocalDateTime now, int limit) {
+		if (courseIds.isEmpty() || limit < 1) {
+			return List.of();
+		}
+		return this.jdbc.sql("""
+				SELECT a.school_activity_id, a.course_id, a.school_type, a.title, a.open_at, a.close_at, a.school_url
+				  FROM school_activities a
+				  LEFT JOIN school_activity_states s ON s.school_activity_id = a.school_activity_id AND s.user_id = :user
+				 WHERE a.course_id IN (:courses) AND a.school_type IN ('report', 'test', 'survey')
+				   AND a.expired_yn = 0 AND a.offline_yn = 0
+				   AND (a.open_at IS NULL OR a.open_at <= :now)
+				   AND a.close_at IS NOT NULL AND a.close_at > :now
+				   AND (s.done_yn IS NULL OR s.done_yn = 0)
+				 ORDER BY a.close_at, a.school_activity_id DESC LIMIT :limit
+				""")
+			.param("user", userId)
+			.param("courses", courseIds)
+			.param("now", now)
+			.param("limit", limit)
+			.query((rs, n) -> new SchoolDueActivity(rs.getLong("school_activity_id"), rs.getLong("course_id"),
+					rs.getString("school_type"), rs.getString("title"), rs.getObject("open_at", LocalDateTime.class),
+					rs.getObject("close_at", LocalDateTime.class), rs.getString("school_url")))
 			.list();
 	}
 

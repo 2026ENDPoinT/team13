@@ -1,7 +1,7 @@
 # ADR-0006 쪽별 요약은 `summary` 모듈로 옮겨 구현한다
 
 ## 상태
-채택 (2026-11-11)
+채택 (2026-11-11). 8번에 학습실 내 문서의 요약을 더했다(2026-11-14, [ADR-0040](0040-study-room-sync.md) 14번).
 
 ## 맥락
 강의 자료(PDF)의 쪽마다 해설과 요약을 만들어 학생에게 보여 준다. 생성 흐름은 [LessonViewer](https://github.com/STack-Corp/lessonviewer)의 `server/generation.ts`에 구현되어 있고 테스트와 실제 호출로 확인돼 있다. 흐름은 추출 → 쪽 해설 → 전체 흐름(story) → 검사 → 후보 → 게시다.
@@ -33,6 +33,7 @@ LessonViewer는 호스트 서비스가 proxy로 붙이는 방식(`server/module/
 6. 작업은 `summary_jobs` 원장으로 관리한다. 상태는 `queued → running → completed | failed | cancelled`이고 끝난 상태는 바뀌지 않는다. 재시도는 새 작업으로 만든다. api는 원장에 쓰기만 하고 worker가 lease를 잡아 실행한다. 큐 제품은 두지 않는다([ADR-0001](0001-modular-monolith.md) 6번). 같은 파일에 진행 중인 작업은 하나만 허용하고 두 번째 요청은 409로 거부한다.
 7. lease가 만료된 작업은 `failed`(`interrupted`)로 닫는다. 자동으로 다시 실행하지 않는다. 모델 호출에 비용이 들기 때문이다.
 8. 생성 시작과 게시는 교수자의 명시적 요청으로만 한다. 완료된 작업의 결과는 후보이고, 게시한 결과만 학생에게 보인다. 게시는 DB의 게시 작업 pointer를 바꾸는 한 번의 commit이다.
+   - (2026-11-14 추가, 소유자 결정) 학생이 학습실에 올린 자기 PDF는 그 학생이 요약을 요청한다(ADR-0040 14번). 같은 원장, pipeline, worker, 출력 검사를 쓰고, 작업은 `summary_jobs.job_origin = 'study_room'`이며 과목이 없다(`course_id` NULL). 게시 단계가 없다. 완료된 결과는 요청한 학생에게만 게시본과 같은 모양으로 보인다. 과목 경로의 작업·후보·게시 API는 그 파일이 과목 첨부가 아니어서 열지 못한다(9번).
 9. 권한은 `files`의 공개 API가 판정한 파일 권한을 그대로 따른다(CHG-06). `files`는 부모 객체의 권한을 자신이 정의한 port로 부모 모듈에 묻는다([ADR-0001](0001-modular-monolith.md) 4번). `summary`는 role만 보고 허용하지 않는다.
 10. 결과 본문과 checkpoint의 저장 위치는 [ADR-0007](0007-confidential-content-placement.md), 모델 호출은 [ADR-0008](0008-llm-port-deepseek.md)을 따른다.
 11. 테이블은 구현할 때 새 DB 영역 `70 summary`로 [db/README.md](../../db/README.md) 5절 절차에 따라 추가한다. `ai_file_summaries`는 바꾸지 않는다.

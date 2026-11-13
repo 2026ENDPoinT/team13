@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,7 @@ import com.stackcorp.astra.learning.api.AttendanceSummaries.AttendanceSummary;
 import com.stackcorp.astra.learning.api.DueActivities;
 import com.stackcorp.astra.learning.api.DueActivities.DueActivity;
 import com.stackcorp.astra.learning.api.DueActivities.Position;
+import com.stackcorp.astra.learning.api.DueActivities.SchoolDueActivity;
 import com.stackcorp.astra.learning.api.LectureProgressSummaries;
 import com.stackcorp.astra.shared.ApiException;
 
@@ -68,6 +70,9 @@ class HomeService {
 	static final int NEW_GRADE_DAYS = 7;
 
 	static final int MAX_TODO_PAGE = 50;
+
+	/** 학교 e-Class에서 가져온 할 일의 {@code origin}. */
+	static final String SCHOOL = "school";
 
 	private final JdbcClient jdbc;
 
@@ -194,43 +199,73 @@ class HomeService {
 
 	/**
 	 * 마감 전 활동을 상한까지 한 번에 읽고 본인이 끝낸 것을 뺀 뒤, 남은 목록에서 after 다음 size개를 고른다. 건수도 남은 목록으로 정하므로
-	 * 끝낸 활동은 배지에도 없다. 쪽의 평가 활동에는 과제·퀴즈·설문 ID를 붙인다. 쿼리 수는 쪽과 관계없다.
+	 * 끝낸 활동은 배지에도 없다. 쪽의 평가 활동에는 과제·퀴즈·설문 ID를 붙인다. 학교 e-Class에서 가져온 활동(ADR-0043)은 같은 마감
+	 * 순서로 섞이고 {@code activityId: "school-<id>"}, {@code origin: "school"}, {@code schoolUrl}을 가진다. 쿼리 수는 쪽과 관계없다.
 	 */
 	private TodoList todo(long userId, Map<Long, MemberCourse> byId, List<Long> courseIds, LocalDateTime now,
 			Position after, int size) {
 		Remaining remaining = remaining(userId, courseIds, now);
 		// 한 건 더 골라 다음 쪽이 있는지 안다.
-		List<DueActivity> rest = remaining.items()
+		List<Due> rest = remaining.items()
 			.stream()
 			.filter((a) -> after == null || a.position().after(after))
 			.limit(size + 1L)
 			.toList();
-		List<DueActivity> page = rest.size() > size ? rest.subList(0, size) : rest;
+		List<Due> page = rest.size() > size ? rest.subList(0, size) : rest;
 		String next = rest.size() > size ? encode(page.getLast().position()) : null;
-		Map<Long, Target> targets = this.targets.of(page.stream().map(DueActivity::activityId).toList());
+		Map<Long, Target> targets = this.targets
+			.of(page.stream().map(Due::nativeId).filter((id) -> id != null).toList());
 		List<TodoItem> items = page.stream().map((a) -> {
 			MemberCourse course = byId.get(a.courseId());
-			Target target = targets.get(a.activityId());
+			Target target = a.nativeId() == null ? null : targets.get(a.nativeId());
 			return new TodoItem(a.activityId(), a.courseId(), course.name(), course.code(), course.section(), a.type(),
 					a.title(), a.openAt(), a.closeAt(), targetId(target, "assignment"), targetId(target, "quiz"),
-					targetId(target, "survey"));
+					targetId(target, "survey"), a.schoolUrl() == null ? null : SCHOOL, a.schoolUrl());
 		}).toList();
 		return new TodoList(now, items, remaining.items().size(), next, remaining.truncated());
 	}
 
+	/**
+	 * 서비스 활동과 학교 활동을 각각 상한까지 읽어 한 마감 순서로 잇는다. 한쪽이 상한에서 잘렸으면 그쪽 마지막 위치보다 뒤인 다른 쪽
+	 * 활동은 뺀다(잘린 쪽에 그보다 앞선 활동이 남아 있을 수 있다).
+	 */
 	private Remaining remaining(long userId, List<Long> courseIds, LocalDateTime now) {
 		List<DueActivity> rows = this.dueActivities.due(courseIds, now, MAX_DUE + 1);
 		boolean truncated = rows.size() > MAX_DUE;
 		List<DueActivity> due = truncated ? rows.subList(0, MAX_DUE) : rows;
 		Set<Long> done = this.completions.completedBy(userId, due.stream().map(DueActivity::activityId).toList(), now);
-		return new Remaining(due.stream().filter((a) -> !done.contains(a.activityId())).toList(), truncated);
+		List<SchoolDueActivity> schoolRows = this.dueActivities.schoolDue(userId, courseIds, now, MAX_DUE + 1);
+		boolean schoolTruncated = schoolRows.size() > MAX_DUE;
+		List<SchoolDueActivity> school = schoolTruncated ? schoolRows.subList(0, MAX_DUE) : schoolRows;
+		Position nativeEnd = truncated ? due.getLast().position() : null;
+		Position schoolEnd = schoolTruncated ? school.getLast().position() : null;
+		List<Due> items = new ArrayList<>();
+		due.stream()
+			.filter((a) -> !done.contains(a.activityId()))
+			.filter((a) -> schoolEnd == null || !a.position().after(schoolEnd))
+			.forEach((a) -> items.add(new Due(a.activityId(), a.activityId(), a.courseId(), a.type(), a.title(),
+					a.openAt(), a.closeAt(), null, a.position())));
+		school.stream()
+			.filter((a) -> nativeEnd == null || !a.position().after(nativeEnd))
+			.forEach((a) -> items.add(new Due(a.activityId(), null, a.courseId(), a.type(), a.title(), a.openAt(),
+					a.closeAt(), a.schoolUrl(), a.position())));
+		items.sort((a, b) -> a.position().after(b.position()) ? 1 : b.position().after(a.position()) ? -1 : 0);
+		return new Remaining(List.copyOf(items), truncated || schoolTruncated);
 	}
 
 	static Long targetId(Target target, String kind) {
 		return target != null && target.kind().equals(kind) ? target.id() : null;
 	}
 
-	private record Remaining(List<DueActivity> items, boolean truncated) {
+	private record Remaining(List<Due> items, boolean truncated) {
+	}
+
+	/**
+	 * 할 일 하나. 서비스 활동이면 {@code activityId}가 숫자이고 {@code nativeId}가 같은 값이다. 학교 활동이면 {@code "school-<id>"}이고
+	 * {@code nativeId}가 null이다.
+	 */
+	private record Due(Object activityId, Long nativeId, long courseId, String type, String title,
+			LocalDateTime openAt, LocalDateTime closeAt, String schoolUrl, Position position) {
 	}
 
 	private static List<Long> studentCourses(List<MemberCourse> mine) {
@@ -333,16 +368,22 @@ class HomeService {
 	}
 
 	/**
-	 * @param type 활동 유형(learning_activities.activity_type)
+	 * @param activityId 서비스 활동이면 학습활동 ID(숫자). 학교 e-Class 활동이면 {@code "school-<id>"}(학교 과제 상세
+	 * {@code /api/courses/{courseId}/assignments/school-<id>}와 같은 ID)
+	 * @param type 활동 유형(learning_activities.activity_type, 학교 활동은 같은 말의 학교 메뉴 ID: report, test, survey)
 	 * @param assignmentId 과제 활동만. 과제 화면의 ID
 	 * @param quizId 퀴즈 활동만
 	 * @param surveyId 강의실 설문 활동만
+	 * @param origin 학교 e-Class 활동만 {@code "school"}
+	 * @param schoolUrl 학교 e-Class 활동만. 학교에서 그 활동을 여는 주소(제출·응시·응답은 학교에서 한다)
 	 */
-	record TodoItem(long activityId, long courseId, String courseName, String courseCode, String section, String type,
-			String title, LocalDateTime openAt, LocalDateTime closeAt,
+	record TodoItem(Object activityId, long courseId, String courseName, String courseCode, String section,
+			String type, String title, LocalDateTime openAt, LocalDateTime closeAt,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Long assignmentId,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Long quizId,
-			@JsonInclude(JsonInclude.Include.NON_NULL) Long surveyId) {
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long surveyId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String origin,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String schoolUrl) {
 	}
 
 	/**

@@ -52,6 +52,15 @@ public class RateLimiter {
 	}
 
 	/**
+	 * 모든 사용자의 요청을 합해 세는 제한. 사용자 단위 제한({@link #check})과 함께 써서 여럿이 나눠 쓰는 외부 자원(예: 모델 제공자의
+	 * 요청 한도)을 지킨다.
+	 * @throws RateLimitedException window 안에 모두 합해 limit번을 넘었을 때
+	 */
+	public void checkTotal(String operation, int limit, Duration window) {
+		count(operation, operation + "#total", limit, window);
+	}
+
+	/**
 	 * 로그인 전이라 사용자가 없는 명령의 주소 단위 제한. 같은 NAT를 쓰는 사용자끼리 서로 막을 수 있으므로 사용자 단위 제한을 쓸 수 있는
 	 * 명령에는 쓰지 않는다.
 	 * @param address 브라우저 주소의 제한 key(identity의 ClientAddresses.limitKey. IPv6는 /64)

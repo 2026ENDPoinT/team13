@@ -35,4 +35,20 @@ class RateLimiterTests {
 		assertThat(meters.get("astra.ratelimit.rejections").tag("operation", "upload").counter().count()).isEqualTo(1);
 	}
 
+	@Test
+	void totalLimitCountsEveryUserTogetherApartFromPerUserCounters() {
+		AtomicLong now = new AtomicLong();
+		RateLimiter limiter = new RateLimiter(now::get, new SimpleMeterRegistry());
+		Duration window = Duration.ofMinutes(1);
+		limiter.checkTotal("assistant-model", 2, window);
+		limiter.check("assistant-model", 1, 1, window);
+		limiter.checkTotal("assistant-model", 2, window);
+		now.set(Duration.ofSeconds(20).toNanos());
+		assertThatThrownBy(() -> limiter.checkTotal("assistant-model", 2, window))
+			.isInstanceOfSatisfying(RateLimitedException.class,
+					(ex) -> assertThat(ex.retryAfter()).isEqualTo(Duration.ofSeconds(40)));
+		now.set(window.toNanos());
+		limiter.checkTotal("assistant-model", 2, window);
+	}
+
 }

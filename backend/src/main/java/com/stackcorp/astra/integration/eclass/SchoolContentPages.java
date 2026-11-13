@@ -21,6 +21,7 @@ import org.jsoup.nodes.TextNode;
 import org.jsoup.select.NodeTraversor;
 import org.jsoup.select.NodeVisitor;
 
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolAssignment;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolPost;
@@ -46,6 +47,12 @@ import com.stackcorp.astra.identity.api.SchoolLoginException.Kind;
  *   script  $(".board_count_wrap &gt; .total_num").text('6')   (목록으로 알아보는 표시. 빈 목록에도 있다)
  *   button.board_list_wrap[data-num=8957473](.expired)
  *     .is_read(.unread)  .board_title  .board_text  .board_list_info .board_list_text(조회수)  .reg_info "11월 4일 (수) 오후 3:24"
+ * 과제 상세 report_view_form.acl?RT_SEQ=
+ *   .view_title span  제목
+ *   table.bbsview &gt; tbody &gt; tr  날짜로 읽히는 첫 칸이 공개일, 둘째 칸이 마감일. .editor_content  설명
+ *   script  CONTENT_SEQ : "…"   (과제 첨부 목록 키, 첫 efile_list)
+ *   script  content_seq = "…";  (학생 본인 제출 파일 목록 키, 둘째 efile_list. 제출 전에는 빈 값)
+ *   #submit_form .submit_info_box .txt(제출 상태 표시) .date(제출 일시)   #submit_form .editor_content(글로 낸 내용)
  * </pre>
  */
 final class SchoolContentPages {
@@ -63,6 +70,9 @@ final class SchoolContentPages {
 	private static final Pattern TYPE = Pattern.compile("[a-z][a-z0-9_]{0,29}");
 
 	private static final Pattern CONTENT_SEQ = Pattern.compile("CONTENT_SEQ\\s*:\\s*\"([0-9A-Za-z]{1,40})\"");
+
+	private static final Pattern SUBMITTED_CONTENT_SEQ = Pattern
+		.compile("content_seq\\s*=\\s*\"([0-9A-Za-z]{1,40})\"");
 
 	private static final Pattern SIZE = Pattern.compile("([0-9]+(?:\\.[0-9]+)?)\\s*(B|KB|MB|GB)", Pattern.CASE_INSENSITIVE);
 
@@ -141,6 +151,54 @@ final class SchoolContentPages {
 	static String contentSeq(String html) {
 		Matcher match = CONTENT_SEQ.matcher(html);
 		return match.find() ? match.group(1) : null;
+	}
+
+	/** 과제 상세의 학생 본인 제출 파일 목록 키(스크립트 변수 {@code content_seq}). 제출하지 않았으면 null. */
+	static String submittedContentSeq(String html) {
+		Matcher match = SUBMITTED_CONTENT_SEQ.matcher(html);
+		String found = null;
+		while (match.find()) {
+			found = match.group(1);
+		}
+		return found;
+	}
+
+	/**
+	 * 과제 상세와 학생 본인의 제출 정보. 표의 칸 이름은 한국어나 영어로 그려지므로 이름으로 정하지 않는다: 날짜로 읽히는 첫 칸이 공개일,
+	 * 둘째 칸이 마감일이다. 제출 여부는 제출 정보 상자({@code .submit_info_box})의 일시로 정하고 상태 표시 글자는 보여 주기만 한다.
+	 * @param year 과목 학년도. 연도 없는 날짜를 정한다
+	 * @throws SchoolLoginException {@code NOT_FOUND}: 과제 상세 화면이 아니다
+	 */
+	static SchoolAssignment assignment(Document doc, List<SchoolFile> files, List<SchoolFile> submittedFiles,
+			int year) {
+		String title = text(doc.selectFirst(".view_title span, .view_title"));
+		Element table = doc.selectFirst("table.bbsview");
+		if (title == null || table == null) {
+			throw new SchoolLoginException(Kind.NOT_FOUND, "report_unrecognized");
+		}
+		List<LocalDateTime> dates = new ArrayList<>();
+		for (Element row : table.select("> tbody > tr, > tr")) {
+			Element th = row.selectFirst("> th");
+			Element td = row.selectFirst("> td");
+			String value = td == null ? null : clean(td.ownText());
+			if (th == null || value == null) {
+				continue;
+			}
+			LocalDateTime date = CourseRoomPage.dateTime(value, year, LocalTime.MIDNIGHT);
+			if (date != null) {
+				dates.add(date);
+			}
+		}
+		Element submitForm = doc.selectFirst("#submit_form");
+		Element info = submitForm == null ? null : submitForm.selectFirst(".submit_info_box");
+		String when = info == null ? null : text(info.selectFirst(".date"));
+		LocalDateTime submittedAt = when == null ? null : CourseRoomPage.dateTime(when, year, LocalTime.MIDNIGHT);
+		String label = info == null ? null : text(info.selectFirst(".txt"));
+		return new SchoolAssignment(limit(title), dates.isEmpty() ? null : dates.get(0),
+				dates.size() < 2 ? null : dates.get(1), body(table.selectFirst(".editor_content")), files,
+				submittedAt == null || label == null ? null : limit(label), submittedAt,
+				submittedAt == null || submitForm == null ? null : body(submitForm.selectFirst(".editor_content")),
+				submittedAt == null ? List.of() : submittedFiles);
 	}
 
 	/**

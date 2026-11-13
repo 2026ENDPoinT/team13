@@ -24,6 +24,7 @@ import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
 import com.stackcorp.astra.TestPdfs;
+import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolAssignment;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolDownload;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolFile;
 import com.stackcorp.astra.identity.api.SchoolCourseContent.SchoolNotice;
@@ -244,6 +245,16 @@ class SchoolContentTests extends IntegrationTest {
 				new SchoolNotice("70", "Midterm", null, LocalDateTime.of(2026, 10, 1, 9, 0), 40, true, true,
 						"https://eclass.example.ac.kr/connect?SEQ=70"));
 
+		final AtomicInteger assignmentDetails = new AtomicInteger();
+
+		final SchoolFile reportFile = new SchoolFile("SYNFILE000003", "SYNCONTENT0003", "과제 안내.pdf", 4096L,
+				"report", "41");
+
+		/** 이 학생이 낸 파일. 학생마다 다른 파일 키를 준다. 제출하지 않았으면 null. */
+		volatile SchoolFile submitted;
+
+		volatile LocalDateTime submittedAt;
+
 		volatile boolean expired;
 
 		volatile boolean closed;
@@ -295,6 +306,21 @@ class SchoolContentTests extends IntegrationTest {
 			}
 			return new SchoolPost("시험 안내", LocalDateTime.of(2026, 11, 5, 21, 0), "담당 교수", "본문",
 					"71".equals(itemId) ? List.of(this.noticeFile) : List.of());
+		}
+
+		@Override
+		public SchoolAssignment assignment(String courseKey, String itemId, Duration requestTimeout,
+				Duration remaining) {
+			check(courseKey);
+			this.assignmentDetails.incrementAndGet();
+			if (!"41".equals(itemId)) {
+				throw new SchoolLoginException(SchoolLoginException.Kind.NOT_FOUND, "report_unrecognized");
+			}
+			boolean done = this.submittedAt != null;
+			return new SchoolAssignment("학교 과제", LocalDateTime.of(2026, 11, 10, 11, 39),
+					LocalDateTime.of(2099, 11, 17, 23, 59), "과제 설명", List.of(this.reportFile),
+					done ? "정상제출" : null, this.submittedAt, done ? "낸 글" : null,
+					done && this.submitted != null ? List.of(this.submitted) : List.of());
 		}
 
 		@Override

@@ -178,7 +178,7 @@ git commit -m "Update reference to <변경 요약>"
 - 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
 - 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
-- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 128 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
+- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 129 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
 
 ## 빌드와 실행
 
@@ -294,6 +294,18 @@ Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://gen
 | `ASTRA_STUDYCHAT_LEASE` | `10m` | 질문 하나의 실행 lease. `ASTRA_LLM_TIMEOUT`보다 길게 둔다 |
 | `ASTRA_STUDYCHAT_RETENTION` | 없음 | 마지막 질문 뒤 대화를 지우기까지의 기간(예: `365d`). 비우면 소유자 삭제와 파일 삭제로만 지운다 |
 
+화면 AI 도우미(`POST /api/assistant`, [ADR-0044](docs/adr/0044-screen-assistant.md))는 api가 처리한다. 분명한 명령은 규칙으로 답하고, 나머지는 위 LLM 설정의 모델에 한 번 묻는다. `ASTRA_LLM_ENABLED=false`이거나 key가 없으면 규칙 답만 하고 모델이 필요한 요청은 503 `llm_disabled`다. 같은 host의 LLM gateway를 쓰는 배포에서는 `ASTRA_LLM_API_KEY`가 gateway의 `GATEWAY_TOKEN`과 같아야 한다.
+
+| 환경 변수 | 기본값 | 내용 |
+|---|---|---|
+| `ASTRA_ASSISTANT_ENABLED` | `true` | `false`면 규칙 답까지 모두 503 `llm_disabled` |
+| `ASTRA_ASSISTANT_TIMEOUT` | `20s` | 모델 답을 기다리는 시간(동시 요청 자리를 기다리는 시간 포함). 넘으면 504 `assistant_timeout` |
+| `ASTRA_ASSISTANT_REQUEST_RATE_LIMIT` | `30` | 한 사용자가 `ASTRA_ASSISTANT_RATE_WINDOW` 안에 보낼 수 있는 요청 수(규칙 답 포함) |
+| `ASTRA_ASSISTANT_RATE_LIMIT` · `ASTRA_ASSISTANT_TOTAL_RATE_LIMIT` | `10` · `60` | 구간 안에 모델을 부를 수 있는 수. 사용자별, 모든 사용자 합계 |
+| `ASTRA_ASSISTANT_RATE_WINDOW` | `1m` | 위 한도의 구간 |
+| `ASTRA_ASSISTANT_MAX_OUTPUT_TOKENS` | `600` | 모델 호출 하나의 출력 token 상한 |
+| `ASTRA_ASSISTANT_REASONING_EFFORT` | `none` | 요청의 `reasoning_effort`. 추론하는 모델(DeepSeek v4.x)이 추론 token으로 출력 상한을 다 써 답이 잘리지 않게 한다. 이 값을 받지 않는 제공자면 비운다 |
+
 ### 저장소와 문서 변환 설정
 
 파일 원본과 파생물은 S3 API로 읽고 쓴다([ADR-0007](docs/adr/0007-confidential-content-placement.md)). 운영에서는 bucket 이름만 넣고 credential은 EC2 instance role로 받는다. 로컬 실행과 테스트는 Testcontainers가 띄운 S3 호환 저장소(`adobe/s3mock`)와 같은 process의 converter를 쓴다.
@@ -305,6 +317,7 @@ Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://gen
 | `ASTRA_STORAGE_REGION` | `ap-northeast-2` | |
 | `ASTRA_CONVERTER_URL` | `http://converter:8090` | converter 주소 |
 | `ASTRA_SUMMARY_POLL_INTERVAL` | `5s` | worker가 대기 중인 요약 작업을 찾는 간격 |
+| `ASTRA_SUMMARY_STUDY_DOCUMENT_DAILY_LIMIT` | `20` | 한 사용자가 하루(기관 시간대)에 요청할 수 있는 학습실 내 문서 요약 수([ADR-0040](docs/adr/0040-study-room-sync.md) 14번). 넘으면 429 `summary_daily_limit` |
 | `ASTRA_UPLOAD_TTL` | `24h` | 첨부하지 않은 업로드를 쓸 수 있는 시간 |
 | `ASTRA_UPLOAD_RATE_LIMIT` · `ASTRA_UPLOAD_RATE_WINDOW` | `30` · `10m` | 한 사용자가 구간 안에 올릴 수 있는 파일 수 |
 | `ASTRA_FILES_GC_INTERVAL` | `1m` | worker 저장소 GC가 한 번 돈 뒤 쉬는 시간 |
@@ -384,15 +397,16 @@ EICAR 표준 시험 문자열(68 byte)만 담은 `.txt`를 올리면 `rejected`�
 
 ### 학습실 설정
 
-학습실의 내 폴더, 항목 배치, 강의 녹음(`/api/me/study-room/**`)은 [ADR-0040](docs/adr/0040-study-room-sync.md)을 따른다. 녹음 파일 하나의 크기와 확장자는 `upload_policies`의 `study_recording` 행(50 MB, `webm, weba, ogg, opus, mp3, m4a, mp4, wav, aac, flac`)이 정한다. 행에 확장자를 더하려면 `StudyRoomService.AUDIO_TYPES`에 재생 형식도 더한다(없으면 422). 크기를 올리면 clamd `StreamMaxLength`와 `ASTRA_SCAN_CLAMD_MAX_STREAM_BYTES`도 그보다 크게 둔다.
+학습실의 내 폴더, 항목 배치, 강의 녹음, 내 문서(`/api/me/study-room/**`)는 [ADR-0040](docs/adr/0040-study-room-sync.md)을 따른다. 녹음 파일 하나의 크기와 확장자는 `upload_policies`의 `study_recording` 행(50 MB, `webm, weba, ogg, opus, mp3, m4a, mp4, wav, aac, flac`)이, 문서는 `study_document` 행(50 MB, `pdf`)이 정한다. 녹음 행에 확장자를 더하려면 `StudyRoomService.AUDIO_TYPES`에 재생 형식도 더한다(없으면 422). 크기를 올리면 clamd `StreamMaxLength`와 `ASTRA_SCAN_CLAMD_MAX_STREAM_BYTES`도 그보다 크게 둔다.
 
 | 환경 변수 | 기본값 | 내용 |
 |---|---|---|
-| `ASTRA_STUDYROOM_QUOTA` | `2GB` | 사용자 한 사람의 녹음 바이트 합 상한. 파일함 용량과 따로 센다 |
+| `ASTRA_STUDYROOM_QUOTA` | `2GB` | 사용자 한 사람의 녹음과 문서 바이트 합 상한. 파일함 용량과 따로 센다 |
 | `ASTRA_STUDYROOM_MAX_RECORDINGS` | `500` | 사용자 한 사람의 녹음 수 상한 |
+| `ASTRA_STUDYROOM_MAX_DOCUMENTS` | `500` | 사용자 한 사람의 문서 수 상한 |
 | `ASTRA_STUDYROOM_MAX_FOLDERS_PER_COURSE` | `50` | 한 과목 학습실의 폴더 수 상한 |
-| `ASTRA_STUDYROOM_RATE_LIMIT` · `ASTRA_STUDYROOM_RATE_WINDOW` | `120` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 학습실 변경 명령 수. 녹음 올리기는 업로드 제한(`ASTRA_UPLOAD_RATE_LIMIT`)을 쓴다 |
-| `ASTRA_STUDYROOM_PLAY_RATE_LIMIT` | `600` | 한 사용자가 같은 구간 안에 보낼 수 있는 녹음 재생 요청 수(GET·HEAD, 탐색마다 하나) |
+| `ASTRA_STUDYROOM_RATE_LIMIT` · `ASTRA_STUDYROOM_RATE_WINDOW` | `120` · `10m` | 한 사용자가 구간 안에 보낼 수 있는 학습실 변경 명령 수. 녹음·문서 올리기는 업로드 제한(`ASTRA_UPLOAD_RATE_LIMIT`)을 쓴다 |
+| `ASTRA_STUDYROOM_PLAY_RATE_LIMIT` | `600` | 한 사용자가 같은 구간 안에 보낼 수 있는 녹음 재생·문서 내용 요청 수(GET·HEAD, 탐색마다 하나) |
 
 ### 학습실 녹음 전사·요약 설정
 

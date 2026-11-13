@@ -255,7 +255,7 @@ class SchoolScreens implements SchoolGrades {
 	}
 
 	/**
-	 * @param attendanceWeek 출석부 반영 차시 표시(학교 글자)
+	 * @param attendanceWeek 출석부 반영 차시. 정규 {@code 4주 1차시}, 비정규 {@code 1회차 2차시}
 	 * @param attendanceInSchoolOnly 출석인정 시간이 있는 콘텐츠가 하나라도 있으면 true: 출석은 학교 학습창에서 본 것만 학교 출석부에
 	 * 들어간다
 	 */
@@ -322,7 +322,7 @@ class SchoolScreens implements SchoolGrades {
 	/**
 	 * @param sessionId 이 응답 안에서만 쓰는 이름({@code "school-<순번>"})
 	 * @param method 서비스 방식 코드. 학교 방식은 글자로만 있어 null이다
-	 * @param schoolMethod 학교 화면의 방식 표시
+	 * @param schoolMethod 학교 화면의 출석 방식 표시. 출석 전·휴강 차시는 null
 	 */
 	record AttendanceSession(String sessionId, int weekNo, int sessionNo, LocalDate classDate, LocalTime startTime,
 			LocalTime endTime, String method, String schoolMethod, boolean cancelled, boolean makeup,
@@ -331,7 +331,7 @@ class SchoolScreens implements SchoolGrades {
 
 	/**
 	 * @param status present|late|absent|excused|unmarked|other
-	 * @param statusLabel 학교 화면의 상태 표시(예 {@code 결석 (0%)}). 처리되지 않았으면 null
+	 * @param statusLabel 학교 화면의 상태 표시(예 {@code 결석 (0%)}, {@code 출석 전}, {@code 휴강}). 없으면 null
 	 */
 	record AttendanceRecord(String status, String source, LocalDateTime decidedAt, String statusLabel) {
 	}

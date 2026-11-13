@@ -52,9 +52,10 @@
 | [ADR-0037](adr/0037-quiz-regrade-and-assessment-deletion.md) | 퀴즈 정답 정정은 한 transaction의 재채점이고, 평가 활동 삭제는 활동의 삭제 표시다 |
 | [ADR-0038](adr/0038-avatar-photo.md) | 아바타 사진은 상태를 identity가, 바이트를 files가 갖는다. 올린 원본은 검사 뒤 격리한 converter가 256px JPEG로 다시 만든 것만 내보내고, 본인과 폐강하지 않은 과목을 함께하는 사람만 본다 |
 | [ADR-0039](adr/0039-institution-wall-clock-time.md) | 일시는 기관 시간대(기본 `Asia/Seoul`)의 벽시계로 두고, DB session과 JVM을 그 시간대에 고정한 뒤 시작할 때 세 값이 같은지 확인한다. `Instant`는 절대 시각이고 기관 시간대는 `GET /api/auth/methods`가 알린다 |
-| [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음은 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 녹음 바이트는 업로드 흐름(용도 `study_recording`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 구간 응답으로 내보낸다 |
+| [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음, 내 문서(PDF)는 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 바이트는 업로드 흐름(용도 `study_recording`·`study_document`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 내보낸다 |
 | [ADR-0042](adr/0042-school-activity-import.md) | 학번·학교 비밀번호 로그인 때 그 학생의 학교 session으로 과목마다 학교 강의실 첫 화면을 차례로 읽어 주차·학습활동 목록과 본인 완료 표시를 두고, 학생의 강의실 주차 목록에 `origin: "school"` 행으로 붙인다. 로그인은 짧게만 기다리고 나머지는 뒤에서 이어 가며, 학교 session은 그 작업이 끝나면 버린다. 내용(파일, 영상, 제출물)은 가져오지 않고 학교 e-Class에서 연다 |
-| [ADR-0043](adr/0043-school-content.md) | 학교 로그인으로 열린 학교 session(쿠키)을 STack session에 붙여 메모리에 두고(로그아웃·만료 때 닫는다), 학생이 STack에서 학교 자료·공지를 열 때 그 학생의 학교 session으로 학교 상세를 읽어 서비스 자료·공지 모양으로 준다. 학교 파일(자료·공지 첨부)은 학생이 열 때 받아 과목 파일(용도 `school_file`)로 저장해 같은 과목 구성원이 서비스 파일 경로로 함께 연다. 목록은 학교 쪽 상태를 바꾸지 않는 화면만 읽고(공지의 안 읽은 수도 그 목록에서 센다), 영상 학습창·2차 인증·출석 요청과 공지 확인은 부르지 않는다 |
+| [ADR-0043](adr/0043-school-content.md) | 학교 로그인으로 열린 학교 session(쿠키)을 STack session에 붙여 메모리에 두고(로그아웃·만료 때 닫는다), 학생이 STack에서 학교 자료·공지·과제를 열 때 그 학생의 학교 session으로 학교 상세를 읽어 서비스 자료·공지·과제 모양으로 준다. 학교 파일(자료·공지·과제 첨부)은 학생이 열 때 받아 과목 파일(용도 `school_file`)로 저장해 같은 과목 구성원이 서비스 파일 경로로 함께 연다. 학생 본인이 낸 과제 파일은 주인 있는 학교 파일이라 그 학생만 연다. 목록과 할 일은 학교 쪽 상태를 바꾸지 않는 화면이나 로그인 때 가져온 행만 쓰고(공지의 안 읽은 수도 그 목록에서 센다), 영상 학습창·2차 인증·출석 요청, 공지 확인, 제출은 부르지 않는다 |
+| [ADR-0044](adr/0044-screen-assistant.md) | 화면 AI 도우미(`POST /api/assistant`)는 백엔드가 맡는다. 브라우저는 문장과 지금 위치만 보내고, 분명한 명령(강의실 이동, 할 일 목록, 오늘 마감, 다음 할 일)은 규칙으로, 나머지는 서버가 로그인한 사용자의 과목·할 일·마감·공지로 만든 목록을 모델에 한 번 보내 고르게 한다. 모델은 요청 안에서만 쓰는 이름으로만 고르고 서버가 그 이름을 화면 주소로 바꾼다. 같은 모델 port와 설정, 외부 AI 스위치를 쓰고, 사용자별·전체 한도, 20초 제한, 감사 기록(본문 없음)을 둔다 |
 
 ## 2. 부하 가정
 
@@ -151,7 +152,7 @@ flowchart LR
 | `summary` | 강의 자료의 쪽별 요약 생성 작업, 후보 확인, 게시, 조회 | `files`, `identity` |
 | `integration` | 학교 IdP, 학사 동기화, AI, 외부 allowlist client | port를 정의한 모듈의 공개 API(`identity`, `catalog`, `learning`, `files`, `summary`) |
 | `shared` | 오류 형식, requestId, 요청 제한, 멱등 원장, 감사 기록. 목록 query 규칙은 첫 페이지 목록과 함께 만든다 | 없음. 모든 모듈이 쓸 수 있다 |
-| `home` | 메인 화면 집계 조회(`/api/me/home`), 담당자 메인(`/api/me/teaching`), 할 일 목록, 캘린더. 쓰기 없음 | `catalog`, `learning`, `assessment`, `communication`의 공개 API. 어떤 모듈도 `home`에 의존하지 않는다 |
+| `home` | 메인 화면 집계 조회(`/api/me/home`), 담당자 메인(`/api/me/teaching`), 할 일 목록, 캘린더, 화면 AI 도우미(`POST /api/assistant`). 도메인 쓰기 없음(도우미의 감사 기록만 쓴다) | `catalog`, `learning`, `assessment`, `communication`의 공개 API, 도우미의 모델 port(`summary.api.LlmClient`). 어떤 모듈도 `home`에 의존하지 않는다 |
 
 의존 방향은 [db/README.md](../db/README.md) 2.1절의 FK 방향을 따른다. 순환은 의존 역전으로 끊는다. 이벤트를 써도 listener가 발행 측 타입을 참조하면 의존이 생기므로 순환을 끊지 못한다.
 
@@ -159,6 +160,7 @@ flowchart LR
 - 캘린더: 학사일정은 `catalog`, 활동 마감은 `learning`에 있어 둘을 함께 읽는 `GET /api/me/calendar`는 `home`에 둔다. 시간표는 `catalog`의 테이블만 쓰므로 `catalog`에 둔다.
 - 할 일: 별도 테이블 없이 활성 수강 × 공개 활동 × serverTime으로 계산한다([reference/db/design/20_catalog.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/db/design/20_catalog.md)). 계산에 `learning`, `assessment`가 필요하므로 `home`에 둔다.
 - 담당자 메인: 채점 대기(`assessment.api.GradingQueue`), 변환 중·실패 영상(`learning.api.PendingVideos`), 답을 기다리는 질문(`communication.api.OpenQuestions`), 처리할 신청(`catalog.api.EnrollmentRequests`)을 각 모듈이 과목 ID 목록 하나로 세어 주고 `home`이 모은다. 과제 채점 대기는 수강생 명단이 필요하므로 `assessment`가 `catalog.api.CourseRosters`의 여러 과목 조회로 명단을 읽는다.
+- 화면 AI 도우미: 답에 쓰는 과목, 할 일, 마감, 공지가 모두 `home`이 이미 모으는 자료라 `home`에 둔다. 가져온 학교 활동과 공지는 `learning`이 `learning.api.SchoolCourseItems`로 가져온 행만 내준다(학교에 요청하지 않는다). 모델 호출은 `summary`가 공개한 `LlmClient` port 하나를 쓰고 다른 client를 두지 않는다. 외부 AI 스위치는 `astra.llm.enabled`와 port bean이 있는지로 `summary`의 `LlmGate.available`과 같이 본다([ADR-0044](adr/0044-screen-assistant.md)).
 - 외부 연동: `identity`가 `ExternalIdentityProvider` 같은 포트를 공개 API로 정의하고 `integration`이 구현한다. 다른 모듈도 외부 결과가 필요하면 같은 방식을 쓴다.
 - 요약과 전달: `summary`가 `LlmClient` port를, `files`가 문서 변환 port와 전달 서명 port를 공개 API로 정의하고 `integration`이 구현한다. S3를 읽고 쓰는 모듈은 `files` 하나다([ADR-0007](adr/0007-confidential-content-placement.md)).
 - 활동 쪽 목록과 평가 ID: 주차 목록, 할 일, 캘린더의 행이 과제·퀴즈·설문 화면으로 바로 이어지도록 `learning`이 `learning.api.ActivityTargets` port를 정의하고 `assessment`가 구현한다. `learning`은 `assessment`에 의존하지 않는다. 활동 ID를 모아 쿼리 한 번으로 묻는다.
@@ -166,6 +168,7 @@ flowchart LR
 - 수강생 화면의 학습 열: 최근 학습과 진도율은 `learning`의 기록이고 `catalog`는 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.RosterLearning` port를 정의하고 `learning`이 구현한다. 한 쪽의 사용자 ID를 모아 사용자 수와 관계없이 같은 수의 쿼리로 묻는다.
 - 내 과목의 안 읽은 공지 수: 공지와 읽음 기록은 `communication`의 것이고 `catalog`는 `communication`에 의존하지 않으므로 `catalog`가 `catalog.api.UnreadCourseNotices` port를 정의하고 `communication`이 메인 화면의 `CourseNoticeDigest.unreadCounts`와 같은 집계로 구현한다. 목록의 과목 ID를 모아 과목 수와 관계없이 쿼리 한 번으로 묻는다.
 - 학교 강의실 공지: 학교 공지와 학생의 학교 읽음 표시는 학교 session을 쓰는 `learning`이 두고(ADR-0043), 공지 목록과 안 읽은 공지 수는 `communication`이 낸다. `communication`은 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.SchoolCourseNotices` port를 정의하고 `learning`이 구현한다. 안 읽은 수는 과목 수와 관계없이 쿼리 한 번이다. 학교 공지 상세(`/notices/school-{id}`)는 `learning`의 controller다.
+- 학교 과제: 과제 상세, 첨부, 본인 제출 정보는 학교 session을 쓰는 `learning`이 읽는다(ADR-0043, `/assignments/school-{id}`와 학교 항목 제출 거절은 `learning`의 controller). 서비스 과제 목록은 `assessment`가 내므로 `learning.api.SchoolAssignmentRows` port로 가져온 학교 과제 행을 받아 학생 목록 뒤에 붙인다. 할 일은 `home`이 `learning.api.DueActivities.schoolDue`(가져온 행과 본인 완료 표시, 과목 수와 관계없이 쿼리 한 번)를 서비스 활동과 한 마감 순서로 섞는다.
 - 학교 영상 상세·강의계획서·출석·성적: 학교 session을 쓰는 `learning`(`SchoolScreens`)이 그 학생이 화면을 열 때 읽는다. 영상 상세, 강의계획서, 출석은 `learning`의 controller가 낸다. 학생 성적은 `assessment`가 내므로 `learning`이 `learning.api.SchoolGrades` port를 정의하고 구현한다(`assessment`는 이미 `learning.api`에 의존한다). 학교 값을 쓰는 과목은 학교 과목 키가 있는 수강생의, STack 담당자가 없는 과목이다. 담당자가 있는 과목은 서비스 화면 그대로다.
 - 아바타 사진 유무: 이름 옆에 아바타를 그리는 `communication`·`learning` 응답은 사용자 ID 옆에 사진 유무를 준다. 판정은 `files`가 `files.api.AvatarPhotos`로 내보내고 `files/avatar/AvatarImages`가 아바타 경로와 같은 규칙으로 구현한다. 현재 사진은 `identity.api.ProfileImages.withCurrent`로, 공통 과목은 `catalog.api.CourseMates`로 사람 수와 관계없이 쿼리 두 번 이하에 묻는다.
 
@@ -506,9 +509,10 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 | API | 권한 | 하는 일 |
 |---|---|---|
 | `GET /api/me/home` | 로그인한 사용자 | 6절의 집계. 알림마당 최근 공지 5개(`communityNotices`, 고정 먼저)와 읽지 않은 알림마당 고정 공지 5개까지(`noticesForMe`, 진입 공지 EP-0190)를 기관 역할의 대상으로 더한다. `courses[]`마다 `currentWeek`, `weekCount`, `progressPercent`, `attendance`(6절) |
-| `GET /api/me/todo?courseId=&cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수. 평가 활동에는 `assignmentId`·`quizId`·`surveyId` 중 하나. `courseId`를 주면 그 과목만(내 과목이 아니면 404, 담당 과목이면 비어 있다). cursor는 같은 `courseId`로만 이어 보낸다 |
+| `GET /api/me/todo?courseId=&cursor=&size=` | 로그인한 사용자 | 할 일 전체. 마감 임박순, 본인이 끝낸 활동 제외, `nextCursor`로 다음 쪽. `total`은 남은 할 일 수. 평가 활동에는 `assignmentId`·`quizId`·`surveyId` 중 하나. 학교 e-Class에서 가져온 과제·시험·설문(마감이 있고, 열렸고, 만료·오프라인 표시가 없고, 본인 완료 표시가 없는 것)이 같은 순서로 섞이고 `activityId: "school-<id>"`, `origin: "school"`, `schoolUrl`을 가진다(평가 ID 없음, 학교에 요청하지 않는다). `courseId`를 주면 그 과목만(내 과목이 아니면 404, 담당 과목이면 비어 있다). cursor는 같은 `courseId`로만 이어 보낸다 |
 | `GET /api/me/todo/count?courseId=` | 로그인한 사용자 | `{serverTime, total, truncated}`. 목록과 같은 값을 항목 없이. `courseId`는 목록과 같다 |
 | `GET /api/me/teaching` | 로그인한 사용자. 담당 과목만 센다 | 담당자 메인(교수 홈의 통계 줄, 확인할 일, 다가오는 일정). 원본에 같은 화면이 없는 새 계약이다. `courses[]`는 담당 과목마다 채점 대기 과제 수와 제출 수, 채점 대기 퀴즈 수와 응시 수, 변환 실패·변환 중 영상 콘텐츠 수, 답을 기다리는 질문 수, 처리할 신청 수(처리 권한이 없으면 null). `tasks[]`는 그 행(유형, 과목, 제목, 수, `activityId`·`assignmentId`·`quizId`·`questionId`), `upcoming[]`은 지금부터 14일 안에 시작(`open`)하거나 마감(`close`)하는 담당 과목 활동이고 행은 `GET /api/me/calendar`의 활동과 같은 속성에 `event`, `at`을 더했다. 담당 과목이 없으면(학생) 목록이 모두 비어 있다. 404를 쓰지 않는 것은 `/api/me/home`이 담당 과목에 빈 할 일을 주는 것과 맞춘 것이다 |
+| `POST /api/assistant` | 로그인한 사용자(CSRF token 필요) | 화면 AI 도우미([ADR-0044](adr/0044-screen-assistant.md)). 본문 `{text, context?: {courseId?, activityId?, history?: [{text, say}]}}`(16 KiB 이하, 그 밖의 필드는 400). 응답 `{say, actions: [{label, href, external}] (5개 이하), source: rule\|model}`. `href`는 화면 주소이고, 가져온 학교 영상·자료·과제·공지도 STack 상세다. `external: true`는 STack 화면이 없는 가져온 시험·설문 등의 학교 e-Class 주소뿐이다. 규칙 답은 모델을 부르지 않는다. 모델 답은 그 사용자의 과목, 할 일, 7일 안의 마감, 지금 과목의 이번 주와 다음 주 마감과 가져온 학교 활동, 최근 공지(가져온 학교 공지 포함)만 보낸다. 413 `body_too_large`, 429 `rate_limited`(`Retry-After`), 503 `llm_disabled`(`astra.assistant.enabled=false`면 모두, 외부 AI가 꺼졌거나 제공자가 없으면 모델 답만), 502 `assistant_upstream_error`·`assistant_invalid_response`, 504 `assistant_timeout`. 요청마다 감사 기록 `assistant.ask` |
 
 담당자 메인의 수는 각 모듈이 정한다. 과제 채점 대기는 수강생 명단(`CourseRosters`)에 있는 학생의 최종 제출 가운데 과제 성적 항목 점수가 빈 것이다. 과제 목록의 `submittedCount`에서 성적부의 `gradedCount`를 뺀 규칙과 같고, 수강을 취소한 학생의 제출은 성적부에서 채점할 수 없으므로 세지 않는다. 퀴즈는 퀴즈 목록의 `awaitingGradingCount`(수동 채점을 기다리는 응시)다. 영상은 지우지 않은 콘텐츠의 `video_state`가 `failed` 또는 `processing`인 것이다. 질문은 답글이 없고 해결로 표시하지 않았고 FAQ가 아닌 질의응답 질문이다. 신청은 신청 목록(`GET /api/courses/{courseId}/enrollment-requests`)과 같이 교수와 비정규 담당자만 처리하는 비정규 `PENDING`, 청강 `REQUESTED`다. 지운 활동, 폐강 과목은 넣지 않는다. 과목 수와 관계없이 쿼리는 14개 이하이고(DB 시계, 과목, 채점 대기 5, 영상 1, 질문 2, 신청 1, 마감 1, 시작 1, 평가 ID 1), `TeachingApiTests`가 DB 문장 수로 확인한다. 확인할 일의 질문은 오래 기다린 순서로 20개, 전체는 100개, 다가오는 일정은 50개까지이고 넘으면 `tasksTruncated`, `upcomingTruncated`다. 과목별 수는 자르지 않는다.
 
@@ -522,8 +526,10 @@ CDN 없는 시연은 같은 host의 프론트엔드 서버(STack-Frontend `serve
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}` | 담당자 | 과제 수정. 읽은 `revision`이 다르면 409 `edit_conflict`. 점수 공개(`scoresReleased`)도 여기서 바꿀 수 있다 |
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}/release` | 담당자 | `{released, revision}`. 과제 전체를 보내지 않고 점수 공개와 거둠만 바꾼다. 읽은 `revision`이 다르면 409 `edit_conflict`, 성공하면 `revision`이 1 오른다. 성적부 공개 명령과 같은 감사 기록(`grade_item.release`·`grade_item.withhold`)과 알림("점수 공개" 보냄·거둠) |
 | `DELETE /api/courses/{courseId}/assignments/{assignmentId}` | 담당자 | 과제 삭제. `If-Match`에 읽은 `revision`(없으면 428, 다르면 409 `edit_conflict`). 활동에 삭제 표시만 남기고 제출물, 버전, 첨부 파일, 임시저장, 점수는 보존한다. 그 commit부터 과제, 제출, 제출 파일, 성적 항목은 누구에게도 없고 보낸 알림을 거둔다. 204 |
-| `GET /api/courses/{courseId}/assignments` | 과목 구성원 | 과제 목록. 담당자는 제출 수, 학생은 공개됐고 시작한 과제와 본인 상태만. 항목마다 `activityId`(주차 목록·할 일·캘린더의 활동 ID) |
+| `GET /api/courses/{courseId}/assignments` | 과목 구성원 | 과제 목록. 담당자는 제출 수, 학생은 공개됐고 시작한 과제와 본인 상태만. 항목마다 `activityId`(주차 목록·할 일·캘린더의 활동 ID). 학생에게는 그 뒤에 학교 e-Class 과제(`assignmentId`·`activityId`: `"school-<id>"`, `origin: "school"`, `schoolUrl`, 본인 완료 표시로 정한 `status`)가 학교 화면 순서로 붙는다 |
 | `GET /api/courses/{courseId}/assignments/{assignmentId}` | 담당자, 볼 수 있는 학생 | 과제, 서버 시각, 제출 구간. 학생에게는 본인 제출 상태, 현재 버전, 임시저장, 공개한 점수만 |
+| `GET /api/courses/{courseId}/assignments/school-{id}` | 학교 로그인한 그 과목 학생 | 학교 과제 상세. 그 학생의 학교 session으로 과제 상세(`report_view_form.acl`)와 과제 첨부·본인 제출 파일 목록(`efile_list.acl` 둘)을 읽는다. 서비스 학생 과제 상세 모양(`assignment`, `phase`, `serverTime`, `submission`)에 `origin`, `schoolUrl`. 과제 첨부는 과목 공용 학교 파일, 본인이 낸 파일은 그 학생만 여는 학교 파일. 학교 session이 없거나 끝났으면 409 `school_signin_required` |
+| `POST …/assignments/school-{id}/submission`, `PUT …/assignments/school-{id}/submission/draft`, `POST …/quizzes/school-{id}/attempts`, `POST …/surveys/school-{id}/completion` | 그 과목 구성원 | 학교 항목은 STack에서 제출·응시·응답하지 않는다. 409 `school_submit_at_school`(`schoolUrl`로 학교에서 한다). 볼 수 없는 항목은 404 |
 | `PUT /api/courses/{courseId}/assignments/{assignmentId}/submission/draft` | 수강생 본인 | 임시저장. 제출로 치지 않는다 |
 | `POST /api/courses/{courseId}/assignments/{assignmentId}/submission` | 수강생 본인 | 최종 제출. `Idempotency-Key`와 `expectedVersion` 필수. `uploadIds`(새 업로드)와 `keepFileIds`(현재 버전의 파일 가운데 이어받을 파일)를 합쳐 5개까지. 새 버전과 첨부를 한 transaction으로 확정하고 receipt를 돌려준다. 앞 버전의 첨부는 그대로 남는다. 이어받을 수 없는 파일이나 쓸 수 없는 업로드는 409 `attachment_not_ready`. 201 |
 | `GET /api/courses/{courseId}/assignments/{assignmentId}/submissions` | 담당자 | 최종 제출한 학생, 접수 시각, 지각, 버전 수, 점수 |
@@ -728,24 +734,31 @@ ZIP은 worker가 작업을 lease로 하나씩 잡아 원본을 읽으며 바로 
 
 파일을 지우면 같은 commit부터 세 API 모두 404다. GC가 rendition을 닫을 때 썸네일 행과 대기 중인 변환도 닫고 객체를 지운다.
 
-### 7.21 학습실 폴더와 강의 녹음
+### 7.21 학습실 폴더, 강의 녹음, 내 문서
 
-결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음은 쪽별 요약과 학습 대화에 들어가지 않는다. 녹음의 전사·요약은 7.22절이다.
+결정은 [ADR-0040](adr/0040-study-room-sync.md)에 있다. 프론트엔드가 브라우저에만 두던 학습실 폴더 트리(`src/shared/study-folders.ts`)와 강의 녹음(`src/shared/course-recordings.ts`)을 서버에 둔다. 학생이 학습실에 올리는 자기 PDF도 같은 규칙으로 둔다(ADR-0040 14번). 로그인한 사용자 누구나 자기 학습실만 쓴다. 남의 폴더, 녹음, 문서, 배치는 없는 ID와 같은 404이고 아무것도 바뀌지 않는다. 만들기(폴더, 녹음, 문서, 강의자료 배치)는 지금 그 과목의 구성원이어야 하고, 읽기·고치기·지우기는 소유만 본다. 담당자와 운영자가 읽는 경로는 없고, 녹음과 문서는 학습 대화와 과목 경로의 요약에 들어가지 않는다. 녹음의 전사·요약은 7.22절이다. 문서는 소유자가 요청하면 강의자료와 같은 흐름으로 쪽별 요약을 만들고 소유자만 읽는다(아래 표의 `…/summary`).
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/study-room/courses/{courseId}` | 로그인한 사용자 | 그 과목의 내 폴더(`position` 순), 녹음(녹음 시작 일시 역순), 배치, 사용량. 강의자료 배치는 지금 그 과목에서 그 파일을 읽을 수 있을 때만 나온다 |
+| `GET /api/me/study-room/courses/{courseId}` | 로그인한 사용자 | 그 과목의 내 폴더(`position` 순), 녹음(녹음 시작 일시 역순), 문서(`documents`, 올린 일시 역순), 배치, 사용량. 강의자료 배치는 지금 그 과목에서 그 파일을 읽을 수 있을 때만 나온다. 사용량의 `usedBytes`는 녹음과 문서의 합이고 `documentCount`, `maxDocuments`, `maxDocumentFileBytes`가 함께 나온다 |
 | `POST /api/me/study-room/courses/{courseId}/folders` | 그 과목 구성원 | `{name}`(1~60자, 제어 문자 말고는 `/`, `\`도 받는다). 끝에 붙는다. 201. 같은 과목에 글자 그대로 같은 이름이면 409 `name_conflict`(대소문자·악센트가 다르면 다른 이름), 과목마다 50개까지(409 `too_many_folders`). `Idempotency-Key` 지원: 재전송은 그 폴더의 지금 상태, 그 사이 지웠으면 410 `folder_deleted` |
 | `PATCH /api/me/study-room/folders/{folderId}` · `DELETE` | 소유자 | 이름 바꾸기, 지우기. `If-Match` 필수. 지우면 그 안의 배치도 지워 항목이 과목 맨 위로 돌아간다. 녹음은 남는다 |
 | `PUT /api/me/study-room/courses/{courseId}/folder-order` | 소유자 | `{folders:[{id, version}]}`, 그 과목 폴더 전부를 새 순서로. 목록이 다르면 409 `folder_set_changed`, version이 다르면 409 `version_conflict`. 자리가 바뀐 폴더만 version이 오른다 |
-| `PUT /api/me/study-room/placements/{course-files\|recordings}/{itemId}` | 소유자 | `{folderId}`. 배치가 없으면 `If-Match: "0"`, 있으면 그 배치의 version. 강의자료는 폴더 과목에서 지금 읽을 수 있어야 하고(아니면 404), 녹음은 같은 과목 폴더에만(409 `course_mismatch`) |
-| `DELETE /api/me/study-room/placements/{course-files\|recordings}/{itemId}` | 소유자 | 배치를 지워 과목 맨 위로. `If-Match` 필수 |
+| `PUT /api/me/study-room/placements/{course-files\|recordings\|documents}/{itemId}` | 소유자 | `{folderId}`. 배치가 없으면 `If-Match: "0"`, 있으면 그 배치의 version. 강의자료는 폴더 과목에서 지금 읽을 수 있어야 하고(아니면 404), 녹음과 문서는 같은 과목 폴더에만(409 `course_mismatch`). 응답과 과목 보기의 `kind`는 `course_file`·`recording`·`document` |
+| `DELETE /api/me/study-room/placements/{course-files\|recordings\|documents}/{itemId}` | 소유자 | 배치를 지워 과목 맨 위로. `If-Match` 필수 |
 | `POST /api/me/study-room/courses/{courseId}/recordings` | 그 과목 구성원 | multipart `file`, `title`(1~200자, UTF-16 단위), `source`(`mic`·`tab`·`audio`), `durationMs`(1~86400000), `recordedAt`(offset이 있는 절대 시각, 2000-01-01부터 지금 + 5분까지. 가져온 파일은 파일의 마지막 수정 일시), `folderId`(선택). 용도 `study_recording`(50 MB, `webm, weba, ogg, opus, mp3, m4a, mp4, wav, aac, flac`, 내용 signature 확인)으로 받고 사용자마다 2 GB·500개(409 `quota_exceeded`, `too_many_recordings`). 201. `state`는 `scanning`·`ready`·`rejected`. `Idempotency-Key` 지원(지문에 과목, 제목, 출처, 길이, 시작 일시, 폴더가 들어간다): 재전송은 한도·폴더 검사 없이 그 녹음의 지금 상태, 그 사이 지웠으면 410 `recording_deleted` |
 | `GET /api/me/study-room/recordings` · `/recordings/{recordingId}` | 소유자 | 모든 과목의 내 녹음과 사용량, 녹음 하나(`ETag`). 과목을 잃어도 보인다 |
 | `PATCH /api/me/study-room/recordings/{recordingId}` · `DELETE` | 소유자 | 제목 바꾸기, 지우기. `If-Match` 필수. 지우면 배치를 지우고 파일 참조를 놓는다. 원본은 저장소 GC가 지운다 |
 | `GET /api/me/study-room/recordings/{recordingId}/content` · `HEAD` | 소유자 | 오디오. `Range` 하나면 206과 `Content-Range`, 내용 밖이면 416, 여러 구간이면 200 전체. 언제나 `attachment`, `Accept-Ranges: bytes`, `nosniff`, `CSP: sandbox`, `private, no-store`. 검사 전 409 `not_ready`, 거부 409 `content_rejected`. `HEAD`는 행만 읽는다. 사용자마다 10분에 600번. 감사 기록은 session·녹음마다 10분에 한 번, 저장소를 열기 전에 남긴다. 이미 남겼는지 찾지 못하면 재생을 막지 않고 다시 남긴다 |
+| `POST /api/me/study-room/courses/{courseId}/documents` | 그 과목 구성원 | multipart `file`(PDF), `title`(선택, 1~300자, 없으면 파일 이름에서 `.pdf`를 뺀 값), `folderId`(선택, 그 과목의 내 폴더), `key`(선택). 용도 `study_document`(50 MB, `pdf`, 내용 signature 확인. 아니면 422 `extension_not_allowed`·`content_mismatch`)로 받고 녹음과 함께 2 GB(409 `quota_exceeded`), 문서 500개(409 `too_many_documents`). 201, 본문은 `{documentId, courseId, title, fileName, sizeBytes, state, folderId, createdAt, updatedAt, version, summaryStatus}`(`summaryStatus`는 가장 최근 요약의 `queued`·`processing`·`ready`·`failed`, 요청한 적이 없으면 null). 멱등 key는 `Idempotency-Key`나 `key`(둘 다면 같아야 한다, 지문에 과목, 제목, 폴더): 재전송은 그 문서의 지금 상태, 그 사이 지웠으면 410 `document_deleted` |
+| `GET /api/me/study-room/documents/{documentId}` | 소유자 | 문서 하나(`ETag`) |
+| `PATCH /api/me/study-room/documents/{documentId}` | 소유자 | `{title?, version}`. version이 다르면 409 `version_conflict` |
+| `DELETE /api/me/study-room/documents/{documentId}?version=n` | 소유자 | 204. version이 없으면 428, 다르면 409 `version_conflict`. 배치를 지우고 파일 참조를 놓는다. 지운 파일 행의 이름은 `document.pdf`가 된다. 대기 중인 요약은 취소하고 실행 중인 요약에는 취소를 요청한다. 요약 결과와 쪽 이미지는 저장소 GC가 파일과 함께 지운다 |
+| `GET /api/me/study-room/documents/{documentId}/content` | 소유자 | PDF(`application/pdf`, `attachment`, 파일 이름). Range와 응답 header, 요청 제한, 감사 기록(`study_room.document.read`)은 녹음 재생과 같다. 검사 전 409 `file_scanning`과 `Retry-After: 10`, 거부 422 `content_rejected` |
+| `POST /api/me/study-room/documents/{documentId}/summary` | 소유자 | 쪽별 요약 요청. 본문 없음, `Idempotency-Key` 지원. 새 작업을 만들었거나 진행 중이면 202, 완료된 요약이 있으면 200(새 작업 없음). 실패한 뒤의 요청은 앞 작업의 중간 결과를 이어받는 새 작업이다. 강의자료 요약과 같은 원장(`summary_jobs`, `job_origin = 'study_room'`), worker, pipeline, 출력 검사를 쓰고 교수자 동의는 보지 않는다. 검사 전 409 `file_scanning`(`Retry-After: 10`), 거부 422 `content_rejected`, 스위치가 꺼졌거나 제공자가 없으면 503 `llm_disabled`, 하루 상한(기본 20)을 넘으면 429 `summary_daily_limit`(다음 자정까지의 `Retry-After`), 요약 생성 요청 제한은 시간당 20번. 감사 기록 `study_room.document.summary` |
+| `GET /api/me/study-room/documents/{documentId}/summary` | 소유자 | `{status, message?, summary?}`. `status`는 `queued`·`processing`·`ready`·`failed`이고 대기·처리 중이면 `Retry-After: 5`. `message`는 실패했을 때의 정해 둔 문장, `summary`는 완료됐을 때 강의자료 게시본(`GET /api/courses/{courseId}/files/{fileId}/summary`)과 같은 `{fileId, publishedAt, question, story, slides, pageImageBase}`(`publishedAt`은 작업이 끝난 일시). 쪽 이미지 cookie는 이 응답에만 그 rendition 경로로 발급한다. 요청한 적이 없으면 404. POST가 요약을 돌려줄 때도 같은 모양이다 |
 
-한 사용자의 학습실 변경은 `study_room_quotas`의 그 사용자 행을 먼저 잠그고 차례로 한다. 녹음 파일은 과목 없이(`files.course_id` NULL) 첨부 없이 기록하므로 과목 파일 내려받기, 미리보기, 요약, 학습 대화는 그 파일을 열지 못한다. 변경 명령은 사용자마다 10분에 120번(`astra.study-room.rate-limit`), 녹음 올리기는 업로드 요청 제한도 함께 쓴다.
+한 사용자의 학습실 변경은 `study_room_quotas`의 그 사용자 행을 먼저 잠그고 차례로 한다. 녹음과 문서 파일은 과목 없이(`files.course_id` NULL) 첨부 없이 기록하므로 과목 파일 내려받기, 미리보기, 요약, 학습 대화는 그 파일을 열지 못한다. 변경 명령은 사용자마다 10분에 120번(`astra.study-room.rate-limit`), 녹음·문서 올리기는 업로드 요청 제한도 함께 쓴다. 교수자의 학습실 업로드는 지금처럼 강의자료 등록(`POST /api/courses/{courseId}/materials`)이다.
 
 ### 7.22 학습실 녹음 전사·요약
 

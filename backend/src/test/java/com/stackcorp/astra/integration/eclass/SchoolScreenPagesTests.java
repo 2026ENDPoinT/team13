@@ -33,9 +33,10 @@ class SchoolScreenPagesTests {
 
 	@Test
 	void videoDetailReadsContentsProgressAndTimesWithoutAnyMediaAddress() {
-		SchoolVideo video = SchoolScreenPages.video(Jsoup.parse(text("school-online-view.html")), 2026);
+		SchoolVideo video = SchoolScreenPages.video(Jsoup.parse(text("school-online-view.html")), 2026, false);
 
-		assertThat(video.attendanceWeek()).isEqualTo("WeekWeek 1 Session1");
+		// 영어 화면은 "WeekWeek 1 Session1"로 그린다. 한국어 화면("1 주 1차시")과 같은 모양으로 준다.
+		assertThat(video.attendanceWeek()).isEqualTo("1주 1차시");
 		assertThat(video.periodStartAt()).isEqualTo(LocalDateTime.of(2026, 9, 1, 0, 0));
 		assertThat(video.periodEndAt()).isEqualTo(LocalDateTime.of(2026, 9, 13, 23, 59));
 		assertThat(video.contents()).containsExactly(
@@ -59,13 +60,32 @@ class SchoolScreenPagesTests {
 				  </div>
 				</div>
 				""";
-		SchoolVideo video = SchoolScreenPages.video(Jsoup.parse(html), 2026);
+		SchoolVideo video = SchoolScreenPages.video(Jsoup.parse(html), 2026, false);
+
+		assertThat(video.attendanceWeek()).isNull();
 
 		assertThat(video.contents()).containsExactly(
 				new SchoolVideoContent(4, "Lecture", null, new BigDecimal("42.5"), null, 3723, null));
-		assertThatThrownBy(() -> SchoolScreenPages.video(Jsoup.parse("<div class=\"bbsview\"></div>"), 2026))
+		assertThatThrownBy(() -> SchoolScreenPages.video(Jsoup.parse("<div class=\"bbsview\"></div>"), 2026, false))
 			.isInstanceOf(SchoolLoginException.class)
 			.hasMessage("video_unrecognized");
+	}
+
+	@Test
+	void attendanceWeekIsTheSameShapeForKoreanAndEnglishPages() {
+		String english = text("school-online-view.html");
+		String korean = english.replace("WeekWeek 1 Session1", "4 주 1차시");
+
+		assertThat(SchoolScreenPages.video(Jsoup.parse(korean), 2026, false).attendanceWeek()).isEqualTo("4주 1차시");
+		assertThat(SchoolScreenPages.video(Jsoup.parse(english.replace("WeekWeek 1 Session1", "WeekWeek 4 Session1")),
+				2026, false)
+			.attendanceWeek()).isEqualTo("4주 1차시");
+		assertThat(SchoolScreenPages.video(Jsoup.parse(english.replace("WeekWeek 1 Session1", "1 회차 2차시")), 2026, true)
+			.attendanceWeek()).isEqualTo("1회차 2차시");
+		assertThat(SchoolScreenPages.video(Jsoup.parse(english), 2026, true).attendanceWeek()).isEqualTo("1회차 1차시");
+		assertThat(SchoolScreenPages.attendanceWeek("1 회차 2차시", false)).isEqualTo("1회차 2차시");
+		assertThat(SchoolScreenPages.attendanceWeek("Week 4", false)).isNull();
+		assertThat(SchoolScreenPages.attendanceWeek(null, false)).isNull();
 	}
 
 	@Test
@@ -139,6 +159,40 @@ class SchoolScreenPagesTests {
 		assertThat(makeup.sessionNo()).isEqualTo(1);
 		assertThat(makeup.startTime()).isEqualTo(LocalTime.of(14, 0));
 		assertThat(makeup.endTime()).isEqualTo(LocalTime.of(15, 0));
+		// 출석 전·휴강 차시의 .attend_dv는 방식이 아니라 상태 글자다. 방식은 null이고 그 글자는 상태 표시로 간다.
+		assertThat(makeup.method()).isNull();
+		assertThat(makeup.statusLabel()).isEqualTo("Before attendance");
+		assertThat(all.stream().filter((s) -> s.method() == null)).hasSize(19);
+		assertThat(all.stream().filter((s) -> "Before attendance".equals(s.statusLabel()))).hasSize(15);
+		SchoolAttendanceSession cancelled = all.stream().filter(SchoolAttendanceSession::cancelled).findFirst().orElseThrow();
+		assertThat(cancelled.method()).isNull();
+		assertThat(cancelled.status()).isNull();
+		assertThat(cancelled.statusLabel()).isEqualTo("Cancel Class");
+		assertThat(all.stream().filter((s) -> s.status() != null))
+			.allSatisfy((s) -> assertThat(s.method()).isIn("Smart", "Online"));
+	}
+
+	@Test
+	void attendanceKoreanRowsKeepMethodForDecidedSessionsAndStateTextAsStatusLabel() {
+		String html = """
+				<div id="week_list_wrap_3" class="attendance_list"><ul class="attendance_week_time_list">
+				  <li><div class="attendance_date_box"><div class="date">2026.09.17 (목)</div><div class="lect_time">14:00 ~ 17:00</div></div>
+				    <div class="attend_menu  " title="온라인"><div class="attend_dv">온라인</div><div class="week_time">1차시</div>
+				      <div class="attend_stats_list"><div class="attend_stats" title="결석 (0%)">
+				        <div class="attend_dv_icon_title absence">결석 (0%)</div><div class="attend_dv_icon absence"></div></div></div></div></li>
+				  <li><div class="attend_menu ready " title="출석 전"><div class="attend_dv">출석 전</div><div class="week_time">2차시</div></div></li>
+				  <li><div class="attend_menu  cancel" title="휴강"><div class="attend_dv">휴강</div><div class="week_time">3차시</div></div></li>
+				</ul></div>
+				""";
+		List<SchoolAttendanceSession> sessions = SchoolScreenPages.attendance(Jsoup.parse(html), 2026).get(0).sessions();
+
+		assertThat(sessions).containsExactly(
+				new SchoolAttendanceSession(1, LocalDate.of(2026, 9, 17), LocalTime.of(14, 0), LocalTime.of(17, 0), "온라인",
+						false, false, "absence", "결석 (0%)"),
+				new SchoolAttendanceSession(2, LocalDate.of(2026, 9, 17), LocalTime.of(14, 0), LocalTime.of(17, 0), null,
+						false, false, null, "출석 전"),
+				new SchoolAttendanceSession(3, LocalDate.of(2026, 9, 17), LocalTime.of(14, 0), LocalTime.of(17, 0), null,
+						false, true, null, "휴강"));
 	}
 
 	@Test
