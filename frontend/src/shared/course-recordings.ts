@@ -346,12 +346,15 @@ function recordedAt(createdAt: string): string {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => { window.setTimeout(resolve, ms); });
 
-/** Who the server says is signed in now, compared with the account an upload or move is for. */
-type AccountCheck = "same" | "other" | "signed-out" | "unknown";
+/**
+ * Who the server says is signed in now, compared with the account an upload or move is for. "no-owner": the
+ * recording was started while nobody was signed in, so it has no account to go to on its own.
+ */
+type AccountCheck = "same" | "other" | "signed-out" | "unknown" | "no-owner";
 
 /** Asks the server (`GET /api/me`, never the cached connection). A change makes the app follow it. */
 async function accountNow(userId: string | null): Promise<AccountCheck> {
-  if (!userId) return "unknown";
+  if (!userId) return "no-owner";
   let now: string | null;
   try {
     now = await signedInUserId();
@@ -369,6 +372,7 @@ const KEPT: Record<Exclude<AccountCheck, "same">, string> = {
   other: "다른 계정으로 로그인되어 있어 녹음을 서버에 올리지 않고 이 브라우저에 보관했습니다. 녹음한 계정으로 다시 로그인한 뒤 ‘내 계정으로 옮기기’로 옮길 수 있습니다.",
   "signed-out": "로그아웃되어 있어 녹음을 서버에 올리지 않고 이 브라우저에 보관했습니다. 다시 로그인한 뒤 ‘내 계정으로 옮기기’로 옮길 수 있습니다.",
   unknown: "로그인한 계정을 확인하지 못해(연결 문제) 녹음을 이 브라우저에 보관했습니다. 연결이 돌아오면 ‘내 계정으로 옮기기’로 옮길 수 있습니다.",
+  "no-owner": "로그인하기 전에 시작한 녹음이라 이 브라우저에 보관했습니다. 내 녹음이 맞으면 ‘내 계정으로 옮기기’로 옮기세요.",
 };
 
 /** Why a move stopped before its end. */
@@ -376,6 +380,7 @@ const MOVE_STOPPED: Record<Exclude<AccountCheck, "same">, string> = {
   other: "로그인한 계정이 바뀌어 옮기기를 멈췄습니다. 남은 항목은 이 브라우저에 그대로 있습니다.",
   "signed-out": "로그아웃되어 옮기기를 멈췄습니다. 남은 항목은 이 브라우저에 그대로 있습니다.",
   unknown: "로그인한 계정을 확인하지 못해(연결 문제) 옮기기를 멈췄습니다. 남은 항목은 이 브라우저에 그대로 있습니다.",
+  "no-owner": "로그인한 계정이 없어 옮기기를 멈췄습니다. 남은 항목은 이 브라우저에 그대로 있습니다.",
 };
 
 /** Thrown by `saveRemote` when the account check right before a POST did not answer "same". */
@@ -539,7 +544,13 @@ export async function moveRecordingToAccount(record: LocalRecording, { folderIds
     if (!(error instanceof ApiError && error.code === "idempotency_conflict")) return keep(error);
     // The same key earlier carried another request (its folder was deleted since, so folderId differs): if that
     // earlier upload reached the server, it is this recording; otherwise the next try uses a new key.
-    const earlier = await alreadyUploaded(server, record).catch(() => null);
+    let earlier: RemoteRecording | null;
+    try {
+      earlier = await alreadyUploaded(server, record);
+    } catch {
+      // The course view did not load: nothing is known, so the key stays as it is for the next try.
+      return keep(new Error("서버에 이미 올라갔는지 확인하지 못했습니다(연결 문제). 연결을 확인한 뒤 ‘다시 올리기’를 누르세요."));
+    }
     if (!earlier) {
       return keep(new Error("예전에 이 녹음을 다른 폴더로 보낸 요청과 맞지 않아 올리지 못했습니다. ‘다시 올리기’를 누르면 새로 올립니다."), {
         uploadKey: `import-rec-${record.id}-${crypto.randomUUID().slice(0, 8)}`,
@@ -703,6 +714,14 @@ onBackendChange((next) => {
   if (!current || current.settled || !next.settled) return;
   current.settled = true;
   current.ownerUserId = next.status === "ready" && next.me ? String(next.me.userId) : null;
+  // Now that the study room is known to be on the server, the server's file limit applies to this recording too.
+  const server = recordsInBrowserOnly(current.courseId, current.folderId) ? null : serverStudyCourse(current.courseId);
+  if (server != null && current.limitBytes == null) {
+    current.limitBytes = studyUsage()?.maxFileBytes ?? null;
+    loadCourseView(server).then((view) => {
+      current.limitBytes = view.usage ? view.usage.maxFileBytes : null;
+    }, () => {});
+  }
 });
 
 /**
@@ -783,9 +802,15 @@ export async function importRecording({ courseId, file }: { courseId: string; fi
         record = await saveRemote(server, input, key);
       } catch (error) {
         // 410 `recording_deleted`: this file was imported before and that recording deleted since. The user chose
-        // the file again, so it is a new upload under a new key.
+        // the file again, so it is a new upload under a second key, fixed so that a lost answer is replayed too;
+        // only if that one was also deleted since does it get a random key.
         if (!(error instanceof ApiError && error.status === 410)) throw error;
-        record = await saveRemote(server, input, `${key.slice(0, 60)}-${crypto.randomUUID()}`);
+        try {
+          record = await saveRemote(server, input, `${key}-again`);
+        } catch (again) {
+          if (!(again instanceof ApiError && again.status === 410)) throw again;
+          record = await saveRemote(server, input, `${key}-${crypto.randomUUID()}`);
+        }
       }
     } catch (error) {
       // The user still has the file: report and let them choose another or free space.

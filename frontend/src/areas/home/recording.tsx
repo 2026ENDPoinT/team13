@@ -271,9 +271,11 @@ function DeleteButton({ record, course, onStale }: { record: RecordingRecord; co
 }
 
 /** A recording still only in this browser while the study room is on the server: why, and the explicit move. */
-function MoveToAccount({ record, course }: { record: LocalRecording; course: Course }) {
+function MoveToAccount({ record: initial, course }: { record: LocalRecording; course: Course }) {
   const [moving, setMoving] = useState(false);
-  const [error, setError] = useState(record.uploadError || "");
+  // The record as the last try left it: after a key conflict it carries the new `uploadKey` the next try must use.
+  const [record, setRecord] = useState(initial);
+  const [error, setError] = useState(initial.uploadError || "");
   const name = backendState().me?.name;
   const account = `지금 로그인한 계정${name ? `(${name})` : ""}`;
   const group = ownerGroup(record.ownerUserId);
@@ -295,6 +297,7 @@ function MoveToAccount({ record, course }: { record: LocalRecording; course: Cou
             if (result.error || !result.record.remote) {
               setMoving(false);
               setError(result.error || "");
+              if (!result.record.remote) setRecord(result.record);
               return;
             }
             toast("녹음을 내 계정으로 옮겼습니다");
