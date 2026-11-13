@@ -6,6 +6,7 @@
 - 요청: 자료·영상 등 활동 상세 화면에서 원본 e-Class처럼 왼쪽 패널에 그 과목의 활동 목록이 종류 아이콘과 함께 보이게.
 - 새 `src/shared/activity-rail.tsx`(`ActivityShell`, `ActivityRail`)와 `activity-rail.css`. 상세 옆에 붙박이 패널(1024px 이상, 그 아래는 "학습활동 목록" 접는 줄): 종류 칩(영상·자료·과제·시험·설문)과 진행중·미제출 칩, 왼쪽 주차 번호(누르면 그 주로 이동), 주차별 행(종류 아이콘·종류 이름·완료 ✓·제목·상태), 지금 보는 활동 강조와 처음 그릴 때 그 위치로 스크롤. 학교 e-Class 행은 새 탭 링크로 남는다. 거른 상태는 같은 과목에서 다른 활동으로 옮겨도 유지한다.
 - 상세 5곳(자료·학교 자료, 영상 상세, 과제, 시험, 설문)의 바깥틀을 `ActivityShell`로 바꿨다(`learning/activity-server.tsx`·`lectures-server.tsx`·`assignments-server.tsx`·`quizzes-server.tsx`·`surveys-server.tsx`).
+- 시험 상세 "내 응시" 행(`AttemptRow`)이 아이콘 칸 없는 2칸인데 `.file-row`가 3칸 그리드라 글이 24px 칸에 눌려 글자가 세로로 깨지던 것을 `backend-ui.css`의 `.srv-quiz-attempts .file-row` 칸 수로 고쳤다.
 - 강의실·목록이 쓰던 상태 글·기간·주 범위·구독 훅을 `src/shared/activity-state.ts`로 옮겨 두 곳이 같이 쓴다(`course/activities-server.tsx`는 거기서 가져온다).
 
 ### 변경 파일
