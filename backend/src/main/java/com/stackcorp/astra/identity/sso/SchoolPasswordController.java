@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.stackcorp.astra.identity.api.ExternalLoginException;
 import com.stackcorp.astra.identity.api.SchoolLoginException;
+import com.stackcorp.astra.identity.api.SchoolCourseRooms;
 import com.stackcorp.astra.identity.api.SchoolPasswordVerifier;
 import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.SchoolAccount;
 import com.stackcorp.astra.identity.session.ClientAddresses;
@@ -32,7 +33,8 @@ import jakarta.servlet.http.HttpServletRequest;
  * 학번과 학교 e-Class 비밀번호로 로그인한다. 학교 e-Class에 로그인해 보고 성공하면 이 서비스의 session 쿠키를 준다. 학교 주소가
  * 설정되지 않은 실행은 404다.
  * <ul>
- * <li>비밀번호는 학교 확인 요청 한 번에만 쓰고 저장하지 않는다. 학교 session도 버린다.</li>
+ * <li>비밀번호는 학교 확인 요청 한 번에만 쓰고 저장하지 않는다. 학교 session은 강의실 학습활동 가져오기가 가져가 끝나면 버리고,
+ * 가져가지 않았으면 응답 전에 버린다.</li>
  * <li>학교 요청은 DB transaction 밖에서 보낸다.</li>
  * <li>학교가 거절한 시도만 브라우저 주소와 학번 단위로 센다. 한도에 닿으면 학교에 묻지 않고 429다. 학교 계정 잠금과 비밀번호 대입을
  * 이 서비스가 돕지 않게 한다. 성공한 로그인은 세지 않아, 앞단 proxy 하나로 모인 주소에서도 정상 로그인끼리 서로 막지 않는다.</li>
@@ -104,18 +106,25 @@ class SchoolPasswordController {
 			throw new ApiException(HttpStatus.BAD_GATEWAY, "school_unavailable",
 					"학교 e-Class 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
 		}
-		if (!studentId.equals(account.studentId())) {
-			throw new ApiException(HttpStatus.BAD_GATEWAY, "school_unavailable",
-					"학교 e-Class 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
-		}
 		IssuedSession session;
 		try {
+			if (!studentId.equals(account.studentId())) {
+				throw new ApiException(HttpStatus.BAD_GATEWAY, "school_unavailable",
+						"학교 e-Class 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
+			}
 			session = this.login.signIn(account, DeviceCookie.read(request), address,
 					request.getHeader(HttpHeaders.USER_AGENT));
 		}
 		catch (ExternalLoginException ex) {
 			log.warn("e-Class login refused: reason={}", ex.reason());
 			throw new ApiException(HttpStatus.UNAUTHORIZED, "rejected", "이 계정으로는 로그인할 수 없습니다.");
+		}
+		finally {
+			// 강의실 가져오기가 가져가지 않은 학교 session(로그인 거절, 가져오기 꺼짐, 과목 없음)은 여기서 버린다.
+			SchoolCourseRooms rooms = account.rooms();
+			if (rooms != null && rooms.claim()) {
+				rooms.close();
+			}
 		}
 		ResponseCookie cookie = ResponseCookie.from(this.properties.cookieName(), session.token())
 			.httpOnly(true)

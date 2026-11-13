@@ -53,6 +53,7 @@
 | [ADR-0038](adr/0038-avatar-photo.md) | 아바타 사진은 상태를 identity가, 바이트를 files가 갖는다. 올린 원본은 검사 뒤 격리한 converter가 256px JPEG로 다시 만든 것만 내보내고, 본인과 폐강하지 않은 과목을 함께하는 사람만 본다 |
 | [ADR-0039](adr/0039-institution-wall-clock-time.md) | 일시는 기관 시간대(기본 `Asia/Seoul`)의 벽시계로 두고, DB session과 JVM을 그 시간대에 고정한 뒤 시작할 때 세 값이 같은지 확인한다. `Instant`는 절대 시각이고 기관 시간대는 `GET /api/auth/methods`가 알린다 |
 | [ADR-0040](adr/0040-study-room-sync.md) | 학습실의 내 폴더, 항목 배치, 강의 녹음은 소유자 한 사람의 것으로 서버에 둔다. 사용자별 사용량 행을 잠가 차례로 바꾸고, 녹음 바이트는 업로드 흐름(용도 `study_recording`, 검사 포함)으로 받아 첨부 없이 두며 소유자에게만 구간 응답으로 내보낸다 |
+| [ADR-0042](adr/0042-school-activity-import.md) | 학번·학교 비밀번호 로그인 때 그 학생의 학교 session으로 과목마다 학교 강의실 첫 화면을 차례로 읽어 주차·학습활동 목록과 본인 완료 표시를 두고, 학생의 강의실 주차 목록에 `origin: "school"` 행으로 붙인다. 로그인은 짧게만 기다리고 나머지는 뒤에서 이어 가며, 학교 session은 그 작업이 끝나면 버린다. 내용(파일, 영상, 제출물)은 가져오지 않고 학교 e-Class에서 연다 |
 
 ## 2. 부하 가정
 
@@ -278,7 +279,7 @@ flowchart LR
 | `GET /api/auth/login?returnTo=` | 누구나. IdP 설정이 없으면 404 | 로그인 전용 쿠키를 주고 IdP로 302 |
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
-| `POST /api/auth/eclass-login` | 누구나(CSRF token 필요). 학교 e-Class 주소 설정이 없으면 404 | `{studentId, password}`. 학교 e-Class에 로그인해 확인한 뒤 session 쿠키(204). 처음 온 학번은 학교 화면의 이름·학과·학년으로 STUDENT를 만들고, 있는 사용자는 그 값으로 갱신한다. ACTIVE가 아니거나 break-glass 계정이면 401 `rejected`, 틀리면 401 `invalid_credentials`, 학교 장애는 502 `school_unavailable`. 비밀번호와 학교 session은 저장하지 않는다. 학교가 거절한 시도만 세어 브라우저 주소당 15분에 30번, 학번당 15분에 10번 실패하면 학교에 묻지 않고 429. 성공한 로그인은 세지 않는다 |
+| `POST /api/auth/eclass-login` | 누구나(CSRF token 필요). 학교 e-Class 주소 설정이 없으면 404 | `{studentId, password}`. 학교 e-Class에 로그인해 확인한 뒤 session 쿠키(204). 처음 온 학번은 학교 화면의 이름·학과·학년으로 STUDENT를 만들고, 있는 사용자는 그 값으로 갱신한다. ACTIVE가 아니거나 break-glass 계정이면 401 `rejected`, 틀리면 401 `invalid_credentials`, 학교 장애는 502 `school_unavailable`. 비밀번호와 학교 session은 저장하지 않는다. 로그인하면 학교 강의실 학습활동 목록을 가져온다(최대 `astra.school-activities.wait`까지 기다리고 나머지는 뒤에서, [ADR-0042](adr/0042-school-activity-import.md)). 학교가 거절한 시도만 세어 브라우저 주소당 15분에 30번, 학번당 15분에 10번 실패하면 학교에 묻지 않고 429. 성공한 로그인은 세지 않는다 |
 | `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. session 쿠키를 지우고 새 CSRF token을 준다. IdP 로그아웃은 연계하지 않는다 |
 | `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 같은 경로에 `reauth=failed`를 붙여 302(경로가 안전하지 않으면 `/?reauth=failed`). 브라우저 이동이라 시작하지 못할 때(session 없음·만료, IdP 설정 없음, break-glass session, 사용자당 10분에 10번 초과)도 JSON 대신 같은 302이고 session과 쿠키는 그대로다. ID token 검증 실패는 `/?login=failed` |
 | `POST /api/me/step-up/totp` | break-glass session | `{code}`. TOTP 재인증. 로그인과 같은 잠금 |
@@ -421,7 +422,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 |---|---|---|
 | `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 역할은 과목 행과 같은 문장에서 정하고 수강생 수는 담당 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
 | `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나. 항목은 `/api/me/courses`와 같다(`learners`는 담당자에게만) |
-| `GET /api/courses/{courseId}/weeks` | 과목 구성원 | `{serverTime, weeks}`. 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 활동마다 DB 시계로 정한 `phase`(`not_open`·`open`·`late`·`closed`, 과제·퀴즈·설문 화면과 같은 경계)와, 평가 활동이면 `assignmentId`·`quizId`·`surveyId` 중 하나. 자료·영상 활동은 `activityId`가 그 화면의 ID다. 쿼리는 권한 판정 뒤 3번 |
+| `GET /api/courses/{courseId}/weeks` | 과목 구성원 | `{serverTime, weeks}`. 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 활동마다 DB 시계로 정한 `phase`(`not_open`·`open`·`late`·`closed`, 과제·퀴즈·설문 화면과 같은 경계)와, 평가 활동이면 `assignmentId`·`quizId`·`surveyId` 중 하나. 자료·영상 활동은 `activityId`가 그 화면의 ID다. 학생에게는 학교 강의실에서 가져온 행(`activityId: "school-<번호>"`, `origin: "school"`, 화면 유형 `type`, `schoolType`, `schoolKind`, `phase`, 본인 `done`(모르면 null), `attendance`, `learningTimeSec`, `offline`, 학교에서 여는 `schoolUrl`)과 학교에만 있는 주차를 같은 목록에 붙인다. 담당자에게는 붙이지 않는다([ADR-0042](adr/0042-school-activity-import.md)). 쿼리는 권한 판정 뒤 학생 5번, 담당자 3번 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부(파일마다 `summaryPublished`), 강의 영상 항목, `phase`, `serverTime`, 평가 활동이면 그 유형의 ID |
 
 ### 7.5 CDN이 없는 환경

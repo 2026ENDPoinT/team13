@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -82,8 +83,11 @@ class LearningController {
 
 	private final AuditLog audit;
 
+	private final SchoolActivities schoolActivities;
+
 	LearningController(JdbcClient jdbc, LearningAccess access, MaterialFiles materialFiles, ActivityTargets targets,
-			MaterialService materials, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit) {
+			MaterialService materials, RateLimiter rateLimiter, Idempotency idempotency, AuditLog audit,
+			SchoolActivities schoolActivities) {
 		this.jdbc = jdbc;
 		this.access = access;
 		this.materialFiles = materialFiles;
@@ -92,12 +96,17 @@ class LearningController {
 		this.rateLimiter = rateLimiter;
 		this.idempotency = idempotency;
 		this.audit = audit;
+		this.schoolActivities = schoolActivities;
 	}
 
 	/**
 	 * 주차와 활동 목록. 학생에게는 자료·퀴즈·설문 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 시작 전 활동의 제목과 기간도 내지
-	 * 않는다(SC-06). 활동마다 DB 시계로 정한 구간({@link ActivityPhase})과, 평가 활동이면 과제·퀴즈·설문 ID를 붙인다. 권한 판정 뒤 쿼리는
-	 * 과목 크기와 관계없이 셋(시계, 주차와 활동, 평가 ID)이다.
+	 * 않는다(SC-06). 활동마다 DB 시계로 정한 구간({@link ActivityPhase})과, 평가 활동이면 과제·퀴즈·설문 ID를 붙인다.
+	 * <p>
+	 * 학생에게는 학교 강의실에서 가져온 주차와 활동({@link SchoolActivities}, ADR-0042)을 같은 주차에 서비스 활동 뒤로 붙인다. 학교에만 있는 주차는
+	 * 주차 번호 순서로 끼우고, 두 쪽에 다 있는 주차는 서비스 주차의 제목·기간을 쓰되 비어 있으면 학교 기간을 쓴다. 학교 활동은 학교 화면이
+	 * 이미 보여 준 목록이므로 시작 전 활동도 그대로 나온다. 권한 판정 뒤 쿼리는 과목 크기와 관계없이 다섯(시계, 주차와 활동, 평가 ID,
+	 * 학교 주차, 학교 활동)이다.
 	 */
 	@GetMapping("/api/courses/{courseId}/weeks")
 	ResponseEntity<WeekList> weeks(@AuthenticationPrincipal Actor actor, @PathVariable long courseId) {
@@ -139,7 +148,20 @@ class LearningController {
 						activity.published(), phase(activity.openAt(), row.closeAt(), target, now),
 						targetId(target, "assignment"), targetId(target, "quiz"), targetId(target, "survey")));
 		}
-		return ok(new WeekList(now, List.copyOf(weeks.values())));
+		// 학교 활동은 학생에게만 붙인다. 담당자가 공개·삭제할 수 있는 서비스 활동이 아니다.
+		return ok(new WeekList(now, instructor ? List.copyOf(weeks.values())
+				: merge(weeks, this.schoolActivities.weeks(courseId, actor.userId(), now))));
+	}
+
+	private static List<WeekView> merge(Map<Integer, WeekView> own, Map<Integer, SchoolActivities.Week> school) {
+		Map<Integer, WeekView> all = new TreeMap<>(own);
+		school.forEach((no, week) -> all.merge(no, new WeekView(no, null, week.startsOn(), week.endsOn(),
+				new ArrayList<>(week.activities())), (mine, theirs) -> {
+					mine.activities().addAll(theirs.activities());
+					return new WeekView(no, mine.title(), mine.startsOn() == null ? theirs.startsOn() : mine.startsOn(),
+							mine.endsOn() == null ? theirs.endsOn() : mine.endsOn(), mine.activities());
+				}));
+		return List.copyOf(all.values());
 	}
 
 	/** 자료 목록. 최근 등록순. 자료마다 구간과 파일별 요약 게시 여부가 있다. 권한 판정 뒤 쿼리는 넷(시계, 자료, 첨부, 게시 여부)이다. */
@@ -395,7 +417,11 @@ class LearningController {
 	record WeekList(LocalDateTime serverTime, List<WeekView> weeks) {
 	}
 
-	record WeekView(int weekNo, String title, LocalDate startsOn, LocalDate endsOn, List<ActivityItem> activities) {
+	record WeekView(int weekNo, String title, LocalDate startsOn, LocalDate endsOn, List<WeekActivity> activities) {
+	}
+
+	/** 주차 목록의 활동 한 행. 서비스 활동({@link ActivityItem})과 학교 강의실에서 가져온 활동({@link SchoolActivities.Item}). */
+	sealed interface WeekActivity permits ActivityItem, SchoolActivities.Item {
 	}
 
 	/**
@@ -407,7 +433,7 @@ class LearningController {
 	record ActivityItem(long activityId, String type, String title, LocalDateTime openAt, LocalDateTime closeAt,
 			boolean published, String phase, @JsonInclude(JsonInclude.Include.NON_NULL) Long assignmentId,
 			@JsonInclude(JsonInclude.Include.NON_NULL) Long quizId,
-			@JsonInclude(JsonInclude.Include.NON_NULL) Long surveyId) {
+			@JsonInclude(JsonInclude.Include.NON_NULL) Long surveyId) implements WeekActivity {
 	}
 
 	private record WeekRow(WeekView week, Activity activity, String type, String title, LocalDateTime closeAt) {

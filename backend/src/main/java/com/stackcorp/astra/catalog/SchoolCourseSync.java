@@ -5,6 +5,7 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -48,6 +49,7 @@ class SchoolCourseSync {
 	}
 
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+	@Order(SchoolLoginSucceeded.CATALOG_ORDER)
 	public void on(SchoolLoginSucceeded event) {
 		try {
 			this.transaction.executeWithoutResult((status) -> sync(event.userId(), event.courses()));

@@ -20,7 +20,8 @@ import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
  * <li>있는 사용자는 학교 화면에서 읽은 이름·학과·학년으로 갱신한다. 읽지 못한 값은 그대로 둔다.</li>
  * <li>break-glass 계정과 ACTIVE가 아닌 계정은 들어오지 못한다.</li>
  * <li>처음 들어온 학번인데 이름을 읽지 못하면 사용자를 만들지 않는다. 이름 없는 사용자를 지어내지 않는다.</li>
- * <li>로그인하면 {@link SchoolLoginSucceeded}로 학교 수강과목을 알린다. {@code catalog}가 commit 뒤에 과목과 수강을 맞춘다.</li>
+ * <li>로그인하면 {@link SchoolLoginSucceeded}로 학교 수강과목과 강의실 손잡이를 알린다. {@code catalog}가 commit 뒤에 과목과 수강을
+ * 맞추고, {@code learning}이 강의실 학습활동 목록을 가져온다.</li>
  * </ul>
  */
 @Service
@@ -97,7 +98,7 @@ class SchoolPasswordLogin {
 		}
 		IssuedSession session = this.sessions.create(existing.userId(), device, ip, userAgent);
 		this.events.record(existing.userId(), session.sessionId(), ip, true, null);
-		this.publisher.publishEvent(new SchoolLoginSucceeded(existing.userId(), account.courses()));
+		this.publisher.publishEvent(new SchoolLoginSucceeded(existing.userId(), account.courses(), account.rooms()));
 		return session;
 	}
 

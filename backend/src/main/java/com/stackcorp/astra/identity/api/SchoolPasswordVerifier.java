@@ -8,6 +8,7 @@ import java.util.List;
  * 주소가 설정되지 않았으면 bean이 없고 그 로그인 수단도 없다.
  * <p>
  * 비밀번호는 확인 요청 한 번에만 쓰고 저장하지 않는다. 구현은 비밀번호와 학교 session 쿠키를 로그·예외 message에 넣지 않는다(SC-07).
+ * 학교 session은 돌려준 {@link SchoolAccount#rooms()}의 메모리에만 남고, 그것을 닫으면 버린다.
  */
 public interface SchoolPasswordVerifier {
 
@@ -24,9 +25,11 @@ public interface SchoolPasswordVerifier {
 	 * @param departmentName 학과. 읽지 못했으면 null
 	 * @param grade 학년(1~6). 읽지 못했으면 null
 	 * @param courses 학교 메인 화면의 수강과목. 읽지 못했으면 비어 있다
+	 * @param rooms 이 확인으로 열린 학교 session으로 강의실을 읽는 손잡이. 없으면 null. 받은 쪽은 {@link SchoolCourseRooms}의 규칙대로
+	 * 닫는다
 	 */
 	record SchoolAccount(String studentId, String name, String departmentName, Integer grade,
-			List<SchoolCourse> courses) {
+			List<SchoolCourse> courses, SchoolCourseRooms rooms) {
 
 		public SchoolAccount {
 			courses = List.copyOf(courses);

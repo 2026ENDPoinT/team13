@@ -71,7 +71,7 @@ git commit -m "Update reference to <변경 요약>"
 - 정본은 Flyway 마이그레이션 [`src/main/resources/db/migration/`](src/main/resources/db/migration/)이다. `V1__baseline.sql`은 Reference에서 설계한 97개 테이블 그대로다. Reference의 `db/design/*.md`에 있는 DDL 조각은 설계 당시 초안이다.
 - 이미 적용된 마이그레이션 파일은 고치지 않는다. 바꿀 내용은 다음 번호의 새 파일로 만든다.
 - 변경·점검·ERD 반영 절차는 [db/README.md](db/README.md) 5~6절을 따른다.
-- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 117 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
+- ERD는 [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka)(MySQL)다. 지금 스키마는 121 테이블이고 `db/erdcloud/snapshot.json`이 그 상태다. ERDCloud 화면에는 V1의 97 테이블까지만 올라가 있다([db/README.md](db/README.md) 6절). 캠퍼스 온의 ERD B는 STack-Backend 레포가 관리한다.
 
 ## 빌드와 실행
 
@@ -371,6 +371,13 @@ PIN/QR 출석의 보안 값이다([ADR-0030](docs/adr/0030-attendance-and-smart-
 | `ASTRA_BREAK_GLASS_PASSWORD_HASH` | 없음 | `{bcrypt}...` 형식의 비밀번호 hash |
 | `ASTRA_BREAK_GLASS_TOTP_SECRET` | 없음 | RFC 6238 TOTP secret(Base32) |
 | `ASTRA_ECLASS_LOGIN_BASE_URL` | 없음 | 학교 e-Class origin(예: `https://eclass.seoultech.ac.kr`). 있으면 `POST /api/auth/eclass-login`이 열리고 `GET /api/auth/methods`에 `eclassPassword`가 나온다. 비밀번호는 학교 확인 요청 한 번에만 쓰고 저장하지 않는다. 학교 서버가 보내지 않는 중간 인증서(Thawte TLS RSA CA G1)를 이 client의 신뢰 목록에 더한다 |
+| `ASTRA_SCHOOL_ACTIVITIES_ENABLED` | `true` | 학교 로그인 때 그 학생의 학교 강의실 주차·학습활동 목록(본인 완료 표시 포함)을 가져와 강의실 주차 목록에 붙인다([ADR-0042](docs/adr/0042-school-activity-import.md)). 끄면 학교 session을 로그인 응답 전에 버린다 |
+| `ASTRA_SCHOOL_ACTIVITIES_WAIT` | `3s` | 로그인 응답이 가져오기를 기다리는 최대 시간(0~30초). 나머지는 뒤에서 이어 간다 |
+| `ASTRA_SCHOOL_ACTIVITIES_BUDGET` | `60s` | 가져오기 한 번의 전체 시간(1초~10분). 넘으면 남은 과목은 읽지 않는다 |
+| `ASTRA_SCHOOL_ACTIVITIES_REQUEST_TIMEOUT` | `8s` | 학교 요청 하나의 제한 시간(1초~1분) |
+| `ASTRA_SCHOOL_ACTIVITIES_MAX_COURSES` | `20` | 한 번에 읽는 과목 수(1~60, 학교 메인 화면 순서) |
+| `ASTRA_SCHOOL_ACTIVITIES_INTERVAL` | `10m` | 같은 학생이 이 간격 안에 다시 로그인하면 가져오지 않는다 |
+| `ASTRA_SCHOOL_ACTIVITIES_CONCURRENCY` | `4` | 동시에 도는 가져오기 수(1~32). 넘치면 그 로그인은 가져오지 않는다 |
 | `ASTRA_SESSION_ALLOWED_ORIGINS` | 없음 | 상태를 바꾸는 요청에 허용하는 Origin(쉼표 구분). 브라우저가 보내는 모양(`scheme://host[:port]`, 소문자, 기본 port와 끝의 `/` 없이) 그대로 적고, 다른 모양이면 앱이 시작하지 않는다. 비우면 요청 자신의 origin만 허용하는데, proxy 뒤에서는 앱이 보는 Host·scheme이 브라우저의 것과 달라 POST·PUT·DELETE가 모두 403이 된다. 그래서 compose 구성은 이 값을 요구한다(아래 "컨테이너로 실행") |
 | `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES` | 없음 | 이 CIDR(쉼표 구분)에서 온 연결에서만 `CloudFront-Viewer-Address`를 브라우저 주소로 쓴다. CloudFront VPC origin이 있는 app subnet을 넣는다. 비우면 header를 믿지 않고 연결한 쪽 주소를 쓴다 |
 | `ASTRA_CLOUDFRONT_BASE_URL` | 없음 | 서비스 도메인(https). signed cookie 정책의 resource 기준 |

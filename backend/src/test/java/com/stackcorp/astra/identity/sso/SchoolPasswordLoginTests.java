@@ -145,6 +145,45 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 	}
 
 	@Test
+	void signInImportsEachCoursesSchoolRoomIntoTheWeekListOnce() throws Exception {
+		String studentId = studentId();
+		int before = SCHOOL.roomReads;
+		Cookie session = this.mvc.perform(login(studentId, PASSWORD)).andExpect(status().isNoContent())
+			.andReturn().getResponse().getCookie("ASTRA_SESSION");
+		assertThat(SCHOOL.roomReads - before).isEqualTo(2);
+		var courses = ApiClient.json(this.mvc.perform(get("/api/me/courses").cookie(session)));
+		long regular = java.util.stream.StreamSupport.stream(courses.spliterator(), false)
+			.filter(node -> node.path("type").asText().equals("REGULAR")).findFirst().orElseThrow()
+			.path("courseId").asLong();
+
+		var weeks = ApiClient.json(this.mvc.perform(get("/api/courses/" + regular + "/weeks").cookie(session))).path("weeks");
+
+		assertThat(weeks.size()).isEqualTo(2);
+		assertThat(weeks.get(0).path("startsOn").asText()).isEqualTo("2026-09-01");
+		var video = weeks.get(0).path("activities").get(0);
+		assertThat(video.path("activityId").asText()).startsWith("school-");
+		assertThat(video.path("origin").asText()).isEqualTo("school");
+		assertThat(video.path("type").asText()).isEqualTo("video");
+		assertThat(video.path("schoolType").asText()).isEqualTo("lecture_weeks");
+		assertThat(video.path("title").asText()).isEqualTo("학교 1주 영상");
+		assertThat(video.path("phase").asText()).isEqualTo("closed");
+		assertThat(video.path("done").asBoolean()).isTrue();
+		assertThat(video.path("attendance").asText()).isEqualTo("1 주 1차시");
+		assertThat(video.path("learningTimeSec").asInt()).isEqualTo(1505);
+		assertThat(video.path("schoolUrl").asText()).isEqualTo(SCHOOL.origin()
+				+ "/ilos/mp/todo_list_connect.acl?SEQ=501&gubun=lecture_weeks&KJKEY=A2026310982911001");
+		var report = weeks.get(1).path("activities").get(0);
+		assertThat(report.path("type").asText()).isEqualTo("report");
+		assertThat(report.path("schoolKind").asText()).isEqualTo("report1");
+		assertThat(report.path("closeAt").asText()).startsWith("2026-12-31T23:59");
+		assertThat(report.path("done").asBoolean()).isFalse();
+
+		this.mvc.perform(login(studentId, PASSWORD)).andExpect(status().isNoContent());
+
+		assertThat(SCHOOL.roomReads - before).isEqualTo(2);
+	}
+
+	@Test
 	void wrongPasswordIsRejectedWithoutCreatingAUser() throws Exception {
 		String studentId = studentId();
 
@@ -252,6 +291,10 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 
 		volatile int logins;
 
+		volatile int roomReads;
+
+		volatile String boundKey;
+
 		private FakeSchool(HttpServer server) {
 			this.server = server;
 		}
@@ -316,6 +359,17 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 							? "<div class=\"user_info\"><span class=\"user_name\">" + this.name
 									+ "</span></div><div class=\"mp_myinfo_user_info\"><p class=\"dept_grade\">컴퓨터공학과 3Grade</p></div>"
 							: LOGIN_FORM);
+					case "/ilos/cls/st/co/eclass_room2.acl" -> {
+						Map<String, String> form = form(new String(exchange.getRequestBody().readAllBytes(),
+								StandardCharsets.UTF_8));
+						this.boundKey = signedIn ? form.get("KJKEY") : null;
+						send(exchange, 200, signedIn ? "{\"isError\":false,\"returnURL\":\"/ilos/cls/st/submain/submain_form.acl\"}"
+								: "{\"isError\":true,\"message\":\"로그인\"}");
+					}
+					case "/ilos/cls/st/submain/submain_form.acl" -> {
+						this.roomReads++;
+						send(exchange, 200, signedIn ? room(this.boundKey) : LOGIN_FORM);
+					}
 					default -> send(exchange, 404, "");
 				}
 			}
@@ -335,6 +389,32 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 				  <span class="info_txt">이러닝수업</span></div>
 				</a>
 				""";
+
+		/** 강의실 첫 화면. 정규과목은 2주(1주 영상, 2주 과제), 비정규과목은 1회차 설문. */
+		static String room(String key) {
+			if (key == null) {
+				return "<p>과목을 선택하세요.</p>";
+			}
+			String activities = key.startsWith("A") ? """
+					<div id="week_list_wrap_1" class="week_list_container"><div class="week_period">9월 1일 ~ 9월 7일</div>
+					<a class="week_activity week_activity_lecture_weeks" href="/ilos/cls/st/activity/activity_form.acl?m=lecture_weeks&amp;n=501">
+					<span class="activity_title">학교 1주 영상</span>
+					<div class="activity_info"><div class="activity_info_title">출석</div><div class="activity_info_text">1 주 1차시</div></div>
+					<div class="activity_info"><div class="activity_info_title">학습시간</div><div class="activity_info_text">25:05</div></div>
+					<div class="activity_info"><div class="activity_info_title">마감</div><div class="activity_info_text">만료됨</div></div>
+					<div class="submit_check_outer"><div class="submit_check"></div></div></a></div>
+					<div id="week_list_wrap_2" class="week_list_container"><div class="week_period">9월 8일 ~ 9월 14일</div>
+					<a class="week_activity week_activity_report1" href="/ilos/cls/st/activity/activity_form.acl?m=report&amp;n=502">
+					<span class="activity_title">학교 과제</span>
+					<div class="activity_info"><div class="activity_info_title">마감</div><div class="activity_info_text">12월 31일 (목) 오후 11:59</div></div></a></div>
+					""" : """
+					<div id="week_list_wrap_1" class="week_list_container"><div class="week_period"></div>
+					<a class="week_activity week_activity_survey" href="/ilos/cls/st/activity/activity_form.acl?m=survey&amp;n=1">
+					<span class="activity_title">학교 설문</span></a></div>
+					""";
+			return "<input type=\"hidden\" id=\"KJ_KEY\" value=\"" + key + "\"><div class=\"activity_list_container\">"
+					+ activities + "</div>";
+		}
 
 		private static final String LOGIN_FORM = """
 				<form id="myform" method="post" action="/ilos/lo/login.acl">

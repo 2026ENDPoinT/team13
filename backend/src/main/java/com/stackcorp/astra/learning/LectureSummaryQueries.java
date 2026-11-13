@@ -32,6 +32,8 @@ class LectureSummaryQueries implements LectureProgressSummaries, PendingVideos {
 		if (courseIds.isEmpty()) {
 			return percent;
 		}
+		Map<Long, long[]> counts = new HashMap<>();
+		// 서비스 영상 콘텐츠와, 학교 강의실에서 가져온 영상 활동(ADR-0042, 학교 화면의 본인 완료 표시)을 함께 센다.
 		this.jdbc.sql("""
 				SELECT a.course_id, COUNT(*), COUNT(p.met_at)
 				  FROM learning_activities a
@@ -42,9 +44,19 @@ class LectureSummaryQueries implements LectureProgressSummaries, PendingVideos {
 				 WHERE a.course_id IN (:courses) AND a.deleted_at IS NULL AND a.published_yn = 1
 				   AND (a.open_at IS NULL OR a.open_at <= :now)
 				 GROUP BY a.course_id
+				UNION ALL
+				SELECT a.course_id, COUNT(*), COUNT(CASE WHEN s.done_yn = 1 THEN 1 END)
+				  FROM school_activities a
+				  LEFT JOIN school_activity_states s ON s.school_activity_id = a.school_activity_id AND s.user_id = :user
+				 WHERE a.course_id IN (:courses) AND a.school_type = 'lecture_weeks'
+				   AND (a.open_at IS NULL OR a.open_at <= :now)
+				 GROUP BY a.course_id
 				""").param("user", userId).param("courses", courseIds).param("now", now).query((rs) -> {
-			percent.put(rs.getLong(1), (int) (rs.getLong(3) * 100L / rs.getLong(2)));
+			long[] count = counts.computeIfAbsent(rs.getLong(1), (id) -> new long[2]);
+			count[0] += rs.getLong(2);
+			count[1] += rs.getLong(3);
 		});
+		counts.forEach((course, count) -> percent.put(course, (int) (count[1] * 100L / count[0])));
 		return percent;
 	}
 

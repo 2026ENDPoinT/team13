@@ -1,0 +1,91 @@
+<!-- 학교 e-Class 정규과목 강의실 첫 화면(submain_form.acl)의 구조만 남긴 합성 화면. 과목 키, 활동 ID, 제목, 날짜는 지어낸 값이다. -->
+<html><head><title>e-Class</title></head><body>
+<input type="hidden" id="KJ_YEAR" value="2026"><input type="hidden" id="KJ_TERM" value="3">
+<input type="hidden" id="KJ_KEY" value="A2026310900011001">
+<section class="lecture_contents"><section class="container"><article class="article">
+<nav class="week_list_wrap with_progress"><div class="week_list"><button class="week complete" value="1"><span>1</span></button></div></nav>
+<div class="activity_list_container">
+  <div id="week_list_wrap_1" class="week_list_container">
+    <div class="week_title_wrap" data-week="1"><div class="week_title_inner"><div class="week_title">
+      <span class="font_headline2">1 주</span><div class="week_period font_caption1">9월 1일 ~ 9월 7일</div></div>
+      <button class="week_open_icon" data-week="1"><div class="week_open_icon_inner"></div></button></div>
+      <div class="week_close_line"></div></div>
+    <div class="week_activity_list"><div class="week_chapter_wrap"><div class="week_chapter_activity_list">
+      <a class="week_activity week_activity_lecture_material" href="/ilos/cls/st/activity/activity_form.acl?m=lecture_material&amp;n=7000001" target="_self">
+        <div class="activity_title_container"><div class="menu_icon lecture_material" title="자료"></div>
+          <div class="activity_title_wrap"><span class="activity_title_top"><span class="activity_title font_subtitle2">강의 안내 자료</span><div class="clip"></div></span></div>
+          <div class="submit_check_outer"><div class="submit_check"></div></div>
+        </div>
+      </a>
+      <a class="week_activity week_activity_lecture_weeks" href="/ilos/cls/st/activity/activity_form.acl?m=lecture_weeks&amp;n=7000002" target="_self">
+        <div class="activity_title_container"><div class="menu_icon lecture_weeks" title="영상"></div>
+          <div class="activity_title_wrap"><span class="activity_title_top"><span class="activity_title font_subtitle2 unread">1주차 강의 영상</span></span>
+            <div class="activity_title_bottom font_caption1">
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">출석</div><div class="activity_info_text font_caption2">1 주 1차시</div></div>
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">학습시간</div><div class="activity_info_text font_caption2">25:05</div></div>
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">시작</div><div class="activity_info_text font_caption2">시작됨</div></div>
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">마감</div><div class="activity_info_text font_caption2">만료됨</div></div>
+            </div></div>
+        </div>
+      </a>
+    </div></div></div>
+  </div>
+  <div id="week_list_wrap_2" class="week_list_container">
+    <div class="week_title_wrap" data-week="2"><div class="week_title_inner"><div class="week_title">
+      <span class="font_headline2">2 주</span><div class="week_period font_caption1">9월 8일 ~ 9월 14일</div></div></div></div>
+    <div class="week_activity_list"></div>
+  </div>
+  <div id="week_list_wrap_3" class="week_list_container">
+    <div class="week_title_wrap" data-week="3"><div class="week_title_inner"><div class="week_title">
+      <span class="font_headline2">3 주</span><div class="week_period font_caption1">9월 15일 ~ 9월 21일</div></div></div></div>
+    <div class="week_activity_list"><div class="week_chapter_wrap"><div class="week_chapter_activity_list">
+      <a class="week_activity week_activity_report1" href="/ilos/cls/st/activity/activity_form.acl?m=report&amp;n=7000003" target="_self">
+        <div class="activity_title_container"><div class="menu_icon report1" title="과제"></div>
+          <div class="activity_title_wrap"><span class="activity_title_top"><span class="activity_title font_subtitle2">과제 1</span></span>
+            <div class="activity_title_bottom font_caption1">
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">마감</div><div class="activity_info_error_text font_subtitle4">D-3</div><div class="activity_info_text font_caption2">9월 18일 (금) 오후 11:59</div></div>
+            </div></div>
+          <div class="submit_check_outer"><div class="submit_check"></div></div>
+        </div>
+      </a>
+      <a class="week_activity week_activity_test2" href="/ilos/cls/st/activity/activity_form.acl?m=test&amp;n=7000004" target="_self">
+        <div class="activity_title_container"><div class="menu_icon test2" title="중간시험"></div>
+          <div class="activity_title_wrap"><span class="activity_title_top"><span class="activity_title font_subtitle2">중간시험</span></span>
+            <div class="activity_title_bottom font_caption1">
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">시작</div><div class="activity_info_text font_caption2">10월 21일 (수) 오전 10:30</div></div>
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">마감</div><div class="activity_info_text font_caption2">10월 21일 (수) 오후 12:00</div></div>
+            </div></div>
+          <div class="submit_check_outer"><div class="activity_status font_caption2">오프라인</div><div class="submit_check"></div></div>
+        </div>
+      </a>
+      <a class="week_activity week_activity_test1" href="/ilos/cls/st/activity/activity_form.acl?m=test&amp;n=7000005" target="_self">
+        <div class="activity_title_container"><div class="menu_icon test1" title="퀴즈"></div>
+          <div class="activity_title_wrap"><span class="activity_title_top"><span class="activity_title font_subtitle2">퀴즈 1</span></span>
+            <div class="activity_title_bottom font_caption1"></div></div>
+        </div>
+      </a>
+      <a class="week_activity week_activity_survey" href="/ilos/cls/st/activity/activity_form.acl?m=survey&amp;n=7000006" target="_self">
+        <div class="activity_title_container"><div class="menu_icon survey" title="설문"></div>
+          <div class="activity_title_wrap"><span class="activity_title_top"><span class="activity_title font_subtitle2">강의 설문</span></span>
+            <div class="activity_title_bottom font_caption1">
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">마감</div><div class="activity_info_text font_caption2">12월 31일 (목) 오후 11:59</div></div>
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">출석</div></div>
+              <div class="activity_info"><div class="activity_info_title font_subtitle4">새 칸</div><div class="activity_info_text font_caption2">알 수 없는 값</div></div>
+            </div></div>
+        </div>
+      </a>
+      <a class="week_activity week_activity_discuss" href="/ilos/cls/st/activity/activity_form.acl?m=discuss&amp;n=7000007" target="_self">
+        <div class="activity_title_container"><div class="activity_title_wrap"><span class="activity_title_top"><span class="activity_title font_subtitle2">토론 1</span></span></div></div>
+      </a>
+      <a class="week_activity week_activity_report1" href="javascript:void(0)"><span class="activity_title">링크 없는 행</span></a>
+      <a class="week_activity week_activity_report1" href="/ilos/cls/st/activity/activity_form.acl?m=report"><span class="activity_title">ID 없는 행</span></a>
+      <a class="week_activity week_activity_report1" href="/ilos/cls/st/activity/activity_form.acl?m=report&amp;n=7000008"><span class="other">제목 없는 행</span></a>
+      <a class="week_activity week_activity_report1" href="/ilos/cls/st/activity/activity_form.acl?m=Report%3Cx%3E&amp;n=7000009"><span class="activity_title">이상한 유형</span></a>
+      <a class="week_activity week_activity_report1" href="/ilos/cls/st/activity/activity_form.acl?m=report&amp;n=7000003"><span class="activity_title">같은 활동 두 번</span></a>
+      <div class="week_activity"><span class="activity_title">링크가 아닌 행</span></div>
+    </div></div></div>
+  </div>
+  <div id="week_list_wrap_x" class="week_list_container"><a class="week_activity" href="/ilos/cls/st/activity/activity_form.acl?m=report&amp;n=7000010"><span class="activity_title">번호 없는 주</span></a></div>
+</div>
+</article></section></section>
+</body></html>
