@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import com.stackcorp.astra.catalog.api.CourseMates;
 import com.stackcorp.astra.catalog.api.CourseMates.CourseMate;
@@ -139,9 +140,12 @@ class MessageService {
 		Map<Long, CourseRole> reach = reachable(userId, courseId, null);
 		Matches matches = this.userSearch.search(reach.keySet(), name,
 				(int) Math.min((long) (page - 1) * size, Integer.MAX_VALUE), size);
+		// 사진 유무는 쪽 하나에 한 번 묻는다.
+		Set<Long> withPhoto = this.authors.photos(userId, matches.items().stream().map((m) -> m.userId()).toList());
 		List<Contact> items = matches.items()
 			.stream()
-			.map((m) -> new Contact(m.userId(), m.name(), reach.get(m.userId()).name()))
+			.map((m) -> new Contact(m.userId(), m.name(), reach.get(m.userId()).name(),
+					withPhoto.contains(m.userId())))
 			.toList();
 		return new ContactPage(items, matches.total(), page, size);
 	}
@@ -426,9 +430,9 @@ class MessageService {
 			List<Long> stored = draft.recipientIds();
 			Map<Long, CourseRole> reach = stored.isEmpty() ? Map.of() : reachable(userId, scope, stored);
 			List<Long> kept = stored.stream().filter(reach::containsKey).toList();
-			Map<Long, String> names = this.userNames.namesOf(kept);
+			Known known = this.authors.of(userId, kept);
 			List<Contact> recipients = kept.stream()
-				.map((id) -> new Contact(id, names.get(id), reach.get(id).name()))
+				.map((id) -> new Contact(id, known.names().get(id), reach.get(id).name(), known.photos().contains(id)))
 				.toList();
 			return new ComposeDraft(draft.revision(), draft.title(), draft.body(), course(userId, scope), recipients,
 					stored.size() - kept.size(), courseDropped, draft.updatedAt());
@@ -627,8 +631,9 @@ class MessageService {
 
 	/**
 	 * @param role 함께 있는 과목에서 그 사람의 역할. INSTRUCTOR|STUDENT
+	 * @param hasPhoto 요청한 사람이 {@code GET /api/users/{userId}/avatar}로 사진을 받을 수 있으면 true(ADR-0038)
 	 */
-	record Contact(long userId, String name, String role) {
+	record Contact(long userId, String name, String role, boolean hasPhoto) {
 	}
 
 	record ContactPage(List<Contact> items, long total, int page, int size) {

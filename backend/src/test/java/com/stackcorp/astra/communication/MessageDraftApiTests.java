@@ -71,6 +71,7 @@ class MessageDraftApiTests extends IntegrationTest {
 	void draftKeepsCourseAndRecipientsAndRechecksThemWhenRead() throws Exception {
 		long mate = this.data.user("STUDENT");
 		this.data.enroll(this.course, mate);
+		this.data.photo(this.stu);
 		put(this.professor, "{\"revision\":1,\"title\":\"안내\",\"body\":\"본문\",\"courseId\":" + this.course
 				+ ",\"recipientIds\":[" + this.stu + "," + mate + "]}").andExpect(status().isOk());
 		this.professor.get(DRAFT).andExpect(status().isOk())
@@ -79,6 +80,8 @@ class MessageDraftApiTests extends IntegrationTest {
 			.andExpect(jsonPath("$.recipients[0].userId").value(this.stu))
 			.andExpect(jsonPath("$.recipients[0].name").value("테스트 STUDENT"))
 			.andExpect(jsonPath("$.recipients[0].role").value("STUDENT"))
+			.andExpect(jsonPath("$.recipients[0].hasPhoto").value(true))
+			.andExpect(jsonPath("$.recipients[1].hasPhoto").value(false))
 			.andExpect(jsonPath("$.droppedRecipients").value(0))
 			.andExpect(jsonPath("$.courseDropped").value(false));
 
