@@ -103,6 +103,10 @@ class NoticeApiTests extends IntegrationTest {
 		this.student.get(notice(this.course, id))
 			.andExpect(jsonPath("$.authorId").value(this.prof))
 			.andExpect(jsonPath("$.authorHasPhoto").value(true));
+		// 작성자 본인이 보아도 같다.
+		this.professor.get(notice(this.course, id))
+			.andExpect(jsonPath("$.authorId").value(this.prof))
+			.andExpect(jsonPath("$.authorHasPhoto").value(true));
 		this.student.get(notice(this.course, id))
 			.andExpect(jsonPath("$.body").value("<b>10월 21일</b>\n본관 101호"))
 			.andExpect(jsonPath("$.read").value(false))
