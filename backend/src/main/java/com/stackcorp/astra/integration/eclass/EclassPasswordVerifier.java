@@ -384,7 +384,7 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		Page detail = session.request(resolve(this.base, VIDEO + "?LECTURE_WEEKS=" + itemId + "&encoding=utf-8"), "GET",
 				null, true, referer);
 		requireSignedIn(detail);
-		return SchoolScreenPages.video(detail.document(), year == null ? 0 : year);
+		return SchoolScreenPages.video(detail.document(), year == null ? 0 : year, courseKey.startsWith("비"));
 	}
 
 	/**
