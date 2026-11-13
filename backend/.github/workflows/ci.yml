@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    # dev는 batch로 합친 통합 브랜치다. main으로 올리기 전에 같은 세 작업을 거친다.
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# action은 commit SHA로, container 이미지는 digest로 고정한다. 판은 줄 끝 주석에 적는다. 판을 올릴 때는 SHA와 주석을 함께 바꾼다.
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      # 영상 변환 테스트가 ffmpeg로 시험 영상을 만들고, 같은 process의 transcoder가 ffmpeg·ffprobe를 실행한다(ADR-0016).
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      # 테스트가 Testcontainers로 MySQL 8.4를 띄우고 Flyway 마이그레이션을 적용한다.
+      - name: Build
+        run: ./gradlew build
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports
+          path: build/reports/tests/
+
+  schema:
+    name: Schema check and ERD snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Start MySQL 8.4
+        run: |
+          docker run -d --name astra-erd-mysql -e MYSQL_ROOT_PASSWORD=erd \
+            mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+          # 초기화용 임시 서버가 아니라 3306에서 듣는 본 서버가 뜰 때까지 기다린다.
+          for i in $(seq 1 90); do
+            docker logs astra-erd-mysql 2>&1 | grep -q 'port: 3306' && exit 0
+            sleep 2
+          done
+          docker logs astra-erd-mysql
+          exit 1
+
+      # db/README.md 5절 3단계와 같은 절차다.
+      - name: Apply migrations and run check.sql
+        run: |
+          docker cp src/main/resources/db/migration astra-erd-mysql:/tmp/migration
+          docker cp db/tools/check.sql astra-erd-mysql:/tmp/check.sql
+          out=$(docker exec astra-erd-mysql sh -c "mysql -uroot -perd -e 'CREATE DATABASE astra CHARACTER SET utf8mb4' \
+            && for f in \$(ls /tmp/migration/V*__*.sql | sort -V); do mysql -uroot -perd --default-character-set=utf8mb4 astra < \$f || exit 1; done \
+            && mysql -uroot -perd --default-character-set=utf8mb4 -N astra < /tmp/check.sql" 2>/dev/null)
+          echo "$out"
+          problems=$(echo "$out" | grep -vE '^(tables|fks)[[:space:]]' || true)
+          if [ -n "$problems" ]; then
+            echo "::error::check.sql reported problems (broken FK, missing COMMENT, or isolated table). See db/README.md section 5."
+            exit 1
+          fi
+
+      # 마이그레이션을 바꾸고 스냅샷을 다시 만들지 않으면 실패한다.
+      - name: ERD snapshot is up to date
+        run: |
+          python3 db/tools/erdcloud_snapshot.py
+          if ! git diff --exit-code -- db/erdcloud/snapshot.json; then
+            echo "::error::db/erdcloud/snapshot.json is stale. Run 'python db/tools/erdcloud_snapshot.py' and commit the result (db/README.md section 5 step 4)."
+            exit 1
+          fi
+
+  container:
+    name: Container image and compose smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # 배포 이미지를 만든다. registry에는 올리지 않는다. converter 역할은 LibreOffice를 더한 target converter다(ADR-0033).
+      - name: Build images
+        run: |
+          docker build --tag astra-backend:ci .
+          docker build --target converter --tag astra-backend-converter:ci .
+
+      # 실제 비밀값 없이 띄운다. S3 주소는 기동에 쓰이지 않으므로 해석되지 않는 이름을 넣는다. 허용 Origin과 /doc·/vod 서명은
+      # compose.yaml이 요구하는 값이다. 프론트엔드 서버(server.mjs) 뒤의 구성처럼 앱 직접 응답(ADR-0009)으로 띄운다.
+      - name: Write env file
+        run: |
+          {
+            echo "COMPOSE_PROFILES=mysql"
+            echo "ASTRA_IMAGE=astra-backend:ci"
+            echo "ASTRA_CONVERTER_IMAGE=astra-backend-converter:ci"
+            echo "DB_URL=jdbc:mysql://mysql:3306/astra"
+            echo "DB_USERNAME=astra"
+            echo "DB_PASSWORD=$(openssl rand -hex 16)"
+            echo "ASTRA_STORAGE_ENDPOINT=http://storage.invalid:9000"
+            echo "ASTRA_STORAGE_ACCESS_KEY=ci"
+            echo "ASTRA_STORAGE_SECRET_KEY=ci"
+            echo "ASTRA_STORAGE_PATH_STYLE=true"
+            echo "ASTRA_SESSION_ALLOWED_ORIGINS=https://eclass.example.ac.kr"
+            echo "ASTRA_DELIVERY_ORIGIN_ENABLED=true"
+            echo "ASTRA_DELIVERY_ORIGIN_SIGNING_KEY='$(openssl rand -base64 32)'"
+          } > .env
+
+      # compose.yaml이 참조하는 변수가 모두 .env.example에 적혀 있는지, 구성이 schema에 맞는지 본다.
+      - name: Check compose file and env example
+        run: |
+          missing=$(grep -oE '\$\{[A-Z_]+' compose.yaml | cut -c3- | sort -u | while read -r name; do
+            grep -qE "^#? ?${name}=" .env.example || echo "${name}"
+          done)
+          if [ -n "$missing" ]; then
+            echo "::error::.env.example does not list: $missing"
+            exit 1
+          fi
+          docker compose config --quiet
+
+      - name: Smoke test
+        run: docker/smoke-test.sh
+
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes
