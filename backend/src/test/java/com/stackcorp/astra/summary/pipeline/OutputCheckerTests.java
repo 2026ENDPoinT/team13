@@ -47,6 +47,20 @@ class OutputCheckerTests {
 		assertThat(checked.soft()).singleElement().asString().contains("p3, p4");
 	}
 
+	// 실제 실행(DeepSeek)에서 모델이 글줄 안에 $$...$$를 쓰고, 고쳐 달라고 해도 두 번 같은 줄을 되풀이했다.
+	@Test
+	void turnsOneLineDisplayMathIntoInlineMathAndKeepsRealBlocks() {
+		String block = "- 높이:\n$$\nh = \\log_{200} N\n$$";
+		Checked<List<PageResult>> checked = OutputChecker.checkPages(ModelJson.MAPPER.valueToTree(Map.of("slides",
+				List.of(page(1, "- 높이는 $$h \\approx \\log_{200}(10^6)$$ 이에요."), page(2, block),
+						page(3, "- 코드:\n```sql\nSELECT '$$x$$';\n```")))),
+				List.of(1, 2, 3));
+
+		assertThat(checked.errors()).isEmpty();
+		assertThat(checked.value()).extracting(PageResult::explain)
+			.containsExactly("- 높이는 $h \\approx \\log_{200}(10^6)$ 이에요.", block, "- 코드:\n```sql\nSELECT '$$x$$';\n```");
+	}
+
 	@Test
 	void rejectsRawHtmlAndImagesButAllowsThemInsideCodeAndMath() {
 		Checked<List<PageResult>> bad = OutputChecker.checkPages(ModelJson.MAPPER.valueToTree(Map.of("slides",

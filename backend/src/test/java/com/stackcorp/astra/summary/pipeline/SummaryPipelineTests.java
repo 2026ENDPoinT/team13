@@ -53,6 +53,8 @@ class SummaryPipelineTests {
 		assertThat(llm.log).filteredOn((r) -> r.purpose() == Purpose.PAGES).hasSize(3);
 		assertThat(llm.log).allMatch((r) -> r.maxOutputTokens() <= 16000);
 		assertThat(result.usage().calls()).isEqualTo(4);
+		// 답은 JSON 객체 하나로 요청한다. agy gateway는 이 표시를 보고 JSON이 아닌 1순위 답을 폴백으로 넘긴다.
+		assertThat(llm.log).allMatch(LlmRequest::jsonObject);
 		assertThat(result.usage().inputTokens()).isEqualTo(40);
 		assertThat(progress).last().isEqualTo(14);
 	}
@@ -117,6 +119,22 @@ class SummaryPipelineTests {
 
 		assertThat(sizes).containsExactly(4, 2, 2);
 		assertThat(result.pack().slides()).extracting(Slide::page).containsExactly(1, 2, 3, 4);
+	}
+
+	// 실제 실행(DeepSeek, 10쪽 강의자료)에서 표지(meta) 해설이 권장 120자를 조금 넘을 때마다 6쪽 묶음 전체를 두 번 더 보냈다.
+	// 다시 물어도 끝내 경고로 받아들이므로 처음 답을 경고와 함께 받는다.
+	@Test
+	void acceptsOutputWithOnlySoftProblemsWithoutAskingAgain() {
+		FakeLlm llm = new FakeLlm((req) -> isStory(req) ? ok(story(3))
+				: ok(Map.of("slides", requestedPages(req).stream()
+					.map((p) -> p == 1 ? slide(p, Map.of("explain", "표지예요. ".repeat(25))) : slide(p))
+					.toList())));
+
+		GenerateResult result = run(llm, document(3));
+
+		assertThat(llm.log).extracting(LlmRequest::purpose).containsExactly(Purpose.PAGES, Purpose.STORY);
+		assertThat(result.pack().slides()).hasSize(3);
+		assertThat(result.warnings()).singleElement().asString().startsWith("p1: meta explain 150자");
 	}
 
 	@Test

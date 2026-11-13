@@ -315,16 +315,17 @@ public final class SummaryPipeline {
 
 		// ── 모델 호출 ──
 
-		// 구조화 출력 요청. 읽기나 검사에 실패하면 오류 목록을 붙여 고쳐 쓰게 한다. soft 문제만 남으면 경고로 받아들인다.
+		// 구조화 출력 요청. 읽기나 검사에 실패하면 오류 목록을 붙여 고쳐 쓰게 한다. 형식이 맞고 권장 분량 같은 soft 문제만 있으면 다시
+		// 묻지 않고 경고로 받아들인다. 다시 물어도 결국 경고로 받아들이므로 묶음 전체를 두 번 더 보내는 비용만 든다.
+		// 답은 JSON 객체 하나로 요청한다(response_format json_object). 제공자나 gateway가 무시해도 아래 검사가 그대로 거른다.
 		private <T> T requestJson(Purpose purpose, String system, List<LlmContent> content, int maxTokens,
 				Function<JsonNode, Checked<T>> check) {
 			List<LlmMessage> messages = new ArrayList<>();
 			messages.add(new LlmMessage(LlmMessage.Role.USER, content));
 			List<String> lastErrors = List.of();
-			Checked<T> best = null;
 			for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
 				LlmResponse res = call(new LlmRequest(attempt == 0 ? purpose : Purpose.REPAIR, system, messages,
-						maxTokens));
+						maxTokens, List.of(), true, null, null, null));
 				if (res.stopReason() == LlmResponse.StopReason.MAX_TOKENS) {
 					throw new TruncatedOutput();
 				}
@@ -337,15 +338,10 @@ public final class SummaryPipeline {
 							List.of());
 				}
 				if (checked.errors().isEmpty() && checked.value() != null) {
-					if (checked.soft().isEmpty()) {
-						return checked.value();
-					}
-					best = checked;
-					lastErrors = checked.soft();
+					this.warnings.addAll(checked.soft());
+					return checked.value();
 				}
-				else {
-					lastErrors = checked.errors();
-				}
+				lastErrors = checked.errors();
 				if (attempt == MAX_ATTEMPTS - 1) {
 					break;
 				}
@@ -355,10 +351,6 @@ public final class SummaryPipeline {
 				messages.add(new LlmMessage(LlmMessage.Role.USER,
 						List.of(new LlmContent.Text("방금 출력에 아래 문제가 있어요. 문제를 모두 고친 전체 JSON을 다시 출력해 주세요. JSON만 출력합니다.\n- "
 								+ lastErrors.stream().limit(40).collect(Collectors.joining("\n- "))))));
-			}
-			if (best != null) {
-				this.warnings.addAll(best.soft());
-				return best.value();
 			}
 			throw new InvalidOutput(lastErrors);
 		}
