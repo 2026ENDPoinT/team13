@@ -57,27 +57,54 @@ public class RateLimiter {
 		count(operation, operation + "@" + address, limit, window);
 	}
 
+	/**
+	 * 실패만 세는 명령의 앞 단계. window 안에 이미 limit번 실패했으면 거부한다. 세지 않는다. 실패는 {@link #recordFailure}로 센다.
+	 * 성공한 요청이 한도를 쓰지 않아, 같은 주소(NAT, 앞단 proxy)를 쓰는 정상 사용자끼리 서로 막지 않는다.
+	 * @param subject 세는 대상. 예: 브라우저 주소, 학번
+	 * @throws RateLimitedException 이미 limit번 실패했을 때
+	 */
+	public void checkFailures(String operation, String subject, int limit) {
+		long now = this.nanoTime.getAsLong();
+		Window current = this.windows.get(operation + "!" + subject);
+		if (current != null && now - current.startedAt < current.length && current.count >= limit) {
+			reject(operation, current, now);
+		}
+	}
+
+	/** {@link #checkFailures}가 보는 실패를 하나 센다. 거부하지 않는다. */
+	public void recordFailure(String operation, String subject, Duration window) {
+		increment(operation + "!" + subject, window);
+	}
+
 	private void count(String operation, String subject, int limit, Duration window) {
+		Window current = increment(subject, window);
+		if (current.count > limit) {
+			reject(operation, current, this.nanoTime.getAsLong());
+		}
+	}
+
+	private Window increment(String subject, Duration window) {
 		long now = this.nanoTime.getAsLong();
 		long length = window.toNanos();
 		if (this.windows.size() > SWEEP_AT) {
 			this.windows.values().removeIf((w) -> now - w.startedAt >= w.length);
 		}
-		Window current = this.windows.compute(subject, (key, w) -> {
+		return this.windows.compute(subject, (key, w) -> {
 			if (w == null || now - w.startedAt >= w.length) {
 				return new Window(now, length, 1);
 			}
 			return new Window(w.startedAt, w.length, w.count + 1);
 		});
-		if (current.count > limit) {
-			Counter.builder("astra.ratelimit.rejections")
-				.description("사용자·연산 요청 제한으로 거부한 요청 수")
-				.tag("operation", MetricTags.code(operation))
-				.register(this.meters)
-				.increment();
-			long remaining = current.length - (now - current.startedAt);
-			throw new RateLimitedException(Duration.ofNanos(Math.max(remaining, 1_000_000_000L)));
-		}
+	}
+
+	private void reject(String operation, Window current, long now) {
+		Counter.builder("astra.ratelimit.rejections")
+			.description("사용자·연산 요청 제한으로 거부한 요청 수")
+			.tag("operation", MetricTags.code(operation))
+			.register(this.meters)
+			.increment();
+		long remaining = current.length - (now - current.startedAt);
+		throw new RateLimitedException(Duration.ofNanos(Math.max(remaining, 1_000_000_000L)));
 	}
 
 	private record Window(long startedAt, long length, int count) {

@@ -43,6 +43,8 @@ dependencies {
 	}
 	// 문서 변환 process(com.stackcorp.converter)만 쓴다.
 	implementation 'org.apache.pdfbox:pdfbox:3.0.8'
+	// 학교 e-Class 로그인 화면을 읽는다(integration.eclass).
+	implementation 'org.jsoup:jsoup:1.21.2'
 	implementation 'org.springframework.modulith:spring-modulith-starter-core'
 	implementation 'org.flywaydb:flyway-mysql'
 	runtimeOnly 'com.mysql:mysql-connector-j'

@@ -269,10 +269,11 @@ flowchart LR
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, 로컬 실행의 `devLogin`)과 기관 시간대(`timeZone`) |
+| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, `eclassPassword`, 로컬 실행의 `devLogin`)과 기관 시간대(`timeZone`) |
 | `GET /api/auth/login?returnTo=` | 누구나. IdP 설정이 없으면 404 | 로그인 전용 쿠키를 주고 IdP로 302 |
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
+| `POST /api/auth/eclass-login` | 누구나(CSRF token 필요). 학교 e-Class 주소 설정이 없으면 404 | `{studentId, password}`. 학교 e-Class에 로그인해 확인한 뒤 session 쿠키(204). 처음 온 학번은 학교 화면의 이름·학과·학년으로 STUDENT를 만들고, 있는 사용자는 그 값으로 갱신한다. ACTIVE가 아니거나 break-glass 계정이면 401 `rejected`, 틀리면 401 `invalid_credentials`, 학교 장애는 502 `school_unavailable`. 비밀번호와 학교 session은 저장하지 않는다. 학교가 거절한 시도만 세어 브라우저 주소당 15분에 30번, 학번당 15분에 10번 실패하면 학교에 묻지 않고 429. 성공한 로그인은 세지 않는다 |
 | `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. IdP 로그아웃은 연계하지 않는다 |
 | `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자. IdP 설정이 없으면 404 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 같은 경로에 `reauth=failed`를 붙여 302(경로가 안전하지 않으면 `/?reauth=failed`). ID token 검증 실패는 `/?login=failed` |
 | `POST /api/me/step-up/totp` | break-glass session | `{code}`. TOTP 재인증. 로그인과 같은 잠금 |

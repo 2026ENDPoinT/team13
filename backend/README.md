@@ -97,7 +97,10 @@ git commit -m "Update reference to <변경 요약>"
 |---|---|
 | 표본 데이터 | 학생 박민준(`21101234`), 교수 박은주(`P-1042`), 이번 학기 과목 7개. 과목 키는 프론트엔드가 `kj`로 쓰는 값(`bi`, `algo`, `ai`, `db`, `oss`, `se`, `secu`)이다. 화면별 내용은 아래 표 |
 | 개발용 로그인 | `POST /api/auth/dev-login` `{"externalRef":"21101234"}`. 이 컴퓨터에서 온 요청만 받는다. CSRF token이 필요하다 |
+| 학교 e-Class 로그인 | `POST /api/auth/eclass-login` `{"studentId":"학번","password":"e-Class 비밀번호"}`. `astra.eclass-login.base-url=https://eclass.seoultech.ac.kr`을 켠다. 학교에 실제로 로그인해 이름·학과·학년을 갱신하고 정규·비정규 수강과목을 동기화한다 |
 | `local` 프로필 | `127.0.0.1`에만 listen, cookie의 `Secure` 끔, 허용 Origin `http://127.0.0.1:4190`·`http://localhost:4190`, 앱이 `/doc`·`/vod`를 직접 응답([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)), `worker` 프로필 포함 |
+
+학교 수강과목 동기화는 로그인 transaction commit 후 별도 transaction으로 완료한다. 학교 과목 키로 과목·학기·시간표·수강 관계를 갱신하고 `/api/me/courses`에서 본인의 과목만 반환한다. 담당자 이름·비정규 학습기간은 표시용 필드로 보관하며, 담당자 사용자나 학교에 없는 학습활동을 만들지 않는다. 재로그인해도 중복 수강을 만들지 않고 학교 목록에서 빠진 동기화 수강만 취소한다. 파싱 결과가 비어 있으면 기존 수강을 보존한다. 동기화 실패는 rollback하고 로그인은 유지한다. `V39__school_course_sync.sql`이 표시용 필드를 추가한다. 학교 비밀번호와 학교 세션 쿠키는 저장하지 않는다.
 
 표본은 `src/test/java/com/stackcorp/astra/local/Local*Seed.java`가 영역마다 넣는다. 시각은 모두 표본을 넣는 때의 DB 시계(기관 시간대, 기본 `Asia/Seoul`) 기준이고, 이미 있는 영역은 다시 넣지 않는다. 개발 PC나 MySQL container의 시간대와 관계없이 화면에는 한국 벽시계 시각이 나온다. 사람은 두 인물 말고도 교수 이준호(`P-2071`, 사이버보안·컴퓨터보안 공동 담당)와 학생 8명(`21101235`~`20101242`, 데이터베이스는 모두 수강)이 있다. 대부분의 표본은 데이터베이스(`bi`) 과목에 있다.
 
@@ -155,6 +158,8 @@ DB의 일시와 API의 offset 없는 일시(`openAt`, `closeAt`, `serverTime` �
 | `ASTRA_LLM_MAX_CONCURRENCY` | `2` | 동시에 보내는 요청 수 상한 |
 | `ASTRA_LLM_EXTRABODY_*` | 없음 | 요청 본문에 더하는 제공자 전용 값. 예: `ASTRA_LLM_EXTRABODY_THINKING_TYPE=disabled`는 본문에 `{"thinking":{"type":"disabled"}}`를 더한다 |
 | `ASTRA_LLM_ENABLED` | `true` | `false`면 요약 생성과 학습 대화를 모두 503 `llm_disabled`로 막고 모델을 부르지 않는다 |
+
+Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`, `ASTRA_LLM_MODEL=gemini-3.5-flash`. Gemini는 도구 호출에 `extra_content.google.thought_signature`를 붙이고 다음 요청에 같은 값이 없으면 400을 내므로, client는 도구 호출의 `extra_content`를 받은 그대로 돌려보낸다.
 
 과목 자료는 담당 교수자가 그 과목에 범위별(`page_summary`, `study_chat`)로 동의한 뒤에만 보낸다([ADR-0032](docs/adr/0032-llm-consent-and-study-chat.md)). 교수자는 아래 처리 조건을 `GET /api/llm/policy`로 보고 동의한다. 제공자를 바꾸면 이 값과 `NOTICE_VERSION`을 함께 바꾼다. 값이 바뀌면 이전 동의는 효력을 잃는다.
 
@@ -342,13 +347,14 @@ PIN/QR 출석의 보안 값이다([ADR-0030](docs/adr/0030-attendance-and-smart-
 
 ### 인증과 CDN 서명 설정
 
-학교 IdP 연결 전까지 로그인은 break-glass 계정 하나만 된다([ADR-0004](docs/adr/0004-sso-bff-session.md) 6번). 비밀번호 hash와 TOTP secret은 DB가 아니라 Secrets Manager에서 환경 변수로 넣는다. 셋 중 하나라도 없으면 로컬 로그인은 꺼진다. 운영자는 `users`에 같은 `external_ref`의 행을 먼저 만든다.
+학교 e-Class 비밀번호 로그인은 `ASTRA_ECLASS_LOGIN_BASE_URL`을 설정하면 열린다. 별도로 break-glass 계정([ADR-0004](docs/adr/0004-sso-bff-session.md) 6번)의 비밀번호 hash와 TOTP secret은 DB가 아니라 Secrets Manager에서 환경 변수로 넣는다. break-glass 설정 셋 중 하나라도 없으면 해당 로그인만 꺼진다. 운영자는 `users`에 같은 `external_ref`의 행을 먼저 만든다.
 
 | 환경 변수 | 기본값 | 내용 |
 |---|---|---|
 | `ASTRA_BREAK_GLASS_EXTERNAL_REF` | 없음 | break-glass 계정의 `users.external_ref` |
 | `ASTRA_BREAK_GLASS_PASSWORD_HASH` | 없음 | `{bcrypt}...` 형식의 비밀번호 hash |
 | `ASTRA_BREAK_GLASS_TOTP_SECRET` | 없음 | RFC 6238 TOTP secret(Base32) |
+| `ASTRA_ECLASS_LOGIN_BASE_URL` | 없음 | 학교 e-Class origin(예: `https://eclass.seoultech.ac.kr`). 있으면 `POST /api/auth/eclass-login`이 열리고 `GET /api/auth/methods`에 `eclassPassword`가 나온다. 비밀번호는 학교 확인 요청 한 번에만 쓰고 저장하지 않는다. 학교 서버가 보내지 않는 중간 인증서(Thawte TLS RSA CA G1)를 이 client의 신뢰 목록에 더한다 |
 | `ASTRA_SESSION_ALLOWED_ORIGINS` | 없음 | 상태를 바꾸는 요청에 허용하는 Origin(쉼표 구분). 비우면 요청 자신의 origin만 허용한다 |
 | `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES` | 없음 | 이 CIDR(쉼표 구분)에서 온 연결에서만 `CloudFront-Viewer-Address`를 브라우저 주소로 쓴다. CloudFront VPC origin이 있는 app subnet을 넣는다. 비우면 header를 믿지 않고 연결한 쪽 주소를 쓴다 |
 | `ASTRA_CLOUDFRONT_BASE_URL` | 없음 | 서비스 도메인(https). signed cookie 정책의 resource 기준 |

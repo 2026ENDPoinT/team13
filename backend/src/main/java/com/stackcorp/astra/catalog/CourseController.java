@@ -41,7 +41,7 @@ class CourseController {
 			       t.term_id, t.term_year, t.term_code, t.term_name, t.is_current,
 			       o.round_year, o.round_no, o.round_label, o.nonregular_category,
 			       COALESCE(o.lecture_type, c.lecture_type) AS lecture_type, o.learning_start_date, o.learning_end_date,
-			       o.cancel_allowed, o.cancel_close_at
+			       o.cancel_allowed, o.cancel_close_at, c.cover_template, c.instructor_label, c.learning_period_label
 			  FROM courses c LEFT JOIN terms t ON t.term_id = c.term_id
 			  LEFT JOIN non_regular_offerings o ON o.course_id = c.course_id
 			""";
@@ -148,9 +148,14 @@ class CourseController {
 			MyEnrollment mine = e == null ? null
 					: new MyEnrollment(e.enrollmentId(), e.kind(), e.status(), e.version(), OfferingRules
 						.cancellable(e.kind(), e.status(), row.cancelAllowed(), row.cancelCloseAt(), now));
+			// 담당자 행이 없는 과목(학교 화면에서 맞춘 과목)은 학교 화면의 담당자 글자를 쓴다.
+			List<String> names = instructors.getOrDefault(row.courseId(), List.of());
+			if (names.isEmpty() && row.instructorLabel() != null) {
+				names = List.of(row.instructorLabel());
+			}
 			views.add(new CourseView(row.courseId(), row.key(), row.name(), row.code(), row.section(), row.term(),
-					role.name(), instructors.getOrDefault(row.courseId(), List.of()), row.type(), row.credit(),
-					schedules.getOrDefault(row.courseId(), List.of()), row.offering(), mine));
+					role.name(), names, row.type(), row.credit(), schedules.getOrDefault(row.courseId(), List.of()),
+					row.offering(), mine, row.coverTemplate(), row.learningPeriod(), row.lectureType()));
 		}
 		return views;
 	}
@@ -167,12 +172,14 @@ class CourseController {
 				rs.getString("course_code"), rs.getString("section_no"), term,
 				CatalogQueries.NON_REGULAR.equals(rs.getString("course_type")) ? "NONREGULAR" : "REGULAR",
 				rs.getBigDecimal("credit"), offering, rs.getObject("cancel_allowed", Boolean.class),
-				rs.getObject("cancel_close_at", LocalDateTime.class));
+				rs.getObject("cancel_close_at", LocalDateTime.class), rs.getString("cover_template"),
+				rs.getString("instructor_label"), rs.getString("learning_period_label"), rs.getString("lecture_type"));
 	}
 
 	private record CourseRow(long courseId, String key, String name, String code, String section, TermView term,
 			String type, BigDecimal credit, OfferingSummary offering, Boolean cancelAllowed,
-			LocalDateTime cancelCloseAt) {
+			LocalDateTime cancelCloseAt, String coverTemplate, String instructorLabel, String learningPeriod,
+			String lectureType) {
 	}
 
 	/**
@@ -197,10 +204,14 @@ class CourseController {
 	 * @param type REGULAR|NONREGULAR
 	 * @param offering 비정규 과정이면 차수와 학습기간. 정규 과목이면 null
 	 * @param enrollment 학생이면 수강 근거. 담당자면 null
+	 * @param coverTemplate 기본 표지 템플릿 키(예: dynamic_13). 없으면 null
+	 * @param learningPeriod 학교 화면에서 맞춘 비정규 과목의 학습기간 표시(예: 2026.05.13~2026.12.21). 없으면 null
+	 * @param lectureType 수업형태(예: 이러닝수업). 없으면 null
 	 */
 	record CourseView(long courseId, String key, String name, String code, String section, TermView term, String role,
 			List<String> instructors, String type, BigDecimal credit, List<ScheduleView> schedules,
-			OfferingSummary offering, MyEnrollment enrollment) {
+			OfferingSummary offering, MyEnrollment enrollment, String coverTemplate, String learningPeriod,
+			String lectureType) {
 	}
 
 }
