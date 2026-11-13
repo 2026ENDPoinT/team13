@@ -92,7 +92,10 @@ class AssistantService {
 	private static Map<String, Object> body(AssistantRules.Answer answer, String source) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("say", answer.say());
+		body.put("intent", answer.intent());
 		body.put("actions", answer.actions().stream().map(AssistantLinks.Action::body).toList());
+		body.put("plan", answer.plan() == null ? null
+				: Map.of("steps", answer.plan().stream().map(AssistantPlan.Step::body).toList()));
 		body.put("source", source);
 		return body;
 	}

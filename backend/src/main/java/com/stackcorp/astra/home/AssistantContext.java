@@ -95,12 +95,25 @@ class AssistantContext {
 	/**
 	 * 활동이나 공지 하나. ref는 이 요청 안에서만 쓰는 이름(A1, A2 …)이다.
 	 *
+	 * @param key 출처를 합칠 때 쓰는 이름. 서비스 활동은 {@code n<활동 ID>}, 가져온 학교 활동은 {@code school-<n>}, 공지는
+	 * {@code notice…}다
 	 * @param kind video, material, report, test, survey, zoom, notice, other
 	 * @param status todo(마감 전이고 끝내지 않았다), done(끝냈다), open(담당 과목이거나 판정하지 않는다), notice
 	 * @param activityKeys 화면이 보내는 활동 값 중 이 항목을 가리키는 것(활동 ID, {@code srv-<n>}, {@code school-<n>})
 	 */
-	record ItemRef(String ref, long courseId, String kind, String type, String title, LocalDateTime closeAt,
-			String status, AssistantLinks.Action action, Set<String> activityKeys) {
+	record ItemRef(String ref, String key, long courseId, String kind, String type, String title,
+			LocalDateTime closeAt, String status, AssistantLinks.Action action, Set<String> activityKeys) {
+
+		/** 공지가 아닌 활동인지. 계획의 단계가 될 수 있다. */
+		boolean activity() {
+			return !this.kind.equals("notice");
+		}
+
+		/** 서비스 활동인지(가져온 학교 활동이 아니다). */
+		boolean nativeActivity() {
+			return this.key.matches("n\\d+");
+		}
+
 	}
 
 	/** 한 요청에서 쓰는 자료. 항목은 할 일, 마감, 과목 활동, 공지 순서로 쌓인다. */
@@ -140,8 +153,8 @@ class AssistantContext {
 			if (full() || !this.keys.add(key) || !this.byId.containsKey(courseId)) {
 				return null;
 			}
-			ItemRef item = new ItemRef("A" + (this.items.size() + 1), courseId, kind, type, title, closeAt, status,
-					action, activityKeys);
+			ItemRef item = new ItemRef("A" + (this.items.size() + 1), key, courseId, kind, type, title, closeAt,
+					status, action, activityKeys);
 			this.items.add(item);
 			return item;
 		}
