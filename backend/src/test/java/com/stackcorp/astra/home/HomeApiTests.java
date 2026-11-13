@@ -128,6 +128,41 @@ class HomeApiTests extends IntegrationTest {
 	}
 
 	@Test
+	void myCoursesCarryTheSameUnreadNoticeCountsAsTheHome() throws Exception {
+		long c1 = course();
+		long c2 = course();
+		long stu = this.data.user("STUDENT");
+		long co = this.data.user("PROFESSOR");
+		this.data.enroll(c1, stu);
+		this.data.enroll(c2, stu);
+		this.data.instructor(c1, co);
+		long n1 = notice(c1, "{\"title\":\"첫 공지\"}");
+		notice(c1, "{\"title\":\"둘째 공지\"}");
+		notice(c1, "{\"title\":\"임시\",\"published\":false}");
+		ApiClient student = new ApiClient(this.mvc, this.data.session(stu));
+		String one = "$[?(@.courseId == " + c1 + ")].unreadNotices";
+		String two = "$[?(@.courseId == " + c2 + ")].unreadNotices";
+
+		student.get("/api/me/courses")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath(one).value(contains(2)))
+			.andExpect(jsonPath(two).value(contains(0)));
+		student.get("/api/courses/" + c1).andExpect(jsonPath("$.unreadNotices").value(2));
+		student.get("/api/me/home")
+			.andExpect(jsonPath("$.courses[?(@.courseId == " + c1 + ")].unreadNotices").value(contains(2)));
+
+		// 읽으면 목록의 수도 줄어든다.
+		student.post("/api/courses/" + c1 + "/notices/" + n1 + "/read").andExpect(status().isOk());
+		student.get("/api/me/courses").andExpect(jsonPath(one).value(contains(1)));
+
+		// 담당 과목에도 수가 있다. 함께 담당하는 사람은 남이 쓴 공지를 세고, 쓴 사람은 자기 공지를 세지 않는다.
+		new ApiClient(this.mvc, this.data.session(co)).get("/api/me/courses")
+			.andExpect(jsonPath("$[0].role").value("INSTRUCTOR"))
+			.andExpect(jsonPath(one).value(contains(2)));
+		this.professor.get("/api/me/courses").andExpect(jsonPath(one).value(contains(0)));
+	}
+
+	@Test
 	void todoFollowsPublishedOpenAndCloseBoundariesOnTheDatabaseClock() throws Exception {
 		long c = course();
 		long taught = course();
@@ -319,9 +354,13 @@ class HomeApiTests extends IntegrationTest {
 	void courseCardsCarryTheWeekOfTheTermAndTheCallersProgressAndAttendance() throws Exception {
 		long c = course();
 		long untimed = course();
+		long cancelledOnly = course();
+		long unmarkedOnly = course();
 		long stu = this.data.user("STUDENT");
 		this.data.enroll(c, stu);
 		this.data.enroll(untimed, stu);
+		this.data.enroll(cancelledOnly, stu);
+		this.data.enroll(unmarkedOnly, stu);
 		long term = this.data.insert("""
 				INSERT INTO terms (term_year, term_code, term_name, start_date, end_date)
 				VALUES (:year, '1', '테스트 학기', CURRENT_DATE - INTERVAL 15 DAY, CURRENT_DATE + INTERVAL 60 DAY)
@@ -342,6 +381,9 @@ class HomeApiTests extends IntegrationTest {
 		attendance(c, stu, "결석", false);
 		attendance(c, stu, null, false);
 		attendance(c, stu, "출석", true);
+		// 휴강한 차시뿐인 과목은 차시가 없는 과목과 같다. 판정 전 차시만 있는 과목은 차시가 있으므로 수가 있다.
+		attendance(cancelledOnly, stu, "출석", true);
+		attendance(unmarkedOnly, stu, null, false);
 
 		ApiClient student = new ApiClient(this.mvc, this.data.session(stu));
 		String card = "$.courses[?(@.courseId == " + c + ")]";
@@ -356,8 +398,14 @@ class HomeApiTests extends IntegrationTest {
 			.andExpect(jsonPath(bare + ".currentWeek").value(contains(nullValue())))
 			.andExpect(jsonPath(bare + ".weekCount").value(contains(nullValue())))
 			.andExpect(jsonPath(bare + ".progressPercent").value(contains(nullValue())))
-			.andExpect(jsonPath(bare + ".attendance.attended").value(contains(0)))
-			.andExpect(jsonPath(bare + ".attendance.total").value(contains(0)));
+			// 출석부 차시가 없는 과목(학교에서 가져온 과목)은 0 / 0이 아니라 출석이 없다.
+			.andExpect(jsonPath(bare + ".attendance").value(contains(nullValue())))
+			.andExpect(jsonPath("$.courses[?(@.courseId == " + cancelledOnly + ")].attendance")
+				.value(contains(nullValue())))
+			.andExpect(jsonPath("$.courses[?(@.courseId == " + unmarkedOnly + ")].attendance.attended")
+				.value(contains(0)))
+			.andExpect(jsonPath("$.courses[?(@.courseId == " + unmarkedOnly + ")].attendance.total")
+				.value(contains(0)));
 		// 담당자에게는 주만 있고 본인 진도와 출석은 없다.
 		this.professor.get("/api/me/home")
 			.andExpect(jsonPath(card + ".currentWeek").value(contains(3)))

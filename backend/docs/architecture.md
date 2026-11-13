@@ -162,6 +162,7 @@ flowchart LR
 - 활동 쪽 목록과 평가 ID: 주차 목록, 할 일, 캘린더의 행이 과제·퀴즈·설문 화면으로 바로 이어지도록 `learning`이 `learning.api.ActivityTargets` port를 정의하고 `assessment`가 구현한다. `learning`은 `assessment`에 의존하지 않는다. 활동 ID를 모아 쿼리 한 번으로 묻는다.
 - 요약 게시 여부: `learning`과 `summary`는 서로 의존하지 않으므로 자료 목록과 파일모음이 묻는 `learning.api.FileSummaries` port를 `integration`이 `summary.api.PublishedSummaries`로 구현한다(`summary.api.CourseStaff`와 같은 방향). 파일 ID를 모아 쿼리 한 번으로 묻는다.
 - 수강생 화면의 학습 열: 최근 학습과 진도율은 `learning`의 기록이고 `catalog`는 `learning`에 의존하지 않으므로 `catalog`가 `catalog.api.RosterLearning` port를 정의하고 `learning`이 구현한다. 한 쪽의 사용자 ID를 모아 사용자 수와 관계없이 같은 수의 쿼리로 묻는다.
+- 내 과목의 안 읽은 공지 수: 공지와 읽음 기록은 `communication`의 것이고 `catalog`는 `communication`에 의존하지 않으므로 `catalog`가 `catalog.api.UnreadCourseNotices` port를 정의하고 `communication`이 메인 화면의 `CourseNoticeDigest.unreadCounts`와 같은 집계로 구현한다. 목록의 과목 ID를 모아 과목 수와 관계없이 쿼리 한 번으로 묻는다.
 - 아바타 사진 유무: 이름 옆에 아바타를 그리는 `communication`·`learning` 응답은 사용자 ID 옆에 사진 유무를 준다. 판정은 `files`가 `files.api.AvatarPhotos`로 내보내고 `files/avatar/AvatarImages`가 아바타 경로와 같은 규칙으로 구현한다. 현재 사진은 `identity.api.ProfileImages.withCurrent`로, 공통 과목은 `catalog.api.CourseMates`로 사람 수와 관계없이 쿼리 두 번 이하에 묻는다.
 
 ### 4.2 모듈 규칙
@@ -316,7 +317,7 @@ flowchart LR
 - session이 유효하면 IdP redirect를 거치지 않는다.
 - `/api/me/home` 지연 시간은 Micrometer로 측정한다. 예산을 넘을 때만 캐시를 넣는다.
 - 응답은 서버 시각(`serverTime`), 과목과 역할, 과목별 안 읽은 공지 수, 최근 공지 5개, 할 일 앞 5개와 전체 수, 최근 7일 안에 공개된 본인 성적 항목 5개(`newGrades`: 항목, 과목, 공개 일시. 점수와 의견은 없다), 안 읽은 쪽지 수(`unreadMessages`), 안 읽은 알림 수(`unreadNotifications`)다.
-- 과목 카드에는 과목마다 진행 주(`currentWeek`, `weekCount`), 본인 영상 진도율(`progressPercent`), 본인 출석(`attendance: {attended, total}`)이 있다. 주는 수업 기간(정규 과목은 학기 `start_date`~`end_date`, 비정규 과정은 학습기간)을 시작일부터 7일씩 나눈 것이고, 오늘은 DB 시계의 날짜(기관 시간대, ADR-0039)다. 시작 전이면 0, 끝난 뒤면 `weekCount`, 기간이 없으면 둘 다 null이다. 진도율은 학생 진도 화면(`GET /api/courses/{courseId}/lecture-progress`)과 같이 학생에게 열린 영상 콘텐츠 가운데 출석인정을 채운 비율(버림)이고, 열린 콘텐츠가 없으면 null이다. 출석은 출석부 요약과 같은 기록에서 출석·지각·공결 차시 수(`attended`)와 판정한 차시 수(`total`, 휴강과 미판정 제외)다. 담당 과목은 진도율과 출석이 null이다.
+- 과목 카드에는 과목마다 진행 주(`currentWeek`, `weekCount`), 본인 영상 진도율(`progressPercent`), 본인 출석(`attendance: {attended, total}`)이 있다. 주는 수업 기간(정규 과목은 학기 `start_date`~`end_date`, 비정규 과정은 학습기간)을 시작일부터 7일씩 나눈 것이고, 오늘은 DB 시계의 날짜(기관 시간대, ADR-0039)다. 시작 전이면 0, 끝난 뒤면 `weekCount`, 기간이 없으면 둘 다 null이다. 진도율은 학생 진도 화면(`GET /api/courses/{courseId}/lecture-progress`)과 같이 학생에게 열린 영상 콘텐츠 가운데 출석인정을 채운 비율(버림)이고, 열린 콘텐츠가 없으면 null이다. 출석은 출석부 요약과 같은 기록에서 출석·지각·공결 차시 수(`attended`)와 판정한 차시 수(`total`, 휴강과 미판정 제외)다. 휴강하지 않은 차시가 하나도 없는 과목(학교에서 가져와 출석부를 쓰지 않는 과목)은 출석이 null이고, 차시가 있으면 아직 판정하지 않았어도 수가 있다. 담당 과목은 진도율과 출석이 null이다.
 - 쿼리는 과목 수와 관계없이 21개 이하다(DB 시계, 과목, 마감 전 활동 1과 완료 판정 4와 평가 ID 1, 안 읽은 공지 수, 최근 공지, 알림마당 공지 2, 영상 진도 1, 출석 1, 안 읽은 쪽지 수, 안 읽은 알림 수, 새 성적 5). 읽기 전용 transaction 하나에서 같은 snapshot으로 읽는다. 과목마다 과제, 퀴즈, 영상, 출석 차시가 있고 점수를 공개한 상태에서도 과목마다 쿼리가 늘지 않는 것은 `HomeApiTests`가 DB 문장 수로 확인한다.
 - 할 일은 학생으로 수강하는 과목의, 공개됐고 `open_at <= now < close_at`인 학습활동 가운데 본인이 아직 끝내지 않은 것이다. 마감 일시가 없는 활동은 넣지 않는다. 완료는 `assessment.api.ActivityCompletions`가 판정한다: 과제는 최종 제출, 퀴즈는 온라인 시험이고 이어갈 응시가 없고 허용 횟수를 다 쓴 때, 강의실 설문은 참여 원장의 완료다. 끝낸 활동은 표시를 달아 남기지 않고 목록과 전체 수에서 뺀다. 원본 할일 팝업(`03_팝업_할일.md`)이 미완료 활동만 보이고 그 수를 헤더 배지로 쓰며, frontend도 `total`을 "남은 활동" 수로 쓰기 때문이다. 마감 전 활동은 500개까지 읽고 넘으면 `truncated`다. 영상과 자료의 완료는 보지 않는다(12절).
 
@@ -419,7 +420,7 @@ HLS AES-128은 DRM이 아니다. 권한이 있는 사용자의 복호화와 화�
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 역할은 과목 행과 같은 문장에서 정하고 수강생 수는 담당 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
+| `GET /api/me/courses?type=&termId=&division=&q=` | 로그인한 사용자 | 담당하거나 수강이 확정된 과목과 그 과목에서의 역할. `type`(REGULAR\|NONREGULAR), 학기, 비정규 분류(B\|C\|K), 과목명·학수번호로 좁힌다. 학생에게는 수강 근거(`enrollment`: 학사 원장·비정규·청강, 스스로 취소할 수 있는지), 비정규 과정에는 차수와 학습기간. 담당 과목에는 수강생 수(`learners`: 그 담당자가 보는 수강생 명단 `GET /api/courses/{courseId}/students`의 검색어 없는 `total`과 같은 사람 수, 없으면 0)가 있고, 학생에게 반의 인원을 보여 주는 다른 응답이 없으므로 수강 과목에서는 null이다. 모든 과목에 역할·학기와 관계없이 안 읽은 공지 수(`unreadNotices`: 메인 화면 과목의 같은 필드와 같은 집계, 강의실 왼쪽 메뉴의 공지 배지)가 있다. 역할은 과목 행과 같은 문장에서 정하고 수강생 수와 안 읽은 공지 수는 과목 전체를 한 번에 세어, 쿼리 수가 과목 수와 관계없다 |
 | `GET /api/courses/{courseId}` | 과목 구성원 | 과목 하나. 항목은 `/api/me/courses`와 같다(`learners`는 담당자에게만) |
 | `GET /api/courses/{courseId}/weeks` | 과목 구성원 | `{serverTime, weeks}`. 주차와 활동 목록. 학생에게는 다른 목록과 같이 공개했고 시작 일시가 지난 활동만 나온다. 활동마다 DB 시계로 정한 `phase`(`not_open`·`open`·`late`·`closed`, 과제·퀴즈·설문 화면과 같은 경계)와, 평가 활동이면 `assignmentId`·`quizId`·`surveyId` 중 하나. 자료·영상 활동은 `activityId`가 그 화면의 ID다. 쿼리는 권한 판정 뒤 3번 |
 | `GET /api/courses/{courseId}/activities/{activityId}` | 그 활동을 볼 수 있는 사람 | 활동 상세, 첨부(파일마다 `summaryPublished`), 강의 영상 항목, `phase`, `serverTime`, 평가 활동이면 그 유형의 ID |

@@ -132,7 +132,7 @@ class HomeService {
 			return new HomeCourse(c.courseId(), c.key(), c.name(), c.code(), c.section(), c.role().name(),
 					unread.getOrDefault(c.courseId(), 0), week.current(), week.count(),
 					student ? percents.get(c.courseId()) : null,
-					summary == null ? null : CourseAttendance.of(summary));
+					CourseAttendance.of(summary));
 		}).toList();
 		List<HomeNotice> latest = this.notices.latest(userId, all, now, HOME_NOTICES)
 			.stream()
@@ -282,7 +282,8 @@ class HomeService {
 	 * @param weekCount 수업 기간의 주 수(일수를 7로 나눠 올림). 기간이 없으면 null
 	 * @param progressPercent 학생 본인의 영상 진도율(0~100, 버림). 진도 화면과 같이 학생에게 열린 영상 콘텐츠 가운데 출석인정을 채운 비율이다.
 	 * 열린 콘텐츠가 없거나 담당 과목이면 null
-	 * @param attendance 학생 본인의 출석. 담당 과목이면 null
+	 * @param attendance 학생 본인의 출석. 담당 과목이거나 휴강하지 않은 차시가 하나도 없는 과목(학교에서 가져온 과목처럼 출석부를 쓰지 않는
+	 * 과목)이면 null이다. 차시가 있으면 아직 판정하지 않았어도 수가 있다
 	 */
 	record HomeCourse(long courseId, String key, String name, String code, String section, String role,
 			int unreadNotices, Integer currentWeek, Integer weekCount, Integer progressPercent,
@@ -295,7 +296,11 @@ class HomeService {
 	 */
 	record CourseAttendance(int attended, int total) {
 
+		/** @return 요약이 없거나 휴강하지 않은 차시가 없으면 null */
 		static CourseAttendance of(AttendanceSummary summary) {
+			if (summary == null || summary.sessions() == 0) {
+				return null;
+			}
 			return new CourseAttendance(summary.present() + summary.late() + summary.excused(),
 					summary.sessions() - summary.unmarked());
 		}
