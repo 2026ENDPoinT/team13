@@ -52,6 +52,10 @@ jobs:
           printf '%s\n' "$files"
           pick() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
           code=$(printf '%s\n' "$files" | grep -vE '^$|^(docs|assets|db/erdcloud)/|\.md$' | grep -q . && echo true || echo false)
+          # main 은 코드가 바뀌었으면 세 작업을 모두 돈다(자바 코드만 바뀌어도 실제 이미지 기동을 확인한다).
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$code" = true ]; then
+            echo "main 코드 변경: 전체 실행"; { echo code=true; echo schema=true; echo container=true; } | tee -a "$GITHUB_OUTPUT"; exit 0
+          fi
           {
             echo "code=$code"
             echo "schema=$(pick '^(src/main/resources/db/migration/|db/tools/)')"
