@@ -91,7 +91,6 @@ function toggleHeroMode(): void {
  */
 export function collapseHero(event: { preventDefault(): void }, onHome: boolean): void {
   if (!heroFull) return;
-  if (onHome && backendStatus() === "ready") return;
   if (onHome) {
     event.preventDefault();
     toggleHeroMode();

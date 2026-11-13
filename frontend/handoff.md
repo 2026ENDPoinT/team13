@@ -1,5 +1,34 @@
 # Handoff
 
+## 2026-11-14 로그인 홈 전체화면에서 로고 클릭 시 일반 모드 복귀
+
+### 작업 내용
+- 원인: `collapseHero()`의 `if (onHome && backendStatus() === "ready") return;`(901d8c6에서 추가, 이유 기록 없음) 때문에 로그인 상태 홈에서는 로고 클릭이 접기를 건너뛰고 같은 홈 주소로 이동만 했다. 이 줄을 삭제해 오프라인 목업과 같은 동작(이동 막고 View Transition으로 접기, 저장값 `normal`)을 하도록 했다.
+
+### 변경 파일
+- `src/areas/home/home.tsx`(`collapseHero`)
+- `tests/integration/home-layout.test.ts`(로그인 홈 전체화면 → `collapseHero` → `preventDefault`·`is-full` 해제·저장 `normal` 회귀 테스트. 수정 전 실패, 수정 후 통과 확인)
+
+### 검증
+- `npx vitest run tests/integration/home-layout.test.ts` 5개 통과, `npm run typecheck` 통과.
+- 가상 로그인 서버(`http://127.0.0.1:4195`) Chromium 1568×886: 전체화면 상태에서 좌상단 로고 클릭 → `is-full` 해제, 저장 `normal`, 주소 유지, 콘솔 오류 없음.
+
+### 남은 작업
+- 없음.
+
+## 2026-11-14 프론트 구조 발표용 설명(코드 변경 없음)
+
+### 작업 내용
+- 발표에서 설명할 수 있도록 현재 프론트 구조를 읽고 정리해 답했다. 확인한 파일: `README.md`, `package.json`, `src/main.tsx`, `App.tsx`, `router.tsx`, `store.ts`, `types.ts`, `manifest.ts`, `areas/registry.tsx`, `shell/shell.tsx`, `shared/{api,backend,remote-cache,home-remote,routes}.ts`, `server.mjs`.
+- 핵심: 라이브러리는 react·react-dom뿐(라우터·상태관리 라이브러리 없음). 주소→`Screen`(manifest 표)→영역(home/course/learning/professor/mobile)→화면. 상태는 `store.ts`의 단일 객체 + `useSyncExternalStore`. 서버 데이터는 `shared/*-remote.ts`(`remote-cache.ts` 캐시) + `areas/*/*-server.tsx`. `server.mjs`가 정적 서빙·`/api` 프록시·AI 비서 중계.
+
+### 변경 파일
+- 없음(handoff.md만)
+- 저장소 밖: 바탕화면 `프론트_구조_발표용.md`(같은 내용, 기본 앱으로 열어 둠)
+
+### 남은 작업
+- 없음.
+
 ## 2026-11-14 홈 추천 문장 버튼 4개: 한 줄 고정 + 세로 가운데 정렬
 
 ### 작업 내용

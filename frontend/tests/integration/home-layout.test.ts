@@ -30,7 +30,7 @@ vi.mock("../../src/shared/course-view.ts", () => ({
   serverCourseViews: () => server.courses.map((course) => ({ course, remote: { courseId: 901, term: { name: course.term } } })),
 }));
 
-import { homeHero, render } from "../../src/areas/home/home.tsx";
+import { collapseHero, homeHero, render } from "../../src/areas/home/home.tsx";
 import { serverTodoList } from "../../src/areas/home/home-server.tsx";
 import { find } from "../../src/manifest.ts";
 import { getState } from "../../src/store.ts";
@@ -120,5 +120,18 @@ describe("e-class 로그인 홈", () => {
     expect(host.querySelectorAll(".summary-card")).toHaveLength(3);
     expect(host.querySelector(".cards")?.textContent).toContain("고급웹프로그래밍");
     expect(host.querySelector(".cards")?.textContent).not.toContain("실제 서버 과목");
+  });
+
+  it("로그인 홈 전체화면에서 로고를 누르면 홈 이동 대신 일반 모드로 접는다", async () => {
+    await mount();
+    await act(async () => (host.querySelector('[aria-label="전체 화면으로 보기"]') as HTMLButtonElement).click());
+    await mount();
+    expect(host.querySelector(".home-hero")?.classList.contains("is-full")).toBe(true);
+    const event = { preventDefault: vi.fn() };
+    await act(async () => collapseHero(event, true));
+    await mount();
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(host.querySelector(".home-hero")?.classList.contains("is-full")).toBe(false);
+    expect(localStorage.getItem("astra-hero-mode")).toBe("normal");
   });
 });
