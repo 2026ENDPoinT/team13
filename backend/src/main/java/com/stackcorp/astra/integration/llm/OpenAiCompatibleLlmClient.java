@@ -144,14 +144,25 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 			.stream()
 			.filter(LlmContent.ToolCall.class::isInstance)
 			.map((c) -> (LlmContent.ToolCall) c)
-			.map((c) -> Map.<String, Object>of("id", c.id(), "type", "function", "function",
-					Map.of("name", c.name(), "arguments", c.arguments())))
+			.map(OpenAiCompatibleLlmClient::toolCall)
 			.toList();
 		Map<String, Object> out = new LinkedHashMap<>();
 		out.put("role", "assistant");
 		out.put("content", text.isEmpty() && !calls.isEmpty() ? null : text);
 		if (!calls.isEmpty()) {
 			out.put("tool_calls", calls);
+		}
+		return out;
+	}
+
+	// 제공자가 호출에 붙인 extra_content는 받은 그대로 돌려보낸다. Gemini는 thought_signature가 빠지면 400을 낸다.
+	private static Map<String, Object> toolCall(LlmContent.ToolCall call) {
+		Map<String, Object> out = new LinkedHashMap<>();
+		out.put("id", call.id());
+		out.put("type", "function");
+		out.put("function", Map.of("name", call.name(), "arguments", call.arguments()));
+		if (call.extraContent() != null) {
+			out.put("extra_content", MAPPER.readTree(call.extraContent()));
 		}
 		return out;
 	}
@@ -246,8 +257,10 @@ final class OpenAiCompatibleLlmClient implements LlmClient {
 				throw new LlmException(Code.PROTOCOL, "제공자 응답의 도구 호출에 id나 이름이 없습니다.");
 			}
 			JsonNode arguments = function.path("arguments");
+			JsonNode extra = call.path("extra_content");
 			calls.add(new LlmContent.ToolCall(call.path("id").stringValue(), function.path("name").stringValue(),
-					arguments.isString() ? arguments.stringValue() : arguments.isMissingNode() ? "{}" : arguments.toString()));
+					arguments.isString() ? arguments.stringValue() : arguments.isMissingNode() ? "{}" : arguments.toString(),
+					extra.isObject() ? extra.toString() : null));
 		}
 		return calls;
 	}

@@ -461,9 +461,9 @@ variable "waf_body_size_limit_bytes" {
 }
 
 variable "waf_large_body_path_prefixes" {
-  description = "Path prefixes whose body size only the app limits (413), e.g. uploads."
+  description = "Path prefixes whose body size only the app limits (413): every multipart or stream upload endpoint."
   type        = list(string)
-  default     = ["/api/uploads"]
+  default     = ["/api/uploads", "/api/filebox/files", "/api/me/profile/image"]
 
   validation {
     condition     = length(var.waf_large_body_path_prefixes) > 0 && alltrue([for p in var.waf_large_body_path_prefixes : can(regex("^/[A-Za-z0-9/_-]*[A-Za-z0-9_-]$", p))])
@@ -478,7 +478,7 @@ variable "waf_large_body_path_prefixes" {
 variable "github_repository" {
   description = "Repository whose GitHub Actions may push images and deploy."
   type        = string
-  default     = "STack-Corp/STack-eclass-Backend"
+  default     = "STack-Corp/STack-Backend"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))

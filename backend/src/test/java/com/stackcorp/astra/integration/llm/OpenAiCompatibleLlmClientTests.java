@@ -99,13 +99,15 @@ class OpenAiCompatibleLlmClientTests {
 			sent.set(JsonMapper.builder().build().readTree(exchange.getRequestBody().readAllBytes()));
 			respond(exchange, 200, """
 					{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function",
-					 "function":{"name":"read_page","arguments":"{\\"page\\":2}"}}]},"finish_reason":"tool_calls"}],
+					 "function":{"name":"read_page","arguments":"{\\"page\\":2}"},
+					 "extra_content":{"google":{"thought_signature":"sig-1"}}}]},"finish_reason":"tool_calls"}],
 					 "usage":{"prompt_tokens":5,"completion_tokens":3}}""");
 		});
 		LlmRequest request = new LlmRequest(Purpose.CHAT, "system text",
 				List.of(new LlmMessage(LlmMessage.Role.USER, List.of(new LlmContent.Text("question"))),
 						new LlmMessage(LlmMessage.Role.ASSISTANT,
-								List.of(new LlmContent.ToolCall("call_0", "search_source", "{\"query\":\"x\"}"))),
+								List.of(new LlmContent.ToolCall("call_0", "search_source", "{\"query\":\"x\"}",
+										"{\"google\":{\"thought_signature\":\"sig-0\"}}"))),
 						new LlmMessage(LlmMessage.Role.TOOL,
 								List.of(new LlmContent.ToolResult("call_0", "result text", false)))),
 				100, List.of(new LlmTool("read_page", "read one page", Map.of("type", "object"))));
@@ -123,13 +125,16 @@ class OpenAiCompatibleLlmClientTests {
 		assertThat(assistant.path("tool_calls").path(0).path("id").stringValue()).isEqualTo("call_0");
 		assertThat(assistant.path("tool_calls").path(0).path("function").path("arguments").stringValue())
 			.isEqualTo("{\"query\":\"x\"}");
+		assertThat(assistant.path("tool_calls").path(0).path("extra_content").path("google").path("thought_signature")
+			.stringValue()).isEqualTo("sig-0");
 		JsonNode tool = body.path("messages").path(3);
 		assertThat(tool.path("role").stringValue()).isEqualTo("tool");
 		assertThat(tool.path("tool_call_id").stringValue()).isEqualTo("call_0");
 		assertThat(tool.path("content").stringValue()).isEqualTo("result text");
 		assertThat(response.stopReason()).isEqualTo(StopReason.TOOL_USE);
 		assertThat(response.text()).isEmpty();
-		assertThat(response.toolCalls()).containsExactly(new LlmContent.ToolCall("call_1", "read_page", "{\"page\":2}"));
+		assertThat(response.toolCalls()).containsExactly(new LlmContent.ToolCall("call_1", "read_page", "{\"page\":2}",
+				"{\"google\":{\"thought_signature\":\"sig-1\"}}"));
 		assertThat(client(properties("", Map.of())).body(REQUEST)).doesNotContainKey("tools");
 	}
 

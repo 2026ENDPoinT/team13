@@ -1,6 +1,6 @@
 # 백엔드 아키텍처
 
-작성일 2026-11-09. 시연부터 학교 도입 전까지 적용하는 기준안이다. 결정의 이유와 기각한 대안은 [docs/adr/](adr/)에 있다. 캠퍼스 온은 별개 서비스이며 [STack-Backend](https://github.com/STack-Corp/STack-Backend)의 `backend/docs/adr/`가 별도 번호 체계로 결정을 기록한다. 2026-11-10 이 문서와 루트 `src/`는 STack-Backend에서 이 레포(STack-eclass-Backend)로 옮겼다. 아래 "루트 `src/`"는 이 레포를 뜻한다.
+작성일 2026-11-09. 시연부터 학교 도입 전까지 적용하는 기준안이다. 결정의 이유와 기각한 대안은 [docs/adr/](adr/)에 있다. 캠퍼스 온은 별개 서비스이며 이 레포 `archive/campus-on` 브랜치의 `backend/docs/adr/`가 별도 번호 체계로 결정을 기록한다. 2026-11-10 이 문서와 루트 `src/`는 STack-Backend에서 STack-eclass-Backend로 옮겼고, 2026-11-13 다시 STack-Backend로 옮겼다. 아래 "루트 `src/`"는 이 레포를 뜻한다.
 
 ## 1. 전제
 
@@ -231,7 +231,7 @@ flowchart LR
 - actor는 session principal 하나다. 요청 본문의 학번, `ud`, role 값은 받지 않는다(SC-02, CHG-01).
 - 과목 범위는 `/api/courses/{courseId}/...`처럼 요청에 명시한다. 서버 session에 현재 과목을 두지 않는다(SC-03, CHG-02).
 - 권한 판정은 `principal × institution × course × membership × object × action × visibility × serverTime`으로 하고 기본은 거부다(SC-02). 첨부, 영상 URL 발급, AI 검색은 부모 객체의 권한을 그대로 따른다(CHG-06). `serverTime`은 DB 시계, 곧 기관 시간대로 고정한 DB session의 `CURRENT_TIMESTAMP`다. client 시계는 쓰지 않는다([ADR-0039](adr/0039-institution-wall-clock-time.md)).
-- 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. 잠금과 재사용 판정은 계정의 `users` 행을 잠근 뒤 하므로 동시에 보낸 시도도 한도를 넘지 못한다. 로그인 전이라 사용자 단위 제한을 쓸 수 없어 브라우저 주소마다 15분에 30번으로 제한한다. break-glass 계정은 과목 권한이 없다.
+- 학교 IdP가 장애일 때 쓰는 관리자 break-glass 계정 하나만 로컬 로그인을 허용하고 MFA(TOTP)를 강제한다. 비밀번호 hash와 TOTP secret은 Secrets Manager에서 받고 DB에 두지 않는다. 15분 안에 5번 실패하면 잠그고, 같은 TOTP 코드를 다시 쓰지 못하도록 성공한 뒤 90초 동안은 다시 로그인하지 않는다. 잠긴 동안 거절한 시도는 기록하되 실패 수에 넣지 않아 잠금을 늘리지 못한다. 잠금과 재사용 판정은 계정의 `users` 행을 잠근 뒤 하므로 동시에 보낸 시도도 한도를 넘지 못한다. 로그인 전이라 사용자 단위 제한을 쓸 수 없어 브라우저 주소마다 15분에 30번으로 제한한다. break-glass 계정은 과목 권한이 없다.
 - session은 마지막 요청 뒤 2시간, 로그인 뒤 12시간이 지나면 끝난다. CSRF는 double-submit 쿠키(`XSRF-TOKEN` 쿠키와 `X-XSRF-TOKEN` header)로 검사하고, 상태를 바꾸는 요청은 `Origin`과 `Sec-Fetch-Site`도 본다.
 - 과목 구성원 판정은 `catalog`의 규칙 하나(`MembershipRule`)다. 역할(`CourseMemberships.roleOf`), 수강생 명단, 함께 듣는 사람, 내 과목, 시간표, 알림, 수강 신청 처리 권한이 모두 이 규칙을 쓴다. 폐강(`CANCELLED`)한 과목에는 구성원이 없으므로 조회와 명령 모두 404다. 담당·수강 행과 학습 기록은 지우지 않는다.
 - 파일 권한은 `files`의 `FileAccess`가 첨부한 부모 객체에 묻는다. 학습활동 첨부는 `learning`이 판정한다. 담당자는 언제나, 학생은 공개됐고 시작 일시가 지난 활동만 본다. 지운 활동과 지운 파일은 담당자에게도 없다. 권한이 없거나 경로의 과목과 객체가 맞지 않으면 존재를 드러내지 않도록 404로 응답한다.
@@ -269,10 +269,11 @@ flowchart LR
 
 | API | 권한 | 하는 일 |
 |---|---|---|
-| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, 로컬 실행의 `devLogin`)과 기관 시간대(`timeZone`) |
+| `GET /api/auth/methods` | 누구나 | 쓸 수 있는 로그인 수단(`oidc`, `breakGlass`, `eclassPassword`, 로컬 실행의 `devLogin`)과 기관 시간대(`timeZone`) |
 | `GET /api/auth/login?returnTo=` | 누구나. IdP 설정이 없으면 404 | 로그인 전용 쿠키를 주고 IdP로 302 |
 | `GET /api/auth/callback` | IdP가 돌려보낸 브라우저. IdP 설정이 없으면 404 | 검증 뒤 session 쿠키를 주고 `returnTo`로 302. 실패는 `/?login=failed`로 302 |
 | `POST /api/auth/break-glass` | 누구나(CSRF token 필요) | break-glass 계정 로그인 |
+| `POST /api/auth/eclass-login` | 누구나(CSRF token 필요). 학교 e-Class 주소 설정이 없으면 404 | `{studentId, password}`. 학교 e-Class에 로그인해 확인한 뒤 session 쿠키(204). 처음 온 학번은 학교 화면의 이름·학과·학년으로 STUDENT를 만들고, 있는 사용자는 그 값으로 갱신한다. ACTIVE가 아니거나 break-glass 계정이면 401 `rejected`, 틀리면 401 `invalid_credentials`, 학교 장애는 502 `school_unavailable`. 비밀번호와 학교 session은 저장하지 않는다. 학교가 거절한 시도만 세어 브라우저 주소당 15분에 30번, 학번당 15분에 10번 실패하면 학교에 묻지 않고 429. 성공한 로그인은 세지 않는다 |
 | `POST /api/auth/logout` | 로그인한 사용자 | 이 서비스의 session만 끝낸다. IdP 로그아웃은 연계하지 않는다 |
 | `GET /api/auth/reauth?returnTo=` | 로그인한 학교 IdP 사용자. IdP 설정이 없으면 404 | 재인증 전용 로그인 쿠키를 주고 IdP로 302(`prompt=login`). callback이 지금 session에 재인증을 기록하고 `returnTo`로 302. 실패는 같은 경로에 `reauth=failed`를 붙여 302(경로가 안전하지 않으면 `/?reauth=failed`). ID token 검증 실패는 `/?login=failed` |
 | `POST /api/me/step-up/totp` | break-glass session | `{code}`. TOTP 재인증. 로그인과 같은 잠금 |

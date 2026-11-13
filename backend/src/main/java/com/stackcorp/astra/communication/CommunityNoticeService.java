@@ -154,7 +154,7 @@ class CommunityNoticeService {
 					LocalDateTime now = this.notices.now();
 					NoticeInput input = notice.input();
 					Long group = this.files.attach(BoardFiles.COMMUNITY_NOTICE, actor.userId(), null,
-							notice.uploadIds(), input.title());
+							notice.uploadIds());
 					LocalDateTime publishedAt = input.publishAt() != null ? input.publishAt() : now;
 					long postId = this.notices.insert(boardId, actor.userId(), input, publishedAt, group);
 					this.alerts.sync(postId, input.title(), input.audience(), publishedAt);
@@ -187,7 +187,7 @@ class CommunityNoticeService {
 		}
 		if (attachments != null) {
 			Long group = this.files.change(BoardFiles.COMMUNITY_NOTICE, actor.userId(), null,
-					this.posts.attachmentGroup(postId), attachments, input.title());
+					this.posts.attachmentGroup(postId), attachments);
 			this.posts.setAttachmentGroup(postId, group);
 		}
 		NoticeView view = view(actor, true, now, postId);

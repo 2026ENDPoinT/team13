@@ -209,7 +209,7 @@ class MessageService {
 	private SentReceipt deliver(long senderId, Long courseId, Outgoing out, List<Long> recipients, Long originId,
 			String originKind) {
 		LocalDateTime now = this.messages.now();
-		Long group = this.files.attach(BoardFiles.MESSAGE, senderId, null, out.uploadIds(), out.title());
+		Long group = this.files.attach(BoardFiles.MESSAGE, senderId, null, out.uploadIds());
 		long messageId = this.messages.insertMessage(senderId, courseId, out.title(), out.body(), recipients.size(),
 				originId, originKind, group, now);
 		this.messages.insertRecipients(messageId, recipients, courseId, now);

@@ -56,7 +56,7 @@ class MaterialService {
 		if (!material.uploadIds().isEmpty()) {
 			try {
 				group = this.attachments
-					.attach(new AttachRequest(userId, courseId, PURPOSE, material.uploadIds(), material.title()));
+					.attach(new AttachRequest(userId, courseId, PURPOSE, material.uploadIds()));
 			}
 			catch (AttachmentException ex) {
 				throw new ApiException(HttpStatus.CONFLICT, "attachment_not_ready", "첨부할 수 없는 업로드가 있습니다.");
@@ -105,7 +105,7 @@ class MaterialService {
 		Optional<Long> group;
 		try {
 			group = this.attachments.change(new ChangeRequest(userId, courseId, PURPOSE, current.attachmentGroupId(),
-					change.keepFileIds(), change.addUploadIds(), change.title()));
+					change.keepFileIds(), change.addUploadIds()));
 		}
 		catch (AttachmentException ex) {
 			throw new ApiException(HttpStatus.CONFLICT, "attachment_not_ready", "첨부할 수 없는 파일이나 업로드가 있습니다.");

@@ -155,7 +155,7 @@ class LectureService {
 
 	private void addItem(long userId, long courseId, long activityId, int seq, NewItem item) {
 		long group = this.attachments
-			.attach(new AttachRequest(userId, courseId, PURPOSE, List.of(item.uploadId()), item.title()));
+			.attach(new AttachRequest(userId, courseId, PURPOSE, List.of(item.uploadId())));
 		long fileId = this.attachments.list(List.of(group)).get(group).getFirst().fileId();
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
 		this.jdbc.sql("""
