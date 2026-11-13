@@ -4,3 +4,4 @@ verification/local/
 *.log
 .env*
 !.env.example
+dist/

@@ -2,12 +2,18 @@
 
 STack e-Class 학생·교수 화면 프론트엔드. `STack-Corp/STack-eclass-Frontend`의 UI 코드만 옮긴 저장소다. 원본 화면 보존 자산, 문서, 검증 도구는 포함하지 않는다.
 
+React 19 + TypeScript(strict), Vite로 빌드한다.
+
 ## 실행
 
-Node.js 22.12 이상. 의존성 설치가 필요 없다(`server.mjs`는 Node 표준 라이브러리만 쓰고, PDF.js·hls.js는 `public/app/vendor`에 들어 있다).
+Node.js 22.18 이상(`server.mjs`가 TypeScript 모듈 `src/shared/assistant/aliases.ts`를 그대로 불러온다).
 
 ```sh
-npm run dev
+npm install
+npm run dev        # Vite 개발 서버(HMR)를 server.mjs에 붙여 실행
+npm run build      # tsc 타입 검사 후 dist/로 빌드
+npm start          # dist/를 서빙(빌드 필요)
+npm run typecheck  # 타입 검사만
 ```
 
 `http://127.0.0.1:4190/`. 다른 포트는 `npm run dev -- --port 4191`.
@@ -25,7 +31,11 @@ npm run dev
 
 | 경로 | 내용 |
 |---|---|
-| `server.mjs` | 정적 파일 서버, 백엔드 프록시, AI 비서 중계 |
-| `public/index.html` | 앱 진입점 |
-| `public/app/` | 화면 코드, 스타일(`tokens.css`), 글꼴, 이미지, 샘플 미디어 |
-| `public/sw.js`, `public/manifest.webmanifest` | PWA 설정 |
+| `server.mjs` | 정적 파일 서버(`dist/`), 개발 모드 Vite 미들웨어(`--dev`), 백엔드 프록시, AI 비서 중계 |
+| `index.html` | 앱 진입점(Vite) |
+| `src/main.tsx`, `src/App.tsx` | 부팅, 루트 컴포넌트(셸·화면·창·토스트) |
+| `src/router.tsx`, `src/store.ts` | 주소 ↔ 화면, 앱 상태(`localStorage` 저장)와 `useAppState` |
+| `src/areas/` | 영역별 화면(home, course, learning, professor, mobile) |
+| `src/shared/` | 서버 클라이언트, 공용 위젯 |
+| `src/ui/` | 공용 컴포넌트(`kit.tsx`), 아이콘, 이미지 |
+| `public/` | 그대로 복사되는 파일: 글꼴, 이미지, 샘플 미디어, PDF.js·hls.js(`public/app/vendor`), PWA 설정 |

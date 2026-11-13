@@ -2,7 +2,7 @@
 // cache is deleted on activate so an installed PWA does not keep stale assets.
 // Backend paths (/api/, /doc/, /vod/) carry per-user, authenticated content:
 // they always go straight to the network and are never stored or served from cache.
-const CACHE = "astra-pwa-2";
+const CACHE = "astra-pwa-3";
 const NETWORK_ONLY = ["/api/", "/doc/", "/vod/"];
 
 function networkOnly(url) {

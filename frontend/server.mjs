@@ -1,19 +1,20 @@
 #!/usr/bin/env node
-// Local-only server for the sample app and the preserved original ASTRA frontend.
+// Local-only server for the STack e-Class frontend.
 // Static files are read-only; POST /api/assistant may relay JSON to Gemini.
-// Serves files from ./public only. Original sources are always text/plain.
+// `--dev` serves the app through Vite (src/, public/) with HMR; otherwise it serves the
+// `npm run build` output in ./dist only.
 // With ASTRA_API_ORIGIN set it also reverse-proxies /api/**, /doc/** and /vod/**
 // to the ASTRA backend (see proxyRequest); without it every path stays read-only.
 import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { allowsPlan } from './public/app/shared/assistant/aliases.js';
+import { allowsPlan } from './src/shared/assistant/aliases.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const PUBLIC_ROOT = path.join(HERE, 'public');
+export const STATIC_ROOT = path.join(HERE, 'dist');
 export const BIND_HOST = '127.0.0.1';
 export const DEFAULT_PORT = 4190;
 
@@ -69,6 +70,8 @@ const CSP_PAGE = [
   "base-uri 'none'",
   "frame-ancestors 'self'",
 ].join('; ');
+// Vite dev pages: the React Refresh preamble is an inline module script.
+const CSP_DEV_PAGE = CSP_PAGE.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'");
 // For assets/sources/json: nothing may run or load even if opened directly.
 const CSP_INERT = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; form-action 'none'; base-uri 'none'; frame-ancestors 'self'; sandbox";
 
@@ -81,7 +84,7 @@ function baseHeaders(csp) {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'X-Frame-Options': 'SAMEORIGIN',
     // App pages may record lectures and fullscreen the player; inert files never can.
-    'Permissions-Policy': `camera=(), ${csp === CSP_PAGE ? 'microphone=(self), display-capture=(self), fullscreen=(self)' : 'microphone=(), display-capture=(), fullscreen=()'}, geolocation=(), payment=(), usb=(), serial=(), bluetooth=()`,
+    'Permissions-Policy': `camera=(), ${csp === CSP_PAGE || csp === CSP_DEV_PAGE ? 'microphone=(self), display-capture=(self), fullscreen=(self)' : 'microphone=(), display-capture=(), fullscreen=()'}, geolocation=(), payment=(), usb=(), serial=(), bluetooth=()`,
     'Cache-Control': 'no-cache',
   };
 }
@@ -114,8 +117,8 @@ export function safeSegments(rawPath) {
   return out;
 }
 
-function insidePublic(abs) {
-  const rel = path.relative(PUBLIC_ROOT, abs);
+function insideStaticRoot(abs) {
+  const rel = path.relative(STATIC_ROOT, abs);
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
@@ -143,8 +146,8 @@ function byteRange(header, size) {
 }
 
 async function sendFile(req, res, relSegments, contentType, csp, extra = {}) {
-  const abs = path.resolve(PUBLIC_ROOT, ...relSegments);
-  if (!insidePublic(abs)) return sendText(req, res, 404, 'Not found\n');
+  const abs = path.resolve(STATIC_ROOT, ...relSegments);
+  if (!insideStaticRoot(abs)) return sendText(req, res, 404, 'Not found\n');
   let info;
   try { info = await stat(abs); } catch { return sendText(req, res, 404, 'Not found\n'); }
   if (!info.isFile()) return sendText(req, res, 404, 'Not found\n');
@@ -697,6 +700,30 @@ function limitLocalRequest(req, ms) {
   return stop;
 }
 
+/** Vite in middleware mode on this server's port; its HMR socket shares the HTTP server. */
+export async function attachVite(server) {
+  const { createServer: createViteServer } = await import('vite');
+  server.vite = await createViteServer({
+    root: HERE,
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: { server } },
+  });
+  server.on('close', () => server.vite.close());
+}
+
+// `--dev`: app pages get Vite's transformed index.html; modules, /@vite/*, and public/ files go to Vite.
+async function serveDev(req, res, vite, rawUrl, rawPath) {
+  if (rawPath === '/' || rawPath === '/index.html' || rawPath === '/ilos' || rawPath.startsWith('/ilos/')) {
+    const html = await vite.transformIndexHtml(rawUrl, await readFile(path.join(HERE, 'index.html'), 'utf8'));
+    const buf = Buffer.from(html, 'utf8');
+    res.writeHead(200, { ...baseHeaders(CSP_DEV_PAGE), 'Content-Type': HTML, 'Content-Length': buf.length });
+    return res.end(req.method === 'HEAD' ? undefined : buf);
+  }
+  // Script responses carry the page CSP as in production: the PDF.js worker and sw.js run under their own.
+  for (const [name, value] of Object.entries(baseHeaders(CSP_PAGE))) res.setHeader(name, value);
+  vite.middlewares(req, res, () => sendText(req, res, 404, 'Not found\n'));
+}
+
 /**
  * options.apiOrigin overrides ASTRA_API_ORIGIN (tests); options.maxBodyBytes overrides the 60 MiB cap;
  * options.requestTimeoutMs and options.streamUploadTimeoutMs override PROXY_REQUEST_TIMEOUT and STREAM_UPLOAD_REQUEST_TIMEOUT,
@@ -735,19 +762,28 @@ export function createServer(options = {}) {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         return sendText(req, res, 405, 'Method not allowed: static resources are read-only.\n', { Allow: 'GET, HEAD' });
       }
+      if (rawPath === '/api/backend') {
+        res.writeHead(200, {
+          ...baseHeaders(CSP_INERT),
+          'Content-Type': MIME['.json'],
+          'Content-Length': backendJson.length,
+        });
+        return res.end(req.method === 'HEAD' ? undefined : backendJson);
+      }
+
+      // Only the vendored PDF parser may run as a dedicated same-origin worker.
+      const destination = req.headers['sec-fetch-dest'];
+      const pdfWorker = destination === 'worker' && rawPath === '/app/vendor/pdfjs/pdf.worker.min.mjs';
+      const appWorker = destination === 'serviceworker' && rawPath === '/sw.js';
+      if (['worker', 'sharedworker', 'serviceworker'].includes(destination) && !pdfWorker && !appWorker) {
+        return sendText(req, res, 403, 'Worker destination not allowed\n');
+      }
+      if (server.vite) return await serveDev(req, res, server.vite, rawUrl, rawPath);
+
       const params = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
       const seg = safeSegments(rawPath);
       if (!seg) return sendText(req, res, 400, 'Bad path\n');
       const [head, ...rest] = seg;
-
-      // Only the vendored PDF parser may run as a dedicated same-origin worker.
-      const destination = req.headers['sec-fetch-dest'];
-      const workerPath = seg.join('/');
-      const pdfWorker = destination === 'worker' && workerPath === 'app/vendor/pdfjs/pdf.worker.min.mjs';
-      const appWorker = destination === 'serviceworker' && workerPath === 'sw.js';
-      if (['worker', 'sharedworker', 'serviceworker'].includes(destination) && !pdfWorker && !appWorker) {
-        return sendText(req, res, 403, 'Worker destination not allowed\n');
-      }
 
       if (seg.length === 1 && head === 'favicon.ico') {
         return sendFile(req, res, ['app', 'favicon.svg'], 'image/svg+xml', CSP_INERT);
@@ -777,14 +813,6 @@ export function createServer(options = {}) {
       }
       if (head === 'api' && rest.length === 1 && rest[0] === 'catalog') {
         return sendFile(req, res, ['catalog.json'], MIME['.json'], CSP_INERT);
-      }
-      if (head === 'api' && rest.length === 1 && rest[0] === 'backend') {
-        res.writeHead(200, {
-          ...baseHeaders(CSP_INERT),
-          'Content-Type': MIME['.json'],
-          'Content-Length': backendJson.length,
-        });
-        return res.end(req.method === 'HEAD' ? undefined : backendJson);
       }
       if (seg.length === 1 && (head === 'catalog.json' || head === 'provenance.json')) {
         return sendFile(req, res, [head], MIME['.json'], CSP_INERT);
@@ -871,7 +899,15 @@ function parsePort(argv) {
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isMain) {
-  const port = parsePort(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const port = parsePort(argv);
+  const dev = argv.includes('--dev');
+  if (!dev) {
+    try { await stat(path.join(STATIC_ROOT, 'index.html')); } catch {
+      console.error('dist/index.html not found: run `npm run build` first, or `npm run dev`.');
+      process.exit(1);
+    }
+  }
   let server;
   try {
     server = createServer();
@@ -883,6 +919,7 @@ if (isMain) {
     console.error(`Server error: ${err.message}`);
     process.exit(1);
   });
+  if (dev) await attachVite(server);
   server.listen(port, BIND_HOST, () => {
     const actual = server.address().port;
     if (server.astraApiOrigin) {
