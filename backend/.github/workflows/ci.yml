@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # dev는 batch로 합친 통합 브랜치다. main으로 올리기 전에 같은 세 작업을 거친다.
+    branches: [main, dev]
   pull_request:
 
 permissions:

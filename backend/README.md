@@ -483,7 +483,7 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 
 ## CI
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main` 푸시와 모든 PR에서 세 작업을 실행한다.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 `main`과 `dev` 푸시, 모든 PR에서 세 작업을 실행한다. `dev`는 여러 브랜치를 batch로 합치는 통합 브랜치이고, `main`으로 올리기 전에 이 세 작업을 거친다. PR 실행은 같은 ref의 새 실행이 오면 취소되고, 푸시 실행은 취소되지 않는다.
 
 | 작업 | 확인하는 것 |
 |---|---|
