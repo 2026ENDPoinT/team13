@@ -303,7 +303,7 @@ transcoder process의 환경 변수:
 | `TRANSCODER_MAX_DURATION_SECONDS` | `14400` | 재생 길이 상한 |
 | `TRANSCODER_TIMEOUT_SECONDS` | `7200` | ffmpeg 실행 제한 시간 |
 | `TRANSCODER_THREADS` | `2` | ffmpeg encoder thread 수. container CPU 상한과 맞춘다 |
-| `TRANSCODER_WORK_DIR` | `java.io.tmpdir` | 요청마다 작업 directory를 만들고 응답 뒤 지우는 곳 |
+| `TRANSCODER_WORK_DIR` | `java.io.tmpdir` | 요청마다 작업 directory를 만들고 응답 뒤 지우는 곳. 시작할 때 이전 실행이 남긴 `transcode-*` directory를 지우므로 이 transcoder process만 써야 한다(다른 transcoder나 process와 공유하지 않는다) |
 | `TRANSCODER_FFMPEG` · `TRANSCODER_FFPROBE` | `ffmpeg` · `ffprobe` | 실행 파일 |
 
 api·worker의 환경 변수:
@@ -353,7 +353,7 @@ PIN/QR 출석의 보안 값이다([ADR-0030](docs/adr/0030-attendance-and-smart-
 | `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES` | 없음 | 이 CIDR(쉼표 구분)에서 온 연결에서만 `CloudFront-Viewer-Address`를 브라우저 주소로 쓴다. CloudFront VPC origin이 있는 app subnet을 넣는다. 비우면 header를 믿지 않고 연결한 쪽 주소를 쓴다 |
 | `ASTRA_CLOUDFRONT_BASE_URL` | 없음 | 서비스 도메인(https). signed cookie 정책의 resource 기준 |
 | `ASTRA_CLOUDFRONT_KEY_PAIR_ID` | 없음 | CloudFront key group의 public key ID. 없으면 signed cookie를 발급하지 않는다 |
-| `ASTRA_CLOUDFRONT_PRIVATE_KEY` | 없음 | PKCS#8 PEM RSA 개인 key |
+| `ASTRA_CLOUDFRONT_PRIVATE_KEY` | 없음 | PKCS#8 PEM RSA 개인 key. `ASTRA_CLOUDFRONT_KEY_PAIR_ID`를 넣으면 필수이고, 없거나 비어 있으면 앱이 시작하지 않는다 |
 | `ASTRA_DELIVERY_ORIGIN_ENABLED` | `false` | CloudFront 없이 앱이 `/doc`, `/vod`를 직접 응답한다. CloudFront 서명과 함께 켤 수 없다 |
 | `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY` | 없음 | 위 방식의 cookie 서명 key(Base64, 32 byte 이상). 비밀값이다 |
 

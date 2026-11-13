@@ -22,7 +22,7 @@ import com.stackcorp.astra.shared.audit.AuditLog;
 /**
  * break-glass 계정의 로컬 로그인. 비밀번호와 TOTP를 모두 요구한다(ADR-0004 6번).
  * <ul>
- * <li>15분 안에 5번 실패하면 15분 동안 잠근다.</li>
+ * <li>15분 안에 5번 실패하면 15분 동안 잠근다. 잠긴 동안 거절한 시도는 실패 수에 넣지 않으므로 잠금을 늘리지 못한다.</li>
  * <li>TOTP 코드 재사용을 막기 위해 성공한 로그인이나 TOTP 재인증(ADR-0029) 뒤 90초 동안은 다시 로그인하지 않는다.</li>
  * <li>잠금과 재사용 판정, 실패 기록, session 발급은 계정의 users 행을 잠근 READ COMMITTED transaction 하나에서 한다. TOTP
  * 재인증({@link BreakGlassStepUp})도 같은 행을 먼저 잠그므로 동시에 보낸 시도가 모두 앞선 실패 수를 보고 한도를 넘거나 같은 코드로
@@ -96,7 +96,7 @@ class BreakGlassLogin implements BreakGlassMarker {
 		Attempt attempt = this.transactions.execute((status) -> {
 			this.events.lockAccount(user);
 			if (this.events.failuresWithin(user, LOCK_WINDOW) >= MAX_FAILURES) {
-				this.events.record(user, null, ip, false, "LOCKED");
+				this.events.record(user, null, ip, false, LoginEvents.LOCKED);
 				return Attempt.refused(BreakGlassException.Reason.LOCKED);
 			}
 			if (failure != null) {

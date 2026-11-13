@@ -54,6 +54,7 @@ fetch() {
   elif [ "$3" = optional ] && grep -q ResourceNotFoundException "$err_tmp"; then
     echo "no value in $1; skipped" >&2
   else
+    echo "cannot read $3 secret $1:" >&2
     cat "$err_tmp" >&2
     exit 1
   fi

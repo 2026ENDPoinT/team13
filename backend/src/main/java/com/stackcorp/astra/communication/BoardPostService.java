@@ -156,7 +156,7 @@ class BoardPostService {
 		long boardId = this.transaction.execute((tx) -> this.boards.boardFor(courseId, kind));
 		return this.idempotency.execute(actor.userId(), audited(kind, "create"), idempotencyKey,
 				List.of(courseId, kind.name(), post), PostView.class, () -> {
-					Long group = this.files.attach(actor.userId(), courseId, post.uploadIds(), post.text().title());
+					Long group = this.files.attach(actor.userId(), courseId, post.uploadIds());
 					long postId = this.posts.insert(boardId, actor.userId(), kind.postKind, null, post.text(), group);
 					this.audit.success(actor.userId(), actor.sessionId(), audited(kind, "create"), "post", postId,
 							courseId);
@@ -195,7 +195,7 @@ class BoardPostService {
 		if (attachments != null) {
 			// 조건부 UPDATE가 글 행을 잠갔다. 같은 글의 다른 수정은 이 transaction이 끝날 때까지 기다린다.
 			Long group = this.files.change(BoardFiles.PURPOSE, actor.userId(), courseId,
-					this.posts.attachmentGroup(postId), attachments, text.title());
+					this.posts.attachmentGroup(postId), attachments);
 			this.posts.setAttachmentGroup(postId, group);
 		}
 		this.audit.success(actor.userId(), actor.sessionId(), audited(kind, "update"), "post", postId, courseId);
