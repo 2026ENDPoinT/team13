@@ -32,7 +32,7 @@ flowchart LR
   AS["ASTRA 백엔드<br/>이 레포"]
   IDP["학교 IdP<br/>OpenID Connect"]
   EC["학교 e-Class<br/>ILOS 화면"]
-  LLM["LLM 제공자<br/>Hive DeepSeek · Gemini<br/>같은 host gateway 경유"]
+  LLM["LLM 제공자<br/>GPT6 Luna · Gemini<br/>같은 host gateway 경유"]
   DG["Deepgram<br/>음성 인식"]
   MIR["ClamAV 서명 mirror"]
   ST & IN & OP & BG -->|"브라우저"| FE
@@ -58,7 +58,7 @@ flowchart LR
 | 프론트엔드 · 앞단 proxy | 브라우저 → proxy → 백엔드 | SPA와 `server.mjs`는 [Frontend-final](https://github.com/STack-Corp/Frontend-final) 레포에 있다. `server.mjs`가 `/api`, `/doc`, `/vod`를 api로 넘기고, 그 앞의 Cloudflare Tunnel이 TLS를 끝낸다. Terraform 구성(`infra/`)에서는 CloudFront가 이 자리에 온다 |
 | 학교 IdP | 백엔드 → IdP, 브라우저 → IdP | OpenID Connect code flow와 PKCE. 설정했을 때만 켜진다 |
 | 학교 e-Class | 백엔드 → e-Class | 학번·비밀번호로 학교 화면에 로그인해 이름·학과·학년과 수강과목을 읽고, 이어서 강의실마다 주차와 학습활동 목록을 가져온다. 학생이 화면을 열 때 그 학생의 학교 session으로 자료, 공지, 과제, 영상 상세, 강의계획서, 출석, 성적을 읽는다. 받은 파일은 과목 파일로 객체 저장소에 복사한다. 학교에 공개 API가 없어 브라우저와 같은 요청을 보낸다. 설정했을 때만 켜진다 |
-| LLM 제공자 | 백엔드 → gateway → 제공자 | 교수자가 동의한 자료의 쪽별 요약과 학습 대화, 학습실 문서 요약과 녹음 요약, 화면 AI 도우미. 운영 배포에서는 같은 host의 LLM gateway(Frontend-final `deploy/hermes/ops/agy-llm-gateway`)가 Hive의 DeepSeek를 먼저 부르고, 실패하면 agy CLI로 Gemini를 부른다. API key가 있을 때만 켜진다 |
+| LLM 제공자 | 백엔드 → gateway → 제공자 | 교수자가 동의한 자료의 쪽별 요약과 학습 대화, 학습실 문서 요약과 녹음 요약, 화면 AI 도우미. 운영 배포에서는 같은 host의 LLM gateway(Frontend-final `deploy/hermes/ops/agy-llm-gateway`)가 GPT6 Luna를 먼저 부르고, 실패하면 agy CLI로 Gemini를 부른다. API key가 있을 때만 켜진다 |
 | Deepgram | 백엔드 → Deepgram | 학습실 녹음 원본을 보내 전사문을 받는다. key가 있을 때만 켜진다 |
 | ClamAV 서명 mirror | 백엔드 → mirror | 악성코드 서명만 내려받는다. 업로드 파일은 보내지 않는다 |
 
