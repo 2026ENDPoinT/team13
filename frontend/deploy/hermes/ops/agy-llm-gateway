@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 """e-class 백엔드용 LLM 게이트웨이(OpenAI Chat Completions 호환). systemd agy-llm-gateway.service 가 띄운다.
 
-  1순위: Google Antigravity 구독의 Gemini 4 Hydrogen — 헤르메스 플러그인 antigravity-agy 의 transport 로
-         로그인된 agy CLI 를 요청마다 한 번 실행한다(텍스트만, 도구 호출 지원).
-  2순위: Gemini 가 안 되면 바로 Hive API 의 DeepSeek 로 같은 요청을 보낸다.
-         - agy 오류·로그아웃·쿼터 초과, 60초 안에 답이 없음, 동시 실행 자리(2개)가 없음 → 그 요청은 기다리지 않고 DeepSeek
-         - 쿼터 초과·로그아웃·agy 없음 → 15분, 그 밖의 실패 → 1분 동안 agy 를 건너뛰고 곧바로 DeepSeek(차단기)
+  1순위: Hive API 의 DeepSeek(reasoning_effort=low). 빠르고 이미지도 읽는다.
+  2순위: DeepSeek 가 실패(시간 초과·5xx·429·빈 답)하면 Google Antigravity 구독의 Gemini 4 Hydrogen — 헤르메스 플러그인
+         antigravity-agy 의 transport 로 로그인된 agy CLI 를 한 번 실행한다(텍스트만, 도구 호출 지원).
+         - 이미지가 든 요청은 Gemini 로 넘기지 않는다(agy 가 이미지를 빼고 글자만 보내 그림을 못 본 답이 오류 없이 온다).
+         - 쿼터 초과·로그아웃·agy 없음 → 15분, 그 밖의 실패 → 1분 동안 agy 를 건너뛴다(차단기). DeepSeek 도 실패가
+           이어지면 DEEPSEEK_COOLDOWN 동안 건너뛰고 Gemini 로 바로 보낸다.
 
 백엔드(api·worker 컨테이너)는 같은 컨테이너 안 127.0.0.1:18090 의 socat 중계(llm-relay-*)를 거쳐
 이 게이트웨이(astra-egress 브리지 172.24.0.1:18090)로 온다. 백엔드 설정은 http 를 loopback 에만 허용한다.
 
 설정: /home/ubuntu/.config/agy-llm-gateway/env (600)
-  GATEWAY_TOKEN       백엔드가 보내는 Bearer 값(ASTRA_LLM_API_KEY)
-  AGY_MODEL           기본 gemini-4-hydrogen-medium
-  AGY_TIMEOUT         agy 한 번의 제한 시간(초), 기본 60
-  AGY_COOLDOWN        일반 실패 뒤 agy 를 건너뛰는 시간(초), 기본 60
-  AGY_HARD_COOLDOWN   쿼터·로그아웃 뒤 건너뛰는 시간(초), 기본 900
-  FALLBACK_BASE_URL   https://api-cdn.thehive.ai/api/v3
-  FALLBACK_MODEL      deepseek-ai/deepseek-v4.1-flash-1017
-  FALLBACK_API_KEY    Hive API key
-  LISTEN              172.24.0.1:18090
+  GATEWAY_TOKEN             백엔드가 보내는 Bearer 값(ASTRA_LLM_API_KEY)
+  DEEPSEEK_BASE_URL         https://api-cdn.thehive.ai/api/v3
+  DEEPSEEK_MODEL            deepseek-ai/deepseek-v4.1-flash-1017
+  DEEPSEEK_API_KEY          Hive API key
+  DEEPSEEK_REASONING_EFFORT 기본 low
+  DEEPSEEK_TIMEOUT          DeepSeek 한 번의 제한 시간(초), 기본 150
+  DEEPSEEK_COOLDOWN         DeepSeek 실패 뒤 건너뛰는 시간(초), 기본 30
+  AGY_MODEL                 기본 gemini-4-hydrogen-medium
+  AGY_TIMEOUT               agy 한 번의 제한 시간(초), 기본 60
+  AGY_COOLDOWN              일반 실패 뒤 agy 를 건너뛰는 시간(초), 기본 60
+  AGY_HARD_COOLDOWN         쿼터·로그아웃 뒤 건너뛰는 시간(초), 기본 900
+  LISTEN                    172.24.0.1:18090
 기록: 요청마다 한 줄(사용 경로·시간·토큰 수). 프롬프트·응답 본문은 남기지 않는다.
 """
 import hmac
@@ -45,23 +49,27 @@ AGY_TIMEOUT = float(ENV.get('AGY_TIMEOUT', '60'))
 AGY_COOLDOWN = float(ENV.get('AGY_COOLDOWN', '60'))
 AGY_HARD_COOLDOWN = float(ENV.get('AGY_HARD_COOLDOWN', '900'))
 HARD_ERRORS = (transport.AgyQuotaExhausted, transport.AgyLoggedOut, transport.AgyMissing)
-# 백엔드 ASTRA_LLM_TIMEOUT(300s) 안에 agy 와 폴백을 함께 끝낸다. 폴백에는 남은 시간만 준다.
+# 백엔드 ASTRA_LLM_TIMEOUT(300s) 안에 DeepSeek 와 Gemini 를 함께 끝낸다. 2순위에는 남은 시간만 준다.
 REQUEST_BUDGET = float(ENV.get('REQUEST_BUDGET', '290'))
-FALLBACK_URL = ENV['FALLBACK_BASE_URL'].rstrip('/') + '/chat/completions'
-FALLBACK_MODEL = ENV['FALLBACK_MODEL']
-FALLBACK_KEY = ENV['FALLBACK_API_KEY']
+DS_URL = ENV['DEEPSEEK_BASE_URL'].rstrip('/') + '/chat/completions'
+DS_MODEL = ENV['DEEPSEEK_MODEL']
+DS_KEY = ENV['DEEPSEEK_API_KEY']
+DS_EFFORT = ENV.get('DEEPSEEK_REASONING_EFFORT', 'low')
+DS_TIMEOUT = float(ENV.get('DEEPSEEK_TIMEOUT', '150'))
+DS_COOLDOWN = float(ENV.get('DEEPSEEK_COOLDOWN', '30'))
 HOST, PORT = ENV.get('LISTEN', '172.24.0.1:18090').rsplit(':', 1)
 MAX_BODY = 16 * 2**20
 # agy 는 헤르메스 에이전트와 같은 Antigravity 구독 쿼터(5시간·주간)를 쓴다. 동시에 AGY_CONCURRENCY(기본 8)개까지 띄우고,
-# 자리가 없으면 기다리지 않고 바로 폴백으로 보낸다(DeepSeek 쪽 동시 수는 백엔드 ASTRA_LLM_MAX_CONCURRENCY 가 정한다).
+# 자리가 없으면 기다리지 않고 실패로 본다(DeepSeek 쪽 동시 수는 백엔드 ASTRA_LLM_MAX_CONCURRENCY 가 정한다).
 AGY_SLOTS = threading.BoundedSemaphore(int(ENV.get('AGY_CONCURRENCY', '8')))
 client = transport.Client(timeout=AGY_TIMEOUT)
 
 
 class Breaker:
-    """agy 가 실패하면 잠시 agy 를 건너뛴다. 실패가 계속될 때 요청마다 agy 를 기다리지 않게 한다."""
+    """실패가 이어질 때 그 제공자를 잠시 건너뛴다. 요청마다 안 되는 쪽을 기다리지 않게 한다."""
 
-    def __init__(self):
+    def __init__(self, name, cooldown, hard_errors=(), hard_cooldown=0.0):
+        self.name, self.cooldown, self.hard_errors, self.hard_cooldown = name, cooldown, hard_errors, hard_cooldown
         self.lock = threading.Lock()
         self.open_until = 0.0
         self.reason = None
@@ -71,22 +79,27 @@ class Breaker:
             return self.reason if time.monotonic() < self.open_until else None
 
     def trip(self, error):
-        seconds = AGY_HARD_COOLDOWN if isinstance(error, HARD_ERRORS) else AGY_COOLDOWN
+        seconds = self.hard_cooldown if self.hard_errors and isinstance(error, self.hard_errors) else self.cooldown
         with self.lock:
             self.open_until = max(self.open_until, time.monotonic() + seconds)
             self.reason = type(error).__name__
-        log(event='agy_paused', reason=self.reason, seconds=int(seconds))
+        log(event=f'{self.name}_paused', reason=self.reason, seconds=int(seconds))
 
     def reset(self):
         with self.lock:
             self.open_until, self.reason = 0.0, None
 
 
-breaker = Breaker()
+breaker = Breaker('agy', AGY_COOLDOWN, HARD_ERRORS, AGY_HARD_COOLDOWN)
+ds_breaker = Breaker('deepseek', DS_COOLDOWN)
 
 
-class AgySkipped(Exception):
-    """agy 를 부르지 않고 바로 폴백한다(차단기 열림·자리 없음). 차단기를 다시 걸지 않는다."""
+class Skipped(Exception):
+    """그 제공자를 부르지 않고 넘어간다(차단기 열림·자리 없음). 차단기를 다시 걸지 않는다."""
+
+
+class EmptyAnswer(Exception):
+    """DeepSeek 가 본문도 도구 호출도 없이 답했다(추론이 max_tokens 를 다 쓴 경우 등)."""
 
 
 def log(**fields):
@@ -99,9 +112,9 @@ def via_agy(body, model=None, timeout=None, short=False):
     model, timeout = model or AGY_MODEL, timeout or AGY_TIMEOUT
     paused = breaker.skip()
     if paused:
-        raise AgySkipped(f'paused:{paused}')
+        raise Skipped(f'agy paused:{paused}')
     if not AGY_SLOTS.acquire(blocking=False):
-        raise AgySkipped('busy')
+        raise Skipped('agy busy')
     kwargs = {k: body[k] for k in ('messages', 'tools', 'tool_choice') if k in body}
     try:
         response = client.chat.completions.create(model=model, timeout=timeout, **kwargs)
@@ -117,15 +130,34 @@ def via_agy(body, model=None, timeout=None, short=False):
     return data
 
 
-def via_fallback(body, remaining, floor=10.0):
-    payload = dict(body, model=FALLBACK_MODEL)
-    # Hive 의 DeepSeek 는 추론 토큰이 max_tokens 를 먹으면 본문이 비어서 온다. 추론을 끄고 답만 받는다.
+def via_deepseek(body, timeout):
+    """DeepSeek 한 번. 성공하면 Chat Completions 응답(dict). 시간 초과·5xx·429·빈 답이면 예외(차단기를 건다).
+    그 밖의 4xx 는 요청 자체 문제라 차단기를 걸지 않고 예외로 넘긴다."""
+    paused = ds_breaker.skip()
+    if paused:
+        raise Skipped(f'deepseek paused:{paused}')
+    payload = dict(body, model=DS_MODEL)
     payload.pop('thinking', None)
-    payload['reasoning_effort'] = 'none'
-    request = urllib.request.Request(FALLBACK_URL, data=json.dumps(payload).encode(), method='POST', headers={
-        'Authorization': f'Bearer {FALLBACK_KEY}', 'Content-Type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=max(floor, remaining)) as response:
-        return response.status, response.read()
+    payload['reasoning_effort'] = DS_EFFORT
+    request = urllib.request.Request(DS_URL, data=json.dumps(payload).encode(), method='POST', headers={
+        'Authorization': f'Bearer {DS_KEY}', 'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(request, timeout=max(1.0, timeout)) as response:
+            data = json.load(response)
+        message = data['choices'][0]['message']
+        if not (message.get('content') or '').strip() and not message.get('tool_calls'):
+            raise EmptyAnswer(data['choices'][0].get('finish_reason'))
+    except urllib.error.HTTPError as error:
+        if error.code == 429 or error.code >= 500:
+            ds_breaker.trip(error)
+        raise
+    except Exception as error:
+        ds_breaker.trip(error)
+        raise
+    ds_breaker.reset()
+    message.pop('reasoning_content', None)
+    data['model'] = DS_MODEL
+    return data
 
 
 # ---------- 프론트 AI 도우미(마스코트 챗봇): Gemini generateContent 형식 ----------
@@ -144,9 +176,9 @@ _assist_systems = {}
 WARM_WINDOW = float(ENV.get('WARM_WINDOW', '21600'))
 
 # ---------- 백엔드 화면 도우미: /chat/completions 에 response_format json_object, 도구 없음 ----------
-# 백엔드(ASTRA_ASSISTANT_TIMEOUT 기본 20초)가 먼저 끊지 않도록 짧게 끝낸다: 가벼운 모델을 미리 띄워 두고 JSON_AGY_TIMEOUT 안에
-# 못 받거나 JSON 이 아니면 DeepSeek 로 넘겨 전체를 JSON_BUDGET 안에 마친다.
-JSON_AGY_TIMEOUT = float(ENV.get('AGY_JSON_TIMEOUT', '10'))
+# 백엔드(ASTRA_ASSISTANT_TIMEOUT 기본 20초)가 먼저 끊지 않도록 짧게 끝낸다: DeepSeek 를 JSON_DS_TIMEOUT 까지 기다리고,
+# 못 받거나 JSON 이 아니면 미리 띄워 둔 Gemini -low 로 넘겨 전체를 JSON_BUDGET 안에 마친다.
+JSON_DS_TIMEOUT = float(ENV.get('DEEPSEEK_JSON_TIMEOUT', '8'))
 JSON_BUDGET = float(ENV.get('JSON_BUDGET', '17'))
 JSON_RULE = '\n\n# 출력 형식\nJSON 객체 하나만 출력한다. 설명, 코드 블록, 앞뒤 문장 없이 JSON 만 쓴다.'
 
@@ -263,10 +295,10 @@ def assistant_reply(value, model):
 
 
 def deepseek_json(messages, remaining):
-    payload = {'model': FALLBACK_MODEL, 'messages': messages, 'temperature': 0, 'max_tokens': 800,
+    payload = {'model': DS_MODEL, 'messages': messages, 'temperature': 0, 'max_tokens': 800,
                'response_format': {'type': 'json_object'}, 'reasoning_effort': 'none', 'stream': False}
-    request = urllib.request.Request(FALLBACK_URL, data=json.dumps(payload).encode(), method='POST', headers={
-        'Authorization': f'Bearer {FALLBACK_KEY}', 'Content-Type': 'application/json'})
+    request = urllib.request.Request(DS_URL, data=json.dumps(payload).encode(), method='POST', headers={
+        'Authorization': f'Bearer {DS_KEY}', 'Content-Type': 'application/json'})
     with urllib.request.urlopen(request, timeout=max(3.0, remaining)) as response:
         data = json.load(response)
     return data['choices'][0]['message'].get('content') or ''
@@ -312,8 +344,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/healthz':
-            return self.reply(200, {'ok': True, 'primary': AGY_MODEL, 'fallback': FALLBACK_MODEL,
-                                    'primary_paused': breaker.skip()})
+            return self.reply(200, {'ok': True, 'primary': DS_MODEL, 'fallback': AGY_MODEL,
+                                    'primary_paused': ds_breaker.skip(), 'fallback_paused': breaker.skip()})
         self.reply(404, {'error': {'message': 'not found'}})
 
     def assistant(self):
@@ -348,9 +380,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             log(route='assistant-fallback', error=type(error).__name__, agy_error=reason)
             return self.reply(502, {'error': {'message': f'primary ({reason}) and fallback failed'}})
-        log(route='assistant-fallback', model=FALLBACK_MODEL, agy_error=reason, retried=retried, replaced=replaced,
+        log(route='assistant-fallback', model=DS_MODEL, agy_error=reason, retried=retried, replaced=replaced,
             agy_ms=int((fb_started - started) * 1000), ms=int((time.monotonic() - fb_started) * 1000))
-        self.reply(200, assistant_reply(value, FALLBACK_MODEL))
+        self.reply(200, assistant_reply(value, DS_MODEL))
 
     def do_POST(self):
         if ASSIST_PATH.match(self.path.split('?', 1)[0]):
@@ -373,53 +405,66 @@ class Handler(BaseHTTPRequestHandler):
             return self.quick(body)
         started = time.monotonic()
         if has_images(body):
-            # agy 플러그인은 글자만 넘기고 이미지를 "[image omitted …]" 로 바꾼다. 그대로 보내면 그림을 못 본 답이 오류 없이
-            # 돌아오므로, 이미지가 든 요청(ASTRA_LLM_VISION=true 의 녹음·문서 쪽 이미지)은 이미지를 읽는 DeepSeek 로 바로 보낸다.
-            return self.fallback(body, started, 'images', REQUEST_BUDGET, 10.0, 'vision')
+            # agy 플러그인은 이미지를 "[image omitted …]" 로 바꿔 글자만 넘기므로, 이미지가 든 요청은 Gemini 로 넘기지 않는다.
+            try:
+                data = via_deepseek(body, min(DS_TIMEOUT, REQUEST_BUDGET))
+            except Exception as error:
+                log(route='vision', error=type(error).__name__, ms=self.elapsed(started))
+                return self.reply(502, {'error': {'message': f'deepseek failed ({type(error).__name__}); images are not sent to Gemini'}})
+            return self.answer(data, 'vision', started, body)
         try:
-            data = via_agy(body)
-            usage = data.get('usage') or {}
-            log(route='agy', model=AGY_MODEL, ms=int((time.monotonic() - started) * 1000),
-                tools=len(body.get('tools') or []), prompt=usage.get('prompt_tokens'), completion=usage.get('completion_tokens'),
-                finish=(data.get('choices') or [{}])[0].get('finish_reason'))
-            return self.reply(200, data)
-        except Exception as error:  # 쿼터·로그아웃·시간 초과·agy 오류 → 2순위
+            data = via_deepseek(body, min(DS_TIMEOUT, REQUEST_BUDGET))
+        except Exception as error:  # 시간 초과·5xx·429·빈 답·차단기 → 2순위 Gemini
             reason = type(error).__name__
-        self.fallback(body, started, reason, REQUEST_BUDGET, 10.0, 'fallback')
-
-    def fallback(self, body, started, reason, budget, floor, route):
-        fb_started = time.monotonic()
+        else:
+            return self.answer(data, 'deepseek', started, body)
         try:
-            status, raw = via_fallback(body, budget - (fb_started - started), floor)
-        except urllib.error.HTTPError as error:
-            status, raw = error.code, error.read()
+            data = via_agy(body, AGY_MODEL, min(AGY_TIMEOUT, max(5.0, REQUEST_BUDGET - (time.monotonic() - started))))
         except Exception as error:
-            log(route=route, error=type(error).__name__, agy_error=reason)
-            return self.reply(502, {'error': {'message': f'primary ({reason}) and fallback failed'}})
-        log(route=route, model=FALLBACK_MODEL, status=status, agy_error=reason,
-            agy_ms=int((fb_started - started) * 1000), ms=int((time.monotonic() - fb_started) * 1000))
-        self.reply(status, raw)
+            log(route='agy-fallback', error=type(error).__name__, ds_error=reason, ms=self.elapsed(started))
+            return self.reply(502, {'error': {'message': f'primary ({reason}) and fallback ({type(error).__name__}) failed'}})
+        self.answer(data, 'agy-fallback', started, body, ds_error=reason)
+
+    @staticmethod
+    def elapsed(started):
+        return int((time.monotonic() - started) * 1000)
+
+    def answer(self, data, route, started, body, **extra):
+        usage = data.get('usage') or {}
+        log(route=route, model=data.get('model'), ms=self.elapsed(started), tools=len(body.get('tools') or []),
+            prompt=usage.get('prompt_tokens'), completion=usage.get('completion_tokens'),
+            finish=(data.get('choices') or [{}])[0].get('finish_reason'), **extra)
+        self.reply(200, data)
 
     def quick(self, body):
-        messages = json_messages(body['messages'])
-        _assist_systems['chat-json'] = (messages[0]['content'], time.monotonic())
+        """백엔드 화면 도우미(json_object, 백엔드 20초 제한): DeepSeek 를 JSON_DS_TIMEOUT 까지, 안 되면 미리 띄운 Gemini -low 로
+        남은 시간(JSON_BUDGET 까지) 안에 끝낸다. 답은 JSON 객체 하나로 다듬어 돌려준다."""
         started = time.monotonic()
         try:
-            data = via_agy({'messages': messages}, ASSIST_MODEL, JSON_AGY_TIMEOUT, short=True)
+            data = via_deepseek(body, JSON_DS_TIMEOUT)
             message = data['choices'][0]['message']
             message['content'] = json.dumps(extract_json(message.get('content')), ensure_ascii=False)
-            log(route='json-agy', model=ASSIST_MODEL, ms=int((time.monotonic() - started) * 1000))
-            return self.reply(200, data)
-        except Exception as error:  # agy 실패·JSON 아님 → DeepSeek(response_format 그대로)
+        except Exception as error:  # 실패·JSON 아님 → Gemini -low
             reason = type(error).__name__
+        else:
+            return self.answer(data, 'json-deepseek', started, body)
+        messages = json_messages(body['messages'])
+        _assist_systems['chat-json'] = (messages[0]['content'], time.monotonic())
+        try:
+            data = via_agy({'messages': messages}, ASSIST_MODEL, max(3.0, JSON_BUDGET - (time.monotonic() - started)), short=True)
+            message = data['choices'][0]['message']
+            message['content'] = json.dumps(extract_json(message.get('content')), ensure_ascii=False)
+        except Exception as error:
+            log(route='json-agy-fallback', error=type(error).__name__, ds_error=reason, ms=self.elapsed(started))
+            return self.reply(502, {'error': {'message': f'primary ({reason}) and fallback ({type(error).__name__}) failed'}})
         finally:
             threading.Thread(target=prewarm_assistant, daemon=True).start()
-        self.fallback(body, started, reason, JSON_BUDGET, 3.0, 'json-fallback')
+        self.answer(data, 'json-agy-fallback', started, body, ds_error=reason)
 
 
 if __name__ == '__main__':
     server = ThreadingHTTPServer((HOST, int(PORT)), Handler)
     server.daemon_threads = True
     threading.Thread(target=keep_assistant_warm, daemon=True).start()
-    log(event='start', listen=f'{HOST}:{PORT}', primary=AGY_MODEL, fallback=FALLBACK_MODEL, assistant=ASSIST_MODEL)
+    log(event='start', listen=f'{HOST}:{PORT}', primary=DS_MODEL, effort=DS_EFFORT, fallback=AGY_MODEL, assistant=ASSIST_MODEL)
     server.serve_forever()
