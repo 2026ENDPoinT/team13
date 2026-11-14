@@ -5,8 +5,9 @@ import java.util.List;
 import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.SchoolCourse;
 
 /**
- * 학번·학교 e-Class 비밀번호 로그인이 commit된 뒤의 사건. 그 학생의 학교 수강과목을 담는다. 로그인 transaction을 연 쪽에서 발행한다.
- * commit 뒤 같은 thread에서 순서대로 받는다. {@code catalog}가 먼저({@link #CATALOG_ORDER}) 과목과 수강을 학교 화면과 맞추고,
+ * 학번·학교 e-Class 비밀번호 로그인이 commit된 뒤의 사건. 그 학생의 학교 수강과목을 담는다. 로그인 쪽이 transaction을 commit하고
+ * DB 연결을 돌려준 뒤 발행하므로 받는 쪽은 transaction 밖에서 {@code @EventListener}로 받는다(로그인이 몰릴 때 받는 쪽의 작업과
+ * 기다림이 로그인의 DB 연결을 쥐지 않게). 같은 thread에서 순서대로 받는다. {@code catalog}가 먼저({@link #CATALOG_ORDER}) 과목과 수강을 학교 화면과 맞추고,
  * {@code learning}이 그다음({@link #LEARNING_ORDER}) 강의실 학습활동 목록을 가져온다.
  * @param userId 로그인한 내부 사용자
  * @param courses 학교 메인 화면의 수강과목. 읽지 못했으면 비어 있다
