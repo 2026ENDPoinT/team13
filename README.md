@@ -290,7 +290,7 @@ flowchart LR
 | 감시 | 5분마다 디스크·메모리·OOM·컨테이너·핵심 서비스·공개 주소·백업 나이를 점검해 텔레그램으로 알림, 복구되면 복구 알림. 다른 머신에서 생존 신호(heartbeat)를 따로 확인 |
 | 백업 | 매일 DB(MySQL·PostgreSQL)와 업로드 저장소·SQLite를 백업하고 다른 머신으로 복사(삭제는 전파하지 않음) |
 | 자원 | 모든 컨테이너에 메모리·CPU·로그 상한, 주간 Docker 캐시 정리 |
-| LLM 게이트웨이 | Gemini 실패·쿼터 초과·지연 시 즉시 DeepSeek, 차단기(1분/15분), 응답 형식 검사와 재질의 |
+| LLM 게이트웨이 | Gemini 실패·쿼터 초과·지연 시 즉시 GPT 6 Luna, 차단기(1분/15분), 응답 형식 검사와 재질의 |
 
 자세한 운영 절차는 [`frontend/deploy/jenkins/README.md`](frontend/deploy/jenkins/README.md)에 있습니다.
 
