@@ -42,6 +42,8 @@ npm run test:mutation  # 변이 테스트(Stryker, 10분 이상)
 - 로그인 히어로의 추천·자동완성은 실제 서버 과목과 활동을 연다. `할 일 목록 보여줘`는 서버 목록을 표시하며, 목업의 자동 계획 실행이나 과제 제출을 서버 기능인 것처럼 제공하지 않는다.
 - 강의실도 목업·로그인 화면이 같은 `RoomLayout`을 사용한다. 평면 과목 헤더·강의계획서·종류/상태 필터·주차 막대·활동 행·빈 화면을 공유하고, 서버 전용 배너·커버·공지/할 일 묶음을 본문에 추가하지 않는다.
 - 로그인 강의실의 주차 수·완료 표시·진도·제출 상태·상세 링크는 서버 응답을 사용한다. 좌측 주차/공지 숫자와 우측 오늘 수업/할 일도 서버 값이며, 미수신 값을 목업 숫자로 채우지 않는다. 계정/로그아웃은 기존 상단 메뉴를 쓰고 본문에 별도 인증 행을 붙이지 않는다.
+- 자료 상세의 첨부파일 행은 미리보기·내려받기만 제공한다. 행의 학습실 저장 아이콘은 제거하며, 다른 화면의 `학습실에 저장` 버튼은 유지한다.
+- PWA는 온라인에서 받은 `/`·`/ilos/` HTML을 공통 앱 셸로 캐시해 오프라인의 미방문 경로에도 사용한다. `/api/`(공개 `/api/catalog` 제외)·`/doc/`·`/vod/`는 캐시하지 않으며, 앱 셸 복원이 인증된 데이터의 오프라인 제공을 뜻하지 않는다.
 
 회귀 검증: `npx vitest run tests/integration/home-layout.test.ts tests/integration/server-hero-commands.test.ts tests/integration/assistant-resolve.test.ts`.
 강의실·공통 셸 회귀 검증: `npx vitest run tests/integration/course-room-layout.test.ts tests/integration/server-chrome.test.ts tests/integration/backend-prompt-layout.test.ts`.

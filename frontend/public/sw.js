@@ -10,6 +10,14 @@ function networkOnly(url) {
   return NETWORK_ONLY.some((prefix) => url.pathname.startsWith(prefix));
 }
 
+const SHELL = "/index.html";
+
+function isShell(request, url, response) {
+  if (request.mode !== "navigate") return false;
+  if (url.pathname !== "/" && !url.pathname.startsWith("/ilos/")) return false;
+  return (response.headers.get("content-type") || "").startsWith("text/html");
+}
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(caches.open(CACHE));
@@ -34,16 +42,22 @@ self.addEventListener("fetch", (event) => {
     try {
       const fresh = await fetch(request);
       if (fresh && fresh.ok) {
-        const cache = await caches.open(CACHE);
-        cache.put(request, fresh.clone());
+        const copy = fresh.clone();
+        event.waitUntil((async () => {
+          const cache = await caches.open(CACHE);
+          await cache.put(request, copy.clone());
+          // Every /ilos/** page is the same app shell, so the last good one backs any navigation
+          // that fails at the network (the cache key below is what the fallback reads).
+          if (isShell(request, url, copy)) await cache.put(SHELL, copy);
+        })().catch(() => {}));
       }
       return fresh;
     } catch (error) {
       const cached = await caches.match(request);
       if (cached) return cached;
       if (request.mode === "navigate") {
-        const home = await caches.match("/index.html");
-        if (home) return home;
+        const shell = await caches.match(SHELL);
+        if (shell) return shell;
       }
       throw error;
     }
