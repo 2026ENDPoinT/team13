@@ -18,7 +18,6 @@ import { lectureDetails, detailKey, ACTIVITY_PHASE, type ActivityDetail, type Ac
 import { materialMessage } from "../../shared/materials-remote.ts";
 import { rememberMaterials } from "../../shared/course-pdfs-remote.ts";
 import { downloadControl, sizeText } from "../../shared/uploads-remote.tsx";
-import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import { AttachmentRow } from "../../shared/attachment-row.tsx";
 import {
   schoolMaterialDetails, schoolVideoDetails, schoolDetailKey, schoolFilesOf, schoolProblemOf, schoolDuration, schoolPercent,
@@ -99,7 +98,6 @@ function FileRow({ kj, courseId, file }: { kj: string; courseId: number | string
       meta={sizeText(file.sizeBytes)}
       preview={preview}
       download={downloadControl(courseId, { fileId: file.fileId, name: file.name }, "icon")}
-      study={file.pdf ? <SaveToStudy variant="icon" kj={kj} file={{ fileId: file.fileId, name: file.name }} /> : null}
     />
   );
 }
@@ -168,7 +166,7 @@ function SchoolMaterialBody({ data, kj, courseId, parts }: { data: SchoolMateria
       ])}
       <Prose text={data.description} />
       <h2>첨부파일</h2>
-      {files.length ? files.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={data.schoolUrl} materialId={data.activityId} />) : <p className="tiny">첨부 파일이 없습니다.</p>}
+      {files.length ? files.map((file) => <SchoolFileRow key={String(file.fileId)} kj={kj} courseId={courseId} file={file} schoolUrl={data.schoolUrl} />) : <p className="tiny">첨부 파일이 없습니다.</p>}
       <div className="btn-row">
         <SchoolLink url={data.schoolUrl} />
         <Link href={hrefFor(find("46_room_files_list"), { kj })} className="btn btn-secondary">파일모음</Link>

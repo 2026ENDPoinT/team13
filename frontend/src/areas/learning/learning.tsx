@@ -1,6 +1,5 @@
 import { Fragment, cloneElement, isValidElement, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon } from "../../ui/icon.tsx";
-import { SaveToStudy } from "../../shared/save-to-study.tsx";
 import { AttachmentRow } from "../../shared/attachment-row.tsx";
 import { Badge, Button, EmptyState, Field, Tabs } from "../../ui/kit.tsx";
 import { Link, GoButton, navigate } from "../../router.tsx";
@@ -131,14 +130,13 @@ function koWhen(value?: string): string {
 function typeLine(type: string, titleTag?: ReactNode, iconName?: string): ReactNode {
   return <div className="type-line"><span className={`type-ico ${type}`} aria-hidden="true"><Icon name={iconName || TYPE_ICON[type] || "file"} /></span>{titleTag || <span>{typeLabel(type)}</span>}</div>;
 }
-function fileRow(name: string, meta?: string, href?: string, save?: { kj: string; fileId: string }): ReactNode {
+function fileRow(name: string, meta?: string, href?: string, downloadable = false): ReactNode {
   return <AttachmentRow
     key={name}
     name={name}
     meta={meta}
     preview={href}
-    download={save ? <button type="button" className="icon-btn" aria-label={`${name} 내려받기`} title="내려받기" onClick={() => toast("샘플 파일은 이 브라우저 밖으로 내려받지 않습니다")}><Icon name="download" /></button> : null}
-    study={save ? <SaveToStudy variant="icon" kj={save.kj} file={{ fileId: save.fileId, name }} /> : null}
+    download={downloadable ? <button type="button" className="icon-btn" aria-label={`${name} 내려받기`} title="내려받기" onClick={() => toast("샘플 파일은 이 브라우저 밖으로 내려받지 않습니다")}><Icon name="download" /></button> : null}
   />;
 }
 function seedMail(state: AppState): void {
@@ -214,7 +212,7 @@ function materialDetail(a: Activity, course: Course, ctx: ScreenCtx): ReactNode 
   return <div className="act-body">{typeLine("material")}<h1>{a.title}</h1>{a.body ? <div className="prose"><p>{a.body}</p></div> : null}{a.fileName ? <p className="tiny">{a.fileName}</p> : null}
     {a.fileId ? <div className="btn-row"><Button kind="primary" onClick={() => void downloadActivity(a)}>다운로드</Button></div> : null}
     {metaTable([["공개일", "2026.10.30 (금)"], ["작성자", course.instructor], ["조회수", "130"]])}<h2>첨부파일</h2>
-    {owned.length ? owned.map((file) => fileRow(file.name, `${file.size}${file.week ? ` · ${file.week}주` : ""}`, preview, { kj: course.id, fileId: file.id })) : fileRow("week5-cases.pdf", "1.2 MB", preview, { kj: course.id, fileId: "f1" })}
+    {owned.length ? owned.map((file) => fileRow(file.name, `${file.size}${file.week ? ` · ${file.week}주` : ""}`, preview, true)) : fileRow("week5-cases.pdf", "1.2 MB", preview, true)}
     <div className="btn-row"><Link href={preview} className="btn btn-primary">문서 미리보기</Link></div>{summaryAside(ctx.state, true)}
   </div>;
 }

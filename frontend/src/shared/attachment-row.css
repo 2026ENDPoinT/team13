@@ -11,8 +11,6 @@
 .attach-actions .icon-btn { background: var(--surface-2); border-radius: var(--radius-sm); }
 .attach-actions .icon-btn:hover { background: var(--border); }
 .attach-actions .icon-btn .ico, .attach-actions .icon-btn svg { width: 20px; height: 20px; }
-.attach-actions .save-study-icon { background: var(--accent-soft); color: var(--accent); }
-.attach-actions .save-study-icon:hover { background: var(--accent-soft); color: var(--accent-press); }
 /* 내려받기 진행·오류 문장은 버튼 아래 한 줄을 쓴다. */
 .attach-actions > :not(.icon-btn) { flex-basis: 100%; text-align: right; }
 .attach-actions > [role="status"]:empty { display: none; }

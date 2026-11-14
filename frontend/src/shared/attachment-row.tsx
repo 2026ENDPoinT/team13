@@ -1,5 +1,5 @@
 // One attached file as a list row: the file-type icon and name/size on the left, icon buttons on the right
-// (미리보기, 내려받기, and — for PDFs that can go to the study room — the blue 학습실 upload button).
+// (미리보기, 내려받기).
 // Used by the material detail (server, school e-Class copy, sample mode).
 import type { ReactNode } from "react";
 import { Icon } from "../ui/icon.tsx";
@@ -35,11 +35,9 @@ export interface AttachmentRowProps {
   preview?: string;
   /** The "내려받기" icon control (`downloadControl(…, "icon")`). */
   download?: ReactNode;
-  /** The "학습실에 저장" icon control (`<SaveToStudy variant="icon" />`). */
-  study?: ReactNode;
 }
 
-export function AttachmentRow({ name, extension, meta, fileKey, preview, download, study }: AttachmentRowProps) {
+export function AttachmentRow({ name, extension, meta, fileKey, preview, download }: AttachmentRowProps) {
   return (
     <article className="attach-row" data-file={fileKey}>
       <FileTypeIcon extension={extensionOf(name, extension)} />
@@ -50,7 +48,6 @@ export function AttachmentRow({ name, extension, meta, fileKey, preview, downloa
       <div className="attach-actions">
         {preview ? <Link className="icon-btn" href={preview} aria-label={`${name} 미리보기`} title="미리보기"><Icon name="search" /></Link> : null}
         {download}
-        {study}
       </div>
     </article>
   );

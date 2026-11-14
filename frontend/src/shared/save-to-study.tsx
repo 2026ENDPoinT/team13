@@ -27,19 +27,9 @@ export interface SaveFile {
 
 const ROOT = "";
 
-/** `icon`: a blue upload icon button for attachment rows; `button`: the labelled button next to "내려받기". */
-export type SaveVariant = "button" | "icon";
-
-export function SaveTrigger({ variant, label, title, saved, where, disabled = false, onClick }: {
-  variant: SaveVariant; label: string; title?: string; saved: boolean; where?: string; disabled?: boolean; onClick: () => void;
+function SaveTrigger({ label, title, saved, where, disabled = false, onClick }: {
+  label: string; title?: string; saved: boolean; where?: string; disabled?: boolean; onClick: () => void;
 }) {
-  if (variant === "icon") {
-    return (
-      <button type="button" className="icon-btn save-study-icon" aria-label={label} title={title ?? (saved ? "학습실에 저장됨" : "학습실에 저장")} data-saved={saved ? "" : undefined} disabled={disabled} onClick={onClick}>
-        <Icon name={saved ? "check" : "upload"} />
-      </button>
-    );
-  }
   return (
     <Button kind="secondary" className="save-study-btn" aria-label={label} title={title} disabled={disabled} onClick={onClick}>
       <Icon name={saved ? "check" : "folder"} />
@@ -50,28 +40,26 @@ export function SaveTrigger({ variant, label, title, saved, where, disabled = fa
 }
 
 /** "학습실에 저장" 버튼. 서버 학습실이면 실제 폴더 배치, 아니면 목업. */
-/** `autoOpen`: the folder dialog is open when it first shows (after a step the click already started, e.g. copying a school file). */
-export function SaveToStudy({ kj, file, courseName, variant = "button", autoOpen = false }: { kj: string; file: SaveFile; courseName?: string; variant?: SaveVariant; autoOpen?: boolean }) {
+export function SaveToStudy({ kj, file, courseName }: { kj: string; file: SaveFile; courseName?: string }) {
   useStudyRoomStore();
   // Reading the folder state loads the course view; a 404 there marks the study-room endpoints missing, and
   // `serverStudyCourse` then answers null, so the button turns into the mock as soon as that is known.
   if (serverStudyCourse(kj) != null) folderState(kj);
   return serverStudyCourse(kj) != null
-    ? <ServerSaveToStudy kj={kj} file={file} courseName={courseName} variant={variant} autoOpen={autoOpen} />
-    : <MockSaveToStudy kj={kj} file={file} courseName={courseName} variant={variant} autoOpen={autoOpen} />;
+    ? <ServerSaveToStudy kj={kj} file={file} courseName={courseName} />
+    : <MockSaveToStudy kj={kj} file={file} courseName={courseName} />;
 }
 
 // ---------- server: the student's folders on the ASTRA backend ----------
 
-function ServerSaveToStudy({ kj, file, courseName, variant, autoOpen }: { kj: string; file: SaveFile; courseName?: string; variant: SaveVariant; autoOpen: boolean }) {
-  const [open, setOpen] = useState(autoOpen);
+function ServerSaveToStudy({ kj, file, courseName }: { kj: string; file: SaveFile; courseName?: string }) {
+  const [open, setOpen] = useState(false);
   const itemId = `srv-${file.fileId}`;
   const where = serverFolderOf(kj, itemId);
   const folder = where ? getFolder(where, kj) : null;
   return (
     <>
       <SaveTrigger
-        variant={variant}
         label={folder ? `${file.name} 학습실 ${folder.name} 폴더에 저장됨, 다른 폴더로 옮기기` : `${file.name} 학습실에 저장`}
         title={folder ? `학습실 · ${folder.name}` : undefined}
         saved={folder != null}
@@ -205,15 +193,14 @@ function ServerSaveDialog({ kj, file, itemId, courseName, onClose }: {
 
 // ---------- sample mode (backend off): mock ----------
 
-function MockSaveToStudy({ kj, file, courseName, variant, autoOpen }: { kj: string; file: SaveFile; courseName?: string; variant: SaveVariant; autoOpen: boolean }) {
+function MockSaveToStudy({ kj, file, courseName }: { kj: string; file: SaveFile; courseName?: string }) {
   useSyncExternalStore(subscribe, getVersion);
-  const [open, setOpen] = useState(autoOpen);
+  const [open, setOpen] = useState(false);
   const key = `${kj}:${file.fileId}`;
   const where = saved.get(key);
   return (
     <>
       <SaveTrigger
-        variant={variant}
         label={`${file.name} ${where == null ? "학습실에 저장" : "학습실에 저장됨, 폴더 바꾸기"}`}
         saved={where != null}
         onClick={() => setOpen(true)}
