@@ -268,6 +268,12 @@ DB의 일시와 API의 offset 없는 일시(`openAt`, `closeAt`, `serverTime` �
 
 Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`, `ASTRA_LLM_MODEL=gemini-3.5-flash`. Gemini는 도구 호출에 `extra_content.google.thought_signature`를 붙이고 다음 요청에 같은 값이 없으면 400을 내므로, client는 도구 호출의 `extra_content`를 받은 그대로 돌려보낸다.
 
+쪽별 요약(강의자료, 학습실 문서)은 쪽 묶음마다 답을 JSON 객체 하나로 요청한다(`response_format` `json_object`). 형식만 맞고 권장 분량을 조금 넘는 것 같은 가벼운 문제는 다시 묻지 않고 경고로 받는다. 같은 host의 agy LLM gateway(Frontend-final `deploy/hermes/ops/agy-llm-gateway`)를 쓰는 배포에서는 아래 동작을 하는 gateway가 먼저 배포돼 있어야 한다. 그 전 gateway는 `json_object` 요청을 모두 화면 도우미용 짧은 경로(약 17초 예산)로 보내서 요약 요청이 시간 초과로 실패한다.
+
+- `max_tokens`가 `JSON_MAX_TOKENS`(기본 2000)보다 큰 `json_object` 요청은 일반 경로로 보낸다.
+- 이미지(`image_url`)가 든 요청은 텍스트만 넘기는 agy(Gemini)를 건너뛰고 폴백(Hive DeepSeek)으로 바로 보낸다. 폴백은 쪽 이미지를 받으므로 `ASTRA_LLM_VISION=true` 그대로 두면 된다.
+- agy 답이 JSON 객체가 아니면 같은 요청을 폴백으로 다시 보낸다.
+
 과목 자료는 담당 교수자가 그 과목에 범위별(`page_summary`, `study_chat`)로 동의한 뒤에만 보낸다([ADR-0032](docs/adr/0032-llm-consent-and-study-chat.md)). 동의와 쪽별 요약 생성·재시도는 담당자 명단의 교수와 비정규 담당자만 하고, 조교는 403 `llm_decider_required`다. 동의 목록의 `canGrant`가 화면에 이 구분을 알린다. 교수자는 아래 처리 조건을 `GET /api/llm/policy`로 보고 동의한다. 제공자를 바꾸면 이 값과 `NOTICE_VERSION`을 함께 바꾼다. 값이 바뀌면 이전 동의는 효력을 잃는다.
 
 | 환경 변수 | 기본값 | 내용 |
