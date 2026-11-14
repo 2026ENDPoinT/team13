@@ -5,11 +5,14 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -49,12 +52,54 @@ class SummaryPipelineTests {
 			assertThat(beat.from()).isEqualTo(2);
 			assertThat(beat.to()).isEqualTo(14);
 		});
-		// 6 + 6 + 2쪽 묶음과 story 한 번
-		assertThat(llm.log).filteredOn((r) -> r.purpose() == Purpose.PAGES).hasSize(3);
+		// 10 + 4쪽 묶음과 story 한 번
+		assertThat(llm.log).filteredOn((r) -> r.purpose() == Purpose.PAGES).hasSize(2);
 		assertThat(llm.log).allMatch((r) -> r.maxOutputTokens() <= 16000);
-		assertThat(result.usage().calls()).isEqualTo(4);
-		assertThat(result.usage().inputTokens()).isEqualTo(40);
+		assertThat(result.usage().calls()).isEqualTo(3);
+		assertThat(result.usage().inputTokens()).isEqualTo(30);
 		assertThat(progress).last().isEqualTo(14);
+	}
+
+	@Test
+	void sendsChunksAtTheSameTimeEachWithTheWholeDocumentOutline() {
+		CountDownLatch allInFlight = new CountDownLatch(3);
+		AtomicBoolean overlapped = new AtomicBoolean(true);
+		FakeLlm honest = honest(30);
+		FakeLlm llm = new FakeLlm((req) -> {
+			if (!isStory(req)) {
+				allInFlight.countDown();
+				try {
+					if (!allInFlight.await(5, TimeUnit.SECONDS)) {
+						overlapped.set(false);
+					}
+				}
+				catch (InterruptedException ex) {
+					throw new IllegalStateException(ex);
+				}
+			}
+			return honest.complete(req);
+		});
+
+		GenerateResult result = run(llm, document(30));
+
+		assertThat(overlapped).isTrue();
+		assertThat(result.pack().slides()).extracting(Slide::page)
+			.containsExactlyElementsOf(IntStream.rangeClosed(1, 30).boxed().toList());
+		// 첫 묶음도 뒤쪽 쪽의 첫 줄을 목차로 받는다.
+		assertThat(llm.log).filteredOn((r) -> r.purpose() == Purpose.PAGES)
+			.hasSize(3)
+			.allSatisfy((r) -> assertThat(firstText(r.messages().getFirst().content())).contains("p30 Slide 30 text"));
+	}
+
+	@Test
+	void reportsTheFailingChunksOwnErrorWhenOneOfTheParallelChunksFails() {
+		FakeLlm honest = honest(30);
+		FakeLlm llm = new FakeLlm((req) -> requestedPages(req).contains(11) ? text("not json") : honest.complete(req));
+
+		GenerationException ex = catchThrowableOfType(GenerationException.class, () -> run(llm, document(30)));
+
+		assertThat(ex.code()).isEqualTo(Code.INVALID_OUTPUT);
+		assertThat(ex.getMessage()).contains("p11");
 	}
 
 	@Test
@@ -354,7 +399,7 @@ class SummaryPipelineTests {
 
 	private static final class MemoryCheckpoints implements CheckpointStore {
 
-		private final Map<String, String> entries = new HashMap<>();
+		private final Map<String, String> entries = new ConcurrentHashMap<>();
 
 		@Override
 		public Optional<String> read(String name) {
@@ -370,7 +415,7 @@ class SummaryPipelineTests {
 
 	private static final class FakeLlm implements LlmClient {
 
-		private final List<LlmRequest> log = new ArrayList<>();
+		private final List<LlmRequest> log = Collections.synchronizedList(new ArrayList<>());
 
 		private final Function<LlmRequest, LlmResponse> script;
 
