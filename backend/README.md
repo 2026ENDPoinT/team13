@@ -11,14 +11,14 @@
 
 | 서비스 | 프론트엔드 | 백엔드 | ERD |
 |---|---|---|---|
-| e-class | [STack-Frontend](https://github.com/STack-Corp/STack-Frontend) | 이 레포 (MySQL 8.4) | [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka) |
-| 캠퍼스 온 | STack-Frontend `archive/campus-on` 브랜치 | 이 레포 `archive/campus-on` 브랜치 (PostgreSQL 17) | [ERD B](https://www.erdcloud.com/d/G75sZP24bZNHuezyy) |
+| e-class | [Frontend-final](https://github.com/STack-Corp/Frontend-final) | 이 레포 (MySQL 8.4) | [ERD A](https://www.erdcloud.com/d/B5bWYfGmFisJTYLka) |
+| 캠퍼스 온 | [STack-Frontend-Keep-](https://github.com/STack-Corp/STack-Frontend-Keep-) `archive/campus-on` 브랜치 | 이 레포 `archive/campus-on` 브랜치 (PostgreSQL 17) | [ERD B](https://www.erdcloud.com/d/G75sZP24bZNHuezyy) |
 
 2026-11-10 STack-Backend에서 루트 `src/`·MySQL 마이그레이션·`db/`·`docs/`를 커밋 이력과 함께 STack-eclass-Backend로 옮겼다(STAC-90). 2026-11-13 STack-eclass-Backend를 커밋 이력과 함께 다시 STack-Backend로 옮겼고, 이때 캠퍼스 온 백엔드(`backend/`)는 main에서 지웠다. 캠퍼스 온의 마지막 상태는 `archive/campus-on` 브랜치에 있다.
 
 ## 구조 한눈에 보기 (C4)
 
-이 레포의 코드와 `compose.yaml`이 정의하는 구조를 C4의 위 두 단계로 그린다. 둥근 끝 상자는 사람, 굵은 파란 상자는 이 시스템과 그 실행 단위, 점선 상자는 외부 시스템, 원통은 저장소다. 실선 화살표는 호출이고, 점선 화살표는 브라우저 redirect나 공유 volume이다.
+이 레포의 코드와 배포 파일이 정의하는 구조를 C4의 위 두 단계로 그린다. 운영 배포는 Hermes host 한 대에서 `compose.yaml`과 Frontend-final의 `deploy/hermes/eclass-backend/compose.hermes.yaml`을 함께 읽어 띄운 구성이고, 그림은 이 구성을 따른다. 둥근 끝 상자는 사람, 굵은 파란 상자는 이 시스템과 그 실행 단위, 점선 상자는 외부 시스템, 원통은 저장소다. 실선 화살표는 호출이고, 점선 화살표는 브라우저 redirect나 공유 volume이다.
 
 ### System Context
 
@@ -31,24 +31,24 @@ flowchart LR
   FE["프론트엔드 · 앞단 proxy<br/>Frontend-final server.mjs<br/>Cloudflare Tunnel"]
   AS["ASTRA 백엔드<br/>이 레포"]
   IDP["학교 IdP<br/>OpenID Connect"]
-  EC["학교 e-Class<br/>ILOS 로그인 화면"]
-  LLM["LLM 제공자<br/>OpenAI 호환 API"]
-  S3[("객체 저장소<br/>S3 · S3 호환")]
+  EC["학교 e-Class<br/>ILOS 화면"]
+  LLM["LLM 제공자<br/>Hive DeepSeek · Gemini<br/>같은 host gateway 경유"]
+  DG["Deepgram<br/>음성 인식"]
   MIR["ClamAV 서명 mirror"]
   ST & IN & OP & BG -->|"브라우저"| FE
   FE -->|"/api · /doc · /vod"| AS
   FE -.->|"로그인 redirect"| IDP
   AS -->|"code 교환 · JWKS"| IDP
-  AS -->|"학번 로그인 확인 · 수강과목"| EC
-  AS -->|"쪽 요약 · 학습 대화"| LLM
-  AS -->|"파일 읽기 · 쓰기"| S3
+  AS -->|"로그인 · 강의실 읽기 · 파일 받기"| EC
+  AS -->|"요약 · 학습 대화 · 화면 도우미"| LLM
+  AS -->|"학습실 녹음"| DG
   AS -->|"서명 내려받기"| MIR
   classDef person fill:#e8f0fe,stroke:#1a73e8
   classDef system fill:#1a73e8,stroke:#0b3d91,stroke-width:3px,color:#fff
   classDef ext fill:#f5f5f5,stroke:#777,stroke-dasharray:5 3
   class ST,IN,OP,BG person
   class AS system
-  class FE,IDP,EC,LLM,S3,MIR ext
+  class FE,IDP,EC,LLM,DG,MIR ext
 ```
 
 사람은 코드가 정하는 역할로 나눈다. 학생과 교수자는 과목 안의 역할(`catalog.api.CourseMemberships.CourseRole`의 `STUDENT`, `INSTRUCTOR`)이다. 알림마당 운영자는 `community_operators` 행으로 정하고(`communication/CommunityOperators`), break-glass 관리자는 로컬 로그인과 TOTP로 들어오는 계정이다(`identity/breakglass/BreakGlassLogin`).
@@ -57,9 +57,9 @@ flowchart LR
 |---|---|---|
 | 프론트엔드 · 앞단 proxy | 브라우저 → proxy → 백엔드 | SPA와 `server.mjs`는 [Frontend-final](https://github.com/STack-Corp/Frontend-final) 레포에 있다. `server.mjs`가 `/api`, `/doc`, `/vod`를 api로 넘기고, 그 앞의 Cloudflare Tunnel이 TLS를 끝낸다. Terraform 구성(`infra/`)에서는 CloudFront가 이 자리에 온다 |
 | 학교 IdP | 백엔드 → IdP, 브라우저 → IdP | OpenID Connect code flow와 PKCE. 설정했을 때만 켜진다 |
-| 학교 e-Class | 백엔드 → e-Class | 학번·비밀번호로 학교 화면에 로그인해 보고 이름·학과·학년과 수강과목을 읽는다. 학교에 공개 API가 없어 브라우저와 같은 form 요청을 보낸다. 설정했을 때만 켜진다 |
-| LLM 제공자 | 백엔드 → 제공자 | 교수자가 동의한 자료의 쪽별 요약과 학습 대화. 기본 주소는 DeepSeek이다. API key가 있을 때만 켜진다 |
-| 객체 저장소 | 백엔드 → 저장소 | 업로드 원본, 쪽 이미지, HLS segment 같은 파생물. compose는 저장소를 띄우지 않는다 |
+| 학교 e-Class | 백엔드 → e-Class | 학번·비밀번호로 학교 화면에 로그인해 이름·학과·학년과 수강과목을 읽고, 이어서 강의실마다 주차와 학습활동 목록을 가져온다. 학생이 화면을 열 때 그 학생의 학교 session으로 자료, 공지, 과제, 영상 상세, 강의계획서, 출석, 성적을 읽는다. 받은 파일은 과목 파일로 객체 저장소에 복사한다. 학교에 공개 API가 없어 브라우저와 같은 요청을 보낸다. 설정했을 때만 켜진다 |
+| LLM 제공자 | 백엔드 → gateway → 제공자 | 교수자가 동의한 자료의 쪽별 요약과 학습 대화, 학습실 문서 요약과 녹음 요약, 화면 AI 도우미. 운영 배포에서는 같은 host의 LLM gateway(Frontend-final `deploy/hermes/ops/agy-llm-gateway`)가 Hive의 DeepSeek를 먼저 부르고, 실패하면 agy CLI로 Gemini를 부른다. API key가 있을 때만 켜진다 |
+| Deepgram | 백엔드 → Deepgram | 학습실 녹음 원본을 보내 전사문을 받는다. key가 있을 때만 켜진다 |
 | ClamAV 서명 mirror | 백엔드 → mirror | 악성코드 서명만 내려받는다. 업로드 파일은 보내지 않는다 |
 
 ### Container
@@ -67,58 +67,61 @@ flowchart LR
 ```mermaid
 flowchart LR
   FE["프론트엔드 · 앞단 proxy<br/>Frontend-final"]
-  subgraph HOST["compose 프로젝트 astra"]
+  subgraph HOST["Hermes · compose 프로젝트 astra"]
     API["api<br/>Spring Boot"]
     WK["worker<br/>Spring Boot"]
     CV["converter<br/>Java · LibreOffice"]
     TC["transcoder<br/>Java · ffmpeg"]
     DB[("mysql<br/>MySQL 8.4")]
-    AV["clamav<br/>clamd"]
-    FC["freshclam"]
+    S3[("s3<br/>SeaweedFS")]
+    AV["clamav · freshclam<br/>ClamAV"]
+    RL["llm-relay<br/>socat"]
   end
+  GW["LLM gateway<br/>host systemd"]
   SCH["학교 IdP · e-Class"]
-  S3[("객체 저장소<br/>S3 · S3 호환")]
-  LLM["LLM 제공자"]
+  DG["Deepgram"]
   MIR["ClamAV 서명 mirror"]
   FE -->|"HTTP :8080"| API
-  API -->|"HTTPS 로그인 확인"| SCH
+  API -->|"HTTPS 로그인 · 강의실"| SCH
   API & WK -->|"JDBC"| DB
   API & WK -->|"S3 API"| S3
   WK -->|"HTTP :8090 문서"| CV
   WK -->|"HTTP :8091 영상"| TC
   WK -->|"TCP :3310 검사"| AV
-  WK -->|"HTTPS 요약 · 대화"| LLM
-  FC -.->|"서명 volume"| AV
-  FC -->|"HTTPS 서명"| MIR
+  API & WK -->|"HTTP 127.0.0.1:18090"| RL
+  RL -->|"TCP host :18090"| GW
+  WK -->|"HTTPS 녹음"| DG
+  AV -->|"HTTPS 서명"| MIR
   classDef box fill:#1a73e8,stroke:#0b3d91,stroke-width:3px,color:#fff
   classDef ext fill:#f5f5f5,stroke:#777,stroke-dasharray:5 3
-  class API,WK,CV,TC,DB,AV,FC box
-  class FE,S3,SCH,LLM,MIR ext
+  class API,WK,CV,TC,DB,S3,AV,RL box
+  class FE,GW,SCH,DG,MIR ext
 ```
 
 | container | 기술 | 맡는 일 |
 |---|---|---|
-| `api` | Spring Boot 4, Java 25 (Spring profile `api`) | HTTP API와 로그인. 시작할 때 Flyway 마이그레이션을 적용한다. 브라우저 요청은 앞단 proxy를 거쳐서만 온다 |
-| `worker` | api와 같은 jar (Spring profile `worker`) | 배경 작업. 업로드 검사, 문서 변환, 영상 변환, 쪽별 요약, 학습 대화, 정리 작업을 한다. 할 일은 DB의 작업 행에서 가져오고 api와 직접 통신하지 않는다 |
+| `api` | Spring Boot 4, Java 25 (Spring profile `api`) | HTTP API와 로그인, 학교 e-Class 읽기, 화면 AI 도우미. 시작할 때 Flyway 마이그레이션을 적용한다. 학생의 학교 session은 이 process의 메모리에만 두므로 api를 다시 띄우면 학생은 학교 내용을 새로 읽기 전에 학교 계정으로 다시 로그인한다 |
+| `worker` | api와 같은 jar (Spring profile `worker`) | 배경 작업. 업로드 검사, 문서 변환, 영상 변환, 쪽별 요약(강의자료, 학습실 문서), 학습 대화, 녹음 전사·요약, 정리 작업을 한다. 할 일은 DB의 작업 행에서 가져오고 api와 직접 통신하지 않는다 |
 | `converter` | 같은 jar의 `com.stackcorp.converter`, PDFBox, LibreOffice | 문서를 쪽 이미지·텍스트·썸네일로 바꾸고 아바타 사진을 정규화한다. 외부 network, 비밀값, 저장소 credential이 없다 |
 | `transcoder` | 같은 jar의 `com.stackcorp.transcoder`, ffmpeg | 영상을 HLS segment로 바꾼다. 외부 network, 비밀값, 저장소 credential, 암호화 key가 없다 |
 | `mysql` | MySQL 8.4 (compose profile `mysql`) | 정본 데이터와 작업 행. profile을 끄면 RDS 같은 외부 MySQL을 쓴다 |
-| `clamav` | ClamAV clamd (compose profile `scan`) | 업로드 파일의 악성코드 검사. worker만 닿는다 |
-| `freshclam` | ClamAV freshclam (compose profile `scan`) | 서명을 받아 clamav와 함께 쓰는 volume에 둔다. 다른 container에 닿지 않는다 |
+| `s3` | SeaweedFS (`compose.hermes.yaml`) | content, delivery bucket. api와 worker만 닿는 `data` network에 있다. Terraform 구성에서는 AWS S3가 이 자리에 온다 |
+| `clamav`, `freshclam` | ClamAV (compose profile `scan`) | clamav는 업로드 파일을 검사하고 worker만 닿는다. freshclam은 서명을 받아 두 container가 함께 쓰는 volume에 둔다 |
+| `llm-relay-api`, `llm-relay-worker` | socat (`compose.hermes.yaml`) | api와 worker의 network namespace 안 `127.0.0.1:18090`을 host의 LLM gateway로 넘긴다. 앱은 http LLM 주소를 loopback에만 허용한다 |
 
 api의 코드는 `com.stackcorp.astra` 아래 패키지 하나가 모듈 하나다. 모듈은 다른 모듈의 `api` 패키지만 쓸 수 있고 `ModuleStructureTests`가 이를 확인한다. worker는 같은 모듈을 실행하고 배경 작업 bean만 더 켠다.
 
 | 모듈 | 맡는 일 |
 |---|---|
-| `identity` | 사용자, 외부 신원 연결, session, 기기, 재인증, break-glass 로그인 |
-| `catalog` | 학기, 과목, 수강, 시간표, 알림 |
-| `learning` | 강의실, 주차, 학습활동, 영상 학습 session, 출석 |
-| `assessment` | 과제, 퀴즈, 설문, 성적 |
-| `communication` | 공지, Q&A, 게시판, 쪽지, 알림마당 |
-| `files` | 업로드, 첨부, 파일함, 학습실, 문서 rendition, 영상 asset, 업로드 검사 작업. 객체 저장소를 부르는 유일한 모듈이다 |
-| `summary` | 강의 자료의 쪽별 요약, LLM 동의, 학습 대화 |
-| `home` | 메인 화면 집계, 할 일, 캘린더. 쓰기가 없다 |
-| `integration` | 다른 모듈이 정의한 port의 구현. 학교 IdP, 학교 e-Class, LLM, converter·transcoder·clamd client, `/doc`·`/vod` cookie 서명. 외부 network를 여는 유일한 모듈이다 |
+| `identity` | 사용자, 외부 신원 연결, session, 기기, 재인증, break-glass 로그인, 학번·학교 비밀번호 로그인. STack session마다 학교 e-Class session을 메모리에 붙여 둔다 |
+| `catalog` | 학기, 과목, 수강, 시간표, 알림. 학교 로그인 때 수강과목을 맞춘다 |
+| `learning` | 강의실, 주차, 학습활동, 영상 학습 session, 출석. 학교 강의실의 주차·학습활동 가져오기와 학교 자료·공지·과제·영상 상세·강의계획서·출석·성적 읽기 |
+| `assessment` | 과제, 퀴즈, 설문, 성적. 학교 과목의 과제 목록과 성적 화면은 `learning`이 읽은 학교 값을 쓴다 |
+| `communication` | 공지, Q&A, 게시판, 쪽지, 알림마당. 학교 과목의 공지는 `learning`이 읽은 학교 공지를 함께 보인다 |
+| `files` | 업로드, 첨부, 파일함, 학습실(녹음, 내 문서), 학교 파일 사본, 문서 rendition, 영상 asset, 업로드 검사와 녹음 전사·요약 작업. 객체 저장소를 부르는 유일한 모듈이다 |
+| `summary` | 강의 자료와 학습실 문서의 쪽별 요약, LLM 동의, 학습 대화 |
+| `home` | 메인 화면 집계, 할 일, 캘린더, 화면 AI 도우미(`POST /api/assistant`). 도메인 쓰기가 없다 |
+| `integration` | 다른 모듈이 정의한 port의 구현. 학교 IdP, 학교 e-Class, LLM, Deepgram, converter·transcoder·clamd client, `/doc`·`/vod` cookie 서명. 외부 network를 여는 유일한 모듈이다 |
 | `shared` | 오류 형식, requestId, 시간, 멱등 원장, 감사 로그, 지표. 모든 모듈이 쓴다 |
 
 모듈 안의 구성, port, 배경 작업, 요청 흐름은 [docs/c4.md](docs/c4.md) 3~4절에 있고, 배포 토폴로지와 결정의 이유는 [docs/architecture.md](docs/architecture.md)에 있다.
@@ -227,10 +230,10 @@ git commit -m "Update reference to <변경 요약>"
 
 표본의 온라인 강의에는 영상 바이트가 없다. 지금 기간의 강의는 콘텐츠가 변환 중(API `state` `processing`)이고, 지난 강의는 학생들이 본 뒤 원본이 내려간 상태(`video_state` `removed`, API `state` `failed`)다. 재생되는 강의는 교수 박은주로 로그인해 강의 화면에서 영상 파일을 올려 만든다. 로컬 실행은 transcoder를 같은 process에서 띄우므로 PATH에 `ffmpeg`가 있으면 곧 `ready`가 된다. 외부 LLM 처리 동의는 넣지 않는다. 쪽별 요약이나 학습 대화를 쓰려면 제공자 key를 넣고 띄운 뒤(`ASTRA_LLM_API_KEY=… ./gradlew bootTestRun`, 아래 "LLM 설정") 교수 화면에서 직접 동의한다. key가 없으면 `GET /api/llm/policy`가 `enabled=false`이고, 교수 화면의 외부 AI 처리 동의는 "이 서비스에서는 외부 AI 기능을 쓰지 않습니다"를 보이며 새로 동의할 수 없다(이미 한 동의는 철회만 할 수 있다). 요약 생성과 학습 대화는 503 `llm_disabled`다.
 
-프론트엔드([STack-Frontend](https://github.com/STack-Corp/STack-Frontend))는 개발 서버가 `/api`, `/doc`, `/vod`를 이 서버로 넘긴다. 브라우저는 프론트엔드 주소만 쓴다. 백엔드는 CORS를 열지 않는다.
+프론트엔드([Frontend-final](https://github.com/STack-Corp/Frontend-final))는 개발 서버가 `/api`, `/doc`, `/vod`를 이 서버로 넘긴다. 브라우저는 프론트엔드 주소만 쓴다. 백엔드는 CORS를 열지 않는다.
 
 ```sh
-ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # STack-Frontend에서
+ASTRA_API_ORIGIN=http://127.0.0.1:8080 npm start    # Frontend-final에서
 ```
 
 8080 포트를 다른 프로그램이 쓰고 있으면 `Port 8080 was already in use`로 실패한다. Docker로 띄운 다른 앱이 8080을 쓰는 경우가 많다. 이때는 포트를 바꿔 실행한다.
@@ -630,7 +633,7 @@ docker compose down                        # 종료. MySQL 데이터 volume까�
 - 저장소는 S3 API면 된다. AWS S3와 instance role이면 bucket 이름만 넣고, S3 호환 저장소면 `ASTRA_STORAGE_ENDPOINT`, `ASTRA_STORAGE_ACCESS_KEY`, `ASTRA_STORAGE_SECRET_KEY`, `ASTRA_STORAGE_PATH_STYLE=true`를 넣는다. 이 구성은 저장소를 띄우지 않는다. EC2에서 container가 instance role을 쓰려면 instance metadata의 hop limit이 2여야 한다. 그러면 bridge network의 모든 container가 instance metadata에 닿으므로, host firewall이 `egress` network(bridge `astra-egress`, api와 worker만 붙는다)에서 온 것만 통과시킨다([ADR-0020](docs/adr/0020-terraform-layout.md) 6번). Terraform으로 만든 EC2에는 이 규칙이 있다. 다른 host에서 instance role을 쓰면 같은 규칙을 직접 넣는다.
 - api에는 두 설정이 꼭 있어야 하고, 없으면 뜨지 않는다. 브라우저는 api에 직접 오지 않고 앞단을 거치기 때문이다. 앞단은 둘 중 하나다.
   - Terraform 배포: CloudFront가 TLS를 끝내고 `/api/*`를 api로, `/doc/*`·`/vod/*`를 delivery bucket으로 보낸다. 배포 문서가 `.env`에 `ASTRA_SESSION_ALLOWED_ORIGINS`(서비스 주소)와 CloudFront 서명 key를 넣는다([infra/README.md](infra/README.md)).
-  - CDN 없는 단일 host: 프론트엔드 서버(STack-Frontend `server.mjs`)가 `/api/**`, `/doc/**`, `/vod/**`를 api로 넘긴다. 운영 구성(Frontend-final `deploy/hermes/eclass-frontend/compose.yaml`)은 프론트엔드 container를 `astra_egress` network에 붙여 `ASTRA_API_ORIGIN=http://api:8080`으로 넘기고, cloudflared가 같은 container의 network namespace에서 server.mjs(127.0.0.1:4190)에 붙는다. host에서 띄우면 `ASTRA_API_ORIGIN=http://127.0.0.1:8080`이다. 이 proxy는 Host를 api 주소로 바꾸고 `X-Forwarded-Host`를 붙이지만, 앱은 누구나 보낼 수 있는 `X-Forwarded-Host`·`X-Forwarded-Proto`로 자기 origin을 정하지 않는다(`server.forward-headers-strategy=none`). 그래서 `ASTRA_SESSION_ALLOWED_ORIGINS`에 브라우저 주소창의 origin(예: `https://eclass.stack-edu.com`)을 넣고, `/doc`, `/vod`는 앱이 직접 응답하도록 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)). api가 보는 연결은 모두 `astra_egress` network의 한 주소(프론트엔드 container, host에서 띄우면 bridge gateway)에서 오므로, 브라우저 주소는 `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES`에 그 범위와 loopback을 넣어야 `X-Forwarded-For`에서 읽는다. server.mjs는 loopback에서 온 요청(cloudflared)이면 받은 `X-Forwarded-For` 뒤에 연결한 쪽 주소를 덧붙이고, 그 밖이면 연결한 쪽 주소 하나로 바꾼다. Cloudflare는 받은 값 뒤에 브라우저 주소를 덧붙인다. 이 덧붙임이 이 설정의 전제다. [.env.example](.env.example)이 이 구성이다.
+  - CDN 없는 단일 host: 프론트엔드 서버(Frontend-final `server.mjs`)가 `/api/**`, `/doc/**`, `/vod/**`를 api로 넘긴다. 운영 구성(Frontend-final `deploy/hermes/eclass-frontend/compose.yaml`)은 프론트엔드 container를 `astra_egress` network에 붙여 `ASTRA_API_ORIGIN=http://api:8080`으로 넘기고, cloudflared가 같은 container의 network namespace에서 server.mjs(127.0.0.1:4190)에 붙는다. host에서 띄우면 `ASTRA_API_ORIGIN=http://127.0.0.1:8080`이다. 이 proxy는 Host를 api 주소로 바꾸고 `X-Forwarded-Host`를 붙이지만, 앱은 누구나 보낼 수 있는 `X-Forwarded-Host`·`X-Forwarded-Proto`로 자기 origin을 정하지 않는다(`server.forward-headers-strategy=none`). 그래서 `ASTRA_SESSION_ALLOWED_ORIGINS`에 브라우저 주소창의 origin(예: `https://eclass.stack-edu.com`)을 넣고, `/doc`, `/vod`는 앱이 직접 응답하도록 `ASTRA_DELIVERY_ORIGIN_ENABLED=true`와 `ASTRA_DELIVERY_ORIGIN_SIGNING_KEY`를 넣는다([ADR-0009](docs/adr/0009-origin-delivery-without-cdn.md)). api가 보는 연결은 모두 `astra_egress` network의 한 주소(프론트엔드 container, host에서 띄우면 bridge gateway)에서 오므로, 브라우저 주소는 `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES`에 그 범위와 loopback을 넣어야 `X-Forwarded-For`에서 읽는다. server.mjs는 loopback에서 온 요청(cloudflared)이면 받은 `X-Forwarded-For` 뒤에 연결한 쪽 주소를 덧붙이고, 그 밖이면 연결한 쪽 주소 하나로 바꾼다. Cloudflare는 받은 값 뒤에 브라우저 주소를 덧붙인다. 이 덧붙임이 이 설정의 전제다. [.env.example](.env.example)이 이 구성이다.
 
   `ASTRA_SESSION_ALLOWED_ORIGINS`가 없으면 `docker compose`가 구성을 거부한다. compose는 api에 `ASTRA_DELIVERY_REQUIRED=true`를 넣으므로 `/doc`, `/vod` 서명이 없으면 api가 시작하지 않고 무엇을 넣을지 로그에 남긴다.
 - `docker compose stop`은 api가 처리 중인 요청을 끝낼 때까지, worker가 실행 중인 요약 작업을 `interrupted`로 닫을 때까지 최대 75초를 기다린다.
