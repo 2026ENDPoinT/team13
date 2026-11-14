@@ -12,8 +12,9 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 /home/ubuntu/bin/agy-llm-gateway
 Restart=always
 RestartSec=5
-MemoryHigh=1536M
-MemoryMax=2G
+# agy 프로세스 하나가 약 300MB. 동시 8개를 한꺼번에 새로 띄웠을 때 최대 2.8GB(2026-11-14 측정)라 그 위로 잡는다.
+MemoryHigh=3584M
+MemoryMax=4G
 
 # 학생·교수자가 쓴 글이 agy 로 들어가므로, agy 가 무엇을 하려 해도 피해가 이 안에 머물게 한다.
 # 쓰기는 agy 상태(~/.gemini)와 개인 /tmp 만, 권한 상승(sudo) 금지, 비밀값·소스·백업 디렉터리는 보이지 않게 한다.

@@ -94,11 +94,12 @@ STack-Backend 에 새 환경 변수가 생기면 Hermes `~/projects/eclass-backe
 
 백엔드의 `ASTRA_LLM_BASE_URL` 은 `http://127.0.0.1:18090/v1` 입니다. 백엔드는 LLM 주소로 http 를 loopback 에만 허용하므로 api·worker 와 네트워크를 함께 쓰는 `llm-relay-api`·`llm-relay-worker`(socat)가 host 의 게이트웨이(`172.24.0.1:18090`, astra-egress 브리지, iptables 로 그 브리지에서만 허용)로 넘깁니다.
 
-- 1순위: 헤르메스 플러그인 `antigravity-agy` 의 transport 로 로그인된 `agy` CLI 를 요청마다 실행해 Antigravity 구독의 **Gemini 4 Hydrogen**(`gemini-4-hydrogen-medium`)을 부릅니다. 도구 호출 지원, 텍스트만.
-- 2순위: Gemini 가 안 되면 바로 Hive API 의 DeepSeek v4.1 Flash 로 보냅니다. agy 오류·로그아웃·쿼터 초과·60초 무응답이면 그 요청을, agy 동시 실행 자리(2개)가 없으면 기다리지 않고 넘깁니다. 실패 뒤에는 agy 를 건너뛰고 곧바로 DeepSeek 로 보냅니다(일반 실패 1분, 쿼터·로그아웃 15분). 상태는 `curl 172.24.0.1:18090/healthz` 의 `primary_paused`.
-- 설정은 `~/.config/agy-llm-gateway/env`(600: 게이트웨이 토큰 = 백엔드 `ASTRA_LLM_API_KEY`, Hive key). 기록은 `journalctl -u agy-llm-gateway`(요청마다 경로·시간·토큰 수, 본문 없음).
+- 1순위: Hive API 의 DeepSeek v4.1 Flash(`reasoning_effort` 는 요청 값, 없으면 `low`). 이미지도 읽습니다. 상태는 `curl 172.24.0.1:18090/healthz` 의 `primary_paused`.
+- 2순위: DeepSeek 가 실패(시간 초과·5xx·429·빈 답)하면 헤르메스 플러그인 `antigravity-agy` 의 transport 로 로그인된 `agy` CLI 를 실행해 Antigravity 구독의 **Gemini 4 Hydrogen**(`gemini-4-hydrogen-medium`)을 부릅니다. 텍스트만 넘기므로 쪽 이미지(`image_url`)가 든 요청(쪽별 요약, `ASTRA_LLM_VISION=true`)은 Gemini 로 넘기지 않고 DeepSeek 로만 보냅니다. `response_format: json_object` 요청에 Gemini 가 JSON 객체가 아닌 답을 내면 넘기지 않고 502(`AgyNotJson`)로 끝냅니다. 백엔드가 다시 보냅니다. 상태는 `fallback_paused`.
+- 짧은 `json_object` 요청(`max_tokens` ≤ `JSON_MAX_TOKENS`, 기본 2000: 백엔드 화면 도우미)만 짧은 예산(17초) 경로로 가고, 쪽별 요약(`json_object`, `max_tokens` 7200~10400)은 일반 경로로 갑니다. 백엔드의 쪽별 요약이 `json_object` 를 보내므로 이 게이트웨이를 백엔드보다 먼저 설치합니다(`deploy/hermes/ops/install.sh`).
+- 설정은 `~/.config/agy-llm-gateway/env`(600: 게이트웨이 토큰 = 백엔드 `ASTRA_LLM_API_KEY`, Hive key). 기록은 `journalctl -u agy-llm-gateway`(요청마다 경로 `route`·시간·토큰 수·`finish`, 본문 없음). 시험: `python3 -m unittest discover -s deploy/hermes/ops/tests`.
 - `docker compose up --no-deps api` 처럼 api·worker 만 다시 만들면 중계가 옛 네트워크에 남아 LLM 이 끊깁니다. 항상 `docker compose up -d`(jenkins-deploy 와 같음)로 올립니다.
-- 교수자 고지(`ASTRA_LLM_POLICY_*`)는 Google Gemini 4 Hydrogen(Antigravity), 장애 시 Hive DeepSeek 로 적혀 있습니다(`gemini-agy-2026-11-14`).
+- 교수자 고지(`ASTRA_LLM_POLICY_*`, `hive-deepseek-2026-11-14`)는 Hive DeepSeek 를 기본 제공자로, 쪽 이미지는 DeepSeek 로만, DeepSeek 장애 때 텍스트 요청만 Google Gemini 4 Hydrogen(Antigravity)으로 적습니다. 값이 바뀌면 이전 동의는 효력을 잃으므로 교수자가 다시 동의해야 쪽별 요약을 만들 수 있습니다.
 - 프론트 AI 도우미(홈 명령줄·마스코트 챗봇, `/api/assistant`)는 viewer 가 백엔드로 넘기고(`ASTRA_API_ORIGIN`), 백엔드가 위 `ASTRA_LLM_*`(같은 게이트웨이, OpenAI 호환 `/chat/completions`)로 처리합니다. 로그인한 사용자만 쓸 수 있고, 한도(사용자당 분당 10, 전체 60)·감사 기록·끄기 스위치(`ASTRA_ASSISTANT_ENABLED`)·제한 시간(`ASTRA_ASSISTANT_TIMEOUT`, 기본 20초)은 백엔드 설정입니다. `ASTRA_LLM_ENABLED=false` 이거나 키가 없으면 503 입니다.
 - viewer 의 `GEMINI_API_BASE`·`GEMINI_MODEL`·`ASSISTANT_TIMEOUT_MS` 와 `~/projects/astra-eclass-reference/assistant.env`(600, `GEMINI_API_KEY` = 게이트웨이 `ASSISTANT_TOKEN`)는 백엔드가 있는 동안 읽히지 않습니다(백엔드 없는 샘플 모드의 로컬 중계에만 쓰임). `ASSISTANT_TIMEOUT_MS` 의 역할은 백엔드 `ASTRA_ASSISTANT_TIMEOUT` 이 맡습니다. host 의 값·파일을 지울지는 host 운영자가 정합니다.
 - 도우미 응답을 빠르게 하려고 게이트웨이가 agy 하나를 늘 미리 띄워 둡니다(약 400 MB, 5분마다 교체). 미리 띄운 것이 있으면 약 3초, 없으면 약 7초입니다. 서버(백엔드) 제한 20초, 브라우저 제한 25초.
