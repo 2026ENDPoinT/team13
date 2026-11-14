@@ -16,7 +16,7 @@
 ### 요청과 응답
 1. `POST /api/assistant`는 `home` 모듈의 route다. 할 일, 마감, 과목 목록을 이미 `home`이 계산하기 때문이다(architecture.md 4.1절). 모델 port(`summary.api.LlmClient`)만 `summary`에서 가져온다. 다른 모델 client를 더하지 않는다.
 2. 요청 본문은 `{ text, context?: { courseId?, activityId?, history? } }`다. `text`는 공백이 아닌 500자 이하, `courseId`는 정수(그 사용자의 과목이 아니면 쓰지 않는다), `activityId`는 화면 주소의 값(`srv-<n>`, `school-<n>`, 숫자) 64자 이하로 모델에 주는 힌트일 뿐이다. `history`는 앞 차례 `{text ≤500, say ≤300}` 4개까지다. 그 밖의 필드, 형식, 길이는 400 `invalid_request`다. 본문은 16 KiB까지만 읽고 넘으면 413 `body_too_large`다. JSON만 받는다.
-3. 응답은 `{ say, actions: [{ label, href, external }] (최대 5개), source: "rule" | "model" }`다. `href`는 화면이 그대로 따라가는 주소다. 화면은 자료를 몰라도 된다.
+3. 응답은 `{ say, intent, actions: [{ label, href, external }] (최대 5개), plan, source: "rule" | "model" }`다. `href`는 화면이 그대로 따라가는 주소다. 화면은 자료를 몰라도 된다. `intent`는 규칙 답이면 `course`(강의실), `list`(목록), `open`(하나 열기), `plan`(계획), 모델 답이면 모델의 의도이고 없으면 null이다. `plan`은 계획일 때만 있고(18~20번) 그 밖은 null이다.
 4. 로그인한 사용자만 쓴다(401 `unauthorized`). 출처 검사와 CSRF는 다른 POST와 같다(403 `forbidden`).
 
 ### 규칙 답
@@ -37,7 +37,7 @@
    - 사용자 문장, 앞 차례, 지금 과목과 항목의 이름, 지금 시각.
    - 보내지 않는 것: 사용자 이름, 학번, 사용자 ID와 과목·활동의 DB ID, 성적, 제출물, 본문, 다른 사람의 자료.
    - 강의 자료의 쪽 내용이 아니라 사용자 본인의 과목·할 일 목록(제목과 마감)이므로 교수자 동의 범위(ADR-0032 3번)가 아니다. 이전 `server.mjs`도 같은 종류의 값을 보냈다. 외부 AI 스위치와 제공자 처리 조건은 그대로 따른다(15번).
-9. 답은 `response_format: {"type":"json_object"}`로 받고, system 문구와 사용자 message의 response_schema로도 형식을 알린다. 답은 `{intent: open|choose|none|clarify, targets: [이름], say}`다. intent가 정해 둔 값이 아니거나 say가 문자열이 아니거나 300자를 넘으면 502 `assistant_invalid_response`다. targets 중 이번에 준 이름이 아닌 것은 버린다. 남은 것이 없으면 "맞는 항목이 없습니다"다.
+9. 답은 `response_format: {"type":"json_object"}`로 받고, system 문구와 사용자 message의 response_schema로도 형식을 알린다. 답은 `{intent: open|choose|plan|none|clarify, targets: [이름] (12개 이하), say}`다. intent가 정해 둔 값이 아니거나 say가 문자열이 아니거나 300자를 넘으면 502 `assistant_invalid_response`다. targets 중 이번에 준 이름이 아닌 것은 버린다. 남은 것이 없으면 "맞는 항목이 없습니다"다.
 10. 이름은 서버가 주소로 바꾼다(`AssistantLinks`, Frontend-final origin/main f096656의 주소 규칙과 같다). 강의실은 정규·비정규 강의실 주소, 서비스 영상·자료는 `n=srv-<활동 ID>`, 과제·시험·설문은 과제·퀴즈·설문 ID가 있으면 `n=srv-<그 ID>` 없으면 연결 화면 `act=<활동 ID>`, 강의실 공지는 공지 창 주소(`id=<공지 ID>`)다. 학교에서 가져온 영상(`m=lecture_weeks&n=school-<n>`), 자료(`m=lecture_material&n=school-<n>`), 과제(`m=report&n=school-<n>`), 공지(`id=school-<n>`)는 STack 상세를 같은 창(`external: false`)으로 연다. STack 화면이 없는 가져온 시험, 설문, 그 밖의 유형만 학교 e-Class 주소(https)를 `external: true`로 준다. 볼 화면이 없는 서비스 유형은 그 강의실로 간다.
 
 ### 같은 host의 LLM gateway
@@ -50,6 +50,14 @@
 15. `astra.assistant.enabled=false`면 규칙 답까지 모두 503 `llm_disabled`다. 외부 AI 스위치(`astra.llm.enabled=false`)가 꺼졌거나 제공자 key가 없으면 모델이 필요한 요청만 503 `llm_disabled`다. 화면의 "설정되지 않음" 안내가 그대로 맞는다.
 16. 모델 답을 기다리는 시간은 `astra.assistant.timeout`(기본 20초, 동시 요청 자리를 기다리는 시간 포함)이다. 넘으면 504 `assistant_timeout`, 그 밖의 모델 호출 실패는 502 `assistant_upstream_error`다. 이 시간은 요청에만 적용되고 다른 모델 기능의 `astra.llm.timeout`(300초)은 바뀌지 않는다.
 17. 요청마다 감사 기록 하나(`assistant.ask`)를 남긴다. 사용자, session, requestId, 결과 코드(`ok` 또는 오류 코드)만 있고 문장과 답은 없다. 개수(과목 수, 항목 수, 모델이 고른 수와 버린 수, token 수, 시간)는 같은 requestId의 서버 로그 한 줄에 남긴다. 지표는 다른 모델 기능과 같은 `astra.llm.calls`, `astra.llm.tokens`에 `kind=assistant`다. 감사 기록 밖에는 아무것도 저장하지 않는다. migration은 없다.
+
+### 계획
+18. 표본 모드(Frontend-final origin/main 69524cf)가 "오늘 할 일 전부 해줘"류 요청을 계획 카드("이 순서로 진행할까요?")로 만들어 차례로 열던 것을 서버가 만든다. `plan`은 `{ steps: [{ id, kind, title, course, due, href, external, mode }] }`이고 12단계까지다. 예전 화면을 위해 앞 5단계를 `actions`로도 준다.
+    - `id`는 화면이 그 활동 화면에서 보는 값, 곧 주소의 `n`이다(`App.tsx`의 `observeScreen(params.get("n"))`, 완료 처리도 같은 값으로 단계를 찾는다). 서비스 영상·자료는 `srv-<활동 ID>`, 서비스 과제·시험·설문은 `srv-<과제·퀴즈·설문 ID>`, 가져온 학교 활동은 `school-<n>`이다. 연결 화면(`act=`)이나 강의실로 가는 서비스 단계는 `srv-<활동 ID>`다.
+    - `kind`는 video, report, test, survey, material, other(zoom, 토론 등). 공지는 단계가 되지 않는다. `due`는 offset 없는 벽시계 일시, `course`는 과목 이름이다. `href`와 `external`은 `actions`와 같은 규칙(10번)이다.
+    - `mode`는 STack이 재생하는 서비스 영상만 `auto`(끝나면 넘어간다)이고, 가져온 학교 영상 상세와 학교 주소로 가는 단계를 포함해 나머지는 모두 `confirm`이다(`plan.ts` `createRun`의 영상 auto 규칙을 서버 모드의 재생 여부로 좁혔다).
+19. 규칙 계획은 표본 모드의 판정을 옮겼다. `isTodayAllRequest`("오늘 할 일 전부 해줘" 꼴)와 `allowsPlan`의 명시 판정(계획 낱말: 전부, 남은 거 다, 순서대로, 시작해 …)이 계획 문장이다. 범위는 기본이 `todayDeadlinePlan`·`buildPlan`과 같이 오늘부터 사흘 안 마감이고 시험과 끝낸 일은 뺀다. 문장에 "오늘 마감"이 있으면 오늘만, "이번 주"가 있으면 이번 주 토요일까지(캘린더와 같이 일요일 시작)다. 과목(이름, 코드, 줄임말, "이 과목")을 말하면 그 과목의 남은 일 전부, 유형 낱말(과제, 강의 …)이 있으면 그 유형만이다(`resolve.ts` 39-47행). 순서는 `orderPlan`이다: 영상 → 과제 → 그 밖, 같은 무리 안에서는 마감이 이른 순, 마감이 없으면 뒤. 확인 답("응")으로 앞 계획 요청을 잇는 판정은 앞 차례의 결과 종류가 요청에 없어 옮기지 않았다.
+20. 모델은 intent `plan`과 targets를 낼 수 있다. 이번에 준 활동 이름만 단계가 되고(과목·공지·모르는 이름은 버린다) 순서는 같은 `orderPlan`이다. 범위 규칙(사흘, 시험 제외, 과목·유형·기간으로 좁힘)은 system 문구로 알린다.
 
 ## 결과와 트레이드오프
 - 화면은 문장과 지금 위치만 보내고 받은 주소로 이동한다. 화면이 들고 있지 않은 자료(다른 쪽의 할 일, 학교에서 가져온 활동)도 답이 된다.

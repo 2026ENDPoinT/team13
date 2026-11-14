@@ -72,6 +72,7 @@
   | `astra.files.video.jobs{state}`, `astra.files.video.jobs.oldest.age`, `astra.files.video.transcodes{outcome, code}`, `astra.files.video.transcodes.interrupted{outcome}` | 영상 변환 대기열, 실행 하나의 시간과 결과(succeeded, retry, failed, cancelled), lease가 끝나 닫은 실행 |
   | `astra.files.zip.jobs{state}`, `astra.files.zip.jobs.oldest.age`, `astra.files.zip.builds{outcome, code}` | 파일함 ZIP 대기열과 만들기 결과(ready, retry, failed) |
   | `astra.files.upload.stream.aborted` | worker가 취소한 끝나지 않은 multipart upload |
+  | `astra.learning.school.imports.queued`, `astra.learning.school.imports.running`, `astra.learning.school.imports.skipped{reason}` | 학교 로그인 때의 학교 강의실 가져오기 줄, 도는 수, 시작하지 못하고 건너뛴 수(`queue_full`, `closed`, `budget`, `shutdown`, [ADR-0042](0042-school-activity-import.md) 7번) |
 
   대기열의 oldest.age는 지금 실행할 수 있는 대기 작업만 센다. 다시 시도를 기다리는 작업이 나이를 부풀려 알람을 울리지 않게 하기 위해서다. 대기 수에는 든다.
 - 같은 기준으로 주기 작업 셋을 더 잠갔다. 학습 대화 정리(`summary.studychat_purge`)는 정리 후보를 잠그지 않고 읽고 대화마다 저장소 prefix를 지운다. 원본이 지워진 영상 거두기(`files.video_withdraw`)는 후보를 잠그지 않고 읽고 asset마다 잠금과 조건부 UPDATE를 한다. 남은 multipart upload 정리(`files.stream_upload_janitor`)는 저장소의 upload 목록을 읽고 하나씩 취소한다. 셋 다 겹치면 같은 대상을 두 번 다룬다. 작업 poll(학습 대화, 문서 변환, 영상 변환, ZIP)과 lease 만료 처리는 `SKIP LOCKED`나 조건부 UPDATE 한 문장이라 묶지 않았다. ZIP 만료 정리도 후보를 `SKIP LOCKED`로 고르므로 그대로 두었다. 다만 고른 transaction을 commit한 뒤 객체를 지우므로, 겹치면 같은 prefix 삭제가 한 번 더 갈 수 있다. 결과는 같다.

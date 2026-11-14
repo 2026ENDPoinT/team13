@@ -46,7 +46,7 @@ class AssistantModel {
 
 	static final String KIND = "assistant";
 
-	static final String PROMPT_VERSION = "astra-assistant-2";
+	static final String PROMPT_VERSION = "astra-assistant-3";
 
 	static final String UPSTREAM_ERROR = "assistant_upstream_error";
 
@@ -54,7 +54,7 @@ class AssistantModel {
 
 	static final String TIMEOUT = "assistant_timeout";
 
-	static final List<String> INTENTS = List.of("open", "choose", "none", "clarify");
+	static final List<String> INTENTS = List.of("open", "choose", "plan", "none", "clarify");
 
 	static final String SYSTEM = """
 			당신은 대학 e-Class(STack) 학생 화면의 길잡이다. 사용자가 쓴 문장을 읽고 사용자가 열고 싶은 강의실, 활동, 공지를 \
@@ -70,6 +70,10 @@ class AssistantModel {
 			강의실로 가려면 과목 id를, 활동이나 공지를 열려면 항목 id를 targets에 넣는다. 목록에 없는 id를 지어내지 않는다.
 			"할 일", "마감" 질문에는 상태가 todo인 항목을 마감이 가까운 순으로 고른다. 영상 재생, 제출, 응시처럼 \
 			화면에서 사용자가 직접 할 일은 대신 했다고 말하지 않고 열 곳만 고른다.
+			"전부 해줘", "남은 거 다", "오늘 할 일 끝내자", "시작해", "순서대로"처럼 여러 일을 차례로 처리해 달라는 분명한 요청은 \
+			intent plan이다. targets에는 처리할 활동 id를 빠짐없이(최대 12개) 넣는다: 상태가 todo인 항목만, 시험(test)과 공지는 \
+			빼고, 기간을 말하지 않았으면 마감이 오늘부터 사흘 안인 것이다. 요청이 과목, 유형, 기간(이번 주 등)을 말하면 그 안에서만 \
+			고른다. "기계학습 강의 듣자"처럼 하나의 일이나 후보를 찾는 요청은 plan이 아니다. 순서는 서버가 정한다.
 			say는 사용자에게 보일 짧은 한국어 문장(해요체, 300자 이하)이다. 마감 일시를 말할 때는 input의 값만 쓴다.
 
 			# 출력 형식
@@ -191,7 +195,7 @@ class AssistantModel {
 		INTENTS.forEach(intents::add);
 		ObjectNode targets = properties.putObject("targets");
 		targets.put("type", "array");
-		targets.put("maxItems", AssistantRules.MAX_ACTIONS);
+		targets.put("maxItems", AssistantPlan.MAX_STEPS);
 		targets.putObject("items").put("type", "string");
 		properties.putObject("say").put("type", "string").put("maxLength", AssistantRequest.MAX_SAY);
 		ArrayNode required = schema.putArray("required");
@@ -261,12 +265,18 @@ class AssistantModel {
 			throw invalid();
 		}
 		if (intent.equals("none") || intent.equals("clarify")) {
-			return new AssistantRules.Answer(say.isEmpty() ? "무엇을 열지 조금 더 구체적으로 말씀해 주세요." : say, List.of());
+			return new AssistantRules.Answer(say.isEmpty() ? "무엇을 열지 조금 더 구체적으로 말씀해 주세요." : say, intent,
+					List.of());
 		}
 		Map<String, AssistantLinks.Action> known = new LinkedHashMap<>();
+		Map<String, ItemRef> items = new LinkedHashMap<>();
 		snapshot.courses.forEach((c) -> known.put(c.ref(), c.room()));
-		snapshot.items.forEach((i) -> known.put(i.ref(), i.action()));
+		snapshot.items.forEach((i) -> {
+			known.put(i.ref(), i.action());
+			items.put(i.ref(), i);
+		});
 		List<AssistantLinks.Action> actions = new ArrayList<>();
+		List<ItemRef> picked = new ArrayList<>();
 		List<String> seen = new ArrayList<>();
 		if (targetNodes != null && targetNodes.isArray()) {
 			for (JsonNode t : targetNodes) {
@@ -278,15 +288,26 @@ class AssistantModel {
 					continue;
 				}
 				seen.add(ref);
+				if (items.containsKey(ref)) {
+					picked.add(items.get(ref));
+				}
 				if (actions.size() < AssistantRules.MAX_ACTIONS) {
 					actions.add(action);
 				}
 			}
 		}
-		if (actions.isEmpty()) {
-			return new AssistantRules.Answer("맞는 항목이 없습니다", List.of());
+		if (intent.equals("plan")) {
+			// 계획은 활동만 단계가 되고, 순서는 서버가 정한다(AssistantPlan.order).
+			List<AssistantPlan.Step> steps = AssistantPlan.steps(snapshot, picked);
+			if (steps.isEmpty()) {
+				return new AssistantRules.Answer("계획에 넣을 일이 없어요.", "plan", List.of());
+			}
+			return AssistantPlan.answer(say.isEmpty() ? "계획 " + steps.size() + "단계예요. 이 순서로 진행할까요?" : say, steps);
 		}
-		return new AssistantRules.Answer(say.isEmpty() ? "열 곳을 골랐어요." : say, List.copyOf(actions));
+		if (actions.isEmpty()) {
+			return new AssistantRules.Answer("맞는 항목이 없습니다", "none", List.of());
+		}
+		return new AssistantRules.Answer(say.isEmpty() ? "열 곳을 골랐어요." : say, intent, List.copyOf(actions));
 	}
 
 	private static JsonNode parse(String text) {

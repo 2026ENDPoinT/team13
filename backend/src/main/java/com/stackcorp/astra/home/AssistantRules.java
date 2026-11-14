@@ -16,7 +16,8 @@ import com.stackcorp.astra.home.AssistantContext.Snapshot;
  * {@code areas/home/command-bar.tsx}의 {@code submitCommand}(강의실 이동, 할 일 목록), {@code shared/assistant/classrooms.ts}
  * ({@code classroomForCommand}, {@code searchClassrooms}), {@code shared/assistant/course-match.ts}({@code abbreviationMatch}),
  * {@code shared/assistant/server-home.ts}({@code serverActionForCommand}, {@code TODO_COMMAND}). 화면과 달리 같은 이름 과목의 구분은
- * {@code (c<courseId>)}로 받고, "오늘 마감"과 "<과목> 다음 할 일"을 더했다. 자동 실행이나 제출은 하지 않는다. 열 곳만 돌려준다.
+ * {@code (c<courseId>)}로 받고, "오늘 마감"과 "<과목> 다음 할 일"을 더했다. 계획 문장은 {@link AssistantPlan}이 만든다. 자동 실행이나
+ * 제출은 하지 않는다. 열 곳과 계획 단계만 돌려준다.
  */
 final class AssistantRules {
 
@@ -36,7 +37,16 @@ final class AssistantRules {
 	private AssistantRules() {
 	}
 
-	record Answer(String say, List<AssistantLinks.Action> actions) {
+	/**
+	 * @param intent course(강의실), list(목록), open(하나 열기), plan(계획) 또는 모델의 의도. 없으면 null
+	 * @param plan 계획 단계. 계획이 아니면 null
+	 */
+	record Answer(String say, String intent, List<AssistantLinks.Action> actions, List<AssistantPlan.Step> plan) {
+
+		Answer(String say, String intent, List<AssistantLinks.Action> actions) {
+			this(say, intent, actions, null);
+		}
+
 	}
 
 	/** @return 규칙에 맞지 않으면 null(모델에 묻는다) */
@@ -45,6 +55,10 @@ final class AssistantRules {
 		Answer room = room(snapshot, query);
 		if (room != null) {
 			return room;
+		}
+		Answer plan = AssistantPlan.rule(snapshot, text, contextCourseId);
+		if (plan != null) {
+			return plan;
 		}
 		if (query.equals(TODO_COMMAND) || query.equals("할일목록") || query.equals("할일보여줘")) {
 			return list(snapshot.todo, snapshot.todoTotal == 0 ? "남은 할 일이 없어요."
@@ -62,7 +76,7 @@ final class AssistantRules {
 						&& Duration.between(snapshot.now, i.closeAt()).compareTo(Duration.ofHours(24)) <= 0)
 				.min(Comparator.comparing(ItemRef::closeAt))
 				.map((i) -> one(i, "마감이 가까운 과제를 열게요."))
-				.orElse(new Answer("24시간 안에 마감인 과제가 없어요.", List.of()));
+				.orElse(new Answer("24시간 안에 마감인 과제가 없어요.", null, List.of()));
 		}
 		Matcher next = NEXT.matcher(query);
 		if (next.matches()) {
@@ -79,13 +93,13 @@ final class AssistantRules {
 		}
 		List<CourseRef> matches = courses(snapshot, m.group(1));
 		if (matches.isEmpty()) {
-			return new Answer("그 이름의 강의실을 찾지 못했어요. 과목 이름을 다시 확인해 주세요.", List.of());
+			return new Answer("그 이름의 강의실을 찾지 못했어요. 과목 이름을 다시 확인해 주세요.", null, List.of());
 		}
 		if (matches.size() == 1) {
-			return new Answer(AssistantLinks.name(matches.getFirst().course()) + " 강의실로 이동할게요.",
+			return new Answer(AssistantLinks.name(matches.getFirst().course()) + " 강의실로 이동할게요.", "course",
 					List.of(matches.getFirst().room()));
 		}
-		return new Answer("어느 강의실로 갈까요?",
+		return new Answer("어느 강의실로 갈까요?", "course",
 				matches.stream().limit(MAX_ACTIONS).map(CourseRef::room).toList());
 	}
 
@@ -96,7 +110,7 @@ final class AssistantRules {
 			List<CourseRef> matches = courses(snapshot, courseQuery);
 			if (matches.size() != 1) {
 				return matches.isEmpty() ? null
-						: new Answer("어느 과목의 다음 할 일을 볼까요?",
+						: new Answer("어느 과목의 다음 할 일을 볼까요?", "course",
 								matches.stream().limit(MAX_ACTIONS).map(CourseRef::room).toList());
 			}
 			course = matches.getFirst();
@@ -110,7 +124,7 @@ final class AssistantRules {
 			.filter((i) -> courseId < 0 || i.courseId() == courseId)
 			.findFirst()
 			.map((i) -> one(i, "다음 할 일을 열게요."))
-			.orElse(new Answer(name == null ? "남은 할 일이 없어요." : name + "에 남은 할 일이 없어요.", List.of()));
+			.orElse(new Answer(name == null ? "남은 할 일이 없어요." : name + "에 남은 할 일이 없어요.", null, List.of()));
 	}
 
 	// server-home.ts serverActionForCommand: "<과목> <제목> 열어줘" 또는 "<제목> 열어줘"와 정확히 같은 할 일 하나.
@@ -189,11 +203,11 @@ final class AssistantRules {
 	}
 
 	private static Answer list(List<ItemRef> items, String say) {
-		return new Answer(say, items.stream().limit(MAX_ACTIONS).map(ItemRef::action).toList());
+		return new Answer(say, "list", items.stream().limit(MAX_ACTIONS).map(ItemRef::action).toList());
 	}
 
 	private static Answer one(ItemRef item, String say) {
-		return new Answer(say, List.of(item.action()));
+		return new Answer(say, "open", List.of(item.action()));
 	}
 
 }

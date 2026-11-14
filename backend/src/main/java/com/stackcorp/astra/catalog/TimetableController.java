@@ -30,8 +30,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 수업시간표(화면 14). 담당하거나 수강이 확정된 과목 가운데 한 학기 과목의 수업 시간 슬롯(course_schedules)만 돌려준다. 학기는 고르지
- * 않으면 현재 학기이고, 고를 때는 요청한 사람이 구성원인 과목이 있는 학기만 받는다. 주는 일요일에 시작해 토요일에 끝나고, 주 경계와
- * 오늘은 서버가 DB 시계로 정한다(CAT-15). 학기 기간이 있으면 그 밖의 날은 넣지 않는다. 휴강·보강은 스키마에 없어 반영하지 않는다.
+ * 않으면 현재 학기이고, 현재 표시가 없으면 내 학기 목록의 첫 학기를 쓴다. 고를 때는 요청한 사람이 구성원인 과목이 있는 학기만 받는다.
+ * 주는 일요일에 시작해 토요일에 끝나고, 오늘은 DB 시계로 정한다(CAT-15). 학기 밖의 수업과 휴강·보강은 반영하지 않는다.
  */
 @RestController
 class TimetableController {
@@ -63,7 +63,7 @@ class TimetableController {
 	 * 다섯(시계, 내 학기, 슬롯, 담당자, 담당자 이름)이다.
 	 * @param date 이 날짜가 든 주(yyyy-MM-dd). 비우면 오늘이 든 주이고, 학기를 골랐는데 오늘이 그 학기 밖이면 학기 첫날(오늘이 학기
 	 * 뒤면 마지막 날)이 든 주다
-	 * @param termId 학기. 응답의 {@code terms} 가운데 하나여야 한다. 비우면 현재 학기
+	 * @param termId 학기. 응답의 {@code terms} 가운데 하나여야 한다. 비우면 현재 학기, 현재 표시가 없으면 내 학기 목록의 첫 학기
 	 */
 	@GetMapping("/api/me/timetable")
 	ResponseEntity<WeekTimetable> week(@AuthenticationPrincipal Actor actor,
@@ -72,11 +72,16 @@ class TimetableController {
 		LocalDateTime now = this.jdbc.sql("SELECT CURRENT_TIMESTAMP(3)").query(LocalDateTime.class).single();
 		LocalDate today = now.toLocalDate();
 		List<TermOption> terms = memberTerms(actor.userId());
-		TermOption term = termId == null ? terms.stream().filter(TermOption::current).findFirst().orElse(null)
+		TermOption term = termId == null ? terms.stream()
+			.filter(TermOption::current)
+			.findFirst()
+			.orElse(terms.isEmpty() ? null : terms.getFirst())
 				: terms.stream()
 					.filter((t) -> t.termId() == termId)
 					.findFirst()
 					.orElseThrow(() -> ApiException.invalid("termId는 내 과목이 있는 학기여야 합니다."));
+		// 학교 동기화는 전역 is_current를 바꾸지 않는다. 현재 표시가 없을 때도 선택란과 실제 조회 학기를 맞춘다.
+		boolean currentTerms = termId == null && (term == null || term.current());
 		LocalDate day = date == null ? (termId == null ? today : term.clamp(today)) : date;
 		if (termId != null && term.startDate() != null && term.endDate() != null) {
 			// 고른 학기는 그 기간 안의 주만 묻는다. 지난 학기도 볼 수 있게 오늘에서의 거리는 따지지 않는다.
@@ -95,11 +100,11 @@ class TimetableController {
 				""" + MembershipRule.instructorOf("c.course_id", ":user") + """
 				 AS instructor
 				  FROM course_schedules s JOIN courses c ON c.course_id = s.course_id JOIN terms t ON t.term_id = c.term_id
-				 WHERE""" + (termId == null ? " t.is_current = 1" : " t.term_id = :term") + " AND c.course_id IN ("
+				 WHERE""" + (currentTerms ? " t.is_current = 1" : " t.term_id = :term") + " AND c.course_id IN ("
 				+ MembershipRule.candidateCourses(":user") + ") AND " + MembershipRule.memberOf("c.course_id", ":user")
 				+ ORDER)
 			.param("user", actor.userId())
-			.param("term", termId)
+			.param("term", term == null ? null : term.termId())
 			.query(TimetableController::courseSlotRow)
 			.list();
 		Map<Long, List<String>> instructors = instructors(rows.stream().map((r) -> r.slot().courseId()).toList());
@@ -222,7 +227,7 @@ class TimetableController {
 	 * @param today DB 시계의 오늘
 	 * @param weekStart 일요일
 	 * @param weekEnd 토요일
-	 * @param termId 이 응답의 학기. 학기를 고르지 않았고 현재 학기에 내 과목이 없으면 null
+	 * @param termId 이 응답의 학기. 현재 표시가 없으면 내 학기 목록의 첫 학기, 내 학기가 없으면 null
 	 * @param terms 고를 수 있는 학기(내가 구성원인 과목이 있는 학기)
 	 */
 	record WeekTimetable(LocalDateTime serverTime, LocalDate today, LocalDate weekStart, LocalDate weekEnd, Long termId,

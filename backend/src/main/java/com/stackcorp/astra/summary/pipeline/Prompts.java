@@ -6,7 +6,7 @@ package com.stackcorp.astra.summary.pipeline;
  */
 final class Prompts {
 
-	static final String VERSION = "astra-lv-gen-1";
+	static final String VERSION = "astra-lv-gen-2";
 
 	private static final String VOICE = """
 			## 말투

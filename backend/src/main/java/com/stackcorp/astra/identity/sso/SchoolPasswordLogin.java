@@ -3,7 +3,9 @@ package com.stackcorp.astra.identity.sso;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.stackcorp.astra.identity.api.ExternalLoginException;
 import com.stackcorp.astra.identity.api.SchoolLoginSucceeded;
@@ -20,8 +22,8 @@ import com.stackcorp.astra.identity.session.SessionStore.IssuedSession;
  * <li>있는 사용자는 학교 화면에서 읽은 이름·학과·학년으로 갱신한다. 읽지 못한 값은 그대로 둔다.</li>
  * <li>break-glass 계정과 ACTIVE가 아닌 계정은 들어오지 못한다.</li>
  * <li>처음 들어온 학번인데 이름을 읽지 못하면 사용자를 만들지 않는다. 이름 없는 사용자를 지어내지 않는다.</li>
- * <li>로그인하면 {@link SchoolLoginSucceeded}로 학교 수강과목과 강의실 손잡이를 알린다. {@code catalog}가 commit 뒤에 과목과 수강을
- * 맞추고, {@code learning}이 강의실 학습활동 목록을 가져온다.</li>
+ * <li>로그인하면 commit하고 DB 연결을 돌려준 뒤 {@link SchoolLoginSucceeded}로 학교 수강과목과 강의실 손잡이를 알린다.
+ * {@code catalog}가 과목과 수강을 맞추고, {@code learning}이 강의실 학습활동 목록을 가져온다.</li>
  * </ul>
  */
 @Service
@@ -37,29 +39,43 @@ class SchoolPasswordLogin {
 
 	private final ApplicationEventPublisher publisher;
 
+	private final TransactionTemplate transaction;
+
 	SchoolPasswordLogin(JdbcClient jdbc, SessionStore sessions, LoginEvents events, BreakGlassProperties breakGlass,
-			ApplicationEventPublisher publisher) {
+			ApplicationEventPublisher publisher, PlatformTransactionManager transactionManager) {
 		this.jdbc = jdbc;
 		this.sessions = sessions;
 		this.events = events;
 		this.breakGlass = breakGlass;
 		this.publisher = publisher;
+		this.transaction = new TransactionTemplate(transactionManager);
 	}
 
 	/**
-	 * 실패를 login_events에 남긴 채로 예외를 던지므로 그 예외로는 rollback하지 않는다.
+	 * 로그인 transaction은 이 method 안에서 끝난다. 거절도 login_events에 남긴 채로 commit한 뒤 예외를 던진다. 로그인하면 commit하고
+	 * DB 연결을 돌려준 다음 {@link SchoolLoginSucceeded}를 발행한다. 받는 쪽(과목 동기화, 학교 강의실 가져오기를 잠깐 기다림)이 이
+	 * thread에서 도는 동안 로그인이 DB 연결을 쥐고 있지 않게 하기 위해서다. 쥐고 있으면 몰린 로그인이 연결 pool을 다 쓰고, 과목 동기화가
+	 * 새 transaction의 연결을 얻지 못한 채 모두 멈춘다.
 	 * @throws ExternalLoginException 로그인할 수 없는 사용자일 때
 	 */
-	@Transactional(noRollbackFor = ExternalLoginException.class)
 	IssuedSession signIn(SchoolAccount account, String device, String ip, String userAgent) {
+		SignedIn signedIn = this.transaction.execute((status) -> signInTransaction(account, device, ip, userAgent));
+		if (signedIn.refusal() != null) {
+			throw new ExternalLoginException(signedIn.refusal());
+		}
+		this.publisher.publishEvent(new SchoolLoginSucceeded(signedIn.userId(), account.courses(), account.rooms()));
+		return signedIn.session();
+	}
+
+	private SignedIn signInTransaction(SchoolAccount account, String device, String ip, String userAgent) {
 		String ref = account.studentId();
 		if (ref.equals(this.breakGlass.externalRef())) {
-			throw new ExternalLoginException("break_glass_account");
+			return SignedIn.refused("break_glass_account");
 		}
 		Account existing = find(ref);
 		if (existing == null) {
 			if (account.name() == null) {
-				throw new ExternalLoginException("profile_missing");
+				return SignedIn.refused("profile_missing");
 			}
 			// 같은 학번이 동시에 처음 로그인하면 한쪽은 아무것도 넣지 않고 아래에서 그 행을 읽는다.
 			this.jdbc.sql("""
@@ -90,16 +106,15 @@ class SchoolPasswordLogin {
 				.update();
 		}
 		if (existing == null) {
-			throw new ExternalLoginException("unknown_user");
+			return SignedIn.refused("unknown_user");
 		}
 		if (!"ACTIVE".equals(existing.status())) {
 			this.events.record(existing.userId(), null, ip, false, "ECLASS_INACTIVE");
-			throw new ExternalLoginException("inactive_account");
+			return SignedIn.refused("inactive_account");
 		}
 		IssuedSession session = this.sessions.create(existing.userId(), device, ip, userAgent);
 		this.events.record(existing.userId(), session.sessionId(), ip, true, null);
-		this.publisher.publishEvent(new SchoolLoginSucceeded(existing.userId(), account.courses(), account.rooms()));
-		return session;
+		return new SignedIn(existing.userId(), session, null);
 	}
 
 	/** 학교가 학번·비밀번호를 받지 않았을 때. 있는 사용자만 기록한다. */
@@ -120,6 +135,14 @@ class SchoolPasswordLogin {
 	}
 
 	private record Account(long userId, String status) {
+	}
+
+	private record SignedIn(long userId, IssuedSession session, String refusal) {
+
+		static SignedIn refused(String refusal) {
+			return new SignedIn(0, null, refusal);
+		}
+
 	}
 
 }

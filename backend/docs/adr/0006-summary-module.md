@@ -23,7 +23,7 @@ LessonViewer는 호스트 서비스가 proxy로 붙이는 방식(`server/module/
    | 단계 | 하는 일 | 담당 |
    |---|---|---|
    | rendition | PDF를 쪽 이미지(화면용, 모델 입력용)와 쪽 텍스트로 바꾼다. 문서 미리보기([68_문서미리보기.md](https://github.com/STack-Corp/ASTRA-Reference/blob/main/68_문서미리보기.md))와 같은 결과를 쓴다 | `files`. 변환은 격리한 converter container가 한다(SC-08) |
-   | pages | 연속한 쪽을 최대 6쪽씩 묶어 이미지와 텍스트를 모델에 보내고 쪽마다 `tag`, `title`, `explain`, `digest`를 받는다 | `summary` |
+   | pages | 연속한 쪽을 최대 10쪽씩 묶어 이미지와 텍스트를 모델에 보내고 쪽마다 `tag`, `title`, `explain`, `digest`를 받는다. 묶음은 동시에 최대 4개 보내고, 묶음마다 자료 전체 목차(쪽마다 추출 텍스트 첫 줄)를 함께 보내 앞 묶음 결과를 기다리지 않는다 | `summary` |
    | story | 쪽별 `digest`로 자료 전체의 질문과 단계별 흐름을 받는다 | `summary` |
    | validate | 스키마, 쪽 범위, 수식 표기를 검사한다 | `summary` |
    | publish | 교수자가 후보를 확인하고 게시한다 | `summary` |

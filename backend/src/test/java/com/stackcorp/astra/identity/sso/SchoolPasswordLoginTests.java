@@ -10,9 +10,23 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.sql.DataSource;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +46,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.sun.net.httpserver.HttpExchange;
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
 import com.sun.net.httpserver.HttpServer;
 
 import jakarta.servlet.http.Cookie;
@@ -50,11 +66,13 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 	@DynamicPropertySource
 	static void school(DynamicPropertyRegistry registry) {
 		registry.add("astra.eclass-login.base-url", SCHOOL::origin);
+		// 동시 로그인 테스트가 가져오기를 기다리는 로그인을 확실히 붙잡아 두도록 길게 둔다. 막지 않은 가져오기는 금방 끝난다.
+		registry.add("astra.school-activities.wait", () -> "10s");
 	}
 
 	@AfterAll
 	static void stop() {
-		SCHOOL.server.stop(0);
+		SCHOOL.stop();
 	}
 
 	@Autowired
@@ -62,6 +80,9 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 
 	@Autowired
 	JdbcClient jdbc;
+
+	@Autowired
+	DataSource dataSource;
 
 	@BeforeEach
 	void up() {
@@ -148,10 +169,10 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 	@Test
 	void signInImportsEachCoursesSchoolRoomIntoTheWeekListOnce() throws Exception {
 		String studentId = studentId();
-		int before = SCHOOL.roomReads;
+		int before = SCHOOL.roomReads.get();
 		Cookie session = this.mvc.perform(login(studentId, PASSWORD)).andExpect(status().isNoContent())
 			.andReturn().getResponse().getCookie("ASTRA_SESSION");
-		assertThat(SCHOOL.roomReads - before).isEqualTo(2);
+		assertThat(SCHOOL.roomReads.get() - before).isEqualTo(2);
 		var courses = ApiClient.json(this.mvc.perform(get("/api/me/courses").cookie(session)));
 		long regular = java.util.stream.StreamSupport.stream(courses.spliterator(), false)
 			.filter(node -> node.path("type").asText().equals("REGULAR")).findFirst().orElseThrow()
@@ -181,7 +202,69 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 
 		this.mvc.perform(login(studentId, PASSWORD)).andExpect(status().isNoContent());
 
-		assertThat(SCHOOL.roomReads - before).isEqualTo(2);
+		assertThat(SCHOOL.roomReads.get() - before).isEqualTo(2);
+	}
+
+	// 로그인은 transaction을 commit하고 DB 연결을 돌려준 뒤에 과목을 맞추고 학교 강의실 가져오기를 기다린다. 연결 pool(10개)보다 많은
+	// 로그인이 몰려도 pool을 다 쓰지 않는다. 자리(기본 8개)를 얻은 가져오기의 로그인만 기다리고, 줄에 선 로그인은 바로 응답한다.
+	@Test
+	void signInsWaitingForTheirImportHoldNoDatabaseConnection() throws Exception {
+		int signIns = 12;
+		HikariPoolMXBean pool = this.dataSource.unwrap(HikariDataSource.class).getHikariPoolMXBean();
+		assertThat(signIns).isGreaterThan(pool.getTotalConnections());
+		int readsBefore = SCHOOL.roomReads.get();
+		CountDownLatch gate = new CountDownLatch(1);
+		SCHOOL.roomGate = gate;
+		ExecutorService clients = Executors.newFixedThreadPool(signIns);
+		try {
+			List<Future<Integer>> responses = new ArrayList<>();
+			List<String> studentIds = new ArrayList<>();
+			for (int i = 0; i < signIns; i++) {
+				String studentId = studentId();
+				studentIds.add(studentId);
+				responses.add(clients.submit(() -> this.mvc.perform(login(studentId, PASSWORD))
+					.andReturn()
+					.getResponse()
+					.getStatus()));
+			}
+			until(() -> SCHOOL.roomsWaiting.get() == 8
+					&& responses.stream().filter(Future::isDone).count() == signIns - 8);
+
+			// 가져오기 8개가 학교 응답을 기다리고 그 로그인 8개가 응답을 기다리는 동안 DB 연결은 쉬고 있다.
+			assertThat(responses.stream().filter(Future::isDone).count()).isEqualTo(signIns - 8);
+			assertThat(pool.getActiveConnections()).isLessThanOrEqualTo(1);
+			assertThat(pool.getThreadsAwaitingConnection()).isZero();
+			gate.countDown();
+			for (Future<Integer> response : responses) {
+				assertThat(response.get(30, TimeUnit.SECONDS)).isEqualTo(204);
+			}
+			// 줄에 섰던 가져오기도 모두 끝난다. 같은 과목을 동시에 저장해도 학생마다 과목 둘을 모두 저장한다.
+			until(() -> SCHOOL.roomReads.get() - readsBefore == signIns * 2
+					&& studentIds.stream().allMatch((studentId) -> imported(studentId) != null));
+			assertThat(studentIds).allSatisfy((studentId) -> assertThat(imported(studentId)).isEqualTo("2/0"));
+		}
+		finally {
+			SCHOOL.roomGate = null;
+			gate.countDown();
+			clients.shutdownNow();
+		}
+	}
+
+	/** @return 끝난 가져오기의 "읽은 과목/실패한 과목". 끝나지 않았으면 null */
+	private String imported(String studentId) {
+		return this.jdbc.sql("""
+				SELECT CONCAT(i.courses_read, '/', i.courses_failed) FROM school_activity_imports i
+				  JOIN users u ON u.user_id = i.user_id
+				 WHERE u.external_ref = :ref AND i.finished_at IS NOT NULL
+				""").param("ref", studentId).query(String.class).optional().orElse(null);
+	}
+
+	private static void until(BooleanSupplier condition) throws InterruptedException {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+		while (!condition.getAsBoolean()) {
+			assertThat(System.nanoTime()).as("condition within 30s").isLessThan(deadline);
+			Thread.sleep(20);
+		}
 	}
 
 	@Test
@@ -235,11 +318,11 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 		for (int i = 0; i < SchoolPasswordController.STUDENT_FAILURES; i++) {
 			this.mvc.perform(login(studentId, "wrong")).andExpect(status().isUnauthorized());
 		}
-		int before = SCHOOL.logins;
+		int before = SCHOOL.logins.get();
 
 		this.mvc.perform(login(studentId, PASSWORD)).andExpect(status().isTooManyRequests());
 
-		assertThat(SCHOOL.logins).isEqualTo(before);
+		assertThat(SCHOOL.logins.get()).isEqualTo(before);
 		this.mvc.perform(login(studentId(), PASSWORD)).andExpect(status().isNoContent());
 	}
 
@@ -257,12 +340,12 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 			this.mvc.perform(behind(proxy, attacker + Integer.toHexString(i + 1), login(studentId(), "wrong")))
 				.andExpect(status().isUnauthorized());
 		}
-		int before = SCHOOL.logins;
+		int before = SCHOOL.logins.get();
 
 		// 같은 /64의 새 주소도 한도를 다 쓴 주소다.
 		this.mvc.perform(behind(proxy, attacker + "beef", login(studentId(), PASSWORD)))
 			.andExpect(status().isTooManyRequests());
-		assertThat(SCHOOL.logins).isEqualTo(before);
+		assertThat(SCHOOL.logins.get()).isEqualTo(before);
 
 		// 같은 proxy를 거친 다른 /64의 사람, 그리고 왼쪽에 공격자 주소를 넣어 보낸 그 사람은 막히지 않는다.
 		MvcResult signedIn = this.mvc.perform(behind(proxy, neighbour + "1", login(studentId(), PASSWORD)))
@@ -293,12 +376,12 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 
 	@Test
 	void malformedStudentIdNeverReachesTheSchool() throws Exception {
-		int before = SCHOOL.logins;
+		int before = SCHOOL.logins.get();
 
 		this.mvc.perform(login("../x", PASSWORD)).andExpect(status().isBadRequest());
 		this.mvc.perform(login(studentId(), "")).andExpect(status().isBadRequest());
 
-		assertThat(SCHOOL.logins).isEqualTo(before);
+		assertThat(SCHOOL.logins.get()).isEqualTo(before);
 	}
 
 	@Test
@@ -337,14 +420,30 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 
 		volatile String courseCards = COURSES;
 
-		volatile int logins;
+		final AtomicInteger logins = new AtomicInteger();
 
-		volatile int roomReads;
+		final AtomicInteger roomReads = new AtomicInteger();
 
-		volatile String boundKey;
+		/** 있으면 강의실 화면 요청이 이 latch가 열릴 때까지 기다린다. */
+		volatile CountDownLatch roomGate;
 
-		private FakeSchool(HttpServer server) {
+		final AtomicInteger roomsWaiting = new AtomicInteger();
+
+		private final AtomicInteger sessions = new AtomicInteger();
+
+		/** 학교 session(sid 쿠키)마다 묶인 과목 키. 학교처럼 과목은 session에 묶인다. */
+		private final Map<String, String> boundKeys = new ConcurrentHashMap<>();
+
+		private final ExecutorService threads;
+
+		private FakeSchool(HttpServer server, ExecutorService threads) {
 			this.server = server;
+			this.threads = threads;
+		}
+
+		void stop() {
+			this.server.stop(0);
+			this.threads.shutdownNow();
 		}
 
 		String origin() {
@@ -354,7 +453,10 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 		static FakeSchool start() {
 			try {
 				HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-				FakeSchool school = new FakeSchool(server);
+				// 여러 학생의 로그인과 가져오기가 동시에 오므로 요청마다 thread를 쓴다.
+				ExecutorService threads = Executors.newCachedThreadPool(Thread.ofPlatform().daemon().factory());
+				server.setExecutor(threads);
+				FakeSchool school = new FakeSchool(server, threads);
 				server.createContext("/", school::handle);
 				server.start();
 				return school;
@@ -371,7 +473,10 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 					return;
 				}
 				String path = exchange.getRequestURI().getPath();
-				boolean signedIn = String.valueOf(exchange.getRequestHeaders().getFirst("Cookie")).contains("auth=ok");
+				String cookies = String.valueOf(exchange.getRequestHeaders().getFirst("Cookie"));
+				boolean signedIn = cookies.contains("auth=ok");
+				Matcher sid = SID.matcher(cookies);
+				String session = sid.find() ? sid.group(1) : "";
 				switch (path) {
 					case "/ilos/index.acl" -> redirect(exchange, "/ilos/main/member/login_form.acl");
 					case "/ilos/main/member/login_form.acl" -> {
@@ -379,11 +484,12 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 						send(exchange, 200, LOGIN_FORM);
 					}
 					case "/ilos/lo/login.acl" -> {
-						this.logins++;
+						this.logins.incrementAndGet();
 						Map<String, String> form = form(new String(exchange.getRequestBody().readAllBytes(),
 								StandardCharsets.UTF_8));
 						if (PASSWORD.equals(form.get("usr_pwd")) && "/ilos/main/main_form.acl".equals(form.get("returnURL"))) {
 							exchange.getResponseHeaders().add("Set-Cookie", "auth=ok; Path=/");
+							exchange.getResponseHeaders().add("Set-Cookie", "sid=" + this.sessions.incrementAndGet() + "; Path=/");
 							send(exchange, 200, "<script>top.location.href=\"/ilos/main/main_form.acl\";</script>");
 						}
 						else {
@@ -410,18 +516,35 @@ class SchoolPasswordLoginTests extends IntegrationTest {
 					case "/ilos/cls/st/co/eclass_room2.acl" -> {
 						Map<String, String> form = form(new String(exchange.getRequestBody().readAllBytes(),
 								StandardCharsets.UTF_8));
-						this.boundKey = signedIn ? form.get("KJKEY") : null;
+						if (signedIn) {
+							this.boundKeys.put(session, form.get("KJKEY"));
+						}
 						send(exchange, 200, signedIn ? "{\"isError\":false,\"returnURL\":\"/ilos/cls/st/submain/submain_form.acl\"}"
 								: "{\"isError\":true,\"message\":\"로그인\"}");
 					}
 					case "/ilos/cls/st/submain/submain_form.acl" -> {
-						this.roomReads++;
-						send(exchange, 200, signedIn ? room(this.boundKey) : LOGIN_FORM);
+						CountDownLatch gate = this.roomGate;
+						if (gate != null) {
+							this.roomsWaiting.incrementAndGet();
+							try {
+								gate.await();
+							}
+							catch (InterruptedException ex) {
+								Thread.currentThread().interrupt();
+							}
+							finally {
+								this.roomsWaiting.decrementAndGet();
+							}
+						}
+						this.roomReads.incrementAndGet();
+						send(exchange, 200, signedIn ? room(this.boundKeys.get(session)) : LOGIN_FORM);
 					}
 					default -> send(exchange, 404, "");
 				}
 			}
 		}
+
+		private static final Pattern SID = Pattern.compile("sid=([0-9]+)");
 
 		private static final String COURSES = """
 				<a class="sub_open" kj="A2026310982911001" kj_year="2026" kj_term="3">

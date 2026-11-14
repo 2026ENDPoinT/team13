@@ -5,11 +5,14 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -49,12 +52,56 @@ class SummaryPipelineTests {
 			assertThat(beat.from()).isEqualTo(2);
 			assertThat(beat.to()).isEqualTo(14);
 		});
-		// 6 + 6 + 2쪽 묶음과 story 한 번
-		assertThat(llm.log).filteredOn((r) -> r.purpose() == Purpose.PAGES).hasSize(3);
+		// 10 + 4쪽 묶음과 story 한 번
+		assertThat(llm.log).filteredOn((r) -> r.purpose() == Purpose.PAGES).hasSize(2);
 		assertThat(llm.log).allMatch((r) -> r.maxOutputTokens() <= 16000);
-		assertThat(result.usage().calls()).isEqualTo(4);
-		assertThat(result.usage().inputTokens()).isEqualTo(40);
+		assertThat(result.usage().calls()).isEqualTo(3);
+		// 답은 JSON 객체 하나로 요청한다. agy gateway는 이 표시를 보고 JSON이 아닌 1순위 답을 폴백으로 넘긴다.
+		assertThat(llm.log).allMatch(LlmRequest::jsonObject);
+		assertThat(result.usage().inputTokens()).isEqualTo(30);
 		assertThat(progress).last().isEqualTo(14);
+	}
+
+	@Test
+	void sendsChunksAtTheSameTimeEachWithTheWholeDocumentOutline() {
+		CountDownLatch allInFlight = new CountDownLatch(3);
+		AtomicBoolean overlapped = new AtomicBoolean(true);
+		FakeLlm honest = honest(30);
+		FakeLlm llm = new FakeLlm((req) -> {
+			if (!isStory(req)) {
+				allInFlight.countDown();
+				try {
+					if (!allInFlight.await(5, TimeUnit.SECONDS)) {
+						overlapped.set(false);
+					}
+				}
+				catch (InterruptedException ex) {
+					throw new IllegalStateException(ex);
+				}
+			}
+			return honest.complete(req);
+		});
+
+		GenerateResult result = run(llm, document(30));
+
+		assertThat(overlapped).isTrue();
+		assertThat(result.pack().slides()).extracting(Slide::page)
+			.containsExactlyElementsOf(IntStream.rangeClosed(1, 30).boxed().toList());
+		// 첫 묶음도 뒤쪽 쪽의 첫 줄을 목차로 받는다.
+		assertThat(llm.log).filteredOn((r) -> r.purpose() == Purpose.PAGES)
+			.hasSize(3)
+			.allSatisfy((r) -> assertThat(firstText(r.messages().getFirst().content())).contains("p30 Slide 30 text"));
+	}
+
+	@Test
+	void reportsTheFailingChunksOwnErrorWhenOneOfTheParallelChunksFails() {
+		FakeLlm honest = honest(30);
+		FakeLlm llm = new FakeLlm((req) -> requestedPages(req).contains(11) ? text("not json") : honest.complete(req));
+
+		GenerationException ex = catchThrowableOfType(GenerationException.class, () -> run(llm, document(30)));
+
+		assertThat(ex.code()).isEqualTo(Code.INVALID_OUTPUT);
+		assertThat(ex.getMessage()).contains("p11");
 	}
 
 	@Test
@@ -117,6 +164,22 @@ class SummaryPipelineTests {
 
 		assertThat(sizes).containsExactly(4, 2, 2);
 		assertThat(result.pack().slides()).extracting(Slide::page).containsExactly(1, 2, 3, 4);
+	}
+
+	// 실제 실행(DeepSeek, 10쪽 강의자료)에서 표지(meta) 해설이 권장 120자를 조금 넘을 때마다 6쪽 묶음 전체를 두 번 더 보냈다.
+	// 다시 물어도 끝내 경고로 받아들이므로 처음 답을 경고와 함께 받는다.
+	@Test
+	void acceptsOutputWithOnlySoftProblemsWithoutAskingAgain() {
+		FakeLlm llm = new FakeLlm((req) -> isStory(req) ? ok(story(3))
+				: ok(Map.of("slides", requestedPages(req).stream()
+					.map((p) -> p == 1 ? slide(p, Map.of("explain", "표지예요. ".repeat(25))) : slide(p))
+					.toList())));
+
+		GenerateResult result = run(llm, document(3));
+
+		assertThat(llm.log).extracting(LlmRequest::purpose).containsExactly(Purpose.PAGES, Purpose.STORY);
+		assertThat(result.pack().slides()).hasSize(3);
+		assertThat(result.warnings()).singleElement().asString().startsWith("p1: meta explain 150자");
 	}
 
 	@Test
@@ -354,7 +417,7 @@ class SummaryPipelineTests {
 
 	private static final class MemoryCheckpoints implements CheckpointStore {
 
-		private final Map<String, String> entries = new HashMap<>();
+		private final Map<String, String> entries = new ConcurrentHashMap<>();
 
 		@Override
 		public Optional<String> read(String name) {
@@ -370,7 +433,7 @@ class SummaryPipelineTests {
 
 	private static final class FakeLlm implements LlmClient {
 
-		private final List<LlmRequest> log = new ArrayList<>();
+		private final List<LlmRequest> log = Collections.synchronizedList(new ArrayList<>());
 
 		private final Function<LlmRequest, LlmResponse> script;
 
