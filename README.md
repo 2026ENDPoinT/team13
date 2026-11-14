@@ -55,11 +55,11 @@
 
 ## 💡 왜 만들었나
 
-학교 e-Class는 강의·과제·시험·공지가 과목마다 흩어져 있어 "오늘 무엇을 해야 하는지"를 한눈에 알기 어렵습니다. STack은 같은 학사 데이터를 쓰면서
+학교 e-Class는 강의·과제·시험·공지가 과목마다 흩어져 있어 "오늘 무엇을 해야 하는지"를 한눈에 알기 어렵습니다. STack은 학교 계정으로 로그인해 같은 학사 데이터를 그대로 읽어 오면서
 
-- **오늘 할 일 중심 홈** — 마감이 가까운 과제와 이어 들을 강의를 첫 화면에,
+- **오늘 할 일 중심 홈** — 학교와 STack의 과제·시험·설문 마감, 이어 들을 강의를 첫 화면에,
 - **말로 시키는 학습 비서** — "오늘 할 일 전부 해줘" 한 문장으로 영상 → 과제 순서의 학습 계획을,
-- **학습실** — 내 자료·녹음·요약을 과목별 폴더로 모으고, 녹음은 자동 전사·요약,
+- **학습실** — 내 문서(PDF)·녹음·요약을 과목별 폴더로 모으고, 녹음은 실시간·자동 전사와 요약, 문서는 쪽별 요약,
 
 을 더했습니다. 학생 화면뿐 아니라 교수자 화면(출제·채점·성적·출석·수강생 관리)과 모바일 화면도 함께 구현했습니다.
 
@@ -69,15 +69,17 @@
 
 | | |
 |---|---|
-| <img src="docs/screenshots/home.png" alt="홈"><br>**홈** — 마감 임박 할 일, 이어 듣기, 오늘 수업, 나의 하루 | <img src="docs/screenshots/assistant-plan.png" alt="AI 학습 비서"><br>**AI 학습 비서** — "오늘 할 일 전부 해줘" → 영상·과제 순서의 계획을 만들고 승인하면 차례로 진행 |
+| <img src="docs/screenshots/home.png" alt="홈"><br>**홈** — 마감 임박 할 일, 이어 듣기, 오늘 수업, 나의 하루 | <img src="docs/screenshots/assistant-plan.png" alt="AI 학습 비서"><br>**AI 학습 비서** — "오늘 할 일 전부 해줘" → 백엔드가 영상·과제 순서의 계획 카드를 만들고, 승인하면 차례로 열어 각 화면의 완료에 맞춰 다음 단계로 진행 |
 | <img src="docs/screenshots/course-room.png" alt="강의실"><br>**강의실** — 주차별 학습활동, 강의계획서, 공지·Q&A·파일·열린게시판 | <img src="docs/screenshots/player.png" alt="강의 플레이어"><br>**강의 플레이어** — 배속·자막·이어 보기, 옆에 학습 노트(요약·전사·연결 PDF) |
 | <img src="docs/screenshots/report-submit.png" alt="과제 제출"><br>**과제 제출** — 서식 있는 설명과 파일 첨부(악성코드 검사 후 접수) | <img src="docs/screenshots/test.png" alt="시험"><br>**시험** — 응시 기간·배점·제한 시간·결과 공개 여부, 시작 시각 전에는 응시 잠금 |
 | <img src="docs/screenshots/file-preview.png" alt="자료 미리보기"><br>**자료 미리보기** — PDF·문서를 브라우저 안에서(PDF.js) | <img src="docs/screenshots/activities.png" alt="학습활동"><br>**학습활동** — 영상·자료·과제·시험·진행중·미제출 필터 |
-| <img src="docs/screenshots/study-room.png" alt="학습실"><br>**학습실** — 과목별 내 폴더에 자료·녹음·요약을 모음 | <img src="docs/screenshots/study-summary.png" alt="자료 요약"><br>**자료 요약** — 쪽별 핵심·흐름·학습 도구 |
-| <img src="docs/screenshots/study-recording.png" alt="강의 녹음"><br>**강의 녹음** — 녹음을 올리면 자동 전사(Deepgram)·요약 | <img src="docs/screenshots/calendar-week.png" alt="주간 달력"><br>**달력·시간표** — 주간 일정과 마감 |
+| <img src="docs/screenshots/study-room.png" alt="학습실"><br>**학습실** — 과목별 내 폴더에 내 문서(PDF)·녹음·요약을 모음 | <img src="docs/screenshots/study-summary.png" alt="자료 요약"><br>**자료 요약** — 강의 자료와 학습실 내 문서의 쪽별 핵심·흐름·학습 도구 |
+| <img src="docs/screenshots/study-recording.png" alt="강의 녹음"><br>**강의 녹음** — 녹음 중 화면 하단 실시간 전사(Web Speech API), 올리면 자동 전사(Deepgram)·요약 | <img src="docs/screenshots/calendar-week.png" alt="주간 달력"><br>**달력·시간표** — 주간 일정과 마감 |
 | <img src="docs/screenshots/catalog.png" alt="수강 과목 찾기"><br>**과목 찾기·수강 신청** — 정규·비정규 과목 검색과 신청 | <img src="docs/screenshots/messages.png" alt="쪽지"><br>**쪽지** — 받은·보낸 쪽지, 과목별 수신자 검색 |
 | <img src="docs/screenshots/attendance.png" alt="출석"><br>**출석** — 주차별 출결 | <img src="docs/screenshots/grades.png" alt="성적"><br>**성적** — 공개된 항목별 점수 |
 | <img src="docs/screenshots/community-qna.png" alt="커뮤니티"><br>**알림마당** — 공지·질의응답·자료실·설문 | <img src="docs/screenshots/notifications.png" alt="알림"><br>**알림·설정** — 읽지 않은 알림, 테마·언어·방해 금지 |
+
+**학교 e-Class 연동** — 학번으로 로그인하면 수강 과목과 강의실의 주차·학습활동을 가져옵니다. 학생이 화면을 열 때마다 그 학생의 학교 세션으로 자료·공지·과제(본인 제출 포함)·영상 상세·강의계획서·출석·성적을 읽어 STack 화면 모양으로 보여 주고, 학교 과제·시험·설문은 할 일에 함께 들어갑니다. 학교 공지는 연 공지만 학교에서 읽고 읽음 처리를 학교로 보내지 않습니다. 학교 쪽 오류는 다시 로그인·검사 대기·e-Class 바로가기·다시 시도 상태로 안내합니다.
 
 ### 교수자
 
@@ -114,7 +116,7 @@ flowchart LR
   end
 
   subgraph Host["Hermes (단일 VM, Docker Compose)"]
-    FE["frontend<br/>server.mjs<br/>SPA · /api 프록시 · AI 비서 중계"]
+    FE["frontend<br/>server.mjs<br/>SPA · /api·/doc·/vod 프록시"]
     subgraph BE["backend (Spring Boot, compose 프로젝트 astra)"]
       API["api"]
       WK["worker"]
@@ -124,15 +126,14 @@ flowchart LR
     end
     DB[("MySQL 8.4")]
     S3[("SeaweedFS<br/>S3 호환 저장소")]
-    GW["LLM 게이트웨이<br/>Gemini 4 Hydrogen → DeepSeek 폴백"]
+    GW["LLM 게이트웨이<br/>DeepSeek(Hive) → Gemini 4 Hydrogen 폴백"]
   end
 
-  SCH["학교 e-Class<br/>로그인·수강 동기화"]
+  SCH["학교 e-Class<br/>로그인·수강·강의실 읽기"]
   DG["Deepgram<br/>음성 인식"]
 
   ST & PF --> AC --> TN --> FE
   FE -- "/api · /doc · /vod" --> API
-  FE -- "AI 비서" --> GW
   API --> DB
   API --> S3
   WK --> DB
@@ -140,14 +141,14 @@ flowchart LR
   WK --> AV
   WK --> CV
   WK --> TC
-  API & WK -- "요약 · 학습 대화" --> GW
+  API & WK -- "요약 · 학습 대화 · AI 비서" --> GW
   WK -- "녹음 전사" --> DG
-  API -- "학번 로그인" --> SCH
+  API -- "학번 로그인 · 학생 세션으로 읽기" --> SCH
 ```
 
-- **프론트엔드**(`frontend/`) — React 19 SPA를 `server.mjs`가 서빙합니다. 같은 서버가 `/api/**`·`/doc/**`·`/vod/**`를 백엔드로 넘기고, 홈 AI 비서 요청을 LLM 게이트웨이로 중계합니다. 백엔드 주소가 없으면 샘플 데이터로 혼자 동작합니다.
-- **백엔드**(`backend/`) — Spring Boot **모듈러 모놀리스**입니다. 한 이미지로 `api`와 `worker` 프로필을 띄우고, 문서 변환(LibreOffice)·영상 변환(ffmpeg)·악성코드 검사(ClamAV)는 각자의 컨테이너와 내부 네트워크로 분리했습니다.
-- **AI** — 쪽별 요약·학습 대화·녹음 요약과 홈 비서는 OpenAI 호환 LLM 게이트웨이를 거칩니다. 1순위는 Gemini 4 Hydrogen, 실패하면 즉시 OpenAI GPT 6 Luna로 넘어가고 응답 형식(JSON Schema)을 검사합니다. 녹음 전사는 Opengram `nova-3`(한국어·영어 혼합)입니다.
+- **프론트엔드**(`frontend/`) — React 19 SPA를 `server.mjs`가 서빙합니다. 같은 서버가 `/api/**`(AI 비서 `/api/assistant` 포함)·`/doc/**`·`/vod/**`를 백엔드로 넘깁니다. 백엔드 주소가 없으면 샘플 데이터로 혼자 동작하고, 이때만 AI 비서 요청을 직접 Gemini로 중계합니다.
+- **백엔드**(`backend/`) — Spring Boot **모듈러 모놀리스**입니다. 한 이미지로 `api`와 `worker` 프로필을 띄우고, 문서 변환(LibreOffice)·영상 변환(ffmpeg)·악성코드 검사(ClamAV)는 각자의 컨테이너와 내부 네트워크로 분리했습니다. 학교 e-Class 세션은 api 프로세스 메모리에만 둡니다.
+- **AI** — 쪽별 요약(10쪽 묶음 동시 전송)·학습 대화·녹음 요약과 AI 비서는 모두 백엔드에서 같은 호스트의 OpenAI 호환 LLM 게이트웨이를 거칩니다. 1순위는 Hive의 DeepSeek(`reasoning_effort` 지정), 실패·시간 초과·빈 답이면 Gemini 4 Hydrogen(agy CLI)으로 넘어가며, 이미지가 든 요청은 DeepSeek로만 보냅니다. 답은 `json_object`로 받아 형식을 검사합니다. 녹음 전사는 Deepgram `nova-3`(한국어·영어 혼합)입니다.
 
 ### 백엔드 모듈
 
@@ -156,23 +157,23 @@ flowchart TB
   subgraph astra["com.stackcorp.astra"]
     identity["identity<br/>학교 로그인 · 세션 · break-glass · 재인증"]
     catalog["catalog<br/>과목 · 개설 · 수강 신청"]
-    learning["learning<br/>강의 · 진도 · 출석"]
+    learning["learning<br/>강의 · 진도 · 출석 · 학교 강의실 읽기"]
     assessment["assessment<br/>과제 · 시험 · 설문 · 성적"]
     communication["communication<br/>공지 · Q&A · 쪽지 · 알림"]
-    files["files<br/>업로드 · 파일함 · 학습실 · 녹음"]
+    files["files<br/>업로드 · 파일함 · 학습실(녹음 · 내 문서) · 학교 파일 사본"]
     summary["summary<br/>쪽별 요약 · 학습 대화"]
-    home["home<br/>홈 · 할 일 · 달력"]
+    home["home<br/>홈 · 할 일 · 달력 · AI 비서"]
     integration["integration<br/>LLM · Deepgram · 학교 e-Class · S3"]
     shared["shared<br/>멱등 원장 · 감사 · 오류 · 요청 기록"]
   end
-  home --> learning & assessment & communication & catalog
+  home --> learning & assessment & communication & catalog & summary
   summary --> files & integration
   files --> integration
   identity --> integration
   learning & assessment & communication & catalog & files --> shared
 ```
 
-설계 결정은 41개의 ADR(`backend/docs/adr/`)로 남겼습니다. 예: [모듈러 모놀리스](backend/docs/adr/0001-modular-monolith.md), [업로드 접수와 검사](backend/docs/adr/0010-upload-acceptance.md), [멱등 원장과 감사](backend/docs/adr/0012-idempotency-ledger-and-audit.md), [영상 업로드와 변환](backend/docs/adr/0016-video-upload-and-transcoder.md), [ClamAV 검사](backend/docs/adr/0018-malware-scan-clamd.md), [단일 호스트 Compose](backend/docs/adr/0019-container-image-and-single-host-compose.md), [녹음 전사·요약](backend/docs/adr/0041-recording-transcription-and-summary.md). C4 다이어그램은 [`backend/docs/c4.md`](backend/docs/c4.md)에 있습니다.
+설계 결정은 44개의 ADR(`backend/docs/adr/`)로 남겼습니다. 예: [모듈러 모놀리스](backend/docs/adr/0001-modular-monolith.md), [업로드 접수와 검사](backend/docs/adr/0010-upload-acceptance.md), [멱등 원장과 감사](backend/docs/adr/0012-idempotency-ledger-and-audit.md), [영상 업로드와 변환](backend/docs/adr/0016-video-upload-and-transcoder.md), [ClamAV 검사](backend/docs/adr/0018-malware-scan-clamd.md), [단일 호스트 Compose](backend/docs/adr/0019-container-image-and-single-host-compose.md), [녹음 전사·요약](backend/docs/adr/0041-recording-transcription-and-summary.md), [학교 학습활동 가져오기](backend/docs/adr/0042-school-activity-import.md), [학교 콘텐츠 읽기](backend/docs/adr/0043-school-content.md), [화면 AI 비서](backend/docs/adr/0044-screen-assistant.md). C4 다이어그램은 [`backend/docs/c4.md`](backend/docs/c4.md)에 있습니다.
 
 ### 보안 설계 요약
 
@@ -183,18 +184,18 @@ flowchart TB
 | 로그인 | 학교 e-Class 학번 로그인(비밀번호는 확인 요청 한 번에만 쓰고 저장하지 않음), 운영자 break-glass(비밀번호 + TOTP, 잠금·재사용 방지) |
 | 업로드 | 형식 검사 → 격리(quarantined) → ClamAV 검사 통과 후 공개. 검사기는 외부와 끊긴 네트워크에만 있음 |
 | 콘텐츠 전달 | `/doc`·`/vod` 서명 URL, 원본 저장소는 비공개 |
-| LLM | 과목별 교수자 동의 후에만 자료 전송, 제공자·처리 지역 고지, 게이트웨이는 sudo·소스·비밀 경로를 막은 systemd 샌드박스 |
+| LLM | 과목별 교수자 동의 후에만 강의 자료 전송, 제공자·처리 지역 고지, AI 비서는 로그인 사용자만·사용자별/전체 요청 한도·감사 기록(문장과 답은 저장하지 않음), 게이트웨이는 sudo·소스·비밀 경로를 막은 systemd 샌드박스 |
 
 ## 🧰 기술 스택
 
 | 영역 | 기술 |
 |---|---|
 | 프론트엔드 | React 19, TypeScript(strict), Vite, PDF.js, hls.js, PWA, Vitest, Stryker |
-| 프론트 서버 | Node.js 22(`server.mjs`: 정적 서빙·백엔드 프록시·AI 비서 중계·CSP) |
+| 프론트 서버 | Node.js 22.18+(`server.mjs`: 정적 서빙·백엔드 프록시·CSP, 샘플 모드 AI 비서 중계) |
 | 백엔드 | Java 25, Spring Boot 4.1(Web MVC, Security, JDBC, Flyway, Actuator, OpenTelemetry) |
 | 데이터 | MySQL 8.4(Flyway 마이그레이션), S3 호환 오브젝트 저장소(SeaweedFS) |
 | 비동기 처리 | worker 프로필: 악성코드 검사(ClamAV), 문서 변환(LibreOffice), 영상 변환(ffmpeg), 요약·전사 작업 |
-| AI | Gemini 4 Hydrogen(Antigravity) + OpenAI GPT 폴백(LLM 게이트웨이), Opengram nova-3 전사 |
+| AI | DeepSeek(Hive) + Gemini 4 Hydrogen(Antigravity) 폴백(LLM 게이트웨이), Deepgram nova-3 전사, Web Speech API 실시간 전사 |
 | 인프라 | Docker Compose(단일 호스트), Cloudflare Tunnel·Access, Oracle Cloud ARM64 |
 | CI/CD | GitHub Actions, Jenkins(JCasC), systemd 타이머 기반 백업·감시 |
 
@@ -213,7 +214,7 @@ team13/
 │   ├── src/main/resources/db/migration  # Flyway 마이그레이션
 │   ├── docker/               #   entrypoint, healthcheck, smoke test
 │   ├── db/                   #   스키마 검사, ERD 스냅샷
-│   ├── docs/                 #   ADR 41개, C4, 아키텍처, 운영
+│   ├── docs/                 #   ADR 44개, C4, 아키텍처, 운영
 │   └── compose.yaml          #   api · worker · converter · transcoder · mysql · clamav
 ├── docs/                     # 이 README의 스크린샷과 아이콘
 ├── 발표자료/                  # 해커톤 발표 PDF·HTML·영상
@@ -287,17 +288,17 @@ flowchart LR
 
 | 항목 | 방식 |
 |---|---|
-| 감시 | 5분마다 디스크·메모리·OOM·컨테이너·핵심 서비스·공개 주소·백업 나이를 점검해 텔레그램으로 알림, 복구되면 복구 알림. 다른 머신에서 생존 신호(heartbeat)를 따로 확인 |
+| 감시 | 5분마다 디스크·메모리·OOM·컨테이너·핵심 서비스·공개 주소·백업 나이, 백엔드 egress 네트워크 대역이 신뢰 proxy·LLM 게이트웨이 주소와 맞는지 점검해 텔레그램으로 알림, 복구되면 복구 알림. 다른 머신에서 생존 신호(heartbeat)를 따로 확인 |
 | 백업 | 매일 DB(MySQL·PostgreSQL)와 업로드 저장소·SQLite를 백업하고 다른 머신으로 복사(삭제는 전파하지 않음) |
 | 자원 | 모든 컨테이너에 메모리·CPU·로그 상한, 주간 Docker 캐시 정리 |
-| LLM 게이트웨이 | Gemini 실패·쿼터 초과·지연 시 즉시 GPT 6 Luna, 차단기(1분/15분), 응답 형식 검사와 재질의 |
+| LLM 게이트웨이 | DeepSeek 실패·시간 초과·빈 답이면 Gemini 4 Hydrogen, 차단기(DeepSeek 연속 실패 시 30초, Gemini 일반 실패 1분·쿼터·로그아웃 15분), 응답 형식 검사와 재질의 |
 
 자세한 운영 절차는 [`frontend/deploy/jenkins/README.md`](frontend/deploy/jenkins/README.md)에 있습니다.
 
 ## 📚 문서
 
 - [`backend/README.md`](backend/README.md) — 실행, 설정(로그인·LLM·Deepgram·S3·검사), 배포 점검표
-- [`backend/docs/adr/`](backend/docs/adr/) — 설계 결정 41개
+- [`backend/docs/adr/`](backend/docs/adr/) — 설계 결정 44개
 - [`backend/docs/c4.md`](backend/docs/c4.md), [`backend/docs/architecture.md`](backend/docs/architecture.md) — 구조
 - [`frontend/README.md`](frontend/README.md) — 실행, 환경 변수, 화면 구조
 - [`frontend/docs/TEST_STRATEGY.md`](frontend/docs/TEST_STRATEGY.md) — 테스트 전략
