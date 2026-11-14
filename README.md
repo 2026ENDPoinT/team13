@@ -147,7 +147,7 @@ flowchart LR
 
 - **프론트엔드**(`frontend/`) — React 19 SPA를 `server.mjs`가 서빙합니다. 같은 서버가 `/api/**`·`/doc/**`·`/vod/**`를 백엔드로 넘기고, 홈 AI 비서 요청을 LLM 게이트웨이로 중계합니다. 백엔드 주소가 없으면 샘플 데이터로 혼자 동작합니다.
 - **백엔드**(`backend/`) — Spring Boot **모듈러 모놀리스**입니다. 한 이미지로 `api`와 `worker` 프로필을 띄우고, 문서 변환(LibreOffice)·영상 변환(ffmpeg)·악성코드 검사(ClamAV)는 각자의 컨테이너와 내부 네트워크로 분리했습니다.
-- **AI** — 쪽별 요약·학습 대화·녹음 요약과 홈 비서는 OpenAI 호환 LLM 게이트웨이를 거칩니다. 1순위는 Gemini 4 Hydrogen, 실패하면 즉시 DeepSeek로 넘어가고 응답 형식(JSON Schema)을 검사합니다. 녹음 전사는 Deepgram `nova-3`(한국어·영어 혼합)입니다.
+- **AI** — 쪽별 요약·학습 대화·녹음 요약과 홈 비서는 OpenAI 호환 LLM 게이트웨이를 거칩니다. 1순위는 Gemini 4 Hydrogen, 실패하면 즉시 OpenAI GPT 6 Luna로 넘어가고 응답 형식(JSON Schema)을 검사합니다. 녹음 전사는 Opengram `nova-3`(한국어·영어 혼합)입니다.
 
 ### 백엔드 모듈
 
@@ -194,7 +194,7 @@ flowchart TB
 | 백엔드 | Java 25, Spring Boot 4.1(Web MVC, Security, JDBC, Flyway, Actuator, OpenTelemetry) |
 | 데이터 | MySQL 8.4(Flyway 마이그레이션), S3 호환 오브젝트 저장소(SeaweedFS) |
 | 비동기 처리 | worker 프로필: 악성코드 검사(ClamAV), 문서 변환(LibreOffice), 영상 변환(ffmpeg), 요약·전사 작업 |
-| AI | Gemini 4 Hydrogen(Antigravity) + DeepSeek 폴백(LLM 게이트웨이), Deepgram nova-3 전사 |
+| AI | Gemini 4 Hydrogen(Antigravity) + OpenAI GPT 폴백(LLM 게이트웨이), Opengram nova-3 전사 |
 | 인프라 | Docker Compose(단일 호스트), Cloudflare Tunnel·Access, Oracle Cloud ARM64 |
 | CI/CD | GitHub Actions, Jenkins(JCasC), systemd 타이머 기반 백업·감시 |
 
