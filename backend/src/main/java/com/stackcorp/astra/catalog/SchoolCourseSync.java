@@ -5,13 +5,12 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.stackcorp.astra.identity.api.SchoolLoginSucceeded;
@@ -19,8 +18,8 @@ import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.SchoolCourse;
 import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.Slot;
 
 /**
- * 학번·학교 e-Class 비밀번호로 로그인한 학생의 과목과 수강을 학교 메인 화면과 맞춘다. 로그인 transaction이 commit된 뒤 같은 thread에서
- * 새 transaction으로 실행하므로, 로그인 응답이 나갈 때는 이미 맞춰져 있다. 실패하면 이 transaction만 rollback하고 로그만 남긴다.
+ * 학번·학교 e-Class 비밀번호로 로그인한 학생의 과목과 수강을 학교 메인 화면과 맞춘다. 로그인 transaction이 commit되고 DB 연결을
+ * 돌려준 뒤 같은 thread에서 새 transaction으로 실행하므로, 로그인 응답이 나갈 때는 이미 맞춰져 있다. 실패하면 이 transaction만 rollback하고 로그만 남긴다.
  * 로그인은 그대로 성공한다.
  * <ul>
  * <li>과목은 학교 과목 키({@code courses.legacy_kjkey})로 찾고 없으면 만든다. 있는 과목은 학교 화면 값으로 갱신한다.</li>
@@ -48,7 +47,7 @@ class SchoolCourseSync {
 		this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 	}
 
-	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+	@EventListener
 	@Order(SchoolLoginSucceeded.CATALOG_ORDER)
 	public void on(SchoolLoginSucceeded event) {
 		try {

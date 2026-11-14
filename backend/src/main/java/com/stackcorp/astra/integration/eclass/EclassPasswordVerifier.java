@@ -771,7 +771,8 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 
 		private final String studentId;
 
-		private Session session;
+		// 읽기와 닫기는 synchronized로 차례를 지킨다. isOpen()만 잠그지 않고 읽는다(진행 중인 읽기를 기다리지 않게).
+		private volatile Session session;
 
 		Rooms(Session session, URI referer, String studentId) {
 			this.session = session;
@@ -782,6 +783,11 @@ final class EclassPasswordVerifier implements SchoolPasswordVerifier {
 		@Override
 		public boolean claim() {
 			return this.claimed.compareAndSet(false, true);
+		}
+
+		@Override
+		public boolean isOpen() {
+			return this.session != null;
 		}
 
 		@Override

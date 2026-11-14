@@ -268,6 +268,12 @@ DB의 일시와 API의 offset 없는 일시(`openAt`, `closeAt`, `serverTime` �
 
 Google Gemini는 OpenAI 호환 주소로 쓴다: `ASTRA_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`, `ASTRA_LLM_MODEL=gemini-3.5-flash`. Gemini는 도구 호출에 `extra_content.google.thought_signature`를 붙이고 다음 요청에 같은 값이 없으면 400을 내므로, client는 도구 호출의 `extra_content`를 받은 그대로 돌려보낸다.
 
+쪽별 요약(강의자료, 학습실 문서)은 쪽 묶음마다 답을 JSON 객체 하나로 요청한다(`response_format` `json_object`). 형식만 맞고 권장 분량을 조금 넘는 것 같은 가벼운 문제는 다시 묻지 않고 경고로 받는다. 같은 host의 agy LLM gateway(Frontend-final `deploy/hermes/ops/agy-llm-gateway`)를 쓰는 배포에서는 아래 동작을 하는 gateway가 먼저 배포돼 있어야 한다. 그 전 gateway는 `json_object` 요청을 모두 화면 도우미용 짧은 경로(약 17초 예산)로 보내서 요약 요청이 시간 초과로 실패한다.
+
+- `max_tokens`가 `JSON_MAX_TOKENS`(기본 2000)보다 큰 `json_object` 요청은 일반 경로로 보낸다.
+- 이미지(`image_url`)가 든 요청은 텍스트만 넘기는 agy(Gemini)를 건너뛰고 폴백(Hive DeepSeek)으로 바로 보낸다. 폴백은 쪽 이미지를 받으므로 `ASTRA_LLM_VISION=true` 그대로 두면 된다.
+- agy 답이 JSON 객체가 아니면 같은 요청을 폴백으로 다시 보낸다.
+
 과목 자료는 담당 교수자가 그 과목에 범위별(`page_summary`, `study_chat`)로 동의한 뒤에만 보낸다([ADR-0032](docs/adr/0032-llm-consent-and-study-chat.md)). 동의와 쪽별 요약 생성·재시도는 담당자 명단의 교수와 비정규 담당자만 하고, 조교는 403 `llm_decider_required`다. 동의 목록의 `canGrant`가 화면에 이 구분을 알린다. 교수자는 아래 처리 조건을 `GET /api/llm/policy`로 보고 동의한다. 제공자를 바꾸면 이 값과 `NOTICE_VERSION`을 함께 바꾼다. 값이 바뀌면 이전 동의는 효력을 잃는다.
 
 | 환경 변수 | 기본값 | 내용 |
@@ -514,12 +520,13 @@ PIN/QR 출석의 보안 값이다([ADR-0030](docs/adr/0030-attendance-and-smart-
 | `ASTRA_BREAK_GLASS_TOTP_SECRET` | 없음 | RFC 6238 TOTP secret(Base32) |
 | `ASTRA_ECLASS_LOGIN_BASE_URL` | 없음 | 학교 e-Class origin(예: `https://eclass.seoultech.ac.kr`). 있으면 `POST /api/auth/eclass-login`이 열리고 `GET /api/auth/methods`에 `eclassPassword`가 나온다. 비밀번호는 학교 확인 요청 한 번에만 쓰고 저장하지 않는다. 학교 서버가 보내지 않는 중간 인증서(Thawte TLS RSA CA G1)를 이 client의 신뢰 목록에 더한다 |
 | `ASTRA_SCHOOL_ACTIVITIES_ENABLED` | `true` | 학교 로그인 때 그 학생의 학교 강의실 주차·학습활동 목록(본인 완료 표시 포함)을 가져와 강의실 주차 목록에 붙인다([ADR-0042](docs/adr/0042-school-activity-import.md)). 끄면 학교 session을 로그인 응답 전에 버린다 |
-| `ASTRA_SCHOOL_ACTIVITIES_WAIT` | `3s` | 로그인 응답이 가져오기를 기다리는 최대 시간(0~30초). 나머지는 뒤에서 이어 간다 |
-| `ASTRA_SCHOOL_ACTIVITIES_BUDGET` | `60s` | 가져오기 한 번의 전체 시간(1초~10분). 넘으면 남은 과목은 읽지 않는다 |
+| `ASTRA_SCHOOL_ACTIVITIES_WAIT` | `3s` | 로그인 응답이 바로 시작한 가져오기를 기다리는 최대 시간(0~30초). 나머지는 뒤에서 이어 간다. 줄에서 기다리는 가져오기는 기다리지 않는다 |
+| `ASTRA_SCHOOL_ACTIVITIES_BUDGET` | `2m` | 로그인부터 잰 가져오기 한 번의 전체 시간(1초~10분, 줄에서 기다린 시간 포함). 넘으면 남은 과목은 읽지 않고, 시작 전에 넘으면 시작하지 않는다 |
 | `ASTRA_SCHOOL_ACTIVITIES_REQUEST_TIMEOUT` | `8s` | 학교 요청 하나의 제한 시간(1초~1분) |
 | `ASTRA_SCHOOL_ACTIVITIES_MAX_COURSES` | `20` | 한 번에 읽는 과목 수(1~60, 학교 메인 화면 순서) |
-| `ASTRA_SCHOOL_ACTIVITIES_INTERVAL` | `10m` | 같은 학생이 이 간격 안에 다시 로그인하면 가져오지 않는다 |
-| `ASTRA_SCHOOL_ACTIVITIES_CONCURRENCY` | `4` | 동시에 도는 가져오기 수(1~32). 넘치면 그 로그인은 가져오지 않는다 |
+| `ASTRA_SCHOOL_ACTIVITIES_INTERVAL` | `10m` | 같은 학생이 이 간격 안에 가져오기를 시작했으면 다시 로그인해도 가져오지 않는다(건너뛴 가져오기는 세지 않는다) |
+| `ASTRA_SCHOOL_ACTIVITIES_CONCURRENCY` | `8` | 동시에 도는 가져오기 수(1~32). 가져오기 하나는 학생 한 명의 학교 session으로 요청을 차례로 보낸다. 자리가 없으면 줄에서 기다린다 |
+| `ASTRA_SCHOOL_ACTIVITIES_QUEUE_CAPACITY` | `200` | 자리가 날 때까지 줄에서 기다리는 가져오기 수(0~5000). 줄도 가득 차면 그 로그인은 가져오지 않고 다음 로그인이 가져온다. 기본값은 수업 시작 때 한 반(40명)이 1분 안에 로그인해도 넉넉하다(가져오기 하나 1.2초면 줄 200개가 동시 8개로 30초에 빈다). 지표 `astra.learning.school.imports.queued`, `astra.learning.school.imports.skipped{reason}` |
 | `ASTRA_SESSION_ALLOWED_ORIGINS` | 없음 | 상태를 바꾸는 요청에 허용하는 Origin(쉼표 구분). 브라우저가 보내는 모양(`scheme://host[:port]`, 소문자, 기본 port와 끝의 `/` 없이) 그대로 적고, 다른 모양이면 앱이 시작하지 않는다. 비우면 요청 자신의 origin만 허용하는데, proxy 뒤에서는 앱이 보는 Host·scheme이 브라우저의 것과 달라 POST·PUT·DELETE가 모두 403이 된다. 그래서 compose 구성은 이 값을 요구한다(아래 "컨테이너로 실행") |
 | `ASTRA_CLIENT_ADDRESS_TRUSTED_PROXIES` | 없음 | 요청을 넘기는 proxy의 주소 또는 CIDR(쉼표 구분). 연결한 쪽 주소가 여기 있을 때만 `X-Forwarded-For`를 오른쪽부터 읽고, 여기 있는 주소를 건너뛴 첫 주소를 브라우저 주소로 쓴다(로그인 기록, session, 학교 비밀번호·break-glass 로그인의 주소 단위 한도. IPv6 한도는 /64 단위로 센다). 믿는 hop마다 받은 header 뒤에 자기가 본 주소를 덧붙여야 안전하다. 덧붙이지 않는 앞단이 믿는 hop 바로 앞에 있으면 브라우저가 보낸 주소가 기록되고 한도도 그 주소로 센다. 비우면 header를 믿지 않고 연결한 쪽 주소를 쓴다. prefix 0(`0.0.0.0/0`, `::/0`), 점 넷이 아닌 IPv4(`10/8`), 범위 밖 bit가 있는 값(`10.0.0.1/8`)은 받지 않고 시작하지 않는다. Terraform 배포는 CloudFront VPC origin이 있는 app subnet, 프론트엔드 서버 뒤 단일 host는 `127.0.0.0/8,::1,<astra_egress 범위>`다([.env.example](.env.example)) |
 | `ASTRA_CLOUDFRONT_BASE_URL` | 없음 | 서비스 도메인(https). signed cookie 정책의 resource 기준 |

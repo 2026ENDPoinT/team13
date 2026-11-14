@@ -271,6 +271,11 @@ class SchoolContentTests extends IntegrationTest {
 		}
 
 		@Override
+		public boolean isOpen() {
+			return !this.closed;
+		}
+
+		@Override
 		public SchoolCourseRoom read(String courseKey, Duration requestTimeout, Duration remaining) {
 			throw new UnsupportedOperationException();
 		}

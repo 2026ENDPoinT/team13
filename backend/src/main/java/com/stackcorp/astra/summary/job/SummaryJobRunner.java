@@ -269,6 +269,12 @@ class SummaryJobRunner implements SmartLifecycle, AutoCloseable {
 							stage, ex.providerFailure(), error, ex.getMessage());
 				}
 			}
+			else {
+				// 검사 실패·호출 수 상한 등. 세부 문구는 모델 출력 조각을 담을 수 있어 로그에 남기지 않는다(작업 저장소에 남는다).
+				log.warn("summary job failed jobId={} stage={} code={} calls={} inputTokens={} outputTokens={}", job.id(),
+						stage, ex.code().name().toLowerCase(), usage != null ? usage.calls() : null,
+						usage != null ? usage.inputTokens() : null, usage != null ? usage.outputTokens() : null);
+			}
 			this.storage.writeFailure(job.fileId(), job.id(), stage, ex.getMessage());
 			finish(job, JobState.FAILED, usage, ex.code().name().toLowerCase(), failureMessage(ex));
 		}

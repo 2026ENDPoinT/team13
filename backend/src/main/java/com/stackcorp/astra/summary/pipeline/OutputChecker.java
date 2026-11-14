@@ -62,7 +62,7 @@ final class OutputChecker {
 			int before = errors.size();
 			Tag tag = Tag.of(string(s.get("tag")));
 			String title = string(s.get("title"));
-			String explain = string(s.get("explain"));
+			String explain = MathNotation.inlineOneLineDisplay(string(s.get("explain")));
 			String digest = string(s.get("digest"));
 			JsonNode uncertainNode = s.get("uncertain");
 			String uncertain = string(uncertainNode);

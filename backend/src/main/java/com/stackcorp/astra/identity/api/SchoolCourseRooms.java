@@ -36,6 +36,11 @@ public interface SchoolCourseRooms {
 	boolean claim();
 
 	/**
+	 * @return {@link #close()} 전이면 true. 줄에서 기다리던 가져오기가 시작하기 전에 학생이 로그아웃했는지(session이 끝나 닫혔는지) 본다
+	 */
+	boolean isOpen();
+
+	/**
 	 * 과목 하나의 강의실 첫 화면(주차와 학습활동 목록)을 읽는다.
 	 * @param courseKey 학교 과목 키(KJKEY). 로그인 때 읽은 수강과목의 키
 	 * @param requestTimeout HTTP 요청 하나의 제한 시간

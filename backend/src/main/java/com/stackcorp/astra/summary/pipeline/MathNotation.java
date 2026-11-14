@@ -21,7 +21,32 @@ final class MathNotation {
 
 	private static final Pattern INLINE_CODE = Pattern.compile("`[^`\\n]*`");
 
+	private static final Pattern ONE_LINE_DISPLAY = Pattern.compile("\\$\\$([^$\\n]+?)\\$\\$");
+
 	private MathNotation() {
+	}
+
+	/**
+	 * 한 줄 안에서 열고 닫은 {@code $$...$$}를 문장 안 수식 {@code $...$}으로 바꾼다. 모델이 블록 수식을 글줄 안에 자주 쓰고, 고쳐
+	 * 달라고 해도 같은 줄을 되풀이해 묶음 전체를 다시 보내게 했다(실제 실행의 "$$는 따로 한 줄에 써야 함"). 화면에는 문장 안 수식으로
+	 * 보이는 편이 원래 뜻에 맞는다. 코드 블록 안은 건드리지 않는다.
+	 */
+	static String inlineOneLineDisplay(String text) {
+		if (text == null || !text.contains("$$")) {
+			return text;
+		}
+		String[] lines = text.split("\n", -1);
+		boolean fenced = false;
+		for (int i = 0; i < lines.length; i++) {
+			if (lines[i].strip().startsWith("```")) {
+				fenced = !fenced;
+			}
+			else if (!fenced) {
+				lines[i] = ONE_LINE_DISPLAY.matcher(lines[i])
+					.replaceAll((m) -> Matcher.quoteReplacement("$" + m.group(1).strip() + "$"));
+			}
+		}
+		return String.join("\n", lines);
 	}
 
 	static List<String> errors(String where, String text, boolean allowDisplay) {
