@@ -34,10 +34,27 @@ export interface AssistantResult {
 export type RunStatus = "ready" | "running" | "paused" | "done" | "stopped";
 export type StepStatus = "pending" | "done" | "skipped";
 
+/**
+ * What a plan step from the signed-in assistant (`POST /api/assistant` `plan.steps`) carries itself, instead of being
+ * looked up in the sample `data.ts`: what it is, where it opens, and how it is shown.
+ */
+export interface ServerStepInfo {
+  /** The backend's step id (kept for the record; the step's `activityId` is the screen id its `href` opens). */
+  id: string;
+  kind: string;
+  title: string;
+  course: string;
+  due: string | null;
+  href: string;
+  external: boolean;
+}
+
 export interface PlanStep {
+  /** Sample steps: the `data.ts` activity id. Server steps: the id of the screen `href` opens (`srv-lecture-12`). */
   activityId: string;
   mode: "auto" | "confirm";
   status: StepStatus;
+  server?: ServerStepInfo;
 }
 
 /** Today's plan run (`state.assistant.run`). */
@@ -52,6 +69,8 @@ export interface PlanRun {
   customOrder?: boolean;
   /** Version 1 runs: indexes of skipped steps. */
   skipped?: number[];
+  /** Server runs: the signed-in user they belong to. Sample runs have none. */
+  owner?: string;
 }
 
 /** A `choose` result waiting in the 요청함. */

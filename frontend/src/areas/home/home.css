@@ -209,13 +209,27 @@ html[data-theme="light"] .seg a.on { background: var(--gray-0); color: var(--tex
 .cmd-opt[aria-selected="true"] { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .cmd-more { padding: var(--space-1) var(--space-3) var(--space-2); color: var(--text-2); font-size: var(--text-xs); line-height: var(--leading-xs); }
 /* 비서의 한 줄 답(입력창 바로 위). 한 줄을 미리 비워 두어 답이 나타나도 입력창이 움직이지 않는다. */
-.cmd-say { min-height: var(--leading-sm); margin: 0; padding: 0 var(--space-5); color: var(--text); font-size: var(--text-sm); line-height: var(--leading-sm); }
+.cmd-say { position: relative; min-height: var(--leading-sm); margin: 0; padding: 0 var(--space-5); color: var(--text); font-size: var(--text-sm); line-height: var(--leading-sm); }
+/* 말풍선: 예약한 한 줄 자리의 아래쪽에 붙여 위로 자라므로 입력창은 움직이지 않는다. 꼬리는 왼쪽 마스코트를 가리킨다. */
+.cmd-say-bubble {
+  position: absolute; left: var(--space-5); bottom: 0; max-width: calc(100% - 2 * var(--space-5)); box-sizing: border-box;
+  padding: var(--space-2) var(--space-4); text-align: left; overflow-wrap: anywhere;
+  background: var(--surface); color: var(--text); border: var(--border-w) solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
+  transform-origin: 24px 100%; animation: cmd-say-in 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.cmd-say-bubble::after {
+  content: ""; position: absolute; left: 18px; bottom: -6px; width: 10px; height: 10px;
+  background: var(--surface); border: solid var(--border); border-width: 0 var(--border-w) var(--border-w) 0; transform: rotate(45deg);
+}
+@keyframes cmd-say-in { from { opacity: 0; transform: translateY(4px) scale(0.96); } }
+@media (prefers-reduced-motion: reduce) { .cmd-say-bubble { animation: none; } }
 
 /* 누르면 바로 실행되는 추천 문장. 위(다음 행동 카드)와 아래(비워 둔 답 줄 + 입력창) 사이 빈 공간의 세로 가운데에 놓는다:
-   위 여백 = gap, 아래 여백 = gap + 답 한 줄 + gap 이므로 (답 한 줄 + gap) / 2 만큼 내리고, 같은 만큼 아래 여백을 줄여 전체 높이는 그대로 둔다. */
+   위 여백 = gap, 아래 여백 = gap + 답 한 줄 + gap 이므로 (답 한 줄 + gap) / 2 만큼 내리고, 같은 만큼 아래 여백을 줄여 전체 높이는 그대로 둔다.
+   overflow 때문에 포커스 링(2px + offset 2px = 4px)이 잘리므로 padding을 4px로 두고 -2px 마진으로 상쇄해 배치는 그대로다. */
 .hero-prompts {
   --prompts-shift: calc((var(--leading-sm) + var(--space-3)) / 2);
-  list-style: none; margin: var(--prompts-shift) 0 calc(var(--prompts-shift) * -1); padding: 2px; display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-2);
+  list-style: none; margin: calc(var(--prompts-shift) - 2px) -2px calc(var(--prompts-shift) * -1 - 2px); padding: 4px; display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-2);
   overflow-x: auto; scrollbar-width: none;
 }
 .hero-prompts::-webkit-scrollbar { display: none; }
@@ -359,6 +373,7 @@ html.hero-morph::view-transition-new(root) { animation: hero-morph-in 240ms ease
   .hero-assist { margin-top: var(--space-4); }
   .cmd-box { min-height: 56px; padding-left: var(--space-4); }
   .cmd-say { padding: 0 var(--space-4); }
+  .cmd-say-bubble { left: var(--space-4); max-width: calc(100% - 2 * var(--space-4)); }
   .cmd-key { display: none; }
   .hero-cta > span:first-child { display: none; }
   .hero-action { padding-right: var(--space-3); }

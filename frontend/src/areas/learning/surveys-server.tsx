@@ -3,7 +3,9 @@
 // `resultsAvailable`을 줄 때만 받는다.
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Dialog, EmptyState, ErrorState, LoadingState } from "../../ui/kit.tsx";
-import { Link, closeDialog } from "../../router.tsx";
+import { Link, closeDialog, navigate } from "../../router.tsx";
+import { completeStep, completionToken, screenKey } from "../../shared/assistant/plan.ts";
+import { refreshTray } from "../../shared/assistant-tray.tsx";
 import { ActivityShell } from "../../shared/activity-rail.tsx";
 import { ApiError } from "../../shared/api.ts";
 import { backendStatus, backendSettled, connect as connectBackend, courseIdFor } from "../../shared/backend.ts";
@@ -185,6 +187,9 @@ function SurveyDialog({ screen }: { screen: Screen }) {
   const entry = useResource(surveyDetails, path);
   // 응답 폼을 보여 준 데이터. 데이터가 잠시 사라져도(다시 읽는 중) 입력 중인 폼을 그대로 둔다.
   const shown = useRef<SurveyDetail | null>(null);
+  // 계획의 이 설문 단계: 창을 연 때의 선택에 묶고, 응답이 접수되면 그 단계를 끝낸다.
+  const planToken = useRef(completionToken(screenKey(screen.id, new URLSearchParams(location.search))));
+  const onDone = () => { if (completeStep(planToken.current, { navigate, event: "survey-saved" })) refreshTray(); };
   useEffect(() => {
     if (path) void surveyDetails.visit("survey-dialog", path, path);
   });
@@ -214,7 +219,7 @@ function SurveyDialog({ screen }: { screen: Screen }) {
       frame = (
         <Fragment key={JSON.stringify(data.questions.map((q) => [q.questionId, (q.options || []).map((o) => o.optionId)]))}>
           <p className="tiny">{`${info.title} · 마감 ${koDateTime(info.closeAt)}`}</p>
-          {surveyForm(courseId, surveyId, data)}
+          {surveyForm(courseId, surveyId, data, { onDone })}
         </Fragment>
       );
     }

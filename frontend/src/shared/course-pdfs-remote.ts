@@ -397,6 +397,20 @@ export function getSummaryResult(record: SummaryTarget, jobId: Id): Promise<Serv
   return apiGet<ServerSummary>(`${base(record)}/summary-jobs/${encodeURIComponent(jobId)}/result`);
 }
 
+/**
+ * A job and, when it has completed, its candidate. Reading the candidate can fail on its own (a 5xx, the network):
+ * the job is still answered (completed, `result` null, `failure` set) so the panel shows the completed state with its
+ * "read the candidate again" action instead of keeping the last running state and stopping its polling.
+ */
+export async function withCandidate(record: SummaryTarget, job: SummaryJob | null): Promise<{ job: SummaryJob | null; result: ServerSummary | null; failure: unknown }> {
+  if (!job || job.state !== "completed") return { job, result: null, failure: null };
+  try {
+    return { job, result: await getSummaryResult(record, job.id), failure: null };
+  } catch (failure) {
+    return { job, result: null, failure };
+  }
+}
+
 export function publishSummary(record: SummaryTarget, jobId: Id): Promise<ServerSummary> {
   return apiSend<ServerSummary>("POST", `${base(record)}/summary-jobs/${encodeURIComponent(jobId)}/publish`);
 }

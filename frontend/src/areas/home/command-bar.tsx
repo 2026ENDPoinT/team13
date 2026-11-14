@@ -1,23 +1,23 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Link, navigate } from "../../router.tsx";
+import { Link, navigate, resolveScreen } from "../../router.tsx";
 import { render } from "../../store.ts";
 import { currentRole, routeFor } from "../../shared/routes.ts";
 import { markChatUsed, setHeroInputOut } from "../../shared/assistant/chat-state.ts";
 import { isTodayAllRequest } from "../../shared/assistant/aliases.ts";
 import { Icon } from "../../ui/icon.tsx";
 import { activityById, typeLabel, typeIcon, TODAY } from "../../shared/format.ts";
-import { nextActions, describe } from "../../shared/assistant/resolve.ts";
+import { nextActions } from "../../shared/assistant/resolve.ts";
 import type { NextAction } from "../../shared/assistant/activity-context.ts";
 import type { AssistantResult } from "../../shared/assistant/activity-context.ts";
 import { searchClassrooms, classroomForCommand } from "../../shared/assistant/classrooms.ts";
 import { ask, execute } from "../../shared/assistant/run.ts";
 import { foldTray, focusTray, openTray, refreshTray } from "../../shared/assistant-tray.tsx";
-import { createRun, planGroups, runState, startRun, stopRun, todayDeadlinePlan } from "../../shared/assistant/plan.ts";
+import { createRun, createServerRun, planGroups, runState, screenKey, startRun, stepInfo, stopRun, todayDeadlinePlan } from "../../shared/assistant/plan.ts";
 import type { Activity } from "../../data.ts";
-import { backendState, backendStatus, subscribe as onBackendChange } from "../../shared/backend.ts";
+import { backendState, backendStatus, currentUserId, subscribe as onBackendChange } from "../../shared/backend.ts";
 import { useHome, useTodo, homeMessage } from "../../shared/home-remote.ts";
 import { currentServerActions, serverPrompts, type ServerAction } from "../../shared/assistant/server-home.ts";
-import { askServer, type AssistantAction } from "../../shared/assistant/server-ask.ts";
+import { askServer, type AnswerStep, type AssistantAction } from "../../shared/assistant/server-ask.ts";
 import { assistantFailure } from "../../shared/assistant/request.ts";
 
 const MAX_ROWS = 5;
@@ -123,11 +123,9 @@ function busyState(on: boolean): void {
 }
 
 export function planPreview(): ReactNode {
-  if (backendStatus() === "ready") {
-    return serverChoices ? <ServerChoices actions={serverChoices} /> : <section className="hero-plan" id="hero-plan-preview" hidden />;
-  }
   const run = runState();
   if (run?.status !== "ready") {
+    if (backendStatus() === "ready" && serverChoices) return <ServerChoices actions={serverChoices} />;
     return <section className="hero-plan" id="hero-plan-preview" aria-labelledby="hero-plan-title" hidden />;
   }
   const groups = planGroups(run);
@@ -141,8 +139,8 @@ export function planPreview(): ReactNode {
             ? (
               <ol className="hero-plan-steps">
                 {group.steps.map(({ step }) => {
-                  const detail = describe(step.activityId);
-                  const type = activityById(step.activityId)?.type ?? "report";
+                  const detail = stepInfo(step);
+                  const type = detail.type;
                   return (
                     <li key={step.activityId}>
                       <span className={`hero-chip t-${type}`} role="img" aria-label={typeLabel(type)} title={typeLabel(type)}><Icon name={typeIcon(type)} /></span>
@@ -412,7 +410,12 @@ function CommandBar({ onActivate }: { onActivate: () => void }) {
             ))}
           </ul>
         )}
-      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">{currentSay() || (server && busy ? "AI 도우미가 답을 찾고 있어요…" : server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "")}</p>
+      <p className="cmd-say" id="assistant-say" aria-live="polite" aria-atomic="true">
+        {(() => {
+          const text = currentSay() || (server && busy ? "AI 도우미가 답을 찾고 있어요…" : server && todo?.error ? homeMessage(todo.error) : server && !todo?.data ? "할 일을 불러오는 중이에요." : "");
+          return text ? <span className="cmd-say-bubble">{text}</span> : null;
+        })()}
+      </p>
       <div className="cmd" role="search" ref={cmdRef}>
         <div
           className={["cmd-box", listShown ? "has-list" : "", ghost ? "has-ghost" : "", busy ? "is-busy" : ""].filter(Boolean).join(" ")}
@@ -540,15 +543,12 @@ async function submitCommand({ acceptRun, command, field: given }: { acceptRun?:
   const text = acceptRun ? "ㄱㄱ" : field.value().trim();
   if (!text) return;
   markChatUsed();
-  if (backendStatus() === "ready") {
-    await askServerCommand(command || text, field, docked);
-    return;
-  }
   if (backendStatus() === "anon") {
     field.clear();
     say(assistantFailure(401));
     return;
   }
+  // 승인 대기 계획(샘플이든 서버 답이든)은 Accept·"ㄱㄱ"로 시작하고 "취소"로 버린다. 그 밖의 문장은 각 모드대로 묻는다.
   const reply = planReply(text);
   const run = runState();
   if (acceptRun && (acceptRun !== run?.id || run.status !== "ready")) return;
@@ -562,6 +562,10 @@ async function submitCommand({ acceptRun, command, field: given }: { acceptRun?:
       startRun({ navigate });
       refreshTray();
     }
+    return;
+  }
+  if (backendStatus() === "ready") {
+    await askServerCommand(command || text, field, docked);
     return;
   }
   if (reply === "accept" && !run) {
@@ -657,19 +661,29 @@ async function askServerCommand(text: string, field: CommandInput, docked: boole
   say("");
   // 백엔드 제한(ASTRA_ASSISTANT_TIMEOUT, 기본 20초)보다 길게 둔다: 서버가 먼저 끝내야 실패 이유가 화면에 남는다.
   const timer = setTimeout(() => controller.abort(), 25000);
-  let answer: { say: string; actions: AssistantAction[] };
+  let answer: { say: string; actions: AssistantAction[]; plan: AnswerStep[] | null };
   try {
     answer = await askServer(text, controller.signal);
   } catch {
-    answer = { say: controller.signal.aborted ? "AI 응답 시간이 초과되었습니다" : "AI에 연결하지 못했습니다", actions: [] };
+    answer = { say: controller.signal.aborted ? "AI 응답 시간이 초과되었습니다" : "AI에 연결하지 못했습니다", actions: [], plan: null };
   } finally {
     clearTimeout(timer);
     if (pendingController === controller) pendingController = null;
   }
   busy = false;
   // 입력을 바꿨거나(Esc·새 입력) 다른 계정으로 바뀌었으면 이 답은 버린다.
-  if (inputRevision !== revision || backendStatus() !== "ready") {
+  const owner = currentUserId();
+  if (inputRevision !== revision || backendStatus() !== "ready" || !owner) {
     render();
+    return;
+  }
+  // 계획 답: 샘플과 같은 계획 카드(홈 히어로)에 올리고, Accept 후에는 같은 실행기로 단계를 진행한다.
+  if (answer.plan) {
+    createServerRun(answer.plan.map((step) => ({ ...step, key: serverStepKey(step) })), owner);
+    refreshTray();
+    say("계획을 요약했어요. Accept를 누르거나 ㄱㄱ · 진행해라고 입력하면 시작해요.");
+    if (docked) navigate(routeFor(currentRole(), "home"));
+    else commandInput?.focus();
     return;
   }
   const [only] = answer.actions;
@@ -681,4 +695,11 @@ async function askServerCommand(text: string, field: CommandInput, docked: boole
   serverChoices = answer.actions.length ? answer.actions : null;
   say(answer.say);
   if (docked && serverChoices) navigate(routeFor(currentRole(), "home"));
+}
+
+/** The screen a server step opens, as `observeScreen` and the completion events see it (`screenKey`). */
+export function serverStepKey(step: Pick<AnswerStep, "id" | "href" | "external">): string {
+  if (step.external) return `external:${step.id}`;
+  const url = new URL(step.href, "http://localhost");
+  return screenKey(resolveScreen(url.pathname, url.searchParams)?.id ?? `href:${url.pathname}${url.search}`, url.searchParams);
 }

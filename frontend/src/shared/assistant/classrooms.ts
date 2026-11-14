@@ -15,21 +15,30 @@ interface ClassroomEntry {
   command: string;
   row: ClassroomRow;
   terms: string[];
+  /** Names the abbreviation matcher may read: the course itself, plus the matching sample course for server courses. */
+  names: Pick<Course, "ko" | "en">[];
 }
 
 const compact = (value: string | null | undefined): string => String(value || "").toLowerCase().replace(/\s+/g, "");
 const available = ({ course }: ClassroomEntry): boolean => course.enrolled && !course.closed;
+/** A server course carries only the server's name (often English, e.g. "Database"); the sample catalog knows its Korean name and aliases ("데이터베이스", "데베", "디비"). */
+function sampleOf(course: Course): Course | undefined {
+  const name = compact(course.ko);
+  return name ? courses.find((sample) => compact(sample.ko) === name || compact(sample.en) === name) : undefined;
+}
 function indexCourses(availableCourses: readonly Course[], server: boolean): ClassroomEntry[] {
   const names = new Map<string, number>();
   if (server) for (const course of availableCourses) names.set(course.ko, (names.get(course.ko) || 0) + 1);
   return availableCourses.map((course) => {
     const displayName = server && (names.get(course.ko) || 0) > 1 ? `${course.ko} (${course.id})` : course.ko;
     const title = `${displayName} 강의실로 이동`;
+    const known = server ? sampleOf(course) : course;
     return {
       course,
       command: compact(title),
       row: { courseId: course.id, title },
-      terms: [...new Set([displayName, course.ko, course.en, course.code, ...(!server ? courseAliases[course.id] || [] : [])].filter(Boolean).map(compact))],
+      terms: [...new Set([displayName, course.ko, course.en, course.code, known?.ko, known?.en, ...(known ? courseAliases[known.id] || [] : [])].filter(Boolean).map(compact))],
+      names: known && known !== course ? [course, known] : [course],
     };
   });
 }
@@ -51,7 +60,7 @@ export function searchClassrooms(text: string): ClassroomRow[] {
   for (const entry of entries()) {
     if (!available(entry)) continue;
     if (entry.terms.some((term) => term.includes(query))) ranked.push([0, entry.row]);
-    else if (abbreviationMatch(query, entry.course)) ranked.push([1, entry.row]);
+    else if (entry.names.some((names) => abbreviationMatch(query, names))) ranked.push([1, entry.row]);
   }
   return ranked.sort((a, b) => a[0] - b[0]).map(([, row]) => row);
 }
