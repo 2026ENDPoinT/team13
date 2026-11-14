@@ -13,13 +13,14 @@ public record GenerateInput(String documentId, String title, SourceDocument sour
 	/**
 	 * 값이 null이면 기본값을 쓴다.
 	 *
-	 * @param pagesPerChunk 한 번에 보내는 쪽 수(1~10, 기본 6)
+	 * @param pagesPerChunk 한 번에 보내는 쪽 수(1~10, 기본 10)
 	 * @param maxCalls 작업의 모델 호출 수 상한
 	 * @param maxImageBytesPerCall 한 번에 보내는 이미지 크기 합의 상한(기본 4 MiB)
+	 * @param parallelChunks 동시에 모델에 보내는 묶음 수(1~8, 기본 4)
 	 */
-	public record Limits(Integer pagesPerChunk, Integer maxCalls, Long maxImageBytesPerCall) {
+	public record Limits(Integer pagesPerChunk, Integer maxCalls, Long maxImageBytesPerCall, Integer parallelChunks) {
 
-		public static final Limits DEFAULT = new Limits(null, null, null);
+		public static final Limits DEFAULT = new Limits(null, null, null, null);
 
 	}
 
