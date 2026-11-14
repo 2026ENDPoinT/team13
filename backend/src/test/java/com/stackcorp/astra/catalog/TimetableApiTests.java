@@ -8,11 +8,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 import com.stackcorp.astra.ApiClient;
 import com.stackcorp.astra.IntegrationTest;
 import com.stackcorp.astra.TestData;
+import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.SchoolCourse;
+import com.stackcorp.astra.identity.api.SchoolPasswordVerifier.Slot;
 
 import org.junit.jupiter.api.Test;
 
@@ -33,6 +36,9 @@ class TimetableApiTests extends IntegrationTest {
 
 	@Autowired
 	JdbcClient jdbc;
+
+	@Autowired
+	SchoolCourseSync schoolCourses;
 
 	@Test
 	void weekContainsOnlyTheCallersCurrentTermClasses() throws Exception {
@@ -133,6 +139,51 @@ class TimetableApiTests extends IntegrationTest {
 		client.get("/api/me/timetable?termId=" + cancelledTerm).andExpect(status().isBadRequest());
 		client.get("/api/me/timetable?termId=abc").andExpect(status().isBadRequest());
 		new ApiClient(this.mvc, null).get("/api/me/timetable?termId=" + past).andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void schoolSyncedTermWithoutCurrentFlagIsUsedByDefault() throws Exception {
+		LocalDate today = this.jdbc.sql("SELECT CURRENT_DATE").query(LocalDate.class).single();
+		LocalDate sunday = today.minusDays(today.getDayOfWeek().getValue() % 7);
+		long user = this.data.user("STUDENT");
+		long past = term(false, today.minusDays(500), today.minusDays(400));
+		long old = course(past, "지난 수업", null);
+		this.data.enroll(old, user);
+		slot(old, 1, "09:00", "12:00", null);
+		long schoolTerm = term(false, today.minusDays(60), today.plusDays(60));
+		int year = this.jdbc.sql("SELECT term_year FROM terms WHERE term_id = :id")
+			.param("id", schoolTerm).query(Integer.class).single();
+		this.jdbc.sql("UPDATE terms SET start_date = NULL, end_date = NULL WHERE term_id = :id")
+			.param("id", schoolTerm).update();
+		// 다른 사용자의 현재 학기가 있어도 본인의 학교 학기를 쓴다.
+		course(term(true, today.minusDays(60), today.plusDays(60)), "남의 현재 수업", null);
+		this.schoolCourses.sync(user, List.of(new SchoolCourse("A" + year + "3TIMETABLE", "학교 수업", true,
+				year, "3", "109834", "21001", "학교 교수", List.of(new Slot(4, 6, 8)), null, null, null, null)));
+		ApiClient client = new ApiClient(this.mvc, this.data.session(user));
+
+		client.get("/api/me/timetable")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.termId").value((int) schoolTerm))
+			.andExpect(jsonPath("$.weekStart").value(sunday.toString()))
+			.andExpect(jsonPath("$.slots[*].courseName").value(contains("학교 수업")))
+			.andExpect(jsonPath("$.slots[0].date").value(sunday.plusDays(4).toString()))
+			.andExpect(jsonPath("$.slots[0].periodStart").value(6))
+			.andExpect(jsonPath("$.slots[0].periodEnd").value(8));
+		client.get("/api/me/timetable?date=" + sunday.plusDays(7))
+			.andExpect(jsonPath("$.termId").value((int) schoolTerm))
+			.andExpect(jsonPath("$.slots[0].date").value(sunday.plusDays(11).toString()));
+		client.get("/api/me/timetable?termId=" + schoolTerm)
+			.andExpect(jsonPath("$.slots[*].courseName").value(contains("학교 수업")));
+	}
+
+	@Test
+	void userWithoutMemberTermsHasNoTimetable() throws Exception {
+		ApiClient client = new ApiClient(this.mvc, this.data.session(this.data.user("STUDENT")));
+		client.get("/api/me/timetable")
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.termId").doesNotExist())
+			.andExpect(jsonPath("$.terms").isEmpty())
+			.andExpect(jsonPath("$.slots").isEmpty());
 	}
 
 	@Test
